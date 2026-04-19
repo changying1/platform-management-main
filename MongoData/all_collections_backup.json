@@ -1,0 +1,1241 @@
+{
+    "worker": [
+        {
+            "_id": {
+                "$oid": "69dcb407243c9ff866bb2ca3"
+            },
+            "id": "1001",
+            "性别": "男"
+        }
+    ],
+    "device": [
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d37"
+            },
+            "device_id": "1001",
+            "name": "张工的安全帽",
+            "lat": 34.281,
+            "lng": 109.131,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "张三",
+            "holderPhone": "138****1234",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.28,
+                    "lng": 109.13,
+                    "speed": 5.2,
+                    "direction": 45
+                },
+                {
+                    "timestamp": "2024-01-01T09:30:00Z",
+                    "lat": 34.281,
+                    "lng": 109.131,
+                    "speed": 3.8,
+                    "direction": 90
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d38"
+            },
+            "device_id": "1002",
+            "name": "李工的安全帽",
+            "lat": 34.284,
+            "lng": 109.134,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "李四",
+            "holderPhone": "139****5678",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.283,
+                    "lng": 109.133,
+                    "speed": 4.5,
+                    "direction": 60
+                },
+                {
+                    "timestamp": "2024-01-01T09:30:00Z",
+                    "lat": 34.284,
+                    "lng": 109.134,
+                    "speed": 3.2,
+                    "direction": 120
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d39"
+            },
+            "device_id": "1003",
+            "name": "王工的定位器",
+            "lat": 34.279,
+            "lng": 109.129,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "王五",
+            "holderPhone": "136****9012",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.278,
+                    "lng": 109.128,
+                    "speed": 6.1,
+                    "direction": 30
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3a"
+            },
+            "device_id": "1004",
+            "name": "赵工的安全帽",
+            "lat": 34.283,
+            "lng": 109.136,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "赵六",
+            "holderPhone": "137****3456",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.282,
+                    "lng": 109.135,
+                    "speed": 4.8,
+                    "direction": 150
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3b"
+            },
+            "device_id": "1005",
+            "name": "孙工的定位器",
+            "lat": 34.286,
+            "lng": 109.132,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "offline",
+            "holder": "孙七",
+            "holderPhone": "135****7890",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3c"
+            },
+            "device_id": "1006",
+            "name": "周工的安全帽",
+            "lat": 34.278,
+            "lng": 109.128,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "周八",
+            "holderPhone": "138****2345",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.277,
+                    "lng": 109.127,
+                    "speed": 3.5,
+                    "direction": 20
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3d"
+            },
+            "device_id": "1007",
+            "name": "吴工的定位器",
+            "lat": 34.285,
+            "lng": 109.138,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "吴九",
+            "holderPhone": "139****6789",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.284,
+                    "lng": 109.137,
+                    "speed": 5.9,
+                    "direction": 180
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3e"
+            },
+            "device_id": "1008",
+            "name": "郑工的安全帽",
+            "lat": 34.282,
+            "lng": 109.13,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "郑十",
+            "holderPhone": "136****0123",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.281,
+                    "lng": 109.129,
+                    "speed": 4.2,
+                    "direction": 75
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d3f"
+            },
+            "device_id": "1009",
+            "name": "陈工的定位器",
+            "lat": 34.287,
+            "lng": 109.135,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "offline",
+            "holder": "陈十一",
+            "holderPhone": "137****4567",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d40"
+            },
+            "device_id": "1010",
+            "name": "林工的安全帽",
+            "lat": 34.28,
+            "lng": 109.133,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "林十二",
+            "holderPhone": "135****8901",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.279,
+                    "lng": 109.132,
+                    "speed": 3.9,
+                    "direction": 105
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d41"
+            },
+            "device_id": "1011",
+            "name": "黄工的定位器",
+            "lat": 34.284,
+            "lng": 109.129,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "黄十三",
+            "holderPhone": "138****3456",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.283,
+                    "lng": 109.128,
+                    "speed": 5.4,
+                    "direction": 45
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d42"
+            },
+            "device_id": "1012",
+            "name": "刘工的安全帽",
+            "lat": 34.281,
+            "lng": 109.137,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "刘十四",
+            "holderPhone": "139****7890",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.28,
+                    "lng": 109.136,
+                    "speed": 4.7,
+                    "direction": 165
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d43"
+            },
+            "device_id": "1013",
+            "name": "罗工的定位器",
+            "lat": 34.279,
+            "lng": 109.131,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "罗十五",
+            "holderPhone": "136****1234",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.278,
+                    "lng": 109.13,
+                    "speed": 6.2,
+                    "direction": 30
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d44"
+            },
+            "device_id": "1014",
+            "name": "梁工的安全帽",
+            "lat": 34.286,
+            "lng": 109.134,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "梁十六",
+            "holderPhone": "137****5678",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.285,
+                    "lng": 109.133,
+                    "speed": 4.3,
+                    "direction": 120
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d45"
+            },
+            "device_id": "1015",
+            "name": "谢工的定位器",
+            "lat": 34.283,
+            "lng": 109.128,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "谢十七",
+            "holderPhone": "135****9012",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.282,
+                    "lng": 109.127,
+                    "speed": 5.1,
+                    "direction": 60
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d46"
+            },
+            "device_id": "2001",
+            "name": "王工的安全帽",
+            "lat": 34.293,
+            "lng": 109.146,
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "status": "online",
+            "holder": "王五",
+            "holderPhone": "136****9012",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.292,
+                    "lng": 109.145,
+                    "speed": 4.9,
+                    "direction": 90
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d47"
+            },
+            "device_id": "2002",
+            "name": "李工的定位器",
+            "lat": 34.291,
+            "lng": 109.144,
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "status": "online",
+            "holder": "李四",
+            "holderPhone": "139****5678",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.29,
+                    "lng": 109.143,
+                    "speed": 5.6,
+                    "direction": 135
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d48"
+            },
+            "device_id": "2003",
+            "name": "张工的安全帽",
+            "lat": 34.295,
+            "lng": 109.148,
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "status": "offline",
+            "holder": "张三",
+            "holderPhone": "138****1234",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d49"
+            },
+            "device_id": "2004",
+            "name": "赵工的定位器",
+            "lat": 34.289,
+            "lng": 109.142,
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "status": "online",
+            "holder": "赵六",
+            "holderPhone": "137****3456",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.288,
+                    "lng": 109.141,
+                    "speed": 4.4,
+                    "direction": 45
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d4a"
+            },
+            "device_id": "2005",
+            "name": "孙工的安全帽子",
+            "lat": 34.294,
+            "lng": 109.147,
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "status": "online",
+            "holder": "孙七",
+            "holderPhone": "135****7890",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.293,
+                    "lng": 109.146,
+                    "speed": 5.3,
+                    "direction": 165
+                }
+            ]
+        },
+        {
+            "_id": {
+                "$oid": "69e33db2dd52fc7bc5b99d4b"
+            },
+            "device_id": "2556",
+            "name": "实时测试定位器",
+            "lat": 34.28,
+            "lng": 109.13,
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "status": "online",
+            "holder": "测试",
+            "holderPhone": "14084725763",
+            "lastUpdate": "2024-01-01T00:00:00Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z",
+            "trajectory": [
+                {
+                    "timestamp": "2024-01-01T09:00:00Z",
+                    "lat": 34.28,
+                    "lng": 109.13,
+                    "speed": 2,
+                    "direction": 0
+                },
+                {
+                    "timestamp": "2024-01-01T09:30:00Z",
+                    "lat": 34.281,
+                    "lng": 109.131,
+                    "speed": 3.5,
+                    "direction": 45
+                },
+                {
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "lat": 34.28,
+                    "lng": 109.13,
+                    "speed": 2.5,
+                    "direction": 180
+                }
+            ]
+        }
+    ],
+    "fence": [
+        {
+            "_id": {
+                "$oid": "69df549fe3fa803b8a13d2cb"
+            },
+            "fence_id": "1",
+            "name": "基坑禁入区",
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "shape": "circle",
+            "behavior": "No Entry",
+            "severity": "severe",
+            "geometry": {
+                "center": [
+                    34.28,
+                    109.13
+                ],
+                "radius": 50
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "基坑施工区域，禁止无关人员进入",
+            "alarm_type": "high",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        },
+        {
+            "_id": {
+                "$oid": "69df54c2e3fa803b8a13d2cd"
+            },
+            "fence_id": "2",
+            "name": "办公区禁出区",
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "normal",
+            "geometry": {
+                "points": [
+                    [
+                        34.282,
+                        109.132
+                    ],
+                    [
+                        34.283,
+                        109.135
+                    ],
+                    [
+                        34.281,
+                        109.136
+                    ],
+                    [
+                        34.28,
+                        109.133
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "办公区域，工作时间禁止外出",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        },
+        {
+            "_id": {
+                "$oid": "69df5564e3fa803b8a13d2cf"
+            },
+            "fence_id": "3",
+            "name": "隧道施工区",
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "shape": "polygon",
+            "behavior": "No Entry",
+            "severity": "risk",
+            "geometry": {
+                "points": [
+                    [
+                        34.29,
+                        109.14
+                    ],
+                    [
+                        34.295,
+                        109.145
+                    ],
+                    [
+                        34.292,
+                        109.148
+                    ],
+                    [
+                        34.287,
+                        109.143
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "隧道施工区域，禁止无关人员进入",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        },
+        {
+            "_id": {
+                "$oid": "69df6eddbf52a6c7a38e38de"
+            },
+            "fence_id": "1776250589069",
+            "name": "啊实打实的",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "points": [
+                    [
+                        34.282144,
+                        109.121816
+                    ],
+                    [
+                        34.282144,
+                        109.12773
+                    ],
+                    [
+                        34.278771,
+                        109.12773
+                    ],
+                    [
+                        34.278771,
+                        109.121816
+                    ],
+                    [
+                        34.282144,
+                        109.121816
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2026-04-15T18:56:29.069287",
+                "end": "2027-04-15T18:56:29.069287"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T18:56:29.069287",
+            "updatedAt": "2026-04-15T18:56:29.069287"
+        },
+        {
+            "_id": {
+                "$oid": "69df6f10bf52a6c7a38e38df"
+            },
+            "fence_id": "1776250640015",
+            "name": "撒大苏打撒丁",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "points": [
+                    [
+                        34.294703,
+                        109.127435
+                    ],
+                    [
+                        34.294703,
+                        109.127371
+                    ],
+                    [
+                        34.294598,
+                        109.12718
+                    ],
+                    [
+                        34.294281,
+                        109.126924
+                    ],
+                    [
+                        34.294017,
+                        109.126541
+                    ],
+                    [
+                        34.293753,
+                        109.126158
+                    ],
+                    [
+                        34.293437,
+                        109.125966
+                    ],
+                    [
+                        34.293173,
+                        109.125647
+                    ],
+                    [
+                        34.292962,
+                        109.125519
+                    ],
+                    [
+                        34.292645,
+                        109.125392
+                    ],
+                    [
+                        34.292382,
+                        109.125328
+                    ],
+                    [
+                        34.29196,
+                        109.1252
+                    ],
+                    [
+                        34.291643,
+                        109.125136
+                    ],
+                    [
+                        34.291221,
+                        109.125136
+                    ],
+                    [
+                        34.290799,
+                        109.1252
+                    ],
+                    [
+                        34.290482,
+                        109.125328
+                    ],
+                    [
+                        34.290218,
+                        109.125583
+                    ],
+                    [
+                        34.29006,
+                        109.125711
+                    ],
+                    [
+                        34.289744,
+                        109.126094
+                    ],
+                    [
+                        34.289533,
+                        109.12635
+                    ],
+                    [
+                        34.289374,
+                        109.126669
+                    ],
+                    [
+                        34.289163,
+                        109.127116
+                    ],
+                    [
+                        34.288847,
+                        109.127691
+                    ],
+                    [
+                        34.288688,
+                        109.128329
+                    ],
+                    [
+                        34.288425,
+                        109.129351
+                    ],
+                    [
+                        34.288213,
+                        109.130373
+                    ],
+                    [
+                        34.28795,
+                        109.131458
+                    ],
+                    [
+                        34.287844,
+                        109.132416
+                    ],
+                    [
+                        34.287528,
+                        109.135993
+                    ],
+                    [
+                        34.287528,
+                        109.136184
+                    ],
+                    [
+                        34.287475,
+                        109.136504
+                    ],
+                    [
+                        34.287422,
+                        109.137014
+                    ],
+                    [
+                        34.287369,
+                        109.137653
+                    ],
+                    [
+                        34.287369,
+                        109.138419
+                    ],
+                    [
+                        34.287317,
+                        109.13925
+                    ],
+                    [
+                        34.287264,
+                        109.139952
+                    ],
+                    [
+                        34.287211,
+                        109.140846
+                    ],
+                    [
+                        34.287105,
+                        109.14174
+                    ],
+                    [
+                        34.287053,
+                        109.142826
+                    ],
+                    [
+                        34.286947,
+                        109.14372
+                    ],
+                    [
+                        34.286842,
+                        109.14455
+                    ],
+                    [
+                        34.286789,
+                        109.144678
+                    ],
+                    [
+                        34.286789,
+                        109.144806
+                    ],
+                    [
+                        34.286947,
+                        109.144806
+                    ],
+                    [
+                        34.287105,
+                        109.144806
+                    ],
+                    [
+                        34.287317,
+                        109.144806
+                    ],
+                    [
+                        34.287739,
+                        109.144678
+                    ],
+                    [
+                        34.288213,
+                        109.144614
+                    ],
+                    [
+                        34.288741,
+                        109.14455
+                    ],
+                    [
+                        34.28948,
+                        109.144167
+                    ],
+                    [
+                        34.290377,
+                        109.143784
+                    ],
+                    [
+                        34.292751,
+                        109.14289
+                    ],
+                    [
+                        34.294123,
+                        109.141996
+                    ],
+                    [
+                        34.29465,
+                        109.141612
+                    ],
+                    [
+                        34.295072,
+                        109.141229
+                    ],
+                    [
+                        34.295495,
+                        109.140655
+                    ],
+                    [
+                        34.295653,
+                        109.140463
+                    ],
+                    [
+                        34.295758,
+                        109.140399
+                    ],
+                    [
+                        34.295758,
+                        109.140335
+                    ],
+                    [
+                        34.295758,
+                        109.140144
+                    ],
+                    [
+                        34.295758,
+                        109.140016
+                    ],
+                    [
+                        34.295758,
+                        109.139824
+                    ],
+                    [
+                        34.295706,
+                        109.139633
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2026-04-15T18:57:20.015015",
+                "end": "2027-04-15T18:57:20.015015"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T18:57:20.015015",
+            "updatedAt": "2026-04-15T18:57:20.015015"
+        },
+        {
+            "_id": {
+                "$oid": "69df6f29bf52a6c7a38e38e0"
+            },
+            "fence_id": "1776250665967",
+            "name": "啊实打实大苏打实打实的",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "points": [
+                    [
+                        34.293788,
+                        109.167862
+                    ],
+                    [
+                        34.28132,
+                        109.176506
+                    ],
+                    [
+                        34.283015,
+                        109.160536
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2026-04-15T18:57:45.967421",
+                "end": "2027-04-15T18:57:45.967421"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T18:57:45.967421",
+            "updatedAt": "2026-04-15T18:57:45.967421"
+        },
+        {
+            "_id": {
+                "$oid": "69df6fc9bf52a6c7a38e38e1"
+            },
+            "fence_id": "1776250825768",
+            "name": "445646546",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "circle",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "center": [
+                    34.297837,
+                    109.158018
+                ],
+                "radius": 100.0
+            },
+            "schedule": {
+                "start": "2026-04-15T19:00:25.768459",
+                "end": "2027-04-15T19:00:25.768459"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T19:00:25.768459",
+            "updatedAt": "2026-04-15T19:00:25.768459"
+        },
+        {
+            "_id": {
+                "$oid": "69df6fd9bf52a6c7a38e38e2"
+            },
+            "fence_id": "1776250841014",
+            "name": "4456465阿斯顿撒旦",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "circle",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "center": [
+                    34.294115,
+                    109.155326
+                ],
+                "radius": 100.0
+            },
+            "schedule": {
+                "start": "2026-04-15T19:00:41.014603",
+                "end": "2027-04-15T19:00:41.014603"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T19:00:41.015110",
+            "updatedAt": "2026-04-15T19:00:41.015110"
+        },
+        {
+            "_id": {
+                "$oid": "69df6fe5bf52a6c7a38e38e3"
+            },
+            "fence_id": "1776250853888",
+            "name": "44",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "points": [
+                    [
+                        34.28988,
+                        109.156
+                    ],
+                    [
+                        34.28988,
+                        109.161086
+                    ],
+                    [
+                        34.285587,
+                        109.161086
+                    ],
+                    [
+                        34.285587,
+                        109.156
+                    ],
+                    [
+                        34.28988,
+                        109.156
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2026-04-15T19:00:53.888684",
+                "end": "2027-04-15T19:00:53.888684"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T19:00:53.888684",
+            "updatedAt": "2026-04-15T19:00:53.888684"
+        },
+        {
+            "_id": {
+                "$oid": "69df70b0bf52a6c7a38e38e4"
+            },
+            "fence_id": "1776251056092",
+            "name": "44",
+            "company": "",
+            "project": "",
+            "project_region_id": null,
+            "shape": "circle",
+            "behavior": "No Exit",
+            "severity": "medium",
+            "geometry": {
+                "center": [
+                    34.301068,
+                    109.192686
+                ],
+                "radius": 453.835442150672
+            },
+            "schedule": {
+                "start": "2026-04-15T19:04:16.092369",
+                "end": "2027-04-15T19:04:16.092369"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2026-04-15T19:04:16.092369",
+            "updatedAt": "2026-04-15T19:04:16.092369"
+        }
+    ],
+    "team": [
+        {
+            "_id": {
+                "$oid": "69e32e47dd52fc7bc5b99d1e"
+            },
+            "team_id": "team1",
+            "name": "施工一队",
+            "color": "text-blue-400",
+            "fence_ids": [
+                "1"
+            ],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32e5fdd52fc7bc5b99d20"
+            },
+            "team_id": "team2",
+            "name": "施工二队",
+            "color": "text-purple-400",
+            "fence_ids": [],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32eabdd52fc7bc5b99d23"
+            },
+            "team_id": "team3",
+            "name": "特种作业队",
+            "color": "text-amber-400",
+            "fence_ids": [
+                "2",
+                "3"
+            ],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e33440dd52fc7bc5b99d2b"
+            },
+            "team_id": "team4",
+            "name": "四号作业队",
+            "color": "text-amber-400",
+            "fence_ids": [],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
+        }
+    ]
+}

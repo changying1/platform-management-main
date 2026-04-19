@@ -194,6 +194,7 @@ const handleClearDraw = () => {
 };
 
 const handleSaveFenceWithRules = (ruleData: any) => {
+  const shape = ruleData.shape === 'circle' ? 'circle' : 'polygon';
   const newFence = {
     id: Date.now().toString(),
     name: ruleData.name,
@@ -203,8 +204,8 @@ const handleSaveFenceWithRules = (ruleData: any) => {
     description: ruleData.description,
     behavior: ruleData.behavior,
     severity: ruleData.severity,
-    type: ruleData.shape === 'circle' ? 'Circle' : 'Polygon',
-    shape: ruleData.shape,
+    type: shape === 'circle' ? 'Circle' : 'Polygon',
+    shape: shape,
     center: ruleData.center,
     points: ruleData.points,
     radius: ruleData.radius || 100,
@@ -246,7 +247,7 @@ const handleSaveFenceAfterDraw = () => {
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
-      shape: pendingFenceData.shape,
+      shape: "circle",
       center: tempCenter,
       points: pendingFenceData.points,
       radius: pendingFenceData.radius,
@@ -272,7 +273,7 @@ const handleSaveFenceAfterDraw = () => {
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
-      shape: pendingFenceData.shape,
+      shape: "polygon",
       center: pendingFenceData.center,
       points: tempPoints,
       radius: pendingFenceData.radius,
@@ -430,6 +431,10 @@ if (activeDrawTool === 'circle') {
     if (!circleStartedRef.current) {
       circleCenter = [lat, lng];
       setTempCenter(circleCenter);
+      // 初始化半径为默认值
+      const initialRadius = 100;
+      setTempShape({ center: circleCenter, radius: initialRadius });
+      setPendingFenceData(prev => ({ ...prev, radius: initialRadius }));
       circleStartedRef.current = true;
       map.setDefaultCursor('cell');
     } 
@@ -450,6 +455,7 @@ if (activeDrawTool === 'circle') {
     const radius = Math.max(5, Math.sqrt(dx * dx + dy * dy));
     
     setPendingFenceData(prev => ({ ...prev, radius }));
+    setTempShape(prev => ({ ...prev, radius }));
     renderDraft('circle', [], circleCenter, radius, null);
   };
   
@@ -481,7 +487,17 @@ if (activeDrawTool === 'rectangle') {
     } 
     // 🟦 第2次点击：确定对角，结束！
     else {
-      setTempPoints([rectStart!, [lat, lng]]);
+      const [x1, y1] = rectStart!;
+      const [x2, y2] = [lat, lng];
+      // 计算矩形的四个角
+      const rectanglePoints = [
+        [x1, y1],  // 第一个角
+        [x1, y2],  // 左上角
+        [x2, y2],  // 第二个角
+        [x2, y1],  // 右下角
+        [x1, y1]   // 回到第一个角，闭合路径
+      ];
+      setTempPoints(rectanglePoints);
       rectStartedRef.current = false;
       map.setDefaultCursor('crosshair');
     }
@@ -733,6 +749,8 @@ const handleCancelDraw = () => {
 };
 
 const handleFenceFormSubmit = (data: any) => {
+  const shape = data.shape === "circle" ? "circle" : "polygon";
+  
   if (editingFenceId) {
     updateFence(editingFenceId, {
       name: data.name,
@@ -741,7 +759,8 @@ const handleFenceFormSubmit = (data: any) => {
       description: data.description,
       behavior: data.behavior,
       severity: data.severity,
-      type: data.shape === "circle" ? "Circle" : "Polygon",
+      type: shape === "circle" ? "Circle" : "Polygon",
+      shape: shape,
       center: data.center,
       points: data.points,
       radius: data.radius,
@@ -753,7 +772,7 @@ const handleFenceFormSubmit = (data: any) => {
     setEditingFenceId(null);
     alert("围栏更新成功！");
   } else {
-    setPendingFenceData(data);
+    setPendingFenceData({ ...data, shape: shape });
   }
   
   setShowAddModal(false);

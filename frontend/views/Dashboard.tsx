@@ -2128,7 +2128,7 @@ devices: currentProject.devices || [],
       <div style={{ textAlign: "center", flex: 1 }}>
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           摄像头在线
-          <span onClick={() => window.open('/monitor/camera', '_blank')} 
+          <span 
           style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", opacity: 0.7, transition: "opacity 0.2s", position: "relative" }}
           
             onMouseEnter={(e) => {
@@ -2193,7 +2193,6 @@ devices: currentProject.devices || [],
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           定位设备在线
   <span 
-    onClick={() => window.open('/monitor/camera', '_blank')}
     style={{ 
       cursor: "pointer",
       display: "inline-flex",

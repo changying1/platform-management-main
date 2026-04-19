@@ -33,6 +33,7 @@ from app.controllers import (
     device_controller,
     video_controller,
     fence_controller,
+    team_controller,
     alarm_controller,
     call_controller,
     dashboard_controller,
@@ -105,6 +106,7 @@ app.include_router(admin_controller.router)
 app.include_router(device_controller.router)
 app.include_router(video_controller.router)
 app.include_router(fence_controller.router)
+app.include_router(team_controller.router)
 app.include_router(alarm_controller.router)
 app.include_router(call_controller.router)
 app.include_router(dashboard_controller.router)

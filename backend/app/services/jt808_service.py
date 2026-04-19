@@ -12,6 +12,8 @@ import random
 from typing import Any
 from app.utils.logger import get_logger
 from app.utils.coord_transform import wgs84_to_gcj02
+from app.services.Device.device_service import device_service
+from app.schemas.device_schema import TrajectoryPoint
 
 logger = get_logger("JT808")
 
@@ -244,14 +246,52 @@ class JT808Manager:
                     device["last_latitude"] = gcj_lat
                     device["last_longitude"] = gcj_lon
                     logger.info(f"[{phone_num}] 坐标更新 -> Lat:{gcj_lat:.6f}, Lon:{gcj_lon:.6f}")
+                    
+                    # 存储到数据库
+                    self._save_to_database(phone_num, gcj_lat, gcj_lon)
                 else:
                     # GPS 未锁定时上报(0,0)，从列表随机选一个点，模拟动起来的效果
                     lat_rand, lon_rand = random.choice(RANDOM_COORDS)
                     device["last_latitude"] = lat_rand
                     device["last_longitude"] = lon_rand
                     logger.warning(f"[{phone_num}] 坐标(0,0), 随机跳点至 -> Lat:{lat_rand:.6f}, Lon:{lon_rand:.6f}")
+                    
+                    # 存储到数据库（使用默认坐标）
+                    self._save_to_database(phone_num, lat_rand, lon_rand)
         except Exception as e:
             logger.error(f"更新设备 {phone_num} 异常: {e}")
+    
+    def _save_to_database(self, phone_num: str, lat: float, lon: float):
+        """将坐标存储到数据库"""
+        try:
+            # 根据holderPhone查询设备
+            device = device_service.get_device_by_holder_phone(phone_num)
+            if not device:
+                logger.warning(f"[{phone_num}] 未找到对应的设备，跳过存储")
+                return
+            
+            # 获取设备的device_id
+            device_id = device.get("device_id")
+            if not device_id:
+                logger.warning(f"[{phone_num}] 设备缺少device_id，跳过存储")
+                return
+            
+            # 直接更新设备的实时坐标，不添加轨迹点
+            from app.schemas.device_schema import DeviceUpdate
+            update_data = DeviceUpdate(
+                lat=lat,
+                lng=lon,
+                lastUpdate=time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime())
+            )
+            
+            # 调用设备服务更新设备信息
+            updated_device = device_service.update_device(device_id, update_data)
+            if updated_device:
+                logger.debug(f"[{phone_num}] 实时坐标已更新到数据库 -> Lat:{lat:.6f}, Lon:{lon:.6f}, DeviceID:{device_id}")
+            else:
+                logger.warning(f"[{phone_num}] 更新设备坐标失败，DeviceID:{device_id}")
+        except Exception as e:
+            logger.error(f"存储坐标到数据库失败 {phone_num}: {e}")
 
     # ----------------------------------------------------------
     #  超时检测：30分钟无心跳自动离线

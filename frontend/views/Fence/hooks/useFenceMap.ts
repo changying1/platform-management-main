@@ -311,7 +311,7 @@ const commonOptions = {
     const map = mapRef.current;
     
     const currentMarkers = overlayRefs.current.devices;
-    const newDeviceIds = new Set(devices.map(d => d.id));
+    const newDeviceIds = new Set(devices.map(d => d.device_id));
 
     // 1. 删除已经不在列表里的设备
     Object.keys(currentMarkers).forEach(id => {
@@ -322,8 +322,8 @@ const commonOptions = {
     });
 
     devices.forEach((device) => {
-      const vType = violationTypes[device.id];
-      const isControlled = controlledIds.has(device.id);
+      const vType = violationTypes[device.device_id];
+      const isControlled = controlledIds.has(device.device_id);
       
       let color = "#22c55e"; 
       if (device.status !== "online") color = "#64748b";
@@ -341,9 +341,9 @@ const commonOptions = {
         </div>
       `;
 
-      if (currentMarkers[device.id]) {
+      if (currentMarkers[device.device_id]) {
         // 2. 更新现有设备
-        const marker = currentMarkers[device.id];
+        const marker = currentMarkers[device.device_id];
         marker.setContent(content);
         // 核心：调试模式下不要强制 setPosition，否则拖拽会卡顿！
         if (!debugMode) {
@@ -364,7 +364,7 @@ const commonOptions = {
         if (onDeviceMove) {
           marker.on('dragend', (e: any) => {
             const lnglat = e.target.getPosition();
-            onDeviceMove(device.id, lnglat.lat, lnglat.lng);
+            onDeviceMove(device.device_id, lnglat.lat, lnglat.lng);
           });
         }
 
@@ -396,7 +396,7 @@ const commonOptions = {
         });
 
         map.add(marker);
-        currentMarkers[device.id] = marker;
+        currentMarkers[device.device_id] = marker;
       }
     });
   }, [clearGroup]);
@@ -462,9 +462,16 @@ const commonOptions = {
     if (points && points.length > 0) {
       const path = points.map(toAmapLngLat);
 
-      // 🟦 矩形：有2个点时自动补成完整矩形
-      if (activeTool === 'rectangle' && path.length === 2) {
-        const [p1, p2] = path;
+      // 🟦 矩形：有2个点或4个点时自动渲染矩形
+      if (activeTool === 'rectangle' && path.length >= 2) {
+        let p1, p2;
+        if (path.length === 2) {
+          // 绘制过程中，只有两个对角点
+          [p1, p2] = path;
+        } else {
+          // 绘制完成后，有四个角点，取第一个和第三个作为对角点
+          [p1, , p2] = path;
+        }
         const rectanglePath = [
           p1,
           [p1[0], p2[1]],

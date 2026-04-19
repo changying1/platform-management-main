@@ -257,8 +257,11 @@ const showTopTip = (message: string) => {
       return;
     }
 
+    const shape = formData.shape === "circle" ? "circle" : "polygon";
+
     onSave({
       ...formData,
+      shape: shape,
       center: tempCenter,
       points: tempPoints,
       orgs: selectedOrgs,
