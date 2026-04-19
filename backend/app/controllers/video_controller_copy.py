@@ -74,23 +74,14 @@ async def start_ai(req: AIMonitorRequest, db: Session = Depends(get_db)):
 
     has_valid_rtsp = rtsp_url.lower().startswith("rtsp://")
     is_ezviz_cloud = bool(db_video and getattr(db_video, "device_serial", None))
-    print(
-        f"[ALARM_API_START_REQ] device_id={device_id} has_valid_rtsp={has_valid_rtsp} "
-        f"is_ezviz_cloud={is_ezviz_cloud} algo_type={str(req.algo_type or '').strip() or 'helmet'}"
-    )
     if (not has_valid_rtsp) and (not is_ezviz_cloud):
-        print(
-            f"[ALARM_API_START_REJECTED] device_id={device_id} reason=missing_rtsp_and_non_ezviz"
-        )
         raise HTTPException(status_code=400, detail="缺少有效 RTSP，且当前设备非萤石云设备，无法启动AI检测")
 
     algo_type = str(req.algo_type or "").strip() or "helmet"
     success = ai_manager.start_monitoring(device_id, rtsp_url if has_valid_rtsp else "", algo_type)
     if success:
-        print(f"[ALARM_API_START_OK] device_id={device_id} algo_type={algo_type}")
         return {"code": 200, "message": f"AI监控已启动: {algo_type}"}
     else:
-        print(f"[ALARM_API_START_FAILED] device_id={device_id} reason=already_running_or_start_failed")
         raise HTTPException(status_code=400, detail="启动失败或已在运行")
 
 @router.get("/ai/rules")

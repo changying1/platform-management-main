@@ -32,6 +32,9 @@ export interface AlarmResponse {
   status: string;
   timestamp: string;
   handled_at?: string;
+
+  alarm_image_path?: string;
+
   recording_path?: string;
   recording_status?: string;
   recording_error?: string;
@@ -60,4 +63,9 @@ export const alarmApi = {
     const response = await apiClient.delete(`/alarms/${id}`);
     return response.data;
   }
+};
+export const toStaticUrl = (path?: string) => {
+  if (!path) return '';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 };

@@ -62,7 +62,6 @@ CAMERA_TIME_SYNC_CACHE: Dict[int, float] = {}
 
 # [新增] 全局字典：用于存储正在运行的 FFmpeg 进程 {stream_name: process_object}
 FFMPEG_PROCESSES = {}
-CRUISE_TASKS = {}
 EZVIZ_TOKEN_CACHE: Dict[str, Any] = {"access_token": None, "expire_at": 0.0}
 EZVIZ_TOKEN_LOCK = threading.Lock()
 EZVIZ_PTZ_LAST_DIRECTION: Dict[int, int] = {}
@@ -94,7 +93,7 @@ DEFAULT_WEEKLY_QUOTA_GB = float(os.getenv("VIDEO_DEFAULT_WEEKLY_QUOTA_GB", "5"))
 DEFAULT_WEEKLY_QUOTA_BYTES = int(DEFAULT_WEEKLY_QUOTA_GB * 1024 * 1024 * 1024)
 TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_RATIO", "0.2"))
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
-RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "1800"))
+RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
 PLAYBACK_ARCHIVE_WINDOW_HOURS = max(1, int(os.getenv("PLAYBACK_ARCHIVE_WINDOW_HOURS", "3")))
 PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
@@ -102,7 +101,8 @@ PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
 PERIODIC_ARCHIVE_LAST_RUN_AT: Dict[int, float] = {}
 EZVIZ_PRESET_UNSUPPORTED_DEVICES: Set[int] = set()
 EZVIZ_PRESET_CACHE: Dict[int, list[dict]] = {}
-
+CRUISE_TASKS: Dict[int, dict] = {}
+CRUISE_TASKS_LOCK = threading.Lock()
 
 class VideoService:
     def _normalize_flag(self, value: Any) -> bool:
@@ -792,6 +792,85 @@ class VideoService:
         except Exception as e:
             if video_id in ONVIF_CLIENT_CACHE: del ONVIF_CLIENT_CACHE[video_id]
             raise ValueError(f"Start failed: {e}")
+
+    def save_current_cruise_config(
+        self,
+        db: Session,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float,
+        rounds: Optional[int],
+    ):
+        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        if not db_video:
+            raise ValueError("Device not found")
+
+        if not preset_tokens or len(preset_tokens) < 2:
+            raise ValueError("巡航至少需要两个预置点")
+
+        available_items = self.list_presets(db, video_id)
+        available = {str(item["token"]) for item in available_items if item.get("token")}
+        if available:
+            missing = [str(token) for token in preset_tokens if str(token) not in available]
+            if missing:
+                raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
+
+        db_video.cruise_preset_tokens_json = json.dumps([str(x) for x in preset_tokens], ensure_ascii=False)
+        db_video.cruise_dwell_seconds = float(dwell_seconds or 8.0)
+        db_video.cruise_rounds = rounds
+
+        db.commit()
+        db.refresh(db_video)
+
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "preset_tokens": [str(x) for x in preset_tokens],
+            "dwell_seconds": float(dwell_seconds or 8.0),
+            "rounds": rounds,
+        }
+
+    def get_current_cruise_config(self, db: Session, video_id: int):
+        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        if not db_video:
+            raise ValueError("Device not found")
+
+        raw_json = getattr(db_video, "cruise_preset_tokens_json", None)
+        dwell_seconds = float(getattr(db_video, "cruise_dwell_seconds", None) or 8.0)
+        rounds = getattr(db_video, "cruise_rounds", None)
+
+        preset_tokens: list[str] = []
+        if raw_json:
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, list):
+                    preset_tokens = [str(x) for x in parsed if str(x).strip()]
+            except Exception:
+                preset_tokens = []
+
+        return {
+            "video_id": video_id,
+            "preset_tokens": preset_tokens,
+            "dwell_seconds": dwell_seconds,
+            "rounds": rounds,
+        }
+
+    def start_current_cruise(self, db: Session, video_id: int):
+        config = self.get_current_cruise_config(db, video_id)
+        preset_tokens = config.get("preset_tokens") or []
+        dwell_seconds = float(config.get("dwell_seconds") or 8.0)
+        rounds = config.get("rounds")
+
+        if len(preset_tokens) < 2:
+            raise ValueError("当前巡航配置为空或预置点数量不足，请先保存巡航路线")
+
+        return self.start_cruise(
+            db=db,
+            video_id=video_id,
+            preset_tokens=preset_tokens,
+            dwell_seconds=dwell_seconds,
+            rounds=rounds,
+        )
 
     def _get_profile_token(self, media_service):
         profiles = media_service.GetProfiles()
@@ -1575,20 +1654,37 @@ class VideoService:
             "failed_tokens": failed_tokens,
         }
 
-    def _cruise_worker(self, db_factory, video_id: int, preset_tokens: list[str], dwell_seconds: float,
-                       rounds: Optional[int], stop_event: threading.Event):
+    def _cruise_worker(
+        self,
+        db_factory,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float,
+        rounds: Optional[int],
+        stop_event: threading.Event,
+    ):
         db = db_factory()
         completed_rounds = 0
+        current_index = 0
+
         try:
             while not stop_event.is_set():
-                for preset in preset_tokens:
+                for idx, preset in enumerate(preset_tokens):
                     if stop_event.is_set():
                         return
+
+                    with CRUISE_TASKS_LOCK:
+                        task = CRUISE_TASKS.get(video_id)
+                        if task:
+                            task["current_index"] = idx
+                            task["current_round"] = completed_rounds + 1
+
                     try:
                         self.goto_preset(db, video_id, preset)
                     except Exception as e:
                         logger.warning(f"巡航跳转失败 video_id={video_id}, preset={preset}: {e}")
 
+                    current_index = idx
                     if stop_event.wait(timeout=dwell_seconds):
                         return
 
@@ -1597,12 +1693,19 @@ class VideoService:
                     return
         finally:
             db.close()
-            task = CRUISE_TASKS.get(video_id)
-            if task and task.get("stop") is stop_event:
-                CRUISE_TASKS.pop(video_id, None)
+            with CRUISE_TASKS_LOCK:
+                task = CRUISE_TASKS.get(video_id)
+                if task and task.get("stop") is stop_event:
+                    CRUISE_TASKS.pop(video_id, None)
 
-    def start_cruise(self, db: Session, video_id: int, preset_tokens: list[str], dwell_seconds: float = 8.0,
-                     rounds: Optional[int] = None):
+    def start_cruise(
+        self,
+        db: Session,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float = 8.0,
+        rounds: Optional[int] = None,
+    ):
         if len(preset_tokens) < 2:
             raise ValueError("巡航至少需要两个预置点")
 
@@ -1611,9 +1714,9 @@ class VideoService:
             raise ValueError("Device not found")
 
         available_items = self.list_presets(db, video_id)
-        available = {item["token"] for item in available_items}
+        available = {str(item["token"]) for item in available_items if item.get("token")}
         if available:
-            missing = [token for token in preset_tokens if token not in available]
+            missing = [str(token) for token in preset_tokens if str(token) not in available]
             if missing:
                 raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
         elif not self._is_ezviz_ptz(db_video):
@@ -1629,43 +1732,76 @@ class VideoService:
         stop_event = threading.Event()
         thread = threading.Thread(
             target=self._cruise_worker,
-            args=(SessionLocal, video_id, preset_tokens, dwell_seconds, rounds, stop_event),
-            daemon=True
+            args=(SessionLocal, video_id, [str(x) for x in preset_tokens], float(dwell_seconds or 8.0), rounds, stop_event),
+            daemon=True,
         )
-        CRUISE_TASKS[video_id] = {
-            "thread": thread,
-            "stop": stop_event,
-            "presets": list(preset_tokens),
-            "dwell_seconds": dwell_seconds,
-            "rounds": rounds,
-        }
+
+        with CRUISE_TASKS_LOCK:
+            CRUISE_TASKS[video_id] = {
+                "thread": thread,
+                "stop": stop_event,
+                "presets": [str(x) for x in preset_tokens],
+                "dwell_seconds": float(dwell_seconds or 8.0),
+                "rounds": rounds,
+                "current_index": 0,
+                "current_round": 0,
+            }
+
         thread.start()
-        return {"status": "success"}
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "running": True,
+        }
 
     def stop_cruise(self, video_id: int):
-        task = CRUISE_TASKS.get(video_id)
-        if not task:
-            return {"status": "idle"}
+        with CRUISE_TASKS_LOCK:
+            task = CRUISE_TASKS.get(video_id)
+            if not task:
+                return {
+                    "status": "idle",
+                    "video_id": video_id,
+                    "running": False,
+                }
 
-        stop_event = task.get("stop")
-        if stop_event:
-            stop_event.set()
-        CRUISE_TASKS.pop(video_id, None)
-        return {"status": "success"}
+            stop_event = task.get("stop")
+            if stop_event:
+                stop_event.set()
+
+            CRUISE_TASKS.pop(video_id, None)
+
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "running": False,
+        }
 
     def get_cruise_status(self, video_id: int):
-        task = CRUISE_TASKS.get(video_id)
-        if not task:
-            return {"running": False}
+        with CRUISE_TASKS_LOCK:
+            task = CRUISE_TASKS.get(video_id)
+            if not task:
+                return {
+                    "video_id": video_id,
+                    "running": False,
+                    "preset_tokens": [],
+                    "dwell_seconds": None,
+                    "rounds": None,
+                    "current_index": None,
+                    "current_round": None,
+                }
 
-        thread = task.get("thread")
-        running = bool(thread and thread.is_alive())
-        return {
-            "running": running,
-            "preset_tokens": task.get("presets", []),
-            "dwell_seconds": task.get("dwell_seconds", 8.0),
-            "rounds": task.get("rounds"),
-        }
+            thread = task.get("thread")
+            running = bool(thread and thread.is_alive())
+
+            return {
+                "video_id": video_id,
+                "running": running,
+                "preset_tokens": task.get("presets", []),
+                "dwell_seconds": task.get("dwell_seconds", 8.0),
+                "rounds": task.get("rounds"),
+                "current_index": task.get("current_index"),
+                "current_round": task.get("current_round"),
+            }
 
     # -------------------------------------------------------------------------
     # 核心业务: 添加/删除/更新
@@ -1767,6 +1903,7 @@ class VideoService:
             stream_name = str(db_video.id)
             self.stop_ffmpeg_stream(stream_name)
             self.stop_ffmpeg_recording(video_id)
+            self.stop_cruise(video_id)
 
             db.delete(db_video)
             db.commit()
@@ -2565,11 +2702,19 @@ class VideoService:
             file_name = os.path.basename(file_path)
             
             try:
+                if not self._is_segment_usable(file_path):
+                    continue
+
                 stat = os.stat(file_path)
+                seg_start = self._parse_segment_start(file_path)
+                updated_at = datetime.fromtimestamp(stat.st_mtime)
+                if seg_start:
+                    updated_at = seg_start
+
                 clips.append({
                     "name": file_name,
                     "size_bytes": int(stat.st_size),
-                    "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": updated_at.strftime("%Y-%m-%d %H:%M:%S"),
                     "web_path": self._to_static_web_path(file_path),
                     "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
                 })
@@ -2583,10 +2728,11 @@ class VideoService:
 
     def list_alarm_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
         """
-        获取指定视频设备的报警录制视频列表（从报警视频目录）
+        获取指定视频设备的报警录制视频列表（结合 static/alarms 的图片和 static/recordings 的视频）
         用于"报警监控回放"
         """
-        alarm_root = self._get_alarm_video_root()
+        alarm_root = self._get_alarm_screenshot_root()  # 取报警截图目录 (即 static/alarms)
+        record_dir = os.path.join(self._get_record_root(), str(video_id))
         
         if not os.path.isdir(alarm_root):
             return []
@@ -2595,22 +2741,67 @@ class VideoService:
         sort_reverse = sort_order.lower() == "desc"
         video_id_str = str(video_id)
         
-        for file_path in sorted(glob.glob(os.path.join(alarm_root, "*.mp4")), reverse=sort_reverse):
+        import glob
+        from datetime import datetime
+        
+        # 预加载常态录像的文件信息（加速匹配）
+        record_files = []
+        if os.path.isdir(record_dir):
+            for rp in glob.glob(os.path.join(record_dir, "*.mp4")):
+                try:
+                    name = os.path.basename(rp)
+                    # 格式：YYYYMMDD_HHMMSS.mp4
+                    time_str = name.split(".")[0]
+                    dt = datetime.strptime(time_str, "%Y%m%d_%H%M%S")
+                    record_files.append((dt.timestamp(), rp))
+                except Exception:
+                    pass
+            # 按时间升序排序
+            record_files.sort(key=lambda x: x[0])
+            
+        for file_path in sorted(glob.glob(os.path.join(alarm_root, "*.jpg")), reverse=sort_reverse):
             file_name = os.path.basename(file_path)
-            # 筛选匹配该设备的报警视频 (文件名格式: alarm_*_358_*.mp4)
-            if f"_{video_id_str}_" not in file_name:
+            # 格式: 358_1775532666_6ef48f.jpg 或类似
+            if f"_{video_id_str}_" not in file_name and not file_name.startswith(f"{video_id_str}_"):
                 continue
             
             try:
-                stat = os.stat(file_path)
-                clips.append({
-                    "name": file_name,
-                    "size_bytes": int(stat.st_size),
-                    "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                    "web_path": self._to_static_web_path(file_path),
-                    "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
-                })
-            except Exception:
+                parts = file_name.split("_")
+                ts = None
+                if len(parts) >= 2 and parts[1].isdigit():
+                    ts = float(parts[1])
+                else:
+                    ts = os.stat(file_path).st_mtime
+                
+                alarm_dt = datetime.fromtimestamp(ts)
+                
+                # 寻找最匹配的录像文件
+                best_video_path = None
+                best_diff = float("inf")
+                
+                for r_ts, rp in record_files:
+                    # 如果报警时间刚好在该录像文件录制的一分钟内
+                    if r_ts <= ts < r_ts + 60:
+                        best_video_path = rp
+                        break
+                    # 退一步找最近的录像
+                    elif 0 <= ts - r_ts < best_diff:
+                        best_diff = ts - r_ts
+                        best_video_path = rp
+
+                if best_video_path:
+                    v_stat = os.stat(best_video_path)
+                    v_name = os.path.basename(best_video_path)
+                    
+                    clips.append({
+                        "name": f"alarm_{v_name}",  # 复用原视频名，加上alarm前缀以标识
+                        "size_bytes": int(v_stat.st_size),
+                        "updated_at": alarm_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                        "web_path": self._to_static_web_path(best_video_path),
+                        "duration_text": self._format_bytes(v_stat.st_size) if v_stat.st_size < 1024*1024 else f"{v_stat.st_size/(1024*1024):.2f}MB",
+                        "thumbnail": self._to_static_web_path(file_path) # 将截图设为封面
+                    })
+            except Exception as e:
                 continue
 
             if len(clips) >= max(1, min(limit, 500)):

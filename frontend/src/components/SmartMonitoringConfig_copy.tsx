@@ -233,11 +233,10 @@ export default function SmartMonitoringConfig({
       }
 
       const streamSource = (device.rtsp_url || device.stream_url || '').trim();
-      const hasEzvizSerial = !!String(device.device_serial || '').trim();
-      if (!streamSource && !hasEzvizSerial) {
+      if (!streamSource) {
         setConfigResults(prev => new Map(prev).set(deviceId, {
           success: false,
-          message: '缺少可用流地址(rtsp/stream_url)，且未配置萤石设备序列号(device_serial)'
+          message: '缺少可用流地址(rtsp/stream_url)'
         }));
         continue;
       }

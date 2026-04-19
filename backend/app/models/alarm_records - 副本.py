@@ -20,7 +20,6 @@ class AlarmRecord(Base):
     location = Column(String(100), nullable=True) # e.g. "Zone A"
 
     recording_path = Column(String(255), nullable=True) 
-    alarm_image_path = Column(String(255), nullable=True)
     recording_status = Column(String(20), default="pending")
     recording_error = Column(String(255), nullable=True)
     

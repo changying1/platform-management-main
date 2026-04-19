@@ -12,7 +12,7 @@ import app.models.group_call
 import app.models.fence
 import app.models.alarm_records
 
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@127.0.0.1:3306/company-management?charset=utf8mb4"
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:123456@127.0.0.1:3306/smart_helmet_db?charset=utf8mb4"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 

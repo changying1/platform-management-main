@@ -15,10 +15,6 @@ from app.services import ai_features
 from app.services.video_service import VideoService, RECORD_SEGMENT_SECONDS, RECORD_SEGMENT_SAFE_MARGIN_SECONDS
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from PIL import Image, ImageDraw, ImageFont
-from app.utils.logger import get_logger
-
-
-logger = get_logger("AIManager")
 
 
 class AIManager:
@@ -42,24 +38,6 @@ class AIManager:
         # 算法分发表
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
         print(f"✅ 已加载AI规则: {list(self.algo_handlers.keys())}")
-
-    def _new_alarm_trace_id(self) -> str:
-        return f"alarmtrace-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
-
-    def _emit_alarm_log(self, level: str, message: str, *args):
-        level_lower = (level or "info").lower()
-        if level_lower == "warning":
-            logger.warning(message, *args)
-        elif level_lower == "error":
-            logger.error(message, *args)
-        else:
-            logger.info(message, *args)
-
-        try:
-            rendered = message.format(*args)
-        except Exception:
-            rendered = f"{message} | args={args}"
-        print(rendered)
 
     # =========================
     # 启动监控
@@ -108,7 +86,6 @@ class AIManager:
 
         if device_id in self.active_monitors:
             print(f"⚠️ 设备 {device_id} 已经在监控中")
-            self._emit_alarm_log("info", "[ALARM_MONITOR_ALREADY_RUNNING] device_id={}", device_id)
             return False
 
         ai_rtsp_url, record_rtsp_url = self._plan_ai_and_record_rtsp(rtsp_url)
@@ -129,11 +106,6 @@ class AIManager:
                     monitor_mode = "ezviz_snapshot"
                 else:
                     print("❌ AI 启动失败：RTSP 地址为空，且设备未配置萤石云序列号")
-                    self._emit_alarm_log(
-                        "error",
-                        "[ALARM_MONITOR_START_FAILED] device_id={} reason=missing_rtsp_and_ezviz_serial",
-                        device_id,
-                    )
                     return False
             finally:
                 db.close()
@@ -166,17 +138,6 @@ class AIManager:
         }
 
         thread.start()
-        self._emit_alarm_log(
-            "info",
-            "[ALARM_MONITOR_STARTED] device_id={} mode={} algo_type={} ai_rtsp_url={} record_rtsp_url={} ezviz_serial={} ezviz_channel={}",
-            device_id,
-            monitor_mode,
-            algo_type,
-            ai_rtsp_url or "",
-            record_rtsp_url or "",
-            ezviz_serial or "",
-            ezviz_channel,
-        )
         return True
 
     def _fetch_ezviz_snapshot_frame(self, device_serial: str, channel_no: int):
@@ -224,13 +185,6 @@ class AIManager:
             frame = self._fetch_ezviz_snapshot_frame(device_serial, channel_no)
 
             if frame is None:
-                self._emit_alarm_log(
-                    "warning",
-                    "[ALARM_SNAPSHOT_FRAME_EMPTY] device_id={} serial={} channel={}",
-                    device_id,
-                    device_serial,
-                    channel_no,
-                )
                 if stop_event.wait(1.0):
                     break
                 continue
@@ -245,28 +199,11 @@ class AIManager:
 
                     if is_alarm:
                         alarm_type = self._extract_alarm_type(details)
-                        alarm_trace_id = self._new_alarm_trace_id()
-                        self._emit_alarm_log(
-                            "info",
-                            "[ALARM_TRIGGERED] trace_id={} mode=ezviz_snapshot device_id={} algo={} alarm_type={}",
-                            alarm_trace_id,
-                            device_id,
-                            algo_key,
-                            alarm_type or algo_key,
-                        )
                         if not self._should_trigger_alarm(device_id, alarm_type or algo_key):
-                            self._emit_alarm_log(
-                                "info",
-                                "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
-                                alarm_trace_id,
-                                device_id,
-                                alarm_type or algo_key,
-                                self.alarm_cooldown_seconds,
-                            )
                             continue
 
-                        img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, alarm_trace_id=alarm_trace_id)
+                        img_path = self._save_alarm_image(frame, device_id, details)
+                        self._save_alarm_to_db(device_id, details, img_path)
             except Exception as logic_error:
                 print(f"⚠️ 抓图检测逻辑异常: {logic_error}")
 
@@ -303,13 +240,11 @@ class AIManager:
 
         if device_id not in self.active_monitors:
             print(f"⚠️ 设备 {device_id} 不在监控中")
-            self._emit_alarm_log("info", "[ALARM_MONITOR_NOT_RUNNING] device_id={}", device_id)
             return False
 
         print(f"--- 停止 AI 监控: {device_id} ---")
         self.active_monitors[device_id]["stop_event"].set()
         del self.active_monitors[device_id]
-        self._emit_alarm_log("info", "[ALARM_MONITOR_STOPPED] device_id={}", device_id)
         return True
 
     # =========================
@@ -478,28 +413,11 @@ class AIManager:
 
                     if is_alarm:
                         alarm_type = self._extract_alarm_type(details)
-                        alarm_trace_id = self._new_alarm_trace_id()
-                        self._emit_alarm_log(
-                            "info",
-                            "[ALARM_TRIGGERED] trace_id={} mode=rtsp device_id={} algo={} alarm_type={}",
-                            alarm_trace_id,
-                            device_id,
-                            algo_key,
-                            alarm_type or algo_key,
-                        )
                         if not self._should_trigger_alarm(device_id, alarm_type or algo_key):
-                            self._emit_alarm_log(
-                                "info",
-                                "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
-                                alarm_trace_id,
-                                device_id,
-                                alarm_type or algo_key,
-                                self.alarm_cooldown_seconds,
-                            )
                             continue
 
-                        img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, alarm_trace_id=alarm_trace_id)
+                        img_path = self._save_alarm_image(frame, device_id, details)
+                        self._save_alarm_to_db(device_id, details, img_path)
 
             except Exception as logic_error:
                 print(f"⚠️ 逻辑异常: {logic_error}")
@@ -512,7 +430,7 @@ class AIManager:
     # =========================
     # 保存报警图片
     # =========================
-    def _save_alarm_image(self, frame, device_id, details=None, alarm_trace_id: str | None = None):
+    def _save_alarm_image(self, frame, device_id, details=None):
         try:
             # 1. 如果有报警详情，先在图片上绘制报警框
             draw_frame = frame.copy()
@@ -527,36 +445,11 @@ class AIManager:
             filename = f"{device_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
             filepath = os.path.join(self.static_dir, filename)
 
-            saved = cv2.imwrite(filepath, draw_frame)
-            image_web_path = f"/static/alarms/{filename}"
-            if saved:
-                self._emit_alarm_log(
-                    "info",
-                    "[ALARM_SCREENSHOT_SAVED] trace_id={} device_id={} path={}",
-                    alarm_trace_id or "-",
-                    device_id,
-                    image_web_path,
-                )
-                return image_web_path
-
-            self._emit_alarm_log(
-                "error",
-                "[ALARM_SCREENSHOT_SAVE_FAILED] trace_id={} device_id={} path={}",
-                alarm_trace_id or "-",
-                device_id,
-                image_web_path,
-            )
-            return ""
+            cv2.imwrite(filepath, draw_frame)
+            return f"/static/alarms/{filename}"
 
         except Exception as e:
             print(f"❌ 图片保存失败: {e}")
-            self._emit_alarm_log(
-                "error",
-                "[ALARM_SCREENSHOT_SAVE_EXCEPTION] trace_id={} device_id={} error={}",
-                alarm_trace_id or "-",
-                device_id,
-                e,
-            )
             return ""
 
     def _should_trigger_alarm(self, device_id, alarm_type):
@@ -652,19 +545,12 @@ class AIManager:
             print(f"⚠️ 图片标注绘制失败: {draw_err}")
             return frame
 
-    def _save_alarm_clip_async(self, alarm_id: int, device_id: str, alarm_time: datetime, alarm_trace_id: str | None = None):
+    def _save_alarm_clip_async(self, alarm_id: int, device_id: str, alarm_time: datetime):
         def _worker():
             try:
                 video_id = int(device_id)
             except Exception:
                 self._update_alarm_recording_status(alarm_id, "failed", None, "device_id 非摄像头ID，无法自动录像")
-                self._emit_alarm_log(
-                    "error",
-                    "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} reason=device_id_not_video_id",
-                    alarm_trace_id or "-",
-                    alarm_id,
-                    device_id,
-                )
                 return
 
             # 现在的策略：保存报警前 15 秒到报警后 15 秒的视频段
@@ -672,16 +558,6 @@ class AIManager:
             clip_before_seconds = 15
             mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
-            self._emit_alarm_log(
-                "info",
-                "[ALARM_VIDEO_SCHEDULED] trace_id={} alarm_id={} device_id={} wait_seconds={} clip_before={} clip_after={}",
-                alarm_trace_id or "-",
-                alarm_id,
-                device_id,
-                wait_seconds,
-                clip_before_seconds,
-                clip_after_seconds,
-            )
             time.sleep(wait_seconds)
 
             trigger_time = datetime.now() - timedelta(seconds=wait_seconds)
@@ -691,16 +567,6 @@ class AIManager:
             last_error = None
             for attempt in range(1, 3):
                 try:
-                    self._emit_alarm_log(
-                        "info",
-                        "[ALARM_VIDEO_GENERATING] trace_id={} alarm_id={} device_id={} attempt={} clip_start={} clip_end={}",
-                        alarm_trace_id or "-",
-                        alarm_id,
-                        device_id,
-                        attempt,
-                        clip_start.strftime("%Y-%m-%d %H:%M:%S"),
-                        clip_end.strftime("%Y-%m-%d %H:%M:%S"),
-                    )
                     result = self.video_service.save_playback_clip(
                         video_id,
                         clip_start,
@@ -715,39 +581,14 @@ class AIManager:
                         None,
                     )
                     print(f"✅ 报警视频已保存 (alarm_id={alarm_id}): {result.get('recording_path')}")
-                    self._emit_alarm_log(
-                        "info",
-                        "[ALARM_VIDEO_SAVED] trace_id={} alarm_id={} device_id={} path={}",
-                        alarm_trace_id or "-",
-                        alarm_id,
-                        device_id,
-                        result.get("recording_path"),
-                    )
                     return
                 except Exception as e:
                     last_error = e
-                    self._emit_alarm_log(
-                        "warning",
-                        "[ALARM_VIDEO_RETRY] trace_id={} alarm_id={} device_id={} attempt={} error={}",
-                        alarm_trace_id or "-",
-                        alarm_id,
-                        device_id,
-                        attempt,
-                        e,
-                    )
                     if attempt < 2:
                         time.sleep(max(8, RECORD_SEGMENT_SAFE_MARGIN_SECONDS))
 
             self._update_alarm_recording_status(alarm_id, "failed", None, str(last_error))
             print(f"❌ 报警视频保存失败 (alarm_id={alarm_id}): {last_error}")
-            self._emit_alarm_log(
-                "error",
-                "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} error={}",
-                alarm_trace_id or "-",
-                alarm_id,
-                device_id,
-                last_error,
-            )
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -772,7 +613,7 @@ class AIManager:
     # =========================
     # 写数据库
     # =========================
-    def _save_alarm_to_db(self, device_id, details, image_path, alarm_trace_id: str | None = None):
+    def _save_alarm_to_db(self, device_id, details, image_path):
         if not details:
             return None
 
@@ -816,36 +657,14 @@ class AIManager:
             db.refresh(record)
 
             print(f"[alarm] save db: device_id={device_id}, image_path={image_path}, alarm_type={alarm_type}, alarm_msg={alarm_msg}")
-            self._emit_alarm_log(
-                "info",
-                "[ALARM_DB_SAVED] trace_id={} alarm_id={} device_id={} alarm_type={} image_path={} status=pending",
-                alarm_trace_id or "-",
-                record.id,
-                device_id,
-                alarm_type,
-                image_path or "",
-            )
 
-            self._save_alarm_clip_async(
-                record.id,
-                str(device_id),
-                record.timestamp or datetime.now(),
-                alarm_trace_id=alarm_trace_id,
-            )
+            self._save_alarm_clip_async(record.id, str(device_id), record.timestamp or datetime.now())
 
             print(f"✅ 报警已保存 (ID: {record.id})")
             return record.id
 
         except Exception as e:
             print(f"❌ 数据库写入失败: {e}")
-            self._emit_alarm_log(
-                "error",
-                "[ALARM_DB_SAVE_FAILED] trace_id={} device_id={} alarm_type={} error={}",
-                alarm_trace_id or "-",
-                device_id,
-                alarm_type,
-                e,
-            )
             db.rollback()
             return None
         finally:

@@ -19,17 +19,6 @@ logger.add(sys.stdout,
 LOG_PATH = os.path.join(LOG_DIR, "smart_helmet.log")
 logger.add(LOG_PATH, rotation="500 MB", retention="10 days", level="INFO", encoding="utf-8")
 
-# 3. 告警链路专用日志（仅记录 [ALARM_*] 事件，便于快速排障）
-ALARM_LOG_PATH = os.path.join(LOG_DIR, "alarm_pipeline.log")
-logger.add(
-    ALARM_LOG_PATH,
-    rotation="200 MB",
-    retention="10 days",
-    level="INFO",
-    encoding="utf-8",
-    filter=lambda record: "[ALARM_" in str(record.get("message", "")),
-)
-
 def get_logger(module_name: str):
     """
     Returns a logger instance bound to a specific module name.
