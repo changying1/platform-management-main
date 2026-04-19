@@ -526,6 +526,45 @@ def cruise_status(video_id: int):
         raise HTTPException(status_code=500, detail=f"获取巡航状态失败: {e}")
 
 
+@router.post("/ptz/{video_id}/cruise/start-current")
+def start_current_cruise(video_id: int, db: Session = Depends(get_db)):
+    """使用当前保存的配置启动巡航"""
+    try:
+        return service.start_current_cruise(db, video_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"启动当前巡航失败: {e}")
+
+
+@router.put("/ptz/{video_id}/cruise/current")
+def save_current_cruise(video_id: int, body: CruiseStartRequest, db: Session = Depends(get_db)):
+    """保存当前巡航配置"""
+    try:
+        return service.save_current_cruise_config(
+            db,
+            video_id,
+            body.preset_tokens,
+            body.dwell_seconds or 8.0,
+            body.rounds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存当前巡航配置失败: {e}")
+
+
+@router.get("/ptz/{video_id}/cruise/current")
+def get_current_cruise(video_id: int, db: Session = Depends(get_db)):
+    """获取当前巡航配置"""
+    try:
+        return service.get_current_cruise_config(db, video_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取当前巡航配置失败: {e}")
+
+
 @router.post("/ai/stop")
 async def stop_ai(device_id: str):
     """停止 AI 监控"""

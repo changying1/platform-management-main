@@ -47,3 +47,7 @@ class VideoDevice(Base):
     
     # 启用状态
     is_active = Column(Integer, default=1, comment="是否启用 1-启用 0-禁用")
+    # 当前巡航配置（供键盘巡航 / start-current 使用）
+    cruise_preset_tokens_json = Column(Text, nullable=True, comment="当前巡航预置点 token 列表 JSON")
+    cruise_dwell_seconds = Column(Float, nullable=True, default=8, comment="当前巡航每个点停留秒数")
+    cruise_rounds = Column(Integer, nullable=True, comment="当前巡航圈数，NULL 表示持续巡航")

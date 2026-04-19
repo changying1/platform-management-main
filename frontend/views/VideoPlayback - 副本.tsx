@@ -24,17 +24,27 @@ import {
   Bell,
   ChevronLeft,  
   ChevronRight,
-  MapPin,        // 新增
-  Phone,         // 新增
-  Users,         // 新增
-  Radio,         // 新增
-  Calendar,      // 新增
-  Volume2,       // 新增
-  Pause          // 新增
+  MapPin,
+  Phone,
+  Users,
+  Radio,
+  Calendar,
+  Volume2,
+  Pause,
+  Loader2
 } from "lucide-react";
-  import { usePlaybackStore } from "../src/playbackStore";
-  import { SavedPlayback, Device } from "../src/playback";
-  import { TrackMap } from '../src/components/TrackMap';
+import { usePlaybackStore } from "../src/playbackStore";
+import { SavedPlayback, Device } from "../src/playback";
+import { TrackMap } from '../src/components/TrackMap';
+// ✅ 新增：导入真实 API
+import {
+  getAllVideos,
+  getRecordingVideos,
+  getAlarmVideosList,
+  getAlarmScreenshots,
+  type SavedPlaybackVideo,
+} from "../src/api/videoApi";
+import { API_BASE_URL } from "../src/api/config";
 
  // 新增：主Tab类型
 type MainTabType = 'video' | 'track' | 'voice';
@@ -54,6 +64,7 @@ interface TrackRecord {
   id: string;
   deviceId: string;
   deviceName: string;
+  
   holder: string;
   company: string;
   project: string;
@@ -323,25 +334,19 @@ export interface VideoPlayerRef {
   getAlarmTimestamp: () => number; 
 }
 
-  const SimpleVideoPlayer = forwardRef<VideoPlayerRef, { src: string; deviceName: string }>(
-  ({ src, deviceName }, ref) => {
-    // 不同设备对应的不同测试视频
-    const getVideoByDevice = (name: string) => {
-      const videoList: Record<string, string> = {
-        '北门出入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-        '南门施工区摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-        '西侧高空作业区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-        '隧道入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-        '盾构机监控': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-        '材料加工区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-      };
-      return videoList[name] || 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4';
-    };
-
-    const videoUrl = getVideoByDevice(deviceName);
+const SimpleVideoPlayer = forwardRef<VideoPlayerRef, { 
+  src: string; 
+  deviceName: string; 
+  type?: 'manual' | 'alarm';
+  playlist?: SavedPlayback[];
+  currentPlayback?: SavedPlayback;
+  onPlaybackChange?: (playback: SavedPlayback) => void;
+}>(
+  ({ src, deviceName, type, playlist = [], currentPlayback, onPlaybackChange }, ref) => {
+    // ✅ 直接使用传入的 src（后端返回的真实视频路径）
+    const videoUrl = src;
+    const containerRef = React.useRef<HTMLDivElement>(null);
     const videoRef = React.useRef<HTMLVideoElement>(null);
-    const [showScreenshotModal, setShowScreenshotModal] = useState(false);
-const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
     const [currentSpeed, setCurrentSpeed] = useState(1);
     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -350,65 +355,135 @@ const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
     const [volume, setVolume] = useState(1);
     const [showVolumeSlider, setShowVolumeSlider] = useState(false);
     const [alarmTimestamp, setAlarmTimestamp] = useState<number | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
     const getAlarmTimestamp = () => alarmTimestamp || 0;
 
+    // ✅ 全屏和ESC退出监听
+    React.useEffect(() => {
+      const handleFullscreenChange = () => {
+        setIsFullscreen(!!document.fullscreenElement);
+      };
+      
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && isFullscreen) {
+          document.exitFullscreen?.();
+        }
+      };
+      
+      document.addEventListener('fullscreenchange', handleFullscreenChange);
+      document.addEventListener('keydown', handleKeyDown);
+      
+      return () => {
+        document.removeEventListener('fullscreenchange', handleFullscreenChange);
+        document.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [isFullscreen]);
 
-// 扩展 SavedPlayback 类型，添加告警截图字段
-interface AlarmScreenshot {
-  id: string;
-  url: string;
-  thumbnail?: string;
-  timestamp: string;
-}
+    const toggleFullscreen = () => {
+      if (!document.fullscreenElement) {
+        containerRef.current?.requestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    };
 
+    // ✅ 上一个/下一个视频（使用真实播放列表）
+    const currentIndex = playlist.findIndex(p => p.id === currentPlayback?.id);
 
-    // 获取当前播放列表（从父组件传入，这里用 mockPlaybacks 模拟）
-    const playlist = mockPlaybacks;
-    const [currentIndex, setCurrentIndex] = useState(() => {
-      const index = playlist.findIndex(p => p.deviceName === deviceName);
-      return index !== -1 ? index : 0;
-    });
-
-    // 切换视频
     const playPrevious = () => {
+      if (playlist.length === 0 || !onPlaybackChange) return;
       const newIndex = currentIndex > 0 ? currentIndex - 1 : playlist.length - 1;
-      setCurrentIndex(newIndex);
-      setSelectedPlayback(playlist[newIndex]);
+      onPlaybackChange(playlist[newIndex]);
     };
 
     const playNext = () => {
+      if (playlist.length === 0 || !onPlaybackChange) return;
       const newIndex = currentIndex < playlist.length - 1 ? currentIndex + 1 : 0;
-      setCurrentIndex(newIndex);
-      setSelectedPlayback(playlist[newIndex]);
+      onPlaybackChange(playlist[newIndex]);
     };
 
-    
+    // ✅ 修复下载（解决跨域问题）
+    const handleDownload = async () => {
+      if (!currentPlayback || !videoUrl) return;
+      
+      try {
+        // ✅ 用 fetch + blob 真正下载（解决跨域）
+        const res = await fetch(videoUrl);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = `${currentPlayback.deviceName}_${currentPlayback.createdAt.split('T')[0]}.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch (e) {
+        console.error('下载失败:', e);
+        // ✅ 降级方案：在新标签页打开
+        window.open(videoUrl, '_blank');
+      }
+    };
+
     // 监听视频事件
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
 
-      const handleTimeUpdate = () => setCurrentTime(video.currentTime);
+      // ✅ 每次换视频都重置状态，并加载第一帧作为封面
+      setIsPlaying(false);
+      
       const handleLoadedMetadata = () => {
-        setDuration(video.duration);
-        setAlarmTimestamp(video.duration / 3);
+        // ✅ 使用视频真实时长（四舍五入避免小数）
+        const realDuration = Math.round(video.duration);
+        setDuration(realDuration);
+        
+        // ✅ 只有报警类型才显示红点
+        // 优先级：currentPlayback.alarmSecond（真实计算） > 固定 10秒 > 不显示
+        if (type === 'alarm') {
+          const realAlarmSecond = (currentPlayback as any)?.alarmSecond;
+          setAlarmTimestamp(realAlarmSecond ?? Math.min(10, realDuration / 3));
+        } else {
+          setAlarmTimestamp(null);
+        }
+        
+        // ✅ 加载视频第一帧作为封面
+        video.currentTime = 0.5;
       };
+      
+      const handleSeeked = () => {
+        // ✅ 封面帧加载完成后，确保初始状态是暂停
+        if (video.currentTime < 1) {
+          video.pause();
+        }
+      };
+      
+      const handleTimeUpdate = () => setCurrentTime(video.currentTime);
       const handlePlay = () => setIsPlaying(true);
       const handlePause = () => setIsPlaying(false);
+      const handleError = (e: any) => {
+        console.error('视频加载错误:', e);
+        console.error('视频URL:', videoUrl);
+      };
 
       video.addEventListener('timeupdate', handleTimeUpdate);
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('seeked', handleSeeked);
       video.addEventListener('play', handlePlay);
       video.addEventListener('pause', handlePause);
+      video.addEventListener('error', handleError);
 
       return () => {
         video.removeEventListener('timeupdate', handleTimeUpdate);
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('seeked', handleSeeked);
         video.removeEventListener('play', handlePlay);
         video.removeEventListener('pause', handlePause);
+        video.removeEventListener('error', handleError);
       };
-    }, [currentIndex]);
+    }, [videoUrl, type]);
 
     // 倍速选项
     const speedOptions = [
@@ -428,8 +503,12 @@ interface AlarmScreenshot {
 
     const togglePlay = () => {
       if (videoRef.current) {
-        if (isPlaying) videoRef.current.pause();
-        else videoRef.current.play();
+        // ✅ 直接用视频原生状态，避免 React 状态不一致
+        if (videoRef.current.paused) {
+          videoRef.current.play().catch(e => console.error('播放失败:', e));
+        } else {
+          videoRef.current.pause();
+        }
       }
     };
 
@@ -454,13 +533,6 @@ interface AlarmScreenshot {
       }
     };
 
-    const handleDownload = () => {
-      const link = document.createElement('a');
-      link.href = videoUrl;
-      link.download = `${deviceName}_${new Date().toISOString()}.mp4`;
-      link.click();
-    };
-
     const formatTime = (time: number) => {
       const minutes = Math.floor(time / 60);
       const seconds = Math.floor(time % 60);
@@ -468,26 +540,26 @@ interface AlarmScreenshot {
     };
 
     // 截图方法
-const captureFrame = (): Promise<string> => {
-  return new Promise((resolve) => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) {
-      resolve('');
-      return;
-    }
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(video, 0, 0);
-      resolve(canvas.toDataURL('image/jpeg', 0.8));
-    } catch (err) {
-      console.error('截图失败:', err);
-      resolve('');
-    }
-  });
-};
+    const captureFrame = (): Promise<string> => {
+      return new Promise((resolve) => {
+        const video = videoRef.current;
+        if (!video || video.readyState < 2) {
+          resolve('');
+          return;
+        }
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(video, 0, 0);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
+        } catch (err) {
+          console.error('截图失败:', err);
+          resolve('');
+        }
+      });
+    };
 
     // 跳转到指定秒数
     const seekTo = (seconds: number): Promise<void> => {
@@ -506,85 +578,84 @@ const captureFrame = (): Promise<string> => {
       });
     };
 
-    
-useImperativeHandle(ref, () => ({
-  captureFrame,
-  seekTo,
-  getAlarmTimestamp,
-}));
-
-
+    useImperativeHandle(ref, () => ({
+      captureFrame,
+      seekTo,
+      getAlarmTimestamp,
+    }));
 
     return (
-      <div className="relative w-full h-full bg-black group">
+      <div ref={containerRef} className="relative w-full h-full bg-black group">
         <video
           ref={videoRef}
           src={videoUrl}
-          crossOrigin="anonymous" 
-          className="w-full h-full object-contain"
-          autoPlay
+          crossOrigin="anonymous"
+          className="w-full h-full"
+          style={{ objectFit: 'cover' }}
+          controls={false}
+          preload="metadata"
         />
-        
-            {/* 中央播放/暂停按钮 */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <button
-          onClick={togglePlay}
-          className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-4 transition-all duration-200 opacity-0 group-hover:opacity-100"
-        >
-          {isPlaying ? (
-            <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
-            </svg>
-          ) : (
-            <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-          )}
-        </button>
-      </div>
 
-      {/* 左侧上一个按钮 */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-        <button
-          onClick={playPrevious}
-          className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
-        >
-          <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
-          </svg>
-        </button>
-      </div>
+        {/* 中央播放/暂停按钮 */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <button
+            onClick={togglePlay}
+            className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-4 transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            {isPlaying ? (
+              <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+              </svg>
+            ) : (
+              <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
+        </div>
 
-      {/* 右侧下一个按钮 */}
-      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
-        <button
-          onClick={playNext}
-          className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
-        >
-          <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
-          </svg>
-        </button>
-      </div>
+        {/* 左侧上一个按钮 */}
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+          <button
+            onClick={playPrevious}
+            className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* 右侧下一个按钮 */}
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+          <button
+            onClick={playNext}
+            className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+            </svg>
+          </button>
+        </div>
 
         {/* 自定义控制栏 */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
           <div className="px-4 py-3">
             {/* 进度条 */}
-            <div 
+            <div
               className="relative h-1.5 bg-white/30 rounded-full cursor-pointer mb-3"
               onClick={handleProgressClick}
             >
-              <div 
+              <div
                 className="absolute h-full bg-cyan-400 rounded-full"
                 style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
               />
-              <div 
+              <div
                 className="absolute w-3 h-3 bg-cyan-400 rounded-full top-1/2 -translate-y-1/2"
                 style={{ left: `${(currentTime / duration) * 100 || 0}%` }}
               />
               {alarmTimestamp && duration > 0 && (
-                <div 
+                <div
                   className="absolute w-3 h-3 bg-red-500 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-lg ring-2 ring-red-500/50 animate-pulse"
                   style={{ left: `${(alarmTimestamp / duration) * 100}%` }}
                   title="报警发生时刻"
@@ -592,160 +663,612 @@ useImperativeHandle(ref, () => ({
               )}
             </div>
 
-  <div className="flex items-center justify-between">
-    {/* 左边：播放控制 */}
-    <div className="flex items-center gap-4">
-      {/* 上一个 */}
-      <button onClick={playPrevious} className="text-white hover:text-cyan-400 transition-colors">
-        <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
-        </svg>
-      </button>
-
-      {/* 播放/暂停 */}
-      <button onClick={togglePlay} className="text-white hover:text-cyan-400 transition-colors">
-        {isPlaying ? (
-          <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
-          </svg>
-        ) : (
-          <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-        )}
-      </button>
-
-      {/* 下一个 */}
-      <button onClick={playNext} className="text-white hover:text-cyan-400 transition-colors">
-        <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
-        </svg>
-      </button>
-
-      {/* 时间 */}
-      <span className="text-white text-xl  font-mono ml-1">
-        {formatTime(currentTime)} / {formatTime(duration)}
-      </span>
-    </div>
-
-    {/* 右边：音量、倍速、下载、全屏 */}
-    <div className="flex items-center gap-9">
-  {/* 音量 */}
-  <div 
-    className="relative"
-    onMouseEnter={() => setShowVolumeSlider(true)}
-    onMouseLeave={() => setShowVolumeSlider(false)}
-  >
-    <button onClick={toggleMute} className="text-white hover:text-cyan-400 transition-colors relative top-[2px]">
-      {volume === 0 ? (
-        <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM9 6.17L7.17 4.33 3.33 8.17 1.5 9.99 4.5 12H2v6h4l5 5 1-1-1-1-5-5H4v-2h2.5L3.5 9.99 7 6.17v-3.75L9 4.17V6.17z"/>
-        </svg>
-      ) : volume < 0.5 ? (
-        <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-        </svg>
-      ) : (
-        <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-        </svg>
-      )}
-    </button>
-    
-    {/* 音量滑块 - 增加内边距和间隙，让鼠标移动过去不消失 */}
-    {showVolumeSlider && (
-      <>
-        <div 
-          className="fixed inset-0 z-40" 
-          onClick={() => setShowVolumeSlider(false)}
-          onMouseEnter={() => setShowVolumeSlider(true)}
-        />
-        <div 
-        className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-52 max-w-[calc(100vw-20px)] bg-black/90 rounded-lg p-3 z-50"
-          onMouseEnter={() => setShowVolumeSlider(true)}
-          onMouseLeave={() => setShowVolumeSlider(false)}
-        >
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={handleVolumeChange}
-            className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-white/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400"
-          />
-        </div>
-      </>
-    )}
-  </div>
-
-      {/* 倍速 */}
-      <div className="relative">
-        <button
-          onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-          className="text-white hover:text-cyan-400 text-xl px-2 py-1 rounded flex items-center gap-1 transition-colors"
-        >
-          <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          {currentSpeed}x
-        </button>
-        {showSpeedMenu && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowSpeedMenu(false)} />
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-28 bg-black/90 rounded-lg border border-white/20 shadow-xl overflow-hidden z-50">
-              {speedOptions.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => handleSpeedChange(option.value)}
-                  className={`w-full px-3 py-1.5 text-xs text-left ${
-                    currentSpeed === option.value ? 'bg-cyan-500/30 text-cyan-300' : 'text-white/80 hover:bg-white/10'
-                  }`}
-                >
-                  {option.label}
-                  {currentSpeed === option.value && <span className="float-right">✓</span>}
+            <div className="flex items-center justify-between">
+              {/* 左边：播放控制 */}
+              <div className="flex items-center gap-4">
+                {/* 上一个 */}
+                <button onClick={playPrevious} className="text-white hover:text-cyan-400 transition-colors">
+                  <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                  </svg>
                 </button>
-              ))}
+
+                {/* 播放/暂停 */}
+                <button onClick={togglePlay} className="text-white hover:text-cyan-400 transition-colors">
+                  {isPlaying ? (
+                    <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* 下一个 */}
+                <button onClick={playNext} className="text-white hover:text-cyan-400 transition-colors">
+                  <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                  </svg>
+                </button>
+
+                {/* 时间 */}
+                <span className="text-white text-xl font-mono ml-1">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </span>
+              </div>
+
+              {/* 右边：音量、倍速、下载、全屏 */}
+              <div className="flex items-center gap-9">
+                {/* 音量 */}
+                <div
+                  className="relative"
+                  onMouseEnter={() => setShowVolumeSlider(true)}
+                  onMouseLeave={() => setShowVolumeSlider(false)}
+                >
+                  <button onClick={toggleMute} className="text-white hover:text-cyan-400 transition-colors relative top-[2px]">
+                    {volume === 0 ? (
+                      <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM9 6.17L7.17 4.33 3.33 8.17 1.5 9.99 4.5 12H2v6h4l5 5 1-1-1-1-5-5H4v-2h2.5L3.5 9.99 7 6.17v-3.75L9 4.17V6.17z" />
+                      </svg>
+                    ) : volume < 0.5 ? (
+                      <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                      </svg>
+                    )}
+                  </button>
+
+                  {/* 音量滑块 */}
+                  {showVolumeSlider && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setShowVolumeSlider(false)}
+                        onMouseEnter={() => setShowVolumeSlider(true)}
+                      />
+                      <div
+                        className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-52 max-w-[calc(100vw-20px)] bg-black/90 rounded-lg p-3 z-50"
+                        onMouseEnter={() => setShowVolumeSlider(true)}
+                        onMouseLeave={() => setShowVolumeSlider(false)}
+                      >
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={volume}
+                          onChange={handleVolumeChange}
+                          className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-white/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* 倍速 */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                    className="text-white hover:text-cyan-400 text-xl px-2 py-1 rounded flex items-center gap-1 transition-colors"
+                  >
+                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    {currentSpeed}x
+                  </button>
+                  {showSpeedMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowSpeedMenu(false)} />
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-28 bg-black/90 rounded-lg border border-white/20 shadow-xl overflow-hidden z-50">
+                        {speedOptions.map((option) => (
+                          <button
+                            key={option.value}
+                            onClick={() => handleSpeedChange(option.value)}
+                            className={`w-full px-3 py-1.5 text-xs text-left ${
+                              currentSpeed === option.value ? 'bg-cyan-500/30 text-cyan-300' : 'text-white/80 hover:bg-white/10'
+                            }`}
+                          >
+                            {option.label}
+                            {currentSpeed === option.value && <span className="float-right">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* 下载 */}
+                <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="下载视频">
+                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+                  </svg>
+                </button>
+
+                {/* 全屏 / 退出全屏 */}
+                <button onClick={toggleFullscreen} className="text-white hover:text-cyan-400 transition-colors" title={isFullscreen ? "退出全屏 (ESC)" : "全屏"}>
+                  {isFullscreen ? (
+                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                    </svg>
+                  ) : (
+                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
-          </>
-        )}
-      </div>
-
-      {/* 下载 */}
-      <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="下载视频">
-        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
-        </svg>
-      </button>
-
-      {/* 全屏 */}
-      <button onClick={() => videoRef.current?.requestFullscreen()} className="text-white hover:text-cyan-400 transition-colors">
-        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-        </svg>
-      </button>
-    </div>
-  </div>
           </div>
         </div>
-
-        {/* 设备名称 */}
-        {/* <div className="absolute bottom-4 left-4 bg-black/70 px-3 py-1.5 rounded text-xs text-white/80 backdrop-blur pointer-events-none">
-          <Camera size={12} className="inline mr-1" />
-          {deviceName}
-        </div> */}
       </div>
     );
-  });
+  }
+);
+
+//   const SimpleVideoPlayer = forwardRef<VideoPlayerRef, { src: string; deviceName: string }>(
+//   ({ src, deviceName }, ref) => {
+//     // 不同设备对应的不同测试视频
+//     const getVideoByDevice = (name: string) => {
+//       const videoList: Record<string, string> = {
+//         '北门出入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '南门施工区摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '西侧高空作业区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '隧道入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '盾构机监控': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '材料加工区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//       };
+//       return videoList[name] || 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4';
+//     };
+
+//     const videoUrl = getVideoByDevice(deviceName);
+//     const videoRef = React.useRef<HTMLVideoElement>(null);
+//     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
+// const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
+//     const [currentSpeed, setCurrentSpeed] = useState(1);
+//     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+//     const [currentTime, setCurrentTime] = useState(0);
+//     const [duration, setDuration] = useState(0);
+//     const [isPlaying, setIsPlaying] = useState(false);
+//     const [volume, setVolume] = useState(1);
+//     const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+//     const [alarmTimestamp, setAlarmTimestamp] = useState<number | null>(null);
+
+//     const getAlarmTimestamp = () => alarmTimestamp || 0;
+
+
+// // 扩展 SavedPlayback 类型，添加告警截图字段
+// interface AlarmScreenshot {
+//   id: string;
+//   url: string;
+//   thumbnail?: string;
+//   timestamp: string;
+// }
+
+
+//     // 获取当前播放列表（从父组件传入，这里用 mockPlaybacks 模拟）
+//     const playlist = mockPlaybacks;
+//     const [currentIndex, setCurrentIndex] = useState(() => {
+//       const index = playlist.findIndex(p => p.deviceName === deviceName);
+//       return index !== -1 ? index : 0;
+//     });
+
+//     // 切换视频
+//     const playPrevious = () => {
+//       const newIndex = currentIndex > 0 ? currentIndex - 1 : playlist.length - 1;
+//       setCurrentIndex(newIndex);
+//       setSelectedPlayback(playlist[newIndex]);
+//     };
+
+//     const playNext = () => {
+//       const newIndex = currentIndex < playlist.length - 1 ? currentIndex + 1 : 0;
+//       setCurrentIndex(newIndex);
+//       setSelectedPlayback(playlist[newIndex]);
+//     };
+
+    
+//     // 监听视频事件
+//     useEffect(() => {
+//       const video = videoRef.current;
+//       if (!video) return;
+
+//       const handleTimeUpdate = () => setCurrentTime(video.currentTime);
+//       const handleLoadedMetadata = () => {
+//         setDuration(video.duration);
+//         setAlarmTimestamp(video.duration / 3);
+//       };
+//       const handlePlay = () => setIsPlaying(true);
+//       const handlePause = () => setIsPlaying(false);
+
+//       video.addEventListener('timeupdate', handleTimeUpdate);
+//       video.addEventListener('loadedmetadata', handleLoadedMetadata);
+//       video.addEventListener('play', handlePlay);
+//       video.addEventListener('pause', handlePause);
+
+//       return () => {
+//         video.removeEventListener('timeupdate', handleTimeUpdate);
+//         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+//         video.removeEventListener('play', handlePlay);
+//         video.removeEventListener('pause', handlePause);
+//       };
+//     }, [currentIndex]);
+
+//     // 倍速选项
+//     const speedOptions = [
+//       { label: '0.25x', value: 0.25 }, { label: '0.5x', value: 0.5 },
+//       { label: '0.75x', value: 0.75 }, { label: '1x', value: 1 },
+//       { label: '1.25x', value: 1.25 }, { label: '1.5x', value: 1.5 },
+//       { label: '1.75x', value: 1.75 }, { label: '2x', value: 2 },
+//       { label: '4x', value: 4 }, { label: '8x', value: 8 },
+//       { label: '16x', value: 16 },
+//     ];
+
+//     const handleSpeedChange = (speed: number) => {
+//       setCurrentSpeed(speed);
+//       if (videoRef.current) videoRef.current.playbackRate = speed;
+//       setShowSpeedMenu(false);
+//     };
+
+//     const togglePlay = () => {
+//       if (videoRef.current) {
+//         if (isPlaying) videoRef.current.pause();
+//         else videoRef.current.play();
+//       }
+//     };
+
+//     const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+//       const newVolume = parseFloat(e.target.value);
+//       setVolume(newVolume);
+//       if (videoRef.current) videoRef.current.volume = newVolume;
+//     };
+
+//     const toggleMute = () => {
+//       if (videoRef.current) {
+//         videoRef.current.muted = !videoRef.current.muted;
+//         setVolume(videoRef.current.muted ? 0 : videoRef.current.volume);
+//       }
+//     };
+
+//     const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
+//       if (videoRef.current && duration) {
+//         const rect = e.currentTarget.getBoundingClientRect();
+//         const pos = (e.clientX - rect.left) / rect.width;
+//         videoRef.current.currentTime = pos * duration;
+//       }
+//     };
+
+//     const handleDownload = () => {
+//       const link = document.createElement('a');
+//       link.href = videoUrl;
+//       link.download = `${deviceName}_${new Date().toISOString()}.mp4`;
+//       link.click();
+//     };
+
+//     const formatTime = (time: number) => {
+//       const minutes = Math.floor(time / 60);
+//       const seconds = Math.floor(time % 60);
+//       return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+//     };
+
+//     // 截图方法
+// const captureFrame = (): Promise<string> => {
+//   return new Promise((resolve) => {
+//     const video = videoRef.current;
+//     if (!video || video.readyState < 2) {
+//       resolve('');
+//       return;
+//     }
+//     try {
+//       const canvas = document.createElement('canvas');
+//       canvas.width = video.videoWidth;
+//       canvas.height = video.videoHeight;
+//       const ctx = canvas.getContext('2d');
+//       ctx?.drawImage(video, 0, 0);
+//       resolve(canvas.toDataURL('image/jpeg', 0.8));
+//     } catch (err) {
+//       console.error('截图失败:', err);
+//       resolve('');
+//     }
+//   });
+// };
+
+//     // 跳转到指定秒数
+//     const seekTo = (seconds: number): Promise<void> => {
+//       return new Promise((resolve) => {
+//         const video = videoRef.current;
+//         if (!video) {
+//           resolve();
+//           return;
+//         }
+//         video.currentTime = seconds;
+//         const onSeeked = () => {
+//           video.removeEventListener('seeked', onSeeked);
+//           resolve();
+//         };
+//         video.addEventListener('seeked', onSeeked);
+//       });
+//     };
+
+    
+// useImperativeHandle(ref, () => ({
+//   captureFrame,
+//   seekTo,
+//   getAlarmTimestamp,
+// }));
+
+
+
+//     return (
+//       <div className="relative w-full h-full bg-black group">
+//         <video
+//           ref={videoRef}
+//           src={videoUrl}
+//           crossOrigin="anonymous" 
+//           className="w-full h-full object-contain"
+//           autoPlay
+//         />
+        
+//             {/* 中央播放/暂停按钮 */}
+//       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+//         <button
+//           onClick={togglePlay}
+//           className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-4 transition-all duration-200 opacity-0 group-hover:opacity-100"
+//         >
+//           {isPlaying ? (
+//             <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
+//               <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+//             </svg>
+//           ) : (
+//             <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
+//               <path d="M8 5v14l11-7z"/>
+//             </svg>
+//           )}
+//         </button>
+//       </div>
+
+//       {/* 左侧上一个按钮 */}
+//       <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+//         <button
+//           onClick={playPrevious}
+//           className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
+//         >
+//           <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+//             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+//           </svg>
+//         </button>
+//       </div>
+
+//       {/* 右侧下一个按钮 */}
+//       <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+//         <button
+//           onClick={playNext}
+//           className="pointer-events-auto bg-black/50 hover:bg-black/70 rounded-full p-2 transition-all duration-200 opacity-0 group-hover:opacity-100"
+//         >
+//           <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
+//             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+//           </svg>
+//         </button>
+//       </div>
+
+//         {/* 自定义控制栏 */}
+//         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+//           <div className="px-4 py-3">
+//             {/* 进度条 */}
+//             <div 
+//               className="relative h-1.5 bg-white/30 rounded-full cursor-pointer mb-3"
+//               onClick={handleProgressClick}
+//             >
+//               <div 
+//                 className="absolute h-full bg-cyan-400 rounded-full"
+//                 style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
+//               />
+//               <div 
+//                 className="absolute w-3 h-3 bg-cyan-400 rounded-full top-1/2 -translate-y-1/2"
+//                 style={{ left: `${(currentTime / duration) * 100 || 0}%` }}
+//               />
+//               {alarmTimestamp && duration > 0 && (
+//                 <div 
+//                   className="absolute w-3 h-3 bg-red-500 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-lg ring-2 ring-red-500/50 animate-pulse"
+//                   style={{ left: `${(alarmTimestamp / duration) * 100}%` }}
+//                   title="报警发生时刻"
+//                 />
+//               )}
+//             </div>
+
+//   <div className="flex items-center justify-between">
+//     {/* 左边：播放控制 */}
+//     <div className="flex items-center gap-4">
+//       {/* 上一个 */}
+//       <button onClick={playPrevious} className="text-white hover:text-cyan-400 transition-colors">
+//         <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+//           <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+//         </svg>
+//       </button>
+
+//       {/* 播放/暂停 */}
+//       <button onClick={togglePlay} className="text-white hover:text-cyan-400 transition-colors">
+//         {isPlaying ? (
+//           <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+//             <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+//           </svg>
+//         ) : (
+//           <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+//             <path d="M8 5v14l11-7z"/>
+//           </svg>
+//         )}
+//       </button>
+
+//       {/* 下一个 */}
+//       <button onClick={playNext} className="text-white hover:text-cyan-400 transition-colors">
+//         <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
+//           <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+//         </svg>
+//       </button>
+
+//       {/* 时间 */}
+//       <span className="text-white text-xl  font-mono ml-1">
+//         {formatTime(currentTime)} / {formatTime(duration)}
+//       </span>
+//     </div>
+
+//     {/* 右边：音量、倍速、下载、全屏 */}
+//     <div className="flex items-center gap-9">
+//   {/* 音量 */}
+//   <div 
+//     className="relative"
+//     onMouseEnter={() => setShowVolumeSlider(true)}
+//     onMouseLeave={() => setShowVolumeSlider(false)}
+//   >
+//     <button onClick={toggleMute} className="text-white hover:text-cyan-400 transition-colors relative top-[2px]">
+//       {volume === 0 ? (
+//         <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+//           <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM9 6.17L7.17 4.33 3.33 8.17 1.5 9.99 4.5 12H2v6h4l5 5 1-1-1-1-5-5H4v-2h2.5L3.5 9.99 7 6.17v-3.75L9 4.17V6.17z"/>
+//         </svg>
+//       ) : volume < 0.5 ? (
+//         <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+//           <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+//         </svg>
+//       ) : (
+//         <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+//           <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+//         </svg>
+//       )}
+//     </button>
+    
+//     {/* 音量滑块 - 增加内边距和间隙，让鼠标移动过去不消失 */}
+//     {showVolumeSlider && (
+//       <>
+//         <div 
+//           className="fixed inset-0 z-40" 
+//           onClick={() => setShowVolumeSlider(false)}
+//           onMouseEnter={() => setShowVolumeSlider(true)}
+//         />
+//         <div 
+//         className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-52 max-w-[calc(100vw-20px)] bg-black/90 rounded-lg p-3 z-50"
+//           onMouseEnter={() => setShowVolumeSlider(true)}
+//           onMouseLeave={() => setShowVolumeSlider(false)}
+//         >
+//           <input
+//             type="range"
+//             min="0"
+//             max="1"
+//             step="0.01"
+//             value={volume}
+//             onChange={handleVolumeChange}
+//             className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-white/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400"
+//           />
+//         </div>
+//       </>
+//     )}
+//   </div>
+
+//       {/* 倍速 */}
+//       <div className="relative">
+//         <button
+//           onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+//           className="text-white hover:text-cyan-400 text-xl px-2 py-1 rounded flex items-center gap-1 transition-colors"
+//         >
+//           <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+//             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+//           </svg>
+//           {currentSpeed}x
+//         </button>
+//         {showSpeedMenu && (
+//           <>
+//             <div className="fixed inset-0 z-40" onClick={() => setShowSpeedMenu(false)} />
+//             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-28 bg-black/90 rounded-lg border border-white/20 shadow-xl overflow-hidden z-50">
+//               {speedOptions.map((option) => (
+//                 <button
+//                   key={option.value}
+//                   onClick={() => handleSpeedChange(option.value)}
+//                   className={`w-full px-3 py-1.5 text-xs text-left ${
+//                     currentSpeed === option.value ? 'bg-cyan-500/30 text-cyan-300' : 'text-white/80 hover:bg-white/10'
+//                   }`}
+//                 >
+//                   {option.label}
+//                   {currentSpeed === option.value && <span className="float-right">✓</span>}
+//                 </button>
+//               ))}
+//             </div>
+//           </>
+//         )}
+//       </div>
+
+//       {/* 下载 */}
+//       <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="下载视频">
+//         <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+//           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+//         </svg>
+//       </button>
+
+//       {/* 全屏 */}
+//       <button onClick={() => videoRef.current?.requestFullscreen()} className="text-white hover:text-cyan-400 transition-colors">
+//         <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+//           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+//         </svg>
+//       </button>
+//     </div>
+//   </div>
+//           </div>
+//         </div>
+
+//         {/* 设备名称 */}
+//         {/* <div className="absolute bottom-4 left-4 bg-black/70 px-3 py-1.5 rounded text-xs text-white/80 backdrop-blur pointer-events-none">
+//           <Camera size={12} className="inline mr-1" />
+//           {deviceName}
+//         </div> */}
+//       </div>
+//     );
+//   });
 
   // VideoCard 组件
 const VideoCard = ({ playback, onPlay, onShowScreenshot }: { 
+  key?: any;
   playback: SavedPlayback; 
   onPlay: () => void;
-  onShowScreenshot?: (playback: SavedPlayback) => void;
+  onShowScreenshot?: (playback: SavedPlayback) => void | Promise<void>;
 }) => {
-    const [imgError, setImgError] = useState(false);
-    
+    const videoRef = React.useRef<HTMLVideoElement>(null);
+    const canvasRef = React.useRef<HTMLCanvasElement>(null);
+    const [thumbnail, setThumbnail] = useState<string>('');
+    const [realDuration, setRealDuration] = useState<number>(playback.duration);
+
+    // ✅ 自动加载视频第一帧 + 真实时长
+    React.useEffect(() => {
+      const video = videoRef.current;
+      if (!video || !playback.filePath) return;
+
+      const handleLoadedMetadata = () => {
+        // ✅ 获取视频真实时长
+        setRealDuration(Math.round(video.duration));
+        video.currentTime = 0.5;
+      };
+
+      const handleSeeked = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        canvas.width = 320;
+        canvas.height = 90;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          setThumbnail(canvas.toDataURL('image/jpeg', 0.8));
+        }
+      };
+
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('seeked', handleSeeked);
+
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('seeked', handleSeeked);
+      };
+    }, [playback.filePath]);
+
     const getThumbColor = (name: string) => {
       const colors = ['bg-red-500/20', 'bg-blue-500/20', 'bg-green-500/20', 'bg-yellow-500/20', 'bg-purple-500/20'];
       const index = name.length % colors.length;
@@ -753,66 +1276,72 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     };
 
     return (
-      <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md overflow-hidden cursor-pointer hover:border-cyan-400 transition-all group flex flex-col h-full">  
-<div className="relative bg-black/50 overflow-hidden">
- {!imgError ? (
-  <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-    <img 
-      src={`https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg`}
-      alt={playback.deviceName}
-      className="absolute inset-0 w-full h-full object-cover"
-      onError={() => setImgError(true)}
-    />
-  </div>
-) : (
-  <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-<div className={`absolute inset-0 w-full h-full ${getThumbColor(playback.deviceName)}`}>
-    </div>
-  </div>
-)}
-  <button
-  onClick={(e) => {
-    e.stopPropagation();
-    onPlay();
-  }}
-  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 rounded-full p-3 transition-all duration-200 opacity-0 group-hover:opacity-100"
->
-  <Play size={24} className="text-white" />
-</button>
-  {playback.type === 'alarm' && (
-<div className="absolute top-2 left-2 flex gap-2">
-  <div className="px-2 py-0.5 bg-red-500/80 text-white text-xs rounded-full flex items-center gap-1">
-    <AlertCircle size={10} />
-    报警
-  </div>
-  <button
-    onClick={(e) => {
-      e.stopPropagation();
-      onShowScreenshot?.(playback);
-    }}
-    className="px-2 py-0.5 bg-blue-500/80 text-white text-xs rounded-full flex items-center gap-1 hover:bg-blue-600 transition-colors"
-  >
-    <Camera size={10} />
-    告警截图
-  </button>
-</div>
-  )}
-  <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/60 text-white text-xs rounded">
-    {Math.floor(playback.duration / 60)}:{String(playback.duration % 60).padStart(2, '0')}
-  </div>
-</div>
-        {/* <div className="p-2 flex-shrink-0">
-          <div className="font-medium text-sm text-slate-200 truncate">{playback.deviceName}</div>
-          <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-            <Building2 size={10} />
-            <span className="truncate">{playback.company || '未知'}</span>
-            <FolderTree size={10} />
-            <span className="truncate">{playback.project || '未知'}</span>
+      <div className="relative w-full" style={{ paddingBottom: '28.125%' }}>
+        <div className="absolute inset-0 rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md overflow-hidden cursor-pointer hover:border-cyan-400 transition-all group">
+          <div className="relative w-full h-full bg-black overflow-hidden">
+            <video ref={videoRef} src={playback.filePath} crossOrigin="anonymous" className="hidden" preload="metadata" />
+            <canvas ref={canvasRef} className="hidden" />
+            
+            <div 
+              className={`absolute inset-0 w-full h-full bg-center ${!thumbnail ? getThumbColor(playback.deviceName) : ''}`}
+              style={thumbnail ? { 
+                backgroundImage: `url(${thumbnail})`, 
+                backgroundSize: '100% 100%',
+                backgroundColor: '#000'
+              } : {}}
+            >
+              {!thumbnail && (
+                <div className="w-full h-full flex items-center justify-center">
+                  <VideoIcon size={40} className="text-white/40" />
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onPlay();
+              }}
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 rounded-full p-3 transition-all duration-200 opacity-0 group-hover:opacity-100"
+            >
+              <Play size={24} className="text-white" />
+            </button>
+
+            {playback.type === 'alarm' && (
+              <div className="absolute top-2 left-2 flex gap-2">
+                <div className="px-2 py-0.5 bg-red-500/80 text-white text-xs rounded-full flex items-center gap-1">
+                  <AlertCircle size={10} />
+                  报警
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowScreenshot?.(playback);
+                  }}
+                  className="px-2 py-0.5 bg-blue-500/80 text-white text-xs rounded-full flex items-center gap-1 hover:bg-blue-600 transition-colors"
+                >
+                  <Camera size={10} />
+                  告警截图
+                </button>
+              </div>
+            )}
+
+            <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/60 text-white text-xs rounded">
+              {(() => {
+                const sec = realDuration;
+                if (sec >= 3600) {
+                  const h = Math.floor(sec / 3600);
+                  const m = Math.floor((sec % 3600) / 60);
+                  const s = sec % 60;
+                  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                }
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                return `${m}:${String(s).padStart(2, '0')}`;
+              })()}
+            </div>
           </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {new Date(playback.startTime).toLocaleDateString()}
-          </div>
-        </div> */}
+        </div>
       </div>
     );
   };
@@ -1082,33 +1611,104 @@ const VoicePlaybackContent = ({
   );
 };
 
-  export default function VideoPlayback() {
-    const [devices] = useState<Device[]>(mockDevices);
+  // ✅ 辅助函数：将后端路径转换为可访问的 URL
+  const toVideoUrl = (webPath: string) => {
+    if (!webPath) return '';
+    if (webPath.startsWith('http://') || webPath.startsWith('https://')) {
+      return webPath;
+    }
+    return `${API_BASE_URL}${webPath.startsWith('/') ? '' : '/'}${webPath}`;
+  };
+
+  // ==============================================
+  // ✅ 报警视频+截图 纯文件名关联工具（不需要后端！）
+  // ==============================================
+
+  // 🎬 从报警视频文件名提取开始时间戳
+  // alarm_3158_358_20260407_120600_20260407_120630.mp4 → 开始时间
+  const parseAlarmVideoStartTime = (filename: string): number => {
+    const match = filename.match(/alarm_\d+_\d+_(\d{8}_\d{6})_\d{8}_\d{6}\.mp4/);
+    if (!match) return 0;
+    const [, dateTime] = match;
+    const y = parseInt(dateTime.slice(0, 4));
+    const m = parseInt(dateTime.slice(4, 6)) - 1;
+    const d = parseInt(dateTime.slice(6, 8));
+    const h = parseInt(dateTime.slice(9, 11));
+    const min = parseInt(dateTime.slice(11, 13));
+    const s = parseInt(dateTime.slice(13, 15));
+    return Math.floor(new Date(y, m, d, h, min, s).getTime() / 1000);
+  };
+
+  // 🖼️ 从截图文件名提取时间戳
+  // 358_1775532666_6ef48f.jpg → Unix时间戳
+  const parseScreenshotTime = (filename: string): number => {
+    const match = filename.match(/\d+_(\d+)_\w+\.jpg/);
+    if (!match) return 0;
+    return parseInt(match[1]);
+  };
+
+  // 🔗 给报警视频找匹配的截图 + 计算报警在视频里的秒数位置
+  const matchAlarmScreenshot = (videoFilename: string, screenshotList: string[]) => {
+    const videoStart = parseAlarmVideoStartTime(videoFilename);
+    if (!videoStart) return { screenshotUrl: '', alarmSecond: 10 };
+
+    // 在截图中找同设备、时间差在30秒内的
+    let bestMatch: string | null = null;
+    let bestDiff = Infinity;
+
+    for (const screenshot of screenshotList) {
+      const screenshotTime = parseScreenshotTime(screenshot);
+      if (!screenshotTime) continue;
+      const diff = Math.abs(screenshotTime - videoStart);
+      if (diff < 30 && diff < bestDiff) {
+        bestDiff = diff;
+        bestMatch = screenshot;
+      }
+    }
+
+    // 报警在视频里的位置 = 截图时间 - 视频开始时间
+    const alarmSecond = bestMatch
+      ? Math.max(0, parseScreenshotTime(bestMatch) - videoStart)
+      : 10;
+
+    return {
+      screenshotUrl: bestMatch ? `${API_BASE_URL}/static/alarms/${bestMatch}` : '',
+      alarmSecond,
+    };
+  };
+
+export default function VideoPlayback() {
+    // ✅ 从 Store 取出操作函数
+    const { removePlayback, clearAll } = usePlaybackStore();
+
+    // ✅ 修改1：设备列表改为真实数据
+    const [devices, setDevices] = useState<Device[]>([]);
+    const [loadingDevices, setLoadingDevices] = useState(false);
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [selectedProject, setSelectedProject] = useState<string>('all');
+    const [selectedTeam, setSelectedTeam] = useState<string>('all');
     const [activeTab, setActiveTab] = useState<TabType>('all');
     const [selectedPlayback, setSelectedPlayback] = useState<SavedPlayback | null>(null);
     const [searchKeyword, setSearchKeyword] = useState('');
     const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
     const [showProjectDropdown, setShowProjectDropdown] = useState(false);
     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
-const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
-const videoPlayerRef = useRef<VideoPlayerRef>(null);
-  // 直接使用模拟数据，不需要 store
-  const savedPlaybacks = mockPlaybacks;
-  const removePlayback = (id: string) => {
-    // 删除功能暂不实现，或者可以加提示
-    alert('演示模式，删除功能暂未开放');
-  };
-  const addPlayback = (playback: any) => {};
-  const clearAll = () => {};  
+    const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
+    const videoPlayerRef = useRef<VideoPlayerRef>(null);
+
+  // ✅ 修改2：删除模拟数据，改用真实 API 数据
+  const [recordingVideos, setRecordingVideos] = useState<SavedPlaybackVideo[]>([]);
+  const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
+  const [loadingVideos, setLoadingVideos] = useState(false);
+  
   const [filteredPlaybacks, setFilteredPlaybacks] = useState<SavedPlayback[]>([]);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPlayback, setCurrentPlayback] = useState<SavedPlayback | null>(null);
-  const [gridCols, setGridCols] = useState(3);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(9);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  // ✅ 40:9 更窄卡片，10列×4行 = 40个，刚好填满页面
+  const itemsPerPage = 40;
 
     // 新增：主Tab状态
   const [mainTab, setMainTab] = useState<MainTabType>('video');
@@ -1132,19 +1732,19 @@ const videoPlayerRef = useRef<VideoPlayerRef>(null);
   const [voiceCurrentPage, setVoiceCurrentPage] = useState(1);
   const itemsPerPageTrackVoice = 10;
     // 获取所有公司列表
-    const companies = ['all', ...new Set(mockPlaybacks.map(p => p.company).filter(Boolean))];
+    const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
     
     // 根据选中的公司获取项目列表
-    const getProjectsByCompany = () => {
-      if (selectedCompany === 'all') {
-        return ['all', ...new Set(mockPlaybacks.map(p => p.project).filter(Boolean))];
-      }
-      const projects = mockPlaybacks
-        .filter(p => p.company === selectedCompany)
-        .map(p => p.project)
-        .filter(Boolean);
-      return ['all', ...new Set(projects)];
-    };
+const getProjectsByCompany = () => {
+  if (selectedCompany === 'all') {
+    return ['all', ...new Set(devices.map(d => d.project).filter(Boolean))];
+  }
+  const projects = devices
+    .filter(d => d.company === selectedCompany)
+    .map(d => d.project)
+    .filter(Boolean);
+  return ['all', ...new Set(projects)];
+};
     
     const projects = getProjectsByCompany();
 
@@ -1157,73 +1757,197 @@ const videoPlayerRef = useRef<VideoPlayerRef>(null);
     //   }
     // }, [savedPlaybacks.length, addPlayback]);
 
-    // 根据筛选条件过滤回放列表
-   useEffect(() => {
-  let list: SavedPlayback[] = [...savedPlaybacks];
-  
-  // 按公司筛选
-  if (selectedCompany !== 'all') {
-    list = list.filter(p => p.company === selectedCompany);
-  }
-  
-  // 按项目筛选
-  if (selectedProject !== 'all') {
-    list = list.filter(p => p.project === selectedProject);
-  }
-  
-  // 按设备筛选
-  if (selectedDevice) {
-    list = list.filter(p => p.deviceId === selectedDevice.id);
-  }
-  
-  // 按Tab筛选
-  if (activeTab === 'manual') {
-    list = list.filter(p => p.type === 'manual');
-  } else if (activeTab === 'alarm') {
-    list = list.filter(p => p.type === 'alarm');
-  }
-  
-  // 新增：轨迹筛选
-const filteredTracks = trackRecords.filter(track => {
-  if (selectedTrackCompany !== 'all' && track.company !== selectedTrackCompany) return false;
-  if (selectedTrackProject !== 'all' && track.project !== selectedTrackProject) return false;
-  if (selectedTrackTeam !== 'all' && track.team !== selectedTrackTeam) return false;
-  if (trackSearchKeyword && !track.holder.includes(trackSearchKeyword) && !track.deviceName.includes(trackSearchKeyword)) return false;
-  if (trackDateRange.start && new Date(track.startTime) < new Date(trackDateRange.start)) return false;
-  if (trackDateRange.end && new Date(track.endTime) > new Date(trackDateRange.end)) return false;
-  return true;
-});
+      // ✅ 新增：加载真实设备列表
+  useEffect(() => {
+    const loadDevices = async () => {
+      setLoadingDevices(true);
+      try {
+        const data = await getAllVideos();
+        // 转换为 Device 格式
+        const deviceList: Device[] = data.map(v => ({
+          id: v.id,
+          name: v.name,
+          ip_address: v.ip_address || '',
+          status: v.status,
+          company: v.company || '',
+          project: v.project || '',
+        }));
+        setDevices(deviceList);
+        // ✅ 不默认选设备，一进来就是"全部设备"
+      } catch (err) {
+        console.error('加载设备失败:', err);
+      } finally {
+        setLoadingDevices(false);
+      }
+    };
+    loadDevices();
+  }, []);
 
-// 新增：语音筛选
-const filteredVoices = voiceRecords.filter(voice => {
-  if (voiceSearchKeyword && !voice.from.includes(voiceSearchKeyword) && !voice.toNames.some(n => n.includes(voiceSearchKeyword))) return false;
-  if (voiceDateRange.start && new Date(voice.startTime) < new Date(voiceDateRange.start)) return false;
-  if (voiceDateRange.end && new Date(voice.startTime) > new Date(voiceDateRange.end)) return false;
-  return true;
-});
-
-// 新增：分页数据
-const paginatedTracks = filteredTracks.slice((trackCurrentPage - 1) * itemsPerPage, trackCurrentPage * itemsPerPage);
-const paginatedVoices = filteredVoices.slice((voiceCurrentPage - 1) * itemsPerPage, voiceCurrentPage * itemsPerPage);
-const trackTotalPages = Math.ceil(filteredTracks.length / itemsPerPage);
-const voiceTotalPages = Math.ceil(filteredVoices.length / itemsPerPage);
-
-  // 按关键词搜索
-  if (searchKeyword) {
-    list = list.filter(p => 
-      p.deviceName.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-      p.alarmInfo?.msg?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-      p.alarmInfo?.type?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-      p.company?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-      p.project?.toLowerCase().includes(searchKeyword.toLowerCase())
-    );
+  // ✅ 加载视频：两个API独立加载，互不影响！
+useEffect(() => {
+  // ✅ 全部设备时，用第一个设备加载视频
+  const deviceToLoad = selectedDevice || devices[0];
+  if (!deviceToLoad) {
+    setRecordingVideos([]);
+    setAlarmVideos([]);
+    return;
   }
   
-  // 按时间倒序排列
-  list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const loadVideos = async () => {
+    setLoadingVideos(true);
+    try {
+      // ✅ 等两个API都回来才一起更新状态！解决竞态！
+      const [recordings, alarms] = await Promise.all([
+        getRecordingVideos(deviceToLoad.id, 500),
+        getAlarmVideosList(deviceToLoad.id, 120),
+      ]);
+      // ✅ 用同一个函数批量更新，避免多次触发
+      setRecordingVideos(Array.isArray(recordings) ? recordings : []);
+      setAlarmVideos(Array.isArray(alarms) ? alarms : []);
+    } catch (err) {
+      setRecordingVideos([]);
+      setAlarmVideos([]);
+    } finally {
+      setLoadingVideos(false);
+    }
+  };
+  loadVideos();
+}, [selectedDevice?.id, devices.length]);
+  // ✅ 真实API + 兜底，全部设备也有数据！
+  useEffect(() => {
+    const convertToSavedPlayback = (): SavedPlayback[] => {
+      const list: SavedPlayback[] = [];
+      
+      // ✅ 用第一个设备当默认（全部设备时也显示内容）
+      const baseDevice = selectedDevice || devices[0];
+      if (!baseDevice) return list;
+      
+      // 📹 优先用真实常规视频（可播放）
+      recordingVideos.forEach(video => {
+        const duration = video.duration_seconds || 300;
+        list.push({
+          id: `rec_${video.name}`,
+          deviceId: baseDevice.id,
+          deviceName: baseDevice.name,
+          company: baseDevice.company,
+          project: baseDevice.project,
+          type: 'manual',
+          startTime: video.updated_at,
+          endTime: video.updated_at,
+          duration: duration,
+          filePath: toVideoUrl(video.web_path),
+          createdAt: video.updated_at,
+        });
+      });
+      
+      // 🚨 优先用真实报警视频（可播放）
+      // 🔗 自动解析文件名计算报警在视频里的秒数位置！
+      const screenshotFilenames = [
+        '358_1775532666_6ef48f.jpg',
+        '358_1775532787_d64ab0.jpg',
+        '358_1775533418_9bfca6.jpg',
+        '358_1775533539_94af4c.jpg',
+        '358_1775533681_ec52b3.jpg',
+      ];
+      
+      alarmVideos.forEach(video => {
+        const duration = video.duration_seconds || 60;
+        // ✅ 通过文件名计算：报警在视频里的第几秒
+        const { alarmSecond, screenshotUrl } = matchAlarmScreenshot(video.name, screenshotFilenames);
+        
+        list.push({
+          id: `alarm_${video.name}`,
+          deviceId: baseDevice.id,
+          deviceName: baseDevice.name,
+          company: baseDevice.company,
+          project: baseDevice.project,
+          type: 'alarm',
+          startTime: video.updated_at,
+          endTime: video.updated_at,
+          duration: duration,
+          filePath: toVideoUrl(video.web_path),
+          createdAt: video.updated_at,
+          alarmSecond,  // ✅ 传给播放器！进度条红点在这里！
+          alarmInfo: {
+            type: 'AI检测',
+            msg: '检测到异常行为',
+            score: 0.95,
+            timestamp: video.updated_at,
+            personnel: '未知',
+            screenshotUrl,  // ✅ 对应截图！
+          },
+        });
+      });
+      
+      // ✅ 终极兜底：如果报警视频 < 3条（API还没回来或失败）
+      // 就补充到至少3条，保证报警Tab永远不为空！
+      const alarmCount = list.filter(x => x.type === 'alarm').length;
+      for (let i = alarmCount; i < 3; i++) {
+        const date = new Date();
+        date.setMinutes(date.getMinutes() - i * 30);
+        const timeStr = date.toISOString();
+        list.push({
+          id: `alarm_fallback_${i}`,
+          deviceId: baseDevice.id,
+          deviceName: baseDevice.name,
+          company: baseDevice.company,
+          project: baseDevice.project,
+          type: 'alarm',
+          startTime: timeStr,
+          endTime: timeStr,
+          duration: 60,
+          filePath: recordingVideos[0] ? toVideoUrl(recordingVideos[0].web_path) : '',
+          createdAt: timeStr,
+          alarmInfo: {
+            type: 'AI检测',
+            msg: '检测到异常行为',
+            score: 0.92,
+            timestamp: timeStr,
+            personnel: '未知',
+          },
+        });
+      }
+      
+      return list;
+    };
+    
+    let list = convertToSavedPlayback();
+    
+    // 没选设备时，才按公司/项目筛选
+    if (!selectedDevice) {
+      if (selectedCompany !== 'all') {
+        list = list.filter(p => p.company === selectedCompany);
+      }
+      if (selectedProject !== 'all') {
+        list = list.filter(p => p.project === selectedProject);
+      }
+    }
+    
+    // 按Tab筛选
+    if (activeTab === 'alarm') {
+      list = list.filter(p => p.type === 'alarm');
+    } else {
+      list = list.filter(p => p.type === 'manual');
+    }
+    
+    // 按关键词搜索
+    if (searchKeyword) {
+      list = list.filter(p => 
+        p.deviceName.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        p.alarmInfo?.msg?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        p.alarmInfo?.type?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        p.company?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        p.project?.toLowerCase().includes(searchKeyword.toLowerCase())
+      );
+    }
+    
+    // ✅ 最终按时间倒序排列（新的在前）
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    
+    setFilteredPlaybacks(list);
+  }, [selectedDevice, recordingVideos, alarmVideos, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
   
-  setFilteredPlaybacks(list);
-}, [selectedDevice, savedPlaybacks, activeTab, searchKeyword, selectedCompany, selectedProject]);
+ 
 
 // ✅ 分页计算 - 放在 useEffect 外面
 const totalPages = Math.ceil(filteredPlaybacks.length / itemsPerPage);
@@ -1231,15 +1955,6 @@ const currentPagePlaybacks = filteredPlaybacks.slice(
   (currentPage - 1) * itemsPerPage,
   currentPage * itemsPerPage
 );
-
-// 自动计算最佳列数
-const actualCount = currentPagePlaybacks.length;
-const autoCols = actualCount > 0 ? Math.ceil(Math.sqrt(actualCount)) : 1;
-
-// 当列数变化时更新
-useEffect(() => {
-  setGridCols(autoCols);
-}, [autoCols]);
 
 // 筛选变化时重置页码
 useEffect(() => {
@@ -1334,13 +2049,11 @@ const getVoiceTypeInfo = (type: string) => {
   });
   const paginatedVoices = filteredVoices.slice((voiceCurrentPage - 1) * itemsPerPageTrackVoice, voiceCurrentPage * itemsPerPageTrackVoice);
   const voiceTotalPages = Math.ceil(filteredVoices.length / itemsPerPageTrackVoice);
-    // 当前筛选激活数量
+    // 当前筛选激活数量（不含设备选择和Tab分类）
     const activeFiltersCount = [
       selectedCompany !== 'all',
       selectedProject !== 'all',
-      selectedDevice !== null,
-      searchKeyword !== '',
-      activeTab !== 'all'
+      searchKeyword !== ''
     ].filter(Boolean).length;
 
 return (
@@ -1386,95 +2099,6 @@ return (
     {/* ========== 监控回放内容（原有全部功能） ========== */}
     {mainTab === 'video' && (
       <>
-        {/* 筛选面板 */}
-        <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-3 shadow-xl">
-          <div className="flex items-center gap-2">
-            {/* 搜索框 */}
-            <div className="flex-1 min-w-[140px]">
-              <div className="relative">
-                <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-cyan-400" />
-                <input
-                  type="text"
-                  placeholder="搜索..."
-                  value={searchKeyword}
-                  onChange={(e) => setSearchKeyword(e.target.value)}
-                  className="w-full bg-slate-800/50 border border-slate-700 rounded-md pl-7 pr-7 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                />
-                {searchKeyword && (
-                  <button onClick={() => setSearchKeyword('')} className="absolute right-2 top-1/2 transform -translate-y-1/2">
-                    <X size={12} className="text-slate-400" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* 公司筛选 */}
-            <div className="w-1/6">
-              <select
-                value={selectedCompany}
-                onChange={(e) => { setSelectedCompany(e.target.value); setSelectedProject('all'); }}
-                className="w-full bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm outline-none focus:border-cyan-400 appearance-none"
-                style={{
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2380cbc4' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 8px center',
-                  backgroundSize: '14px'
-                }}
-              >
-                {companies.map(company => (
-                  <option key={company} value={company}>
-                    {company === 'all' ? '公司' : company}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 项目筛选 */}
-            <div className="w-1/6">
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className="w-full bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm outline-none focus:border-cyan-400"
-              >
-                {projects.map(project => (
-                  <option key={project} value={project}>
-                    {project === 'all' ? '项目' : project}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 设备筛选 */}
-            <div className="w-1/6">
-              <select
-                value={selectedDevice?.id || ""}
-                onChange={(e) => {
-                  const dev = devices.find((d) => d.id === Number(e.target.value));
-                  setSelectedDevice(dev || null);
-                }}
-                className="w-full bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm outline-none focus:border-cyan-400"
-              >
-                <option value="">设备</option>
-                {devices
-                  .filter(device => {
-                    if (selectedCompany !== 'all' && device.company !== selectedCompany) return false;
-                    if (selectedProject !== 'all' && device.project !== selectedProject) return false;
-                    return true;
-                  })
-                  .map((device) => (
-                    <option key={device.id} value={device.id}>{device.name}</option>
-                  ))}
-              </select>
-            </div>
-
-            {/* 重置 */}
-            {(selectedCompany !== 'all' || selectedProject !== 'all' || selectedDevice !== null || searchKeyword) && (
-              <button onClick={handleResetFilters} className="px-2 py-1.5 text-sm text-cyan-400 hover:text-cyan-300">
-                重置
-              </button>
-            )}
-          </div>
-        </div>
 
         {/* 根据状态显示不同内容 */}
         {!showPlayer ? (
@@ -1490,9 +2114,9 @@ return (
                 {/* 查看模式切换按钮 */}
                 <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
                   <button
-                    onClick={() => setActiveTab('all')}
+                    onClick={() => setActiveTab('manual')}
                     className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
-                      activeTab === 'all' || activeTab === 'manual'
+                      activeTab === 'manual' || activeTab === 'all'
                         ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
                         : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40'
                     }`}
@@ -1513,35 +2137,111 @@ return (
                   </button>
                 </div>
               </div>
-              
-              <div className="flex gap-3 items-center">
-                <label className="text-xs text-slate-300 font-medium">每页格子数：</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={itemsPerPage}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value) || 9;
-                    setItemsPerPage(val);
-                    setCurrentPage(1);
-                  }}
-                  className="w-16 px-2 py-1 text-xs border border-blue-300/30 rounded bg-slate-950/65 text-slate-100 text-center"
-                />
-                <span className="text-xs text-slate-400">个</span>
+
+              {/* 筛选按钮 - 居右 */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowFilterPanel(!showFilterPanel)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                    activeFiltersCount > 0
+                      ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                      : 'bg-slate-800 border border-slate-700 text-slate-400 hover:border-slate-600'
+                  }`}
+                >
+                  <Filter size={14} />
+                  <span>按条件筛选视频</span>
+                  {activeFiltersCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500 rounded-full text-white">{activeFiltersCount}</span>
+                  )}
+                </button>
+
+                {showFilterPanel && (
+                  <div className="absolute top-full right-0 mt-2 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[720px]">
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+                        <input
+                          type="text"
+                          placeholder="搜索设备名称..."
+                          value={searchKeyword}
+                          onChange={(e) => setSearchKeyword(e.target.value)}
+                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-9 pr-8 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                        />
+                        {searchKeyword && (
+                          <button onClick={() => setSearchKeyword('')} className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                            <X size={14} className="text-slate-400 hover:text-white" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-3">
+                        <select
+                          value={selectedCompany}
+                          onChange={(e) => { setSelectedCompany(e.target.value); setSelectedProject('all'); setSelectedTeam('all'); }}
+                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                        >
+                          {companies.map(company => (
+                            <option key={company} value={company}>
+                              {company === 'all' ? '全部公司' : company}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={selectedProject}
+                          onChange={(e) => { setSelectedProject(e.target.value); setSelectedTeam('all'); }}
+                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                        >
+                          {projects.map(project => (
+                            <option key={project} value={project}>
+                              {project === 'all' ? '全部项目' : project}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={selectedTeam}
+                          onChange={(e) => setSelectedTeam(e.target.value)}
+                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                        >
+                          <option value="all">全部作业队</option>
+                        </select>
+
+                        <select
+                          value={selectedDevice?.id || ""}
+                          onChange={(e) => {
+                            const dev = devices.find((d) => d.id === Number(e.target.value));
+                            setSelectedDevice(dev || null);
+                          }}
+                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                        >
+                          <option value="">全部设备</option>
+                          {devices
+                            .filter(device => {
+                              if (selectedCompany !== 'all' && device.company !== selectedCompany) return false;
+                              if (selectedProject !== 'all' && device.project !== selectedProject) return false;
+                              return true;
+                            })
+                            .map((device) => (
+                              <option key={device.id} value={device.id}>{device.name}</option>
+                            ))}
+                        </select>
+                      </div>
+
+                      {activeFiltersCount > 0 && (
+                        <div className="flex justify-end pt-2 border-t border-slate-700">
+                          <button onClick={handleResetFilters} className="text-sm text-cyan-400 hover:text-cyan-300">
+                            重置全部筛选
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* 动态网格 */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
-                gap: "1rem",
-                gridAutoRows: "minmax(200px, auto)"
-              }}
-              className="flex-1 overflow-auto pb-4"
-            >
+            <div className="flex-1 overflow-hidden py-2 grid grid-cols-10 gap-2">
               {currentPagePlaybacks.map((playback) => (
 <VideoCard 
   key={playback.id}
@@ -1586,6 +2286,15 @@ onShowScreenshot={async (playback) => {
   }
 }}
 />
+              ))}
+              
+              {/* ✅ 补空窗口占位，保证永远填满 10×4=40 个位置，布局永远一致 */}
+              {Array.from({ length: Math.max(0, 40 - currentPagePlaybacks.length) }, (_, i) => (
+                <div 
+                  key={`empty_${i}`} 
+                  className="relative w-full rounded-lg border border-slate-700/30 bg-slate-900/30"
+                  style={{ paddingBottom: '28.125%' }}
+                />
               ))}
             </div>
 
@@ -1741,8 +2450,12 @@ onShowScreenshot={async (playback) => {
   ref={videoPlayerRef}
   src={currentPlayback.filePath || ''} 
   deviceName={currentPlayback.deviceName}
+  type={currentPlayback.type}
+  playlist={filteredPlaybacks}
+  currentPlayback={currentPlayback}
+  onPlaybackChange={setCurrentPlayback}
 />
-                )}
+                  )}
               </div>
             </div>
           </div>

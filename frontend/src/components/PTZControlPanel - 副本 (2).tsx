@@ -29,11 +29,9 @@ import {
   gotoPreset,
   deletePreset,
   deletePresetsBulk,
+  startCruise,
   stopCruise,
   getCruiseStatus,
-  saveCurrentCruiseConfig,
-  getCurrentCruiseConfig,
-  startCurrentCruise,
 } from '../api/videoApi';
 
 interface PTZControlPanelProps {
@@ -55,7 +53,6 @@ const PTZControlPanel: React.FC<PTZControlPanelProps> = ({
   const [newPresetName, setNewPresetName] = useState('');
   const [selectedPresetTokens, setSelectedPresetTokens] = useState<string[]>([]);
   const [dwellSeconds, setDwellSeconds] = useState(8);
-  const [cruiseConfigLoaded, setCruiseConfigLoaded] = useState(false);
   const [isCruising, setIsCruising] = useState(false);
   const [busy, setBusy] = useState(false);
   const activeControlTypeRef = useRef<'ptz' | 'zoom' | null>(null);
@@ -84,101 +81,69 @@ const PTZControlPanel: React.FC<PTZControlPanelProps> = ({
   };
 
 const loadPresetsAndCruiseStatus = useCallback(async () => {
+  console.log('🔍 [加载预置点] 开始加载，设备ID:', video.id, '时间:', new Date().toLocaleTimeString());
   try {
-    const [presetList, cruiseStatus, currentCruiseConfig] = await Promise.all([
+    const [presetList, cruiseStatus] = await Promise.all([
       getPresets(video.id),
       getCruiseStatus(video.id),
-      getCurrentCruiseConfig(video.id),
     ]);
-
-    setPresets(Array.isArray(presetList) ? presetList : []);
-
-    const running = Boolean(cruiseStatus?.running);
-    setIsCruising(running);
-
-    const savedTokens = Array.isArray(currentCruiseConfig?.preset_tokens)
-  ? currentCruiseConfig.preset_tokens
-  : [];
-
-    const savedDwell =
-      typeof currentCruiseConfig?.dwell_seconds === 'number'
-        ? currentCruiseConfig.dwell_seconds
-        : 8;
-
-    // 只在首次加载当前设备巡航配置时回填，避免轮询把用户正在编辑的选择覆盖掉
-    if (!cruiseConfigLoaded) {
-      setSelectedPresetTokens(savedTokens);
-      setDwellSeconds(Math.max(1, Math.min(120, Number(savedDwell) || 8)));
-      setCruiseConfigLoaded(true);
-    }
-
+    console.log('📋 [加载预置点] 后端返回列表:', presetList);
+    console.log('📋 [加载预置点] 列表长度:', presetList.length);
+    console.log('📋 [加载预置点] 列表内容:', JSON.stringify(presetList));
+    setPresets(presetList);
+    // ...
   } catch (err: any) {
-    onError?.(`加载预置点/巡航状态失败: ${err.message || err}`);
+    console.error('❌ [加载预置点] 失败:', err);
+    onError?.(`加载预置点失败: ${err.message || err}`);
   }
-}, [video.id, onError, cruiseConfigLoaded]);
-
-useEffect(() => {
-  setCruiseConfigLoaded(false);
-  setSelectedPresetTokens([]);
-  setDwellSeconds(8);
-  setIsCruising(false);
-}, [video.id]);
-
-useEffect(() => {
-  loadPresetsAndCruiseStatus();
-
-  const timer = window.setInterval(() => {
+}, [video.id, onError]);
+  useEffect(() => {
     loadPresetsAndCruiseStatus();
-  }, 1500);
+  }, [loadPresetsAndCruiseStatus]);
 
-  return () => {
-    window.clearInterval(timer);
-  };
-}, [loadPresetsAndCruiseStatus]);
-
-const startMove = useCallback(
-  async (direction: PTZDirection) => {
-    if (!canPTZ) {
-      onError?.('当前设备不支持云台控制');
-      return;
-    }
-    if ((direction === 'zoom_in' || direction === 'zoom_out') && !canZoom) {
-      onError?.('当前设备不支持变焦控制');
-      return;
-    }
-    if (isControlling) return;
-
-    activeDirectionRef.current = direction;
-    pressStartAtRef.current = Date.now();
-    longPressStartedRef.current = false;
-
-    if (holdTimerRef.current) {
-      clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-
-    holdTimerRef.current = setTimeout(async () => {
-      try {
-        const isZoomDirection = direction === 'zoom_in' || direction === 'zoom_out';
-        setIsControlling(true);
-        if (isZoomDirection) {
-          await zoomStartControl(video.id, direction, fixedControlSpeed);
-          activeControlTypeRef.current = 'zoom';
-        } else {
-          await ptzStartControl(video.id, direction, fixedControlSpeed);
-          activeControlTypeRef.current = 'ptz';
-        }
-        longPressStartedRef.current = true;
-        onSuccess?.(`摄像头向${getDirectionName(direction)}持续移动中...`);
-      } catch (err: any) {
-        activeControlTypeRef.current = null;
-        setIsControlling(false);
-        onError?.(`云台持续控制失败: ${err.message || err}`);
+  const startMove = useCallback(
+    async (direction: PTZDirection) => {
+      if (!canPTZ) {
+        onError?.('当前设备不支持云台控制');
+        return;
       }
-    }, 220);
-  },
-  [canPTZ, canZoom, isControlling, fixedControlSpeed, video.id, onSuccess, onError]
-);
+      if ((direction === 'zoom_in' || direction === 'zoom_out') && !canZoom) {
+        onError?.('当前设备不支持变焦控制');
+        return;
+      }
+      if (isControlling) return;
+
+      activeDirectionRef.current = direction;
+      pressStartAtRef.current = Date.now();
+      longPressStartedRef.current = false;
+
+      if (holdTimerRef.current) {
+        clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+      }
+
+      holdTimerRef.current = setTimeout(async () => {
+        try {
+          const isZoomDirection = direction === 'zoom_in' || direction === 'zoom_out';
+          setIsControlling(true);
+          if (isZoomDirection) {
+            await zoomStartControl(video.id, direction, fixedControlSpeed);
+            activeControlTypeRef.current = 'zoom';
+          } else {
+            await ptzStartControl(video.id, direction, fixedControlSpeed);
+            activeControlTypeRef.current = 'ptz';
+          }
+          longPressStartedRef.current = true;
+          onSuccess?.(`摄像头向${getDirectionName(direction)}持续移动中...`);
+        } catch (err: any) {
+          activeControlTypeRef.current = null;
+          setIsControlling(false);
+          onError?.(`云台持续控制失败: ${err.message || err}`);
+        }
+      }, 220);
+    },
+    [canPTZ, canZoom, isControlling, fixedControlSpeed, video.id, onSuccess, onError]
+  );
 
   const stopMove = useCallback(async () => {
     const now = Date.now();
@@ -254,14 +219,41 @@ const startMove = useCallback(
   });
 
 const handleCreatePreset = async () => {
+  console.log('➕ [创建预置点] 开始，设备ID:', video.id, '名称:', newPresetName, '时间:', new Date().toLocaleTimeString());
   try {
     setBusy(true);
     const payload = newPresetName.trim() ? { name: newPresetName.trim() } : {};
-    await createPreset(video.id, payload);
-    await loadPresetsAndCruiseStatus();
+    const created = await createPreset(video.id, payload);
+    console.log('✅ [创建预置点] 后端返回:', created);
+    console.log('✅ [创建预置点] 返回的 token:', created.token);
+
+   // ========== 修改这里 ==========
+    // 方案一：直接添加到本地，不重新加载（推荐）
+    setPresets((prev) => {
+      console.log('📦 [创建预置点] 更新前 presets:', prev);
+      const exists = prev.some((p) => p.token === created.token);
+      const newPresets = exists ? prev.map((p) => (p.token === created.token ? created : p)) : [...prev, created];
+      console.log('📦 [创建预置点] 更新后 presets:', newPresets);
+      return newPresets;
+    });
+    
+    // 删除或注释掉原来的 loadPresetsAndCruiseStatus() 调用
+    // 或者添加延迟加载：
+    // setTimeout(() => {
+    //   loadPresetsAndCruiseStatus();
+    // }, 2000);
+    // ========== 修改结束 ==========
+    // setPresets((prev) => {
+    //   console.log('📦 [创建预置点] 更新前 presets:', prev);
+    //   const exists = prev.some((p) => p.token === created.token);
+    //   const newPresets = exists ? prev.map((p) => (p.token === created.token ? created : p)) : [...prev, created];
+    //   console.log('📦 [创建预置点] 更新后 presets:', newPresets);
+    //   return newPresets;
+    // });
     setNewPresetName('');
     onSuccess?.('预置点已保存');
   } catch (err: any) {
+    console.error('❌ [创建预置点] 失败:', err);
     onError?.(`保存预置点失败: ${err.message || err}`);
   } finally {
     setBusy(false);
@@ -335,65 +327,48 @@ const handleCreatePreset = async () => {
     }
   };
 
-  const handleToggleCruisePreset = async (token: string) => {
-  setCruiseConfigLoaded(true);
-
-  const nextTokens = selectedPresetTokens.includes(token)
-    ? selectedPresetTokens.filter((item) => item !== token)
-    : [...selectedPresetTokens, token];
-
-  setSelectedPresetTokens(nextTokens);
-
-  try {
-    await saveCurrentCruiseConfig(video.id, {
-      preset_tokens: nextTokens,
-      dwell_seconds: dwellSeconds,
-      rounds: null,
+  const handleToggleCruisePreset = (token: string) => {
+    setSelectedPresetTokens((prev) => {
+      if (prev.includes(token)) {
+        return prev.filter((item) => item !== token);
+      }
+      return [...prev, token];
     });
-  } catch (err: any) {
-    onError?.(`保存巡航配置失败: ${err.message || err}`);
-  }
-};
+  };
 
   const handleStartCruise = async () => {
-  if (selectedPresetTokens.length < 2) {
-    onError?.('常规巡航至少需要选择两个预置点');
-    return;
-  }
-
-  try {
-    setBusy(true);
-
-    await saveCurrentCruiseConfig(video.id, {
-      preset_tokens: selectedPresetTokens,
-      dwell_seconds: dwellSeconds,
-      rounds: null,
-    });
-
-    await startCurrentCruise(video.id);
-
-    setIsCruising(true);
-    onSuccess?.('常规巡航已启动');
-  } catch (err: any) {
-    onError?.(`启动巡航失败: ${err.message || err}`);
-  } finally {
-    setBusy(false);
-  }
-};
+    if (selectedPresetTokens.length < 2) {
+      onError?.('常规巡航至少需要选择两个预置点');
+      return;
+    }
+    try {
+      setBusy(true);
+      await startCruise(video.id, {
+        preset_tokens: selectedPresetTokens,
+        dwell_seconds: dwellSeconds,
+        rounds: null,
+      });
+      setIsCruising(true);
+      onSuccess?.('常规巡航已启动');
+    } catch (err: any) {
+      onError?.(`启动巡航失败: ${err.message || err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleStopCruise = async () => {
-  try {
-    setBusy(true);
-    await stopCruise(video.id);
-    await loadPresetsAndCruiseStatus();
-    setIsCruising(false);
-    onSuccess?.('常规巡航已停止');
-  } catch (err: any) {
-    onError?.(`停止巡航失败: ${err.message || err}`);
-  } finally {
-    setBusy(false);
-  }
-};
+    try {
+      setBusy(true);
+      await stopCruise(video.id);
+      setIsCruising(false);
+      onSuccess?.('常规巡航已停止');
+    } catch (err: any) {
+      onError?.(`停止巡航失败: ${err.message || err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="bg-slate-950/70 rounded-lg shadow-md p-4 select-none text-slate-100 border border-blue-300/25">
@@ -588,20 +563,7 @@ const handleCreatePreset = async () => {
               min={1}
               max={120}
               value={dwellSeconds}
-              onChange={async (e) => {
-                const nextDwell = Math.max(1, Math.min(120, Number(e.target.value) || 8));
-                setDwellSeconds(nextDwell);
-
-                try {
-                  await saveCurrentCruiseConfig(video.id, {
-                    preset_tokens: selectedPresetTokens,
-                    dwell_seconds: nextDwell,
-                    rounds: null,
-                  });
-                } catch (err: any) {
-                  onError?.(`保存巡航配置失败: ${err.message || err}`);
-                }
-              }}
+              onChange={(e) => setDwellSeconds(Math.max(1, Math.min(120, Number(e.target.value) || 8)))}
               className="w-full bg-slate-900 border border-blue-300/25 rounded px-2 py-1.5 text-xs outline-none focus:border-cyan-300"
             />
           </div>

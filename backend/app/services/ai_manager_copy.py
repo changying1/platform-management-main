@@ -434,8 +434,12 @@ class AIManager:
         try:
             # 1. 如果有报警详情，先在图片上绘制报警框
             draw_frame = frame.copy()
-            if details and isinstance(details, dict) and "boxes" in details:
-                draw_frame = self._draw_boxes_on_frame(draw_frame, details["boxes"])
+            boxes = []
+            if details and isinstance(details, dict):
+                boxes = details.get("boxes") or []
+
+            if boxes:
+                draw_frame = self._draw_boxes_on_frame(draw_frame, boxes)
 
             # 2. 生成文件名并保存图片
             filename = f"{device_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
@@ -549,14 +553,16 @@ class AIManager:
                 self._update_alarm_recording_status(alarm_id, "failed", None, "device_id 非摄像头ID，无法自动录像")
                 return
 
-            # 等待2分钟缓冲，忽略数据库时区问题
+            # 现在的策略：保存报警前 15 秒到报警后 15 秒的视频段
+            clip_after_seconds = 15
+            clip_before_seconds = 15
             mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
-            wait_seconds = 120 + mature_buffer
+            wait_seconds = clip_after_seconds + mature_buffer
             time.sleep(wait_seconds)
 
             trigger_time = datetime.now() - timedelta(seconds=wait_seconds)
-            clip_start = trigger_time - timedelta(minutes=2)
-            clip_end = trigger_time + timedelta(minutes=2)
+            clip_start = trigger_time - timedelta(seconds=clip_before_seconds)
+            clip_end = trigger_time + timedelta(seconds=clip_after_seconds)
 
             last_error = None
             for attempt in range(1, 3):
@@ -617,14 +623,20 @@ class AIManager:
         alarm_type = self._extract_alarm_type(details)
         alarm_msg = details.get("msg") if isinstance(details, dict) else None
 
+        box_count = 0
         if isinstance(details, dict) and isinstance(details.get("boxes"), list) and details["boxes"]:
             first_box = details["boxes"][0] or {}
             alarm_msg = alarm_msg or first_box.get("msg")
+            box_count = len(details["boxes"])
 
         if not alarm_type:
             alarm_type = "unknown"
         if not alarm_msg:
             alarm_msg = "检测到异常"
+
+        # 方便排查：描述里附带框数量
+        if box_count > 0:
+            alarm_msg = f"{alarm_msg}（检测框数量: {box_count}）"
 
         db = SessionLocal()
 
@@ -636,12 +648,15 @@ class AIManager:
                 description=alarm_msg,
                 status="pending",
                 timestamp=datetime.now(),
+                alarm_image_path=image_path,
                 recording_status="pending",
             )
 
             db.add(record)
             db.commit()
             db.refresh(record)
+
+            print(f"[alarm] save db: device_id={device_id}, image_path={image_path}, alarm_type={alarm_type}, alarm_msg={alarm_msg}")
 
             self._save_alarm_clip_async(record.id, str(device_id), record.timestamp or datetime.now())
 

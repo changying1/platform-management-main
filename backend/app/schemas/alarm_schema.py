@@ -25,8 +25,10 @@ class AlarmOut(AlarmCreate):
     timestamp: datetime
     handled_at: datetime | None = None
     recording_path: Optional[str] = None
+    alarm_image_path: Optional[str] = None
     recording_status: str = "pending"
     recording_error: Optional[str] = None
+    
     
     class Config:
         from_attributes=True

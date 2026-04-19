@@ -92,6 +92,7 @@ interface ExtendedAlarmInfo {
   score: number;
   timestamp: string;
   personnel: string | null;
+  screenshotUrl?: string;
   screenshot?: {
     id: string;
     url: string;
@@ -1700,6 +1701,7 @@ export default function VideoPlayback() {
   // ✅ 修改2：删除模拟数据，改用真实 API 数据
   const [recordingVideos, setRecordingVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
+  const [alarmScreenshots, setAlarmScreenshots] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   
   const [filteredPlaybacks, setFilteredPlaybacks] = useState<SavedPlayback[]>([]);
@@ -1797,16 +1799,19 @@ useEffect(() => {
     setLoadingVideos(true);
     try {
       // ✅ 等两个API都回来才一起更新状态！解决竞态！
-      const [recordings, alarms] = await Promise.all([
+      const [recordings, alarms, screenshots] = await Promise.all([
         getRecordingVideos(deviceToLoad.id, 500),
         getAlarmVideosList(deviceToLoad.id, 120),
+        getAlarmScreenshots(deviceToLoad.id, 120),
       ]);
-      // ✅ 用同一个函数批量更新，避免多次触发
+
       setRecordingVideos(Array.isArray(recordings) ? recordings : []);
       setAlarmVideos(Array.isArray(alarms) ? alarms : []);
+      setAlarmScreenshots(Array.isArray(screenshots) ? screenshots : []);
     } catch (err) {
       setRecordingVideos([]);
       setAlarmVideos([]);
+      setAlarmScreenshots([]);
     } finally {
       setLoadingVideos(false);
     }
@@ -1842,14 +1847,10 @@ useEffect(() => {
       
       // 🚨 优先用真实报警视频（可播放）
       // 🔗 自动解析文件名计算报警在视频里的秒数位置！
-      const screenshotFilenames = [
-        '358_1775532666_6ef48f.jpg',
-        '358_1775532787_d64ab0.jpg',
-        '358_1775533418_9bfca6.jpg',
-        '358_1775533539_94af4c.jpg',
-        '358_1775533681_ec52b3.jpg',
-      ];
-      
+      const screenshotFilenames = alarmScreenshots
+        .map(item => item.name)
+        .filter(Boolean);
+            
       alarmVideos.forEach(video => {
         const duration = video.duration_seconds || 60;
         // ✅ 通过文件名计算：报警在视频里的第几秒
@@ -1881,32 +1882,7 @@ useEffect(() => {
       
       // ✅ 终极兜底：如果报警视频 < 3条（API还没回来或失败）
       // 就补充到至少3条，保证报警Tab永远不为空！
-      const alarmCount = list.filter(x => x.type === 'alarm').length;
-      for (let i = alarmCount; i < 3; i++) {
-        const date = new Date();
-        date.setMinutes(date.getMinutes() - i * 30);
-        const timeStr = date.toISOString();
-        list.push({
-          id: `alarm_fallback_${i}`,
-          deviceId: baseDevice.id,
-          deviceName: baseDevice.name,
-          company: baseDevice.company,
-          project: baseDevice.project,
-          type: 'alarm',
-          startTime: timeStr,
-          endTime: timeStr,
-          duration: 60,
-          filePath: recordingVideos[0] ? toVideoUrl(recordingVideos[0].web_path) : '',
-          createdAt: timeStr,
-          alarmInfo: {
-            type: 'AI检测',
-            msg: '检测到异常行为',
-            score: 0.92,
-            timestamp: timeStr,
-            personnel: '未知',
-          },
-        });
-      }
+      
       
       return list;
     };
@@ -1945,8 +1921,7 @@ useEffect(() => {
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
-  
+  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
  
 
 // ✅ 分页计算 - 放在 useEffect 外面
@@ -2524,7 +2499,7 @@ onShowScreenshot={async (playback) => {
               <div className="flex-1">
                 <div className="rounded-lg overflow-hidden border border-cyan-400/30 bg-black/50">
 <img 
-  src={selectedAlarm.alarmInfo.screenshot?.url || ''}
+  src={selectedAlarm.alarmInfo.screenshot?.url || selectedAlarm.alarmInfo.screenshotUrl || ''}
   alt="告警截图"
   className="w-full h-auto"
   onError={(e) => {

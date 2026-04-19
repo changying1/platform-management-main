@@ -50,7 +50,8 @@ ffmpeg-8.0.1-essentials_build/*
 !ffmpeg-8.0.1-essentials_build/bin/
 ffmpeg-8.0.1-essentials_build/bin/*
 !ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe
-backend/static/alarms/"*.bin" 
+backend/static/*
 *.bin
 *.pt
 *.pth
+backend/LargeLanguageModel/*

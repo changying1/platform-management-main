@@ -4,6 +4,7 @@
   import chinaJson from "../src/assets/china.json";
   import { ProjectMap } from '../src/components/ProjectMap';
   import { deviceApi, ApiDevice } from "../src/api/deviceApi";
+  import { API_BASE_URL } from '../src/api/config';
   import { MenuKey } from '../types';
   import { Users, Shield, Cpu, Activity, MapPin, Bell, Calendar, Clock, Award, Building2, ClipboardList, Smartphone, TrendingUp, Briefcase, ExternalLink, Eye, ArrowRight    } from "lucide-react";// ------------------------------------------------------------------
   // 中国省份到高德/阿里云 DataV 的 Adcode (行政区划代码) 映射
@@ -52,6 +53,10 @@
       (key) => key.startsWith(prov) || prov.startsWith(key)
     );
     return k ? PROVINCE_ADCODE[k] : null;
+  }
+
+  function normalizeArray<T>(value: unknown): T[] {
+    return Array.isArray(value) ? (value as T[]) : [];
   }
 
   // 类型定义
@@ -802,7 +807,7 @@ devicesList: {
 useEffect(() => {
     (async () => {
         try {
-            const baseUrl = 'http://localhost:3001';
+      const baseUrl = API_BASE_URL;
             
             // ========== 基础数据（保留）==========
             const [resProjects, resBranches] = await Promise.all([
@@ -811,20 +816,25 @@ useEffect(() => {
             ]);
 if (resProjects.ok) {
     const data = await resProjects.json();
-    setProjects(data.projects);
-    setTotalWorkers(data.totalWorkers);
-    setAvgDuration(data.avgDuration || 0);
+  const projectList = normalizeArray<ProjectSummary>(data?.projects ?? data);
+  setProjects(projectList);
+  setTotalWorkers(
+    typeof data?.totalWorkers === 'number'
+      ? data.totalWorkers
+      : projectList.reduce((sum, project) => sum + (project.userCount || 0), 0)
+  );
+  setAvgDuration(typeof data?.avgDuration === 'number' ? data.avgDuration : 0);
 }
             if (resBranches.ok) {
                 const data = await resBranches.json();
-                setBranches(data);
+        setBranches(normalizeArray<Branch>(data));
             }
             
             // ========== 设备数据 ==========
             const resDevices = await fetch(`${baseUrl}/api/dashboard/devices`);
             if (resDevices.ok) {
                 const devicesData = await resDevices.json();
-                setDbDevices(devicesData);
+              setDbDevices(normalizeArray<any>(devicesData));
             }
             
 // ========== 告警统计 ==========
@@ -851,7 +861,7 @@ if (selectedProjectId) {
 const resTodayAlarms = await fetch(alarmsUrl);
 if (resTodayAlarms.ok) {
     const todayAlarms = await resTodayAlarms.json();
-    setTodayAlarms(todayAlarms);
+  setTodayAlarms(normalizeArray<any>(todayAlarms));
 }
             
             // ========== 设备分类统计 ==========
@@ -896,7 +906,7 @@ if (selectedProjectId) {
     const resWorkTypes = await fetch(`${baseUrl}/api/dashboard/project/work-types?project_id=${selectedProjectId}`);
     if (resWorkTypes.ok) {
         const data = await resWorkTypes.json();
-        setWorkTypeStats(data);
+    setWorkTypeStats(normalizeArray<any>(data));
     }
 } else {
     setWorkTypeStats([]);

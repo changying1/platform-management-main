@@ -4,6 +4,7 @@ import { Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactDOM from 'react-dom';
 import { addCameraViaRTSP } from '../api/videoApi';
+import { API_BASE_URL } from '../api/config';
 
 interface Camera {
   id: number;
@@ -29,7 +30,7 @@ const [cameras, setCameras] = useState<Camera[]>([]);
 
 const fetchCameras = async () => {
   try {
-    const response = await fetch('http://localhost:3001/api/devices');
+    const response = await fetch(`${API_BASE_URL}/api/devices`);
     const data = await response.json();
     const camerasData = data.map((device: any) => ({
       id: device.id,
@@ -357,7 +358,7 @@ const confirmImport = () => {
 <button 
   onClick={async () => {
     if (confirm('确定删除该摄像头吗？')) {
-      await fetch(`http://localhost:3001/api/devices/camera/${camera.id}`, {
+      await fetch(`${API_BASE_URL}/api/devices/camera/${camera.id}`, {
         method: 'DELETE',
       });
       await fetchCameras();
@@ -567,14 +568,14 @@ const confirmImport = () => {
         
         if (editingItem.id) {
           // 更新
-          await fetch(`http://localhost:3001/api/devices/camera/${editingItem.id}`, {
+          await fetch(`${API_BASE_URL}/api/devices/camera/${editingItem.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           });
         } else {
           // 新增
-          await fetch('http://localhost:3001/api/devices/camera', {
+          await fetch(`${API_BASE_URL}/api/devices/camera`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

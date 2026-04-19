@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from urllib.parse import urlparse
 from app.models.video import VideoDevice
 from app.models.device import Device
+from app.models.alarm_records import AlarmRecord
 from app.schemas.video_schema import VideoCreate, VideoUpdate, CameraCreateRequest
 from app.utils.logger import get_logger
 import requests
@@ -19,9 +20,10 @@ import hashlib
 import base64
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Tuple
 
 RECORDING_PROCESSES = {}
+
 
 # [日志压制]
 def suppress_verbose_logging():
@@ -29,6 +31,7 @@ def suppress_verbose_logging():
         logger = logging.getLogger(logger_name)
         logger.setLevel(logging.CRITICAL)
         logger.propagate = False
+
 
 suppress_verbose_logging()
 
@@ -46,7 +49,7 @@ logger = get_logger("VideoService")
 # --- 配置部分 ---
 NMS_HOST = "http://127.0.0.1:8001"
 NMS_USER = "admin"
-NMS_PASS = "123456" 
+NMS_PASS = "123456"
 NMS_MEDIA_ROOT = os.path.abspath(os.getenv("NMS_MEDIA_ROOT", r"C:\media"))
 
 # --- 全局缓存 ---
@@ -59,7 +62,6 @@ CAMERA_TIME_SYNC_CACHE: Dict[int, float] = {}
 
 # [新增] 全局字典：用于存储正在运行的 FFmpeg 进程 {stream_name: process_object}
 FFMPEG_PROCESSES = {}
-CRUISE_TASKS = {}
 EZVIZ_TOKEN_CACHE: Dict[str, Any] = {"access_token": None, "expire_at": 0.0}
 EZVIZ_TOKEN_LOCK = threading.Lock()
 EZVIZ_PTZ_LAST_DIRECTION: Dict[int, int] = {}
@@ -87,15 +89,383 @@ EZVIZ_DIRECTION_MAP = {
 }
 
 TOKEN_ERROR_CODES = {"10002", "10029", "10030", "10031", "20002"}
+DEFAULT_WEEKLY_QUOTA_GB = float(os.getenv("VIDEO_DEFAULT_WEEKLY_QUOTA_GB", "5"))
+DEFAULT_WEEKLY_QUOTA_BYTES = int(DEFAULT_WEEKLY_QUOTA_GB * 1024 * 1024 * 1024)
+TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_RATIO", "0.2"))
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
 PLAYBACK_ARCHIVE_WINDOW_HOURS = max(1, int(os.getenv("PLAYBACK_ARCHIVE_WINDOW_HOURS", "3")))
-PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS, int(os.getenv("PLAYBACK_ARCHIVE_LOOKBACK_HOURS", "24")))
+PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
+                                      int(os.getenv("PLAYBACK_ARCHIVE_LOOKBACK_HOURS", "24")))
 PERIODIC_ARCHIVE_LAST_RUN_AT: Dict[int, float] = {}
 EZVIZ_PRESET_UNSUPPORTED_DEVICES: Set[int] = set()
+EZVIZ_PRESET_CACHE: Dict[int, list[dict]] = {}
+CRUISE_TASKS: Dict[int, dict] = {}
+CRUISE_TASKS_LOCK = threading.Lock()
 
 class VideoService:
+    def _normalize_flag(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _format_bytes(self, value: int) -> str:
+        size = max(0, int(value or 0))
+        units = ["B", "KB", "MB", "GB", "TB"]
+        display = float(size)
+        unit_index = 0
+        while display >= 1024 and unit_index < len(units) - 1:
+            display /= 1024
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(display)}{units[unit_index]}"
+        return f"{display:.2f}{units[unit_index]}"
+
+    def _get_week_cycle_bounds(self, reference: Optional[datetime] = None) -> Tuple[datetime, datetime]:
+        now = reference or datetime.now()
+        week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        return week_start, now
+
+    def _get_weekly_quota_bytes(self, db_video: VideoDevice) -> int:
+        quota = getattr(db_video, "weekly_quota_bytes", None)
+        if isinstance(quota, int) and quota > 0:
+            return quota
+        if isinstance(quota, float) and quota > 0:
+            return int(quota)
+        return DEFAULT_WEEKLY_QUOTA_BYTES
+
+    def _get_ezviz_device_traffic_bytes(self, db_video: VideoDevice, cycle_start: datetime, cycle_end: datetime) -> Optional[int]:
+        device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
+        if not device_serial:
+            return None
+
+        channel_no = int(getattr(db_video, "channel_no", None) or 1)
+        start_str = cycle_start.strftime("%Y-%m-%d %H:%M:%S")
+        end_str = cycle_end.strftime("%Y-%m-%d %H:%M:%S")
+
+        paths_and_payloads = [
+            (
+                "/api/lapp/device/traffic",
+                {
+                    "deviceSerial": device_serial,
+                    "channelNo": channel_no,
+                    "startTime": start_str,
+                    "endTime": end_str,
+                },
+            ),
+            (
+                "/api/lapp/v2/device/traffic",
+                {
+                    "deviceSerial": device_serial,
+                    "channelNo": channel_no,
+                    "startTime": start_str,
+                    "endTime": end_str,
+                },
+            ),
+            (
+                "/api/lapp/device/traffic/get",
+                {
+                    "deviceSerial": device_serial,
+                    "channelNo": channel_no,
+                    "beginTime": int(cycle_start.timestamp() * 1000),
+                    "endTime": int(cycle_end.timestamp() * 1000),
+                },
+            ),
+            (
+                "/api/lapp/device/usage",
+                {
+                    "deviceSerial": device_serial,
+                    "channelNo": channel_no,
+                    "startTime": start_str,
+                    "endTime": end_str,
+                },
+            ),
+        ]
+
+        for path, payload in paths_and_payloads:
+            try:
+                body = self._call_ezviz_api(path, payload, retry_on_token_error=True)
+                data = body.get("data") or {}
+                traffic_bytes = (
+                    data.get("traffic")
+                    or data.get("flowUsed")
+                    or data.get("used")
+                    or data.get("consumed")
+                    or data.get("bytes")
+                    or data.get("trafficBytes")
+                )
+                if traffic_bytes is not None:
+                    return max(0, int(traffic_bytes))
+            except Exception:
+                continue
+        return None
+
+    def _collect_weekly_recording_usage_bytes(self, video_id: int, cycle_start: datetime, cycle_end: datetime) -> int:
+        device_root = os.path.join(self._get_record_root(), str(video_id))
+        if not os.path.isdir(device_root):
+            return 0
+
+        total = 0
+        for file_path in glob.glob(os.path.join(device_root, "*.mp4")):
+            try:
+                seg_start = self._parse_segment_start(file_path)
+                if seg_start is None:
+                    seg_start = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if seg_start < cycle_start or seg_start >= cycle_end:
+                    continue
+                total += int(os.path.getsize(file_path))
+            except Exception:
+                continue
+        return total
+
+    def _build_device_status_summary(self, db: Session, db_video: VideoDevice) -> dict:
+        raw_status = str(getattr(db_video, "status", "offline") or "offline").strip().lower()
+        sleeping = self._normalize_flag(getattr(db_video, "sleeping", False))
+        if sleeping:
+            main_status = "sleeping"
+        elif raw_status not in {"online", "offline", "sleeping"}:
+            main_status = "offline"
+        else:
+            main_status = raw_status
+
+        privacy_enabled = self._normalize_flag(getattr(db_video, "privacy_enabled", False))
+        storage_abnormal = self._normalize_flag(getattr(db_video, "storage_abnormal", False))
+        low_battery = self._normalize_flag(getattr(db_video, "low_battery", False))
+        weak_signal = self._normalize_flag(getattr(db_video, "weak_signal", False))
+
+        alarm_active = bool(
+            db.query(AlarmRecord)
+            .filter(
+                AlarmRecord.device_id == str(db_video.id),
+                AlarmRecord.status == "pending",
+            )
+            .first()
+        )
+
+        status_tags: list[str] = []
+        if privacy_enabled:
+            status_tags.append("privacy_enabled")
+        if storage_abnormal:
+            status_tags.append("storage_abnormal")
+        if low_battery:
+            status_tags.append("low_battery")
+        if weak_signal:
+            status_tags.append("weak_signal")
+        if alarm_active:
+            status_tags.append("alarm_active")
+
+        is_fault = bool(storage_abnormal or low_battery or weak_signal or alarm_active or main_status == "offline")
+        status_text_map = {
+            "online": "在线",
+            "offline": "离线",
+            "sleeping": "待机/休眠",
+        }
+        status_text_parts = [status_text_map.get(main_status, "离线")]
+        tag_text_map = {
+            "privacy_enabled": "隐私开启",
+            "storage_abnormal": "存储异常",
+            "low_battery": "低电量",
+            "weak_signal": "信号弱",
+            "alarm_active": "异常告警中",
+        }
+        status_text_parts.extend(tag_text_map[tag] for tag in status_tags if tag in tag_text_map)
+
+        return {
+            "main_status": main_status,
+            "privacy_enabled": privacy_enabled,
+            "storage_abnormal": storage_abnormal,
+            "low_battery": low_battery,
+            "weak_signal": weak_signal,
+            "sleeping": sleeping,
+            "alarm_active": alarm_active,
+            "status_tags": status_tags,
+            "is_fault": is_fault,
+            "status_text": "｜".join(status_text_parts),
+        }
+
+    def _sync_single_monitoring_alarm(
+        self,
+        db: Session,
+        db_video: VideoDevice,
+        alarm_type: str,
+        severity: str,
+        description: str,
+        active: bool,
+    ) -> bool:
+        """将监控状态同步为报警记录：active=True 生成待处理报警，False 自动恢复。"""
+        device_id = str(db_video.id)
+        pending_alarm = (
+            db.query(AlarmRecord)
+            .filter(
+                AlarmRecord.device_id == device_id,
+                AlarmRecord.alarm_type == alarm_type,
+                AlarmRecord.status == "pending",
+            )
+            .first()
+        )
+
+        if active:
+            if pending_alarm:
+                return False
+            db.add(
+                AlarmRecord(
+                    device_id=device_id,
+                    alarm_type=alarm_type,
+                    severity=severity,
+                    description=description,
+                    location=db_video.name or f"视频设备-{device_id}",
+                    status="pending",
+                )
+            )
+            return True
+
+        if pending_alarm:
+            pending_alarm.status = "resolved"
+            pending_alarm.handled_at = datetime.utcnow() + timedelta(hours=8)
+            return True
+
+        return False
+
+    def _sync_monitoring_alarms(
+        self,
+        db: Session,
+        db_video: VideoDevice,
+        status_summary: dict,
+        weekly_quota_bytes: int,
+        weekly_used_bytes: int,
+        weekly_remaining_bytes: int,
+    ) -> bool:
+        """根据设备状态与流量阈值同步报警记录。"""
+        changed = False
+
+        alarm_specs = [
+            (
+                "VIDEO_DEVICE_OFFLINE",
+                "high",
+                f"视频设备 {db_video.name} 离线",
+                status_summary.get("main_status") == "offline",
+            ),
+            (
+                "VIDEO_DEVICE_SLEEPING",
+                "low",
+                f"视频设备 {db_video.name} 处于待机/休眠",
+                bool(status_summary.get("sleeping")),
+            ),
+            (
+                "VIDEO_DEVICE_PRIVACY_ENABLED",
+                "low",
+                f"视频设备 {db_video.name} 开启隐私模式",
+                bool(status_summary.get("privacy_enabled")),
+            ),
+            (
+                "VIDEO_DEVICE_STORAGE_ABNORMAL",
+                "high",
+                f"视频设备 {db_video.name} 存储异常",
+                bool(status_summary.get("storage_abnormal")),
+            ),
+            (
+                "VIDEO_DEVICE_LOW_BATTERY",
+                "medium",
+                f"视频设备 {db_video.name} 低电量",
+                bool(status_summary.get("low_battery")),
+            ),
+            (
+                "VIDEO_DEVICE_WEAK_SIGNAL",
+                "medium",
+                f"视频设备 {db_video.name} 信号弱",
+                bool(status_summary.get("weak_signal")),
+            ),
+        ]
+
+        for alarm_type, severity, description, active in alarm_specs:
+            changed = self._sync_single_monitoring_alarm(
+                db=db,
+                db_video=db_video,
+                alarm_type=alarm_type,
+                severity=severity,
+                description=description,
+                active=active,
+            ) or changed
+
+        quota = max(0, int(weekly_quota_bytes or 0))
+        remaining = max(0, int(weekly_remaining_bytes or 0))
+        ratio = (remaining / quota) if quota > 0 else 0.0
+        traffic_low_active = quota > 0 and ratio <= TRAFFIC_ALERT_THRESHOLD_RATIO
+        traffic_desc = (
+            f"视频设备 {db_video.name} 流量低于阈值20%，"
+            f"剩余 {self._format_bytes(remaining)} / 周额度 {self._format_bytes(quota)}，"
+            f"本周已用 {self._format_bytes(weekly_used_bytes)}"
+        )
+        changed = self._sync_single_monitoring_alarm(
+            db=db,
+            db_video=db_video,
+            alarm_type="VIDEO_TRAFFIC_LOW",
+            severity="medium",
+            description=traffic_desc,
+            active=traffic_low_active,
+        ) or changed
+
+        return changed
+
+    def get_monitoring_summary(self, db: Session, video_id: int):
+        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        if not db_video:
+            return None
+
+        now = datetime.now()
+        cycle_start, cycle_end = self._get_week_cycle_bounds(now)
+        weekly_quota_bytes = self._get_weekly_quota_bytes(db_video)
+
+        is_ezviz_cloud = self._is_ezviz_access(db_video)
+        weekly_used_bytes = 0
+        if is_ezviz_cloud:
+            ezviz_traffic = self._get_ezviz_device_traffic_bytes(db_video, cycle_start, cycle_end)
+            if ezviz_traffic is not None:
+                weekly_used_bytes = ezviz_traffic
+            else:
+                weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
+        else:
+            weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
+
+        weekly_remaining_bytes = max(0, weekly_quota_bytes - weekly_used_bytes)
+        status_summary = self._build_device_status_summary(db, db_video)
+        has_alarm_changes = self._sync_monitoring_alarms(
+            db=db,
+            db_video=db_video,
+            status_summary=status_summary,
+            weekly_quota_bytes=weekly_quota_bytes,
+            weekly_used_bytes=weekly_used_bytes,
+            weekly_remaining_bytes=weekly_remaining_bytes,
+        )
+        status_summary = self._build_device_status_summary(db, db_video)
+
+        if has_alarm_changes:
+            try:
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to persist monitoring alarms: {e}")
+
+        return {
+            "device_id": db_video.id,
+            "device_name": db_video.name,
+            "weekly_quota_bytes": weekly_quota_bytes,
+            "weekly_used_bytes": weekly_used_bytes,
+            "weekly_remaining_bytes": weekly_remaining_bytes,
+            "weekly_quota_text": self._format_bytes(weekly_quota_bytes),
+            "weekly_used_text": self._format_bytes(weekly_used_bytes),
+            "weekly_remaining_text": self._format_bytes(weekly_remaining_bytes),
+            "cycle_start_time": cycle_start,
+            "cycle_end_time": cycle_end,
+            "last_calculated_at": now,
+            **status_summary,
+        }
+
     def _get_ezviz_config(self) -> tuple[str, str, str]:
         # 运行时读取环境变量，避免导入时机导致配置值为空。
         base_url = (os.getenv("EZVIZ_BASE_URL") or EZVIZ_BASE_URL or "https://open.ys7.com").rstrip("/")
@@ -118,7 +488,7 @@ class VideoService:
                 if db_video.id in ONVIF_CLIENT_CACHE: del ONVIF_CLIENT_CACHE[db_video.id]
 
         logger.info(f"Connecting to {db_video.ip_address}...")
-        
+
         try:
             base_dir = os.path.dirname(os.path.dirname(__file__))
             root_dir = os.path.dirname(base_dir)
@@ -127,27 +497,27 @@ class VideoService:
                 os.path.join(base_dir, 'wsdl'),
                 os.path.join(os.getcwd(), 'wsdl')
             ]
-            
+
             wsdl_path = None
             for p in possible_paths:
                 if os.path.exists(p) and os.path.isdir(p):
                     wsdl_path = p
                     logger.info(f"Loaded local WSDL from: {p}")
                     break
-            
+
             kwargs = {'no_cache': False}
             if wsdl_path:
                 kwargs['wsdl_dir'] = wsdl_path
 
             camera = ONVIFCamera(
-                db_video.ip_address, db_video.port or 80, 
-                db_video.username, db_video.password, 
+                db_video.ip_address, db_video.port or 80,
+                db_video.username, db_video.password,
                 **kwargs
             )
-            
+
             ONVIF_CLIENT_CACHE[db_video.id] = camera
             return camera, camera.create_ptz_service(), camera.create_media_service()
-            
+
         except Exception as e:
             logger.error(f"Connection Failed: {e}")
             raise ValueError(f"连接失败: {e}")
@@ -267,13 +637,13 @@ class VideoService:
         nonce_raw = os.urandom(16)
         nonce_b64 = base64.b64encode(nonce_raw).decode('utf-8')
         created = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
-        
+
         sha1 = hashlib.sha1()
         sha1.update(nonce_raw)
         sha1.update(created.encode('utf-8'))
         sha1.update(password.encode('utf-8'))
         digest = base64.b64encode(sha1.digest()).decode('utf-8')
-        
+
         return f"""<s:Header>
     <Security s:mustUnderstand="1" xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
         <UsernameToken>
@@ -294,7 +664,7 @@ class VideoService:
             ptz_url = ptz_service.binding.options.get('address')
         if not ptz_url:
             ptz_url = camera.xaddrs.get('http://www.onvif.org/ver20/ptz/wsdl')
-        
+
         if not ptz_url:
             logger.error("No PTZ URL found")
             return False
@@ -366,17 +736,17 @@ class VideoService:
         try:
             camera, ptz, media = self._get_onvif_service(db_video)
             token = self._get_profile_token(media)
-            
+
             logger.info(f"STOPPING {db_video.name} using ODM Raw Mode...")
 
             if self._send_raw_soap_stop(camera, ptz, token, db_video.username, db_video.password):
                 return {"status": "success", "message": "Stopped (ODM Mode)"}
-            
+
             # 兜底
             try:
                 space_uri = "http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace"
                 stop_req = {
-                    'ProfileToken': token, 
+                    'ProfileToken': token,
                     'Velocity': {'PanTilt': {'x': 0.0, 'y': 0.0, 'space': space_uri}}
                 }
                 ptz.ContinuousMove(stop_req)
@@ -415,13 +785,92 @@ class VideoService:
                     'PanTilt': {'x': pan, 'y': tilt},
                     'Zoom': {'x': zoom}
                 },
-                'Timeout': 'PT5S' 
+                'Timeout': 'PT5S'
             }
             ptz.ContinuousMove(request)
             return {"status": "success"}
         except Exception as e:
             if video_id in ONVIF_CLIENT_CACHE: del ONVIF_CLIENT_CACHE[video_id]
             raise ValueError(f"Start failed: {e}")
+
+    def save_current_cruise_config(
+        self,
+        db: Session,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float,
+        rounds: Optional[int],
+    ):
+        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        if not db_video:
+            raise ValueError("Device not found")
+
+        if not preset_tokens or len(preset_tokens) < 2:
+            raise ValueError("巡航至少需要两个预置点")
+
+        available_items = self.list_presets(db, video_id)
+        available = {str(item["token"]) for item in available_items if item.get("token")}
+        if available:
+            missing = [str(token) for token in preset_tokens if str(token) not in available]
+            if missing:
+                raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
+
+        db_video.cruise_preset_tokens_json = json.dumps([str(x) for x in preset_tokens], ensure_ascii=False)
+        db_video.cruise_dwell_seconds = float(dwell_seconds or 8.0)
+        db_video.cruise_rounds = rounds
+
+        db.commit()
+        db.refresh(db_video)
+
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "preset_tokens": [str(x) for x in preset_tokens],
+            "dwell_seconds": float(dwell_seconds or 8.0),
+            "rounds": rounds,
+        }
+
+    def get_current_cruise_config(self, db: Session, video_id: int):
+        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        if not db_video:
+            raise ValueError("Device not found")
+
+        raw_json = getattr(db_video, "cruise_preset_tokens_json", None)
+        dwell_seconds = float(getattr(db_video, "cruise_dwell_seconds", None) or 8.0)
+        rounds = getattr(db_video, "cruise_rounds", None)
+
+        preset_tokens: list[str] = []
+        if raw_json:
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, list):
+                    preset_tokens = [str(x) for x in parsed if str(x).strip()]
+            except Exception:
+                preset_tokens = []
+
+        return {
+            "video_id": video_id,
+            "preset_tokens": preset_tokens,
+            "dwell_seconds": dwell_seconds,
+            "rounds": rounds,
+        }
+
+    def start_current_cruise(self, db: Session, video_id: int):
+        config = self.get_current_cruise_config(db, video_id)
+        preset_tokens = config.get("preset_tokens") or []
+        dwell_seconds = float(config.get("dwell_seconds") or 8.0)
+        rounds = config.get("rounds")
+
+        if len(preset_tokens) < 2:
+            raise ValueError("当前巡航配置为空或预置点数量不足，请先保存巡航路线")
+
+        return self.start_cruise(
+            db=db,
+            video_id=video_id,
+            preset_tokens=preset_tokens,
+            dwell_seconds=dwell_seconds,
+            rounds=rounds,
+        )
 
     def _get_profile_token(self, media_service):
         profiles = media_service.GetProfiles()
@@ -652,8 +1101,13 @@ class VideoService:
         if not device_serial:
             raise ValueError("UPSTREAM_ERROR: 云设备缺少 device_serial")
 
+        # ✅ 强制使用 HLS 而不是 ezopen
+        # if protocol_name == "ezopen":
+        #     preferred_code = 2  # HLS
+        # else:
         preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
         protocol_candidates = [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
+        # protocol_candidates = [preferred_code] + [c for c in [2, 4, 3, 1] if c != preferred_code]
 
         url = ""
         last_error: Optional[Exception] = None
@@ -679,12 +1133,12 @@ class VideoService:
 
             data = body.get("data") or {}
             url = (
-                data.get("url")
-                or data.get("liveAddress")
-                or data.get("hls")
-                or data.get("rtmp")
-                or data.get("ezopen")
-                or ""
+                    data.get("url")
+                    or data.get("liveAddress")
+                    or data.get("hls")
+                    or data.get("rtmp")
+                    or data.get("ezopen")
+                    or ""
             )
             if url:
                 break
@@ -702,6 +1156,12 @@ class VideoService:
             resolved_play_type = "rtmp"
         elif ".flv" in lower_url:
             resolved_play_type = "flv"
+
+        # ✅ 关键：转换 ezopen 为 HLS 地址
+        # if url and url.startswith("ezopen://"):
+        #     url = f"https://open.ys7.com/v3/openlive/{device_serial}_1.m3u8"
+        #     resolved_play_type = "hls"
+        #     logger.info(f"Converted ezopen to HLS for device {device_serial}: {url}")
 
         # 云流场景也要持续落本地分段，供临时缓存/常态回放使用。
         record_entry = RECORDING_PROCESSES.get(db_video.id)
@@ -733,6 +1193,101 @@ class VideoService:
             "access_token": self._get_ezviz_token(force_refresh=False),
         }
 
+    # def _get_stream_info_ezviz(self, db_video: VideoDevice) -> dict:
+    #     protocol_name = self._normalize_stream_protocol(getattr(db_video, "stream_protocol", None))
+    #     channel_no = int(getattr(db_video, "channel_no", None) or 1)
+    #     device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
+    #     if not device_serial:
+    #         raise ValueError("UPSTREAM_ERROR: 云设备缺少 device_serial")
+    #
+    #     if protocol_name == "ezopen":
+    #         preferred_code = 2  # 强制使用 HLS 而不是 ezopen
+    #     else:
+    #         preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
+    #
+    #     protocol_candidates = [preferred_code] + [c for c in [2, 4, 3, 1] if c != preferred_code]
+    #
+    #     # preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
+    #     # protocol_candidates = [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
+    #
+    #     url = ""
+    #     last_error: Optional[Exception] = None
+    #     for protocol_code in protocol_candidates:
+    #         payload = {
+    #             "deviceSerial": device_serial,
+    #             "channelNo": channel_no,
+    #             "protocol": protocol_code,
+    #             "expireTime": 3600,
+    #         }
+    #
+    #         body = None
+    #         paths = ["/api/lapp/live/address/get", "/api/lapp/v2/live/address/get"]
+    #         for path in paths:
+    #             try:
+    #                 body = self._call_ezviz_api(path, payload)
+    #                 break
+    #             except Exception as e:
+    #                 last_error = e
+    #
+    #         if body is None:
+    #             continue
+    #
+    #         data = body.get("data") or {}
+    #         url = (
+    #             data.get("url")
+    #             or data.get("liveAddress")
+    #             or data.get("hls")
+    #             or data.get("rtmp")
+    #             or data.get("ezopen")
+    #             or ""
+    #         )
+    #         if url:
+    #             break
+    #
+    #     if not url:
+    #         raise last_error or ValueError("UPSTREAM_ERROR: 平台未返回可用播放地址")
+    #
+    #     lower_url = str(url).lower()
+    #     resolved_play_type = protocol_name
+    #     if lower_url.startswith("ezopen://"):
+    #         resolved_play_type = "ezopen"
+    #     elif ".m3u8" in lower_url:
+    #         resolved_play_type = "hls"
+    #     elif lower_url.startswith("rtmp"):
+    #         resolved_play_type = "rtmp"
+    #     elif ".flv" in lower_url:
+    #         resolved_play_type = "flv"
+    #
+    #     # 云流场景也要持续落本地分段，供临时缓存/常态回放使用。
+    #     record_entry = RECORDING_PROCESSES.get(db_video.id)
+    #     record_running = False
+    #     if isinstance(record_entry, dict):
+    #         record_proc = record_entry.get("process")
+    #         if record_proc is not None:
+    #             try:
+    #                 record_running = record_proc.poll() is None
+    #             except Exception:
+    #                 record_running = False
+    #     elif record_entry is not None:
+    #         try:
+    #             record_running = record_entry.poll() is None
+    #         except Exception:
+    #             record_running = False
+    #
+    #     if not record_running:
+    #         record_source = self._get_record_source_for_device(db_video)
+    #         if record_source:
+    #             self.start_ffmpeg_recording(db_video.id, record_source)
+    #
+    #     return {
+    #         "url": url,
+    #         "play_type": resolved_play_type,
+    #         "platform": "ezviz",
+    #         "device_serial": device_serial,
+    #         "channel_no": channel_no,
+    #         "access_token": self._get_ezviz_token(force_refresh=False),
+    #     }
+
     def _ezviz_ptz_start(self, db_video: VideoDevice, direction: str, speed: float = 0.5):
         direction_code = EZVIZ_DIRECTION_MAP.get(direction)
         if direction_code is None:
@@ -757,24 +1312,36 @@ class VideoService:
     def _ezviz_ptz_stop(self, db_video: VideoDevice):
         now = time.time()
         last_stop_at = EZVIZ_PTZ_LAST_STOP_AT.get(db_video.id, 0.0)
-        if now - last_stop_at < 0.35:
+        if now - last_stop_at < 0.2:
             return {"status": "skipped", "message": "duplicate stop suppressed"}
         EZVIZ_PTZ_LAST_STOP_AT[db_video.id] = now
 
-        payload = {
+        channel_no = int(getattr(db_video, "channel_no", None) or 1)
+        base_payload = {
             "deviceSerial": db_video.device_serial,
-            "channelNo": int(getattr(db_video, "channel_no", None) or 1),
+            "channelNo": channel_no,
         }
-        last_direction = EZVIZ_PTZ_LAST_DIRECTION.get(db_video.id)
-        if last_direction is not None:
-            payload["direction"] = last_direction
+
+        # 先尝试不带 direction（萤石部分机型 stop 要求仅 serial+channel）
         try:
-            self._call_ezviz_api("/api/lapp/device/ptz/stop", payload)
+            self._call_ezviz_api("/api/lapp/device/ptz/stop", dict(base_payload))
             return {"status": "success"}
-        except Exception as e:
-            # Stop 属于幂等操作，平台超时场景下按降级成功处理，避免前端长按/松开持续报错。
-            logger.warning(f"EZVIZ PTZ stop degraded for video_id={db_video.id}: {e}")
-            return {"status": "degraded", "message": str(e)}
+        except Exception as first_error:
+            last_direction = EZVIZ_PTZ_LAST_DIRECTION.get(db_video.id)
+            if last_direction is not None:
+                payload_with_dir = dict(base_payload)
+                payload_with_dir["direction"] = last_direction
+                try:
+                    self._call_ezviz_api("/api/lapp/device/ptz/stop", payload_with_dir)
+                    return {"status": "success"}
+                except Exception as second_error:
+                    logger.warning(
+                        f"EZVIZ PTZ stop failed video_id={db_video.id}, first={first_error}, second={second_error}"
+                    )
+                    raise ValueError(f"PTZ_STOP_FAILED: {second_error}")
+
+            logger.warning(f"EZVIZ PTZ stop failed video_id={db_video.id}: {first_error}")
+            raise ValueError(f"PTZ_STOP_FAILED: {first_error}")
 
     def get_stream_info(self, db: Session, video_id: int):
         db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
@@ -799,24 +1366,39 @@ class VideoService:
             raise ValueError("Device not found")
 
         if self._is_ezviz_ptz(db_video):
-            if video_id in EZVIZ_PRESET_UNSUPPORTED_DEVICES:
-                return []
             try:
                 payload = {
                     "deviceSerial": db_video.device_serial,
                     "channelNo": int(getattr(db_video, "channel_no", None) or 1),
                 }
                 body = None
+                last_error = None
                 for path in ["/api/lapp/device/preset/list", "/api/lapp/v2/device/preset/list"]:
                     try:
                         body = self._call_ezviz_api(path, payload)
                         break
-                    except Exception:
+                    except Exception as e:
+                        last_error = e
                         body = None
+
                 if body is None:
-                    EZVIZ_PRESET_UNSUPPORTED_DEVICES.add(video_id)
-                    logger.info(f"EZVIZ presets unsupported or unavailable for video_id={video_id}, skip preset polling")
+                    cached = EZVIZ_PRESET_CACHE.get(video_id, [])
+                    if cached:
+                        logger.warning(
+                            f"EZVIZ list presets fallback to cache for video_id={video_id}: {last_error}"
+                        )
+                        return cached
+
+                    if video_id in EZVIZ_PRESET_UNSUPPORTED_DEVICES:
+                        return []
+
+                    if "404" in str(last_error or ""):
+                        EZVIZ_PRESET_UNSUPPORTED_DEVICES.add(video_id)
+                        logger.info(f"EZVIZ presets unsupported for video_id={video_id}, skip preset polling")
+                    else:
+                        logger.warning(f"EZVIZ list presets failed for video_id={video_id}: {last_error}")
                     return []
+
                 data = body.get("data") or []
                 result = []
                 for item in data:
@@ -827,8 +1409,15 @@ class VideoService:
                         "token": token,
                         "name": str(item.get("name") or item.get("presetName") or f"Preset-{token}"),
                     })
+
+                if result:
+                    EZVIZ_PRESET_CACHE[video_id] = result
                 return result
             except Exception as e:
+                cached = EZVIZ_PRESET_CACHE.get(video_id, [])
+                if cached:
+                    logger.warning(f"EZVIZ list presets exception fallback cache video_id={video_id}: {e}")
+                    return cached
                 if "404" in str(e):
                     EZVIZ_PRESET_UNSUPPORTED_DEVICES.add(video_id)
                     logger.info(f"EZVIZ presets unsupported for video_id={video_id}, skip preset polling")
@@ -857,6 +1446,7 @@ class VideoService:
         if not db_video:
             raise ValueError("Device not found")
 
+        # 萤石云设备处理
         if self._is_ezviz_ptz(db_video):
             payload = {
                 "deviceSerial": db_video.device_serial,
@@ -864,31 +1454,100 @@ class VideoService:
             }
             if name:
                 payload["name"] = name
-            if preset_token:
-                payload["index"] = preset_token
+
+            print("=" * 50)
+            print("调用萤石云添加预置点")
+            print(f"Payload: {payload}")
+            # ✅ 修改：创建新预置点时不传 index（preset_token）
+            # if preset_token:
+            #     payload["index"] = preset_token
             body = self._call_ezviz_api("/api/lapp/device/preset/add", payload)
+
+            print(f"萤石云响应: {body}")
+            print(f"响应 code: {body.get('code')}")
+            print(f"响应 msg: {body.get('msg')}")
+            print(f"响应 data: {body.get('data')}")
+            print("=" * 50)
             data = body.get("data") or {}
-            token = str(data.get("index") or data.get("presetIndex") or preset_token or "")
-            return {
+            token = str(data.get("index") or data.get("presetIndex") or "")
+            created = {
                 "token": token,
                 "name": name or f"Preset-{token}",
             }
+            if token:
+                existing = EZVIZ_PRESET_CACHE.get(video_id, [])
+                exists = any(str(item.get("token")) == token for item in existing)
+                EZVIZ_PRESET_CACHE[video_id] = (
+                    [created, *existing] if not exists else [created if str(item.get("token")) == token else item for item in existing]
+                )
+            if video_id in EZVIZ_PRESET_UNSUPPORTED_DEVICES:
+                EZVIZ_PRESET_UNSUPPORTED_DEVICES.discard(video_id)
+            return created
 
+        # ONVIF 设备处理
         _, _, ptz, _, token = self._create_ptz_and_media(db, video_id)
+
+        # ✅ 修改：创建预置点时只传 ProfileToken 和 PresetName
+        # 绝对不要传 PresetToken！
         req = {'ProfileToken': token}
         if name:
             req['PresetName'] = name
-        if preset_token:
-            req['PresetToken'] = preset_token
+
+        # ❌ 删除下面这几行！创建新预置点不能传 PresetToken
+        # if preset_token:
+        #     req['PresetToken'] = preset_token
 
         try:
+            # SetPreset 返回摄像头生成的 PresetToken
             created_token = ptz.SetPreset(req)
+
+            # ✅ 修改：确保返回有效的 token
+            if not created_token:
+                raise ValueError("摄像头未返回预置点 token")
+
             return {
-                "token": str(created_token or preset_token or ''),
+                "token": str(created_token),  # 只使用摄像头返回的 token
                 "name": name or f"Preset-{created_token}"
             }
         except Exception as e:
             raise ValueError(f"创建预置点失败: {e}")
+    # def set_preset(self, db: Session, video_id: int, name: Optional[str] = None, preset_token: Optional[str] = None):
+    #     db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+    #     if not db_video:
+    #         raise ValueError("Device not found")
+    #
+    #     if self._is_ezviz_ptz(db_video):
+    #         payload = {
+    #             "deviceSerial": db_video.device_serial,
+    #             "channelNo": int(getattr(db_video, "channel_no", None) or 1),
+    #         }
+    #         if name:
+    #             payload["name"] = name
+    #         if preset_token:
+    #             payload["index"] = preset_token
+    #         body = self._call_ezviz_api("/api/lapp/device/preset/add", payload)
+    #         data = body.get("data") or {}
+    #         token = str(data.get("index") or data.get("presetIndex") or preset_token or "")
+    #         return {
+    #             "token": token,
+    #             "name": name or f"Preset-{token}",
+    #         }
+    #
+    #     _, _, ptz, _, token = self._create_ptz_and_media(db, video_id)
+    #     req = {'ProfileToken': token}
+    #     if name:
+    #         req['PresetName'] = name
+    #     if preset_token:
+    #         req['PresetToken'] = preset_token
+    #
+    #     try:
+    #         created_token = ptz.SetPreset(req)
+    #         return {
+    #             "token": str(created_token or preset_token or ''),
+    #             "name": name or f"Preset-{created_token}"
+    #         }
+    #     except Exception as e:
+    #         raise ValueError(f"创建预置点失败: {e}")
 
     def goto_preset(self, db: Session, video_id: int, preset_token: str, speed: float = 0.5):
         db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
@@ -931,6 +1590,8 @@ class VideoService:
                 "index": preset_token,
             }
             self._call_ezviz_api("/api/lapp/device/preset/clear", payload)
+            existing = EZVIZ_PRESET_CACHE.get(video_id, [])
+            EZVIZ_PRESET_CACHE[video_id] = [item for item in existing if str(item.get("token")) != str(preset_token)]
             return {"status": "success"}
 
         _, _, ptz, _, token = self._create_ptz_and_media(db, video_id)
@@ -993,19 +1654,37 @@ class VideoService:
             "failed_tokens": failed_tokens,
         }
 
-    def _cruise_worker(self, db_factory, video_id: int, preset_tokens: list[str], dwell_seconds: float, rounds: Optional[int], stop_event: threading.Event):
+    def _cruise_worker(
+        self,
+        db_factory,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float,
+        rounds: Optional[int],
+        stop_event: threading.Event,
+    ):
         db = db_factory()
         completed_rounds = 0
+        current_index = 0
+
         try:
             while not stop_event.is_set():
-                for preset in preset_tokens:
+                for idx, preset in enumerate(preset_tokens):
                     if stop_event.is_set():
                         return
+
+                    with CRUISE_TASKS_LOCK:
+                        task = CRUISE_TASKS.get(video_id)
+                        if task:
+                            task["current_index"] = idx
+                            task["current_round"] = completed_rounds + 1
+
                     try:
                         self.goto_preset(db, video_id, preset)
                     except Exception as e:
                         logger.warning(f"巡航跳转失败 video_id={video_id}, preset={preset}: {e}")
 
+                    current_index = idx
                     if stop_event.wait(timeout=dwell_seconds):
                         return
 
@@ -1014,11 +1693,19 @@ class VideoService:
                     return
         finally:
             db.close()
-            task = CRUISE_TASKS.get(video_id)
-            if task and task.get("stop") is stop_event:
-                CRUISE_TASKS.pop(video_id, None)
+            with CRUISE_TASKS_LOCK:
+                task = CRUISE_TASKS.get(video_id)
+                if task and task.get("stop") is stop_event:
+                    CRUISE_TASKS.pop(video_id, None)
 
-    def start_cruise(self, db: Session, video_id: int, preset_tokens: list[str], dwell_seconds: float = 8.0, rounds: Optional[int] = None):
+    def start_cruise(
+        self,
+        db: Session,
+        video_id: int,
+        preset_tokens: list[str],
+        dwell_seconds: float = 8.0,
+        rounds: Optional[int] = None,
+    ):
         if len(preset_tokens) < 2:
             raise ValueError("巡航至少需要两个预置点")
 
@@ -1027,9 +1714,9 @@ class VideoService:
             raise ValueError("Device not found")
 
         available_items = self.list_presets(db, video_id)
-        available = {item["token"] for item in available_items}
+        available = {str(item["token"]) for item in available_items if item.get("token")}
         if available:
-            missing = [token for token in preset_tokens if token not in available]
+            missing = [str(token) for token in preset_tokens if str(token) not in available]
             if missing:
                 raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
         elif not self._is_ezviz_ptz(db_video):
@@ -1045,43 +1732,76 @@ class VideoService:
         stop_event = threading.Event()
         thread = threading.Thread(
             target=self._cruise_worker,
-            args=(SessionLocal, video_id, preset_tokens, dwell_seconds, rounds, stop_event),
-            daemon=True
+            args=(SessionLocal, video_id, [str(x) for x in preset_tokens], float(dwell_seconds or 8.0), rounds, stop_event),
+            daemon=True,
         )
-        CRUISE_TASKS[video_id] = {
-            "thread": thread,
-            "stop": stop_event,
-            "presets": list(preset_tokens),
-            "dwell_seconds": dwell_seconds,
-            "rounds": rounds,
-        }
+
+        with CRUISE_TASKS_LOCK:
+            CRUISE_TASKS[video_id] = {
+                "thread": thread,
+                "stop": stop_event,
+                "presets": [str(x) for x in preset_tokens],
+                "dwell_seconds": float(dwell_seconds or 8.0),
+                "rounds": rounds,
+                "current_index": 0,
+                "current_round": 0,
+            }
+
         thread.start()
-        return {"status": "success"}
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "running": True,
+        }
 
     def stop_cruise(self, video_id: int):
-        task = CRUISE_TASKS.get(video_id)
-        if not task:
-            return {"status": "idle"}
+        with CRUISE_TASKS_LOCK:
+            task = CRUISE_TASKS.get(video_id)
+            if not task:
+                return {
+                    "status": "idle",
+                    "video_id": video_id,
+                    "running": False,
+                }
 
-        stop_event = task.get("stop")
-        if stop_event:
-            stop_event.set()
-        CRUISE_TASKS.pop(video_id, None)
-        return {"status": "success"}
+            stop_event = task.get("stop")
+            if stop_event:
+                stop_event.set()
+
+            CRUISE_TASKS.pop(video_id, None)
+
+        return {
+            "status": "success",
+            "video_id": video_id,
+            "running": False,
+        }
 
     def get_cruise_status(self, video_id: int):
-        task = CRUISE_TASKS.get(video_id)
-        if not task:
-            return {"running": False}
+        with CRUISE_TASKS_LOCK:
+            task = CRUISE_TASKS.get(video_id)
+            if not task:
+                return {
+                    "video_id": video_id,
+                    "running": False,
+                    "preset_tokens": [],
+                    "dwell_seconds": None,
+                    "rounds": None,
+                    "current_index": None,
+                    "current_round": None,
+                }
 
-        thread = task.get("thread")
-        running = bool(thread and thread.is_alive())
-        return {
-            "running": running,
-            "preset_tokens": task.get("presets", []),
-            "dwell_seconds": task.get("dwell_seconds", 8.0),
-            "rounds": task.get("rounds"),
-        }
+            thread = task.get("thread")
+            running = bool(thread and thread.is_alive())
+
+            return {
+                "video_id": video_id,
+                "running": running,
+                "preset_tokens": task.get("presets", []),
+                "dwell_seconds": task.get("dwell_seconds", 8.0),
+                "rounds": task.get("rounds"),
+                "current_index": task.get("current_index"),
+                "current_round": task.get("current_round"),
+            }
 
     # -------------------------------------------------------------------------
     # 核心业务: 添加/删除/更新
@@ -1133,7 +1853,7 @@ class VideoService:
         new_video.stream_url = flv_url
         db.commit()
         db.refresh(new_video)
-        
+
         self.start_ffmpeg_recording(new_video.id, camera_data.rtsp_url)
         return new_video
 
@@ -1154,7 +1874,7 @@ class VideoService:
         db.commit()
         db.refresh(new_video)
         return new_video
-    
+
     def get_videos(self, db: Session, skip: int = 0, limit: int = 100):
         return db.query(VideoDevice).offset(skip).limit(limit).all()
 
@@ -1183,6 +1903,7 @@ class VideoService:
             stream_name = str(db_video.id)
             self.stop_ffmpeg_stream(stream_name)
             self.stop_ffmpeg_recording(video_id)
+            self.stop_cruise(video_id)
 
             db.delete(db_video)
             db.commit()
@@ -1200,7 +1921,7 @@ class VideoService:
         if not stream_info:
             return None
         return stream_info.get("url")
-        
+
     def ptz_move(self, db: Session, video_id: int, direction: str, speed: float = 0.5, duration: float = 0.5):
         try:
             self.ptz_start_move(db, video_id, direction, speed)
@@ -1235,7 +1956,7 @@ class VideoService:
 
         ffmpeg_path = self._get_ffmpeg_path()
         rtmp_url = f"rtmp://127.0.0.1:19350/live/{stream_name}"
-        
+
         # V4 完美配置
         command = [
             ffmpeg_path, "-y",
@@ -1254,27 +1975,27 @@ class VideoService:
         ]
 
         logger.info(f"Starting FFmpeg Stream for {stream_name}...")
-        
+
         try:
             # [修改关键点] 隐藏 CMD 窗口
             startupinfo = None
             creationflags = 0
-            
+
             if os.name == 'nt':
                 # Windows 下使用 CREATE_NO_WINDOW (0x08000000) 彻底隐藏
-                creationflags = 0x08000000 
+                creationflags = 0x08000000
 
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.DEVNULL, 
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=creationflags
             )
-            
+
             # [新增] 存入全局字典
             FFMPEG_PROCESSES[stream_name] = process
             logger.info(f"Stream {stream_name} started (PID: {process.pid})")
-            
+
             return process
         except Exception as e:
             logger.error(f"FFmpeg start failed: {e}")
@@ -1290,7 +2011,7 @@ class VideoService:
         if process:
             try:
                 logger.info(f"Stopping FFmpeg for {stream_name} (PID: {process.pid})...")
-                process.terminate() # 尝试温和关闭
+                process.terminate()  # 尝试温和关闭
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
@@ -1308,9 +2029,10 @@ class VideoService:
 
     def _get_ffmpeg_path(self) -> str:
         return os.getenv(
-            "FFMPEG_PATH", 
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..", "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe")
-            )
+            "FFMPEG_PATH",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "..",
+                         "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe")
+        )
 
     def _get_ffprobe_path(self) -> str:
         ffmpeg_path = self._get_ffmpeg_path()
@@ -1383,20 +2105,21 @@ class VideoService:
 
             data = body.get("data") or {}
             url = (
-                data.get("url")
-                or data.get("liveAddress")
-                or data.get("flv")
-                or data.get("hls")
-                or data.get("rtmp")
-                or data.get("ezopen")
-                or ""
+                    data.get("url")
+                    or data.get("liveAddress")
+                    or data.get("flv")
+                    or data.get("hls")
+                    or data.get("rtmp")
+                    or data.get("ezopen")
+                    or ""
             )
             lower_url = str(url).lower()
             if not url:
                 continue
             if lower_url.startswith("ezopen://"):
                 continue
-            if lower_url.startswith("http://") or lower_url.startswith("https://") or lower_url.startswith("rtmp://") or lower_url.startswith("rtsp://"):
+            if lower_url.startswith("http://") or lower_url.startswith("https://") or lower_url.startswith(
+                    "rtmp://") or lower_url.startswith("rtsp://"):
                 return str(url)
 
         return None
@@ -1529,7 +2252,8 @@ class VideoService:
             # 避免把仍在写入中的当前分段加入 concat。
             seg_start = self._parse_segment_start(file_path)
             if seg_start:
-                if (datetime.now() - seg_start).total_seconds() < (RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                if (datetime.now() - seg_start).total_seconds() < (
+                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
                     return False
 
             stat = os.stat(file_path)
@@ -1621,7 +2345,8 @@ class VideoService:
         rel_path = os.path.relpath(abs_file_path, static_root)
         return "/static/" + rel_path.replace("\\", "/")
 
-    def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[tuple[str, datetime, datetime]]:
+    def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
+        tuple[str, datetime, datetime]]:
         record_root = self._get_record_root()
         device_root = os.path.join(record_root, str(video_id))
         if not os.path.isdir(device_root):
@@ -1732,7 +2457,8 @@ class VideoService:
 
         return segments
 
-    def save_playback_clip(self, video_id: int, start_time: datetime | str, end_time: datetime | str, output_type: str = "playback", filename_prefix: Optional[str] = None):
+    def save_playback_clip(self, video_id: int, start_time: datetime | str, end_time: datetime | str,
+                           output_type: str = "playback", filename_prefix: Optional[str] = None):
         start_dt = self._parse_datetime_input(start_time)
         end_dt = self._parse_datetime_input(end_time)
         if end_dt <= start_dt:
@@ -1950,3 +2676,174 @@ class VideoService:
 
     def list_temp_cache_videos(self, video_id: int, limit: int = 30) -> list[dict]:
         return self._list_saved_videos(self._get_temp_playback_root(), video_id, limit)
+
+    def _get_alarm_screenshot_root(self) -> str:
+        """获取告警截图根目录"""
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        alarm_screenshot_root = os.path.join(base_dir, "static", "alarms")
+        os.makedirs(alarm_screenshot_root, exist_ok=True)
+        return alarm_screenshot_root
+
+    def list_recording_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
+        """
+        获取指定视频设备的录制视频列表（直接从录制目录）
+        用于"常规监控回放"
+        """
+        record_root = self._get_record_root()
+        device_root = os.path.join(record_root, str(video_id))
+        
+        if not os.path.isdir(device_root):
+            return []
+
+        clips: list[dict] = []
+        sort_reverse = sort_order.lower() == "desc"
+        
+        for file_path in sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=sort_reverse):
+            file_name = os.path.basename(file_path)
+            
+            try:
+                if not self._is_segment_usable(file_path):
+                    continue
+
+                stat = os.stat(file_path)
+                seg_start = self._parse_segment_start(file_path)
+                updated_at = datetime.fromtimestamp(stat.st_mtime)
+                if seg_start:
+                    updated_at = seg_start
+
+                clips.append({
+                    "name": file_name,
+                    "size_bytes": int(stat.st_size),
+                    "updated_at": updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "web_path": self._to_static_web_path(file_path),
+                    "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
+                })
+            except Exception:
+                continue
+
+            if len(clips) >= max(1, min(limit, 500)):
+                break
+
+        return clips
+
+    def list_alarm_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
+        """
+        获取指定视频设备的报警录制视频列表。
+
+        优先直接读取 static/alarm_videos 中由 save_playback_clip 生成的报警视频；
+        若历史数据尚未落盘到该目录，则回退到旧逻辑：通过 static/alarms 的截图和
+        static/recordings 的常规录像反推报警视频。
+        用于"报警监控回放"
+        """
+        alarm_root = self._get_alarm_video_root()
+        clips = self._list_saved_videos(alarm_root, video_id, limit)
+
+        if clips:
+            if sort_order.lower() == "asc":
+                clips.reverse()
+            return clips
+
+        alarm_screenshot_root = self._get_alarm_screenshot_root()
+        record_dir = os.path.join(self._get_record_root(), str(video_id))
+
+        if not os.path.isdir(alarm_screenshot_root):
+            return []
+
+        sort_reverse = sort_order.lower() == "desc"
+        video_id_str = str(video_id)
+
+        # 预加载常态录像的文件信息（加速匹配）
+        record_files = []
+        if os.path.isdir(record_dir):
+            for rp in glob.glob(os.path.join(record_dir, "*.mp4")):
+                try:
+                    name = os.path.basename(rp)
+                    time_str = name.split(".")[0]
+                    dt = datetime.strptime(time_str, "%Y%m%d_%H%M%S")
+                    record_files.append((dt.timestamp(), rp))
+                except Exception:
+                    pass
+            record_files.sort(key=lambda x: x[0])
+
+        fallback_clips: list[dict] = []
+        for file_path in sorted(glob.glob(os.path.join(alarm_screenshot_root, "*.jpg")), reverse=sort_reverse):
+            file_name = os.path.basename(file_path)
+            if f"_{video_id_str}_" not in file_name and not file_name.startswith(f"{video_id_str}_"):
+                continue
+
+            try:
+                parts = file_name.split("_")
+                if len(parts) >= 2 and parts[1].isdigit():
+                    ts = float(parts[1])
+                else:
+                    ts = os.stat(file_path).st_mtime
+
+                alarm_dt = datetime.fromtimestamp(ts)
+
+                best_video_path = None
+                best_diff = float("inf")
+
+                for r_ts, rp in record_files:
+                    if r_ts <= ts < r_ts + 60:
+                        best_video_path = rp
+                        break
+                    if 0 <= ts - r_ts < best_diff:
+                        best_diff = ts - r_ts
+                        best_video_path = rp
+
+                if best_video_path:
+                    v_stat = os.stat(best_video_path)
+                    v_name = os.path.basename(best_video_path)
+                    fallback_clips.append({
+                        "name": f"alarm_{v_name}",
+                        "size_bytes": int(v_stat.st_size),
+                        "updated_at": alarm_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                        "web_path": self._to_static_web_path(best_video_path),
+                        "duration_text": self._format_bytes(v_stat.st_size) if v_stat.st_size < 1024 * 1024 else f"{v_stat.st_size / (1024 * 1024):.2f}MB",
+                        "thumbnail": self._to_static_web_path(file_path),
+                    })
+            except Exception:
+                continue
+
+            if len(fallback_clips) >= max(1, min(limit, 500)):
+                break
+
+        return fallback_clips
+
+    def list_alarm_screenshots(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
+        """
+        获取指定视频设备的告警截图列表
+        用于"告警截图"
+        """
+        alarm_root = self._get_alarm_screenshot_root()
+        
+        if not os.path.isdir(alarm_root):
+            return []
+
+        screenshots: list[dict] = []
+        sort_reverse = sort_order.lower() == "desc"
+        video_id_str = str(video_id)
+        
+        for file_path in sorted(glob.glob(os.path.join(alarm_root, "*.jpg")), reverse=sort_reverse):
+            file_name = os.path.basename(file_path)
+            # 筛选匹配该设备的告警截图 (文件名格式: 358_*.jpg)
+            if not file_name.startswith(f"{video_id_str}_"):
+                continue
+            
+            try:
+                stat = os.stat(file_path)
+                screenshots.append({
+                    "name": file_name,
+                    "size_bytes": int(stat.st_size),
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "web_path": self._to_static_web_path(file_path),
+                    "thumbnail_path": self._to_static_web_path(file_path),  # JPG可直接用作缩略图
+                })
+            except Exception:
+                continue
+
+            if len(screenshots) >= max(1, min(limit, 500)):
+                break
+
+        return screenshots
+
