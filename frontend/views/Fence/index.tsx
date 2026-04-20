@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2 } from "lucide-react";
+import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause } from "lucide-react";
 import { useFenceManager } from "./hooks/useFenceManager";
 import { useFenceMap } from "./hooks/useFenceMap";
 import { FenceSidebar } from "./components/FenceSidebar";
@@ -9,9 +9,18 @@ import { FenceAddModal } from "./components/FenceAddModal";
 import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
+import { TrajectoryPlayback } from "./components/TrajectoryPlayback";
 import { FenceData, FenceDevice } from "./types";
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
+
+interface TrajectoryPoint {
+  lat: number;
+  lng: number;
+  timestamp: string;
+  speed?: number;
+  direction?: number;
+}
 
 interface AlarmRecord {
   id: string;
@@ -48,6 +57,14 @@ export default function FenceManagement() {
   const [tempShape, setTempShape] = useState<any>({});
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState<[number, number] | null>(null);
+  const [showTrajectoryPlayback, setShowTrajectoryPlayback] = useState(false);
+  const [playbackTrajectory, setPlaybackTrajectory] = useState<TrajectoryPoint[]>([]);
+  const [playbackDeviceId, setPlaybackDeviceId] = useState<string | null>(null);
+  const [hasAutoFit, setHasAutoFit] = useState(false);
+  const [isPlayingTrajectory, setIsPlayingTrajectory] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentPointIndex, setCurrentPointIndex] = useState(0);
+  const [movingMarker, setMovingMarker] = useState<any>(null);
 
 const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceData; type: string }) => {
   const newAlarm: AlarmRecord = {
@@ -373,7 +390,7 @@ renderFences(
   renderDevices(devices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
     updateDevicePosition(deviceId, latitude, longitude);
   });
-  
+
 renderDraft(
   activeDrawTool,
   tempPoints,
@@ -382,7 +399,119 @@ renderDraft(
   // 🔒 画笔工具绝对不传鼠标！只有多边形才需要跟随线！
   activeDrawTool === 'polygon' ? mouseLngLat : null
 );
-}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, devices, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData]);
+
+// 渲染轨迹回放
+if (playbackTrajectory.length > 0 && mapRef.current) {
+  const AMap = window.AMap;
+  const map = mapRef.current;
+
+  // 清除之前的轨迹
+  if ((map as any)._trajectoryOverlays) {
+    (map as any)._trajectoryOverlays.forEach((overlay: any) => map.remove(overlay));
+  }
+  (map as any)._trajectoryOverlays = [];
+
+  const path = playbackTrajectory.map((p) => [p.lng, p.lat]);
+
+  // 轨迹线
+  const polyline = new AMap.Polyline({
+    path: path,
+    strokeColor: '#3b82f6',
+    strokeWeight: 4,
+    strokeOpacity: 0.8,
+    showDir: true,
+  });
+  map.add(polyline);
+  (map as any)._trajectoryOverlays.push(polyline);
+
+  // 起点标记
+  const startPoint = playbackTrajectory[0];
+  const startMarker = new AMap.Marker({
+    position: [startPoint.lng, startPoint.lat],
+    content: `<div style="width: 24px; height: 24px; background: #22c55e; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">始</div>`,
+    offset: new AMap.Pixel(-12, -12),
+  });
+  map.add(startMarker);
+  (map as any)._trajectoryOverlays.push(startMarker);
+
+  // 终点标记
+  const endPoint = playbackTrajectory[playbackTrajectory.length - 1];
+  const endMarker = new AMap.Marker({
+    position: [endPoint.lng, endPoint.lat],
+    content: `<div style="width: 24px; height: 24px; background: #ef4444; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">终</div>`,
+    offset: new AMap.Pixel(-12, -12),
+  });
+  map.add(endMarker);
+  (map as any)._trajectoryOverlays.push(endMarker);
+
+  // 自适应视图 - 只在第一次加载时执行
+  if (!hasAutoFit) {
+    map.setFitView([polyline, startMarker, endMarker], false, [50, 50, 50, 50]);
+    setHasAutoFit(true);
+  }
+}
+}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, devices, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, playbackTrajectory]);
+
+// 轨迹播放动画
+useEffect(() => {
+  if (!isPlaying || !mapRef.current || playbackTrajectory.length === 0) return;
+
+  const map = mapRef.current;
+  const AMap = window.AMap;
+
+  // 创建移动标记（如果不存在）
+  if (!movingMarker && playbackTrajectory.length > 0) {
+    const startPoint = playbackTrajectory[0];
+    const marker = new AMap.Marker({
+      position: [startPoint.lng, startPoint.lat],
+      content: `<div style="width: 32px; height: 32px; background: #3b82f6; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5); animation: pulse 1.5s infinite;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+      </div>`,
+      offset: new AMap.Pixel(-16, -16),
+    });
+    map.add(marker);
+    setMovingMarker(marker);
+  }
+
+  // 播放动画
+  const interval = setInterval(() => {
+    setCurrentPointIndex((prev) => {
+      const next = prev + 1;
+      if (next >= playbackTrajectory.length) {
+        // 播放结束，回到起点
+        setIsPlaying(false);
+        if (movingMarker && playbackTrajectory.length > 0) {
+          const startPoint = playbackTrajectory[0];
+          movingMarker.setPosition([startPoint.lng, startPoint.lat]);
+        }
+        return 0;
+      }
+
+      // 更新标记位置
+      const point = playbackTrajectory[next];
+      if (movingMarker) {
+        movingMarker.setPosition([point.lng, point.lat]);
+      }
+
+      return next;
+    });
+  }, 500); // 每500ms移动一个点
+
+  return () => {
+    clearInterval(interval);
+  };
+}, [isPlaying, playbackTrajectory, movingMarker]);
+
+// 清理移动标记
+useEffect(() => {
+  return () => {
+    if (movingMarker && mapRef.current) {
+      mapRef.current.remove(movingMarker);
+    }
+  };
+}, [movingMarker]);
 
 useEffect(() => {
   if (!showDrawToolbar || !mapReady || !mapRef.current) return;
@@ -833,6 +962,61 @@ const handleEditFence = (fence: FenceData) => {
 
   <div ref={mapContainerRef} className="w-full h-full" />
 </div>
+
+{/* 轨迹播放控制按钮 */}
+{isPlayingTrajectory && (
+  <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+    {/* 播放/暂停按钮 */}
+    <button
+      onClick={() => {
+        if (isPlaying) {
+          setIsPlaying(false);
+        } else {
+          setIsPlaying(true);
+        }
+      }}
+      className="bg-blue-500/90 hover:bg-blue-400 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105"
+    >
+      {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+      {isPlaying ? '暂停' : '播放'}
+    </button>
+    
+    {/* 进度显示 */}
+    {playbackTrajectory.length > 0 && (
+      <div className="bg-slate-900/90 text-white px-3 py-2 rounded-full shadow-2xl text-sm">
+        {currentPointIndex + 1} / {playbackTrajectory.length}
+      </div>
+    )}
+    
+    {/* 中止回放按钮 */}
+    <button
+      onClick={() => {
+        setPlaybackTrajectory([]);
+        setPlaybackDeviceId(null);
+        setIsPlayingTrajectory(false);
+        setIsPlaying(false);
+        setCurrentPointIndex(0);
+        setHasAutoFit(false);
+        // 清除地图上的轨迹和移动标记
+        if (mapRef.current) {
+          const map = mapRef.current;
+          if ((map as any)._trajectoryOverlays) {
+            (map as any)._trajectoryOverlays.forEach((overlay: any) => map.remove(overlay));
+            (map as any)._trajectoryOverlays = [];
+          }
+          if (movingMarker) {
+            map.remove(movingMarker);
+            setMovingMarker(null);
+          }
+        }
+      }}
+      className="bg-red-500/90 hover:bg-red-400 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105"
+    >
+      <X size={18} />
+      中止
+    </button>
+  </div>
+)}
     
 <div className="absolute bottom-24 right-4 z-20 bg-slate-900/90 backdrop-blur-md border border-cyan-400/30 rounded-lg p-3 min-w-[180px] shadow-2xl">
   <div className="text-xs text-cyan-400 mb-2 font-bold">图例说明</div>
@@ -928,10 +1112,18 @@ const handleEditFence = (fence: FenceData) => {
     setShowAddModal(true);
     setSidebarCollapsed(true);
   }}
-  className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-900 px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-cyan-500/30"
+  className="absolute bottom-6 left-[calc(50%-80px)] -translate-x-1/2 z-30 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-900 px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-cyan-500/30"
 >
-  <Plus size={22} />
+  <Plus size={20} />
   设置新围栏
+</button>
+
+<button
+  onClick={() => setShowTrajectoryPlayback(true)}
+  className="absolute bottom-6 left-[calc(50%+80px)] -translate-x-1/2 z-30 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-400 hover:to-indigo-400 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-blue-500/30"
+>
+  <Navigation size={20} />
+  轨迹回放
 </button>
 
 <button
@@ -1132,6 +1324,25 @@ const handleEditFence = (fence: FenceData) => {
   show={showSuccess}
   onClose={() => setShowSuccess(false)}
 />
+
+{showTrajectoryPlayback && (
+  <TrajectoryPlayback
+    onSelectDevice={(deviceId, trajectory) => {
+      // 清除之前的播放状态
+      if (movingMarker && mapRef.current) {
+        mapRef.current.remove(movingMarker);
+        setMovingMarker(null);
+      }
+      setPlaybackDeviceId(deviceId);
+      setPlaybackTrajectory(trajectory);
+      setIsPlayingTrajectory(true);
+      setIsPlaying(false);
+      setCurrentPointIndex(0);
+      setHasAutoFit(false);
+    }}
+    onClose={() => setShowTrajectoryPlayback(false)}
+  />
+)}
   </div>
   );
 }

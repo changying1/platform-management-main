@@ -262,7 +262,7 @@ class JT808Manager:
             logger.error(f"更新设备 {phone_num} 异常: {e}")
     
     def _save_to_database(self, phone_num: str, lat: float, lon: float):
-        """将坐标存储到数据库"""
+        """将坐标存储到数据库，同时添加轨迹点"""
         try:
             # 根据holderPhone查询设备
             device = device_service.get_device_by_holder_phone(phone_num)
@@ -276,20 +276,33 @@ class JT808Manager:
                 logger.warning(f"[{phone_num}] 设备缺少device_id，跳过存储")
                 return
             
-            # 直接更新设备的实时坐标，不添加轨迹点
+            # 1. 更新设备的实时坐标
             from app.schemas.device_schema import DeviceUpdate
+            from datetime import datetime, timezone
             update_data = DeviceUpdate(
                 lat=lat,
                 lng=lon,
-                lastUpdate=time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime())
+                lastUpdate=datetime.now(timezone.utc).isoformat()
             )
             
-            # 调用设备服务更新设备信息
             updated_device = device_service.update_device(device_id, update_data)
             if updated_device:
                 logger.debug(f"[{phone_num}] 实时坐标已更新到数据库 -> Lat:{lat:.6f}, Lon:{lon:.6f}, DeviceID:{device_id}")
             else:
                 logger.warning(f"[{phone_num}] 更新设备坐标失败，DeviceID:{device_id}")
+            
+            # 2. 添加轨迹点（用于轨迹回放功能）
+            from app.schemas.device_schema import TrajectoryPoint
+            trajectory_point = TrajectoryPoint(
+                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                lat=lat,
+                lng=lon,
+                speed=0.0,
+                direction=0.0
+            )
+            device_service.add_trajectory_point(device_id, trajectory_point)
+            logger.debug(f"[{phone_num}] 轨迹点已添加 -> Lat:{lat:.6f}, Lon:{lon:.6f}")
+            
         except Exception as e:
             logger.error(f"存储坐标到数据库失败 {phone_num}: {e}")
 
