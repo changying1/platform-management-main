@@ -39,6 +39,41 @@
                     "lng": 109.131,
                     "speed": 3.8,
                     "direction": 90
+                },
+                {
+                    "timestamp": "2026-04-19T18:00:00Z",
+                    "lat": 34.2845,
+                    "lng": 109.1345,
+                    "speed": 2.5,
+                    "direction": 45
+                },
+                {
+                    "timestamp": "2026-04-19T18:05:00Z",
+                    "lat": 34.2848,
+                    "lng": 109.135,
+                    "speed": 3.2,
+                    "direction": 60
+                },
+                {
+                    "timestamp": "2026-04-19T18:10:00Z",
+                    "lat": 34.2852,
+                    "lng": 109.1358,
+                    "speed": 2.8,
+                    "direction": 90
+                },
+                {
+                    "timestamp": "2026-04-19T18:15:00Z",
+                    "lat": 34.2855,
+                    "lng": 109.1365,
+                    "speed": 3.5,
+                    "direction": 120
+                },
+                {
+                    "timestamp": "2026-04-19T18:20:00Z",
+                    "lat": 34.285,
+                    "lng": 109.137,
+                    "speed": 2,
+                    "direction": 180
                 }
             ]
         },
@@ -525,16 +560,16 @@
             },
             "device_id": "2556",
             "name": "实时测试定位器",
-            "lat": 34.28,
-            "lng": 109.13,
+            "lat": 34.2835,
+            "lng": 109.1335,
             "company": "中铁一局",
             "project": "西安地铁8号线",
             "status": "online",
             "holder": "测试",
             "holderPhone": "14084725763",
-            "lastUpdate": "2024-01-01T00:00:00Z",
+            "lastUpdate": "2026-04-20T08:27:11Z",
             "createdAt": "2024-01-01T00:00:00Z",
-            "updatedAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2026-04-20T16:27:11.554444",
             "trajectory": [
                 {
                     "timestamp": "2024-01-01T09:00:00Z",
@@ -556,6 +591,97 @@
                     "lng": 109.13,
                     "speed": 2.5,
                     "direction": 180
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:14Z",
+                    "lat": 34.2825,
+                    "lng": 109.1355,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:20Z",
+                    "lat": 34.2835,
+                    "lng": 109.1335,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:24Z",
+                    "lat": 34.2855,
+                    "lng": 109.1325,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:30Z",
+                    "lat": 34.2825,
+                    "lng": 109.1355,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:35Z",
+                    "lat": 34.2842,
+                    "lng": 109.1348,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:40Z",
+                    "lat": 34.2825,
+                    "lng": 109.1355,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:45Z",
+                    "lat": 34.285,
+                    "lng": 109.135,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:50Z",
+                    "lat": 34.2855,
+                    "lng": 109.1325,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:55Z",
+                    "lat": 34.283,
+                    "lng": 109.133,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:26:57Z",
+                    "lat": 34.285,
+                    "lng": 109.135,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:27:01Z",
+                    "lat": 34.285,
+                    "lng": 109.135,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:27:06Z",
+                    "lat": 34.2845,
+                    "lng": 109.1345,
+                    "speed": 0.0,
+                    "direction": 0.0
+                },
+                {
+                    "timestamp": "2026-04-20T08:27:11Z",
+                    "lat": 34.2835,
+                    "lng": 109.1335,
+                    "speed": 0.0,
+                    "direction": 0.0
                 }
             ]
         }
