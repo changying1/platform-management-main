@@ -11,6 +11,7 @@ interface LocationDevice {
   company?: string;
   projectId: number;
   projectName?: string;
+  team?: string;              // 所属工队
   holder?: string;
   holderPhone?: string;
   status: 'online' | 'offline' | 'fault';
@@ -19,11 +20,11 @@ interface LocationDevice {
 
 export default function LocationDeviceManagement() {
 const [devices, setDevices] = useState<LocationDevice[]>([
-  { id: 1, name: 'UWB定位手环-001', deviceId: 'UWB001', type: 'uwb_band', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', holder: '张三', holderPhone: '13800138001', status: 'online' },
-  { id: 2, name: 'UWB定位工牌-002', deviceId: 'UWB002', type: 'uwb_badge', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', holder: '李四', holderPhone: '13800138002', status: 'online' },
-  { id: 3, name: 'RTK手环-003', deviceId: 'RTK001', type: 'rtk_band', company: '第二分公司', projectId: 2, projectName: '西安地铁10号线', holder: '王五', holderPhone: '13800138003', status: 'offline' },
-  { id: 4, name: 'RTK工牌-004', deviceId: 'RTK002', type: 'rtk_badge', company: '第二分公司', projectId: 2, projectName: '西安地铁10号线', holder: '赵六', holderPhone: '13800138004', status: 'fault' },
-  { id: 5, name: 'Wi-Fi定位服务器', deviceId: 'WIFI001', type: 'wifi', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', holder: '机房管理员', holderPhone: '13800138005', status: 'online' },
+  { id: 1, name: 'UWB定位手环-001', deviceId: 'UWB001', type: 'uwb_band', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', team: '土建工队', holder: '张三', holderPhone: '13800138001', status: 'online' },
+  { id: 2, name: 'UWB定位工牌-002', deviceId: 'UWB002', type: 'uwb_badge', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', team: '土建工队', holder: '李四', holderPhone: '13800138002', status: 'online' },
+  { id: 3, name: 'RTK手环-003', deviceId: 'RTK001', type: 'rtk_band', company: '第二分公司', projectId: 2, projectName: '西安地铁10号线', team: '机电工队', holder: '王五', holderPhone: '13800138003', status: 'offline' },
+  { id: 4, name: 'RTK工牌-004', deviceId: 'RTK002', type: 'rtk_badge', company: '第二分公司', projectId: 2, projectName: '西安地铁10号线', team: '安全工队', holder: '赵六', holderPhone: '13800138004', status: 'fault' },
+  { id: 5, name: 'Wi-Fi定位服务器', deviceId: 'WIFI001', type: 'wifi', company: '第一分公司', projectId: 1, projectName: '西安地铁8号线', team: '机电工队', holder: '机房管理员', holderPhone: '13800138005', status: 'online' },
 ]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -33,19 +34,23 @@ const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const [filterType, setFilterType] = useState<string>('all');
 const [filterStatus, setFilterStatus] = useState<string>('all');
 const [filterCompany, setFilterCompany] = useState<string>('all');
+const [filterTeam, setFilterTeam] = useState<string>('all');
 const types = ['all', ...new Set(devices.map(d => d.type))];
 const statuses = ['all', 'online', 'offline', 'fault'];
 const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
+const teams = ['all', ...new Set(devices.map(d => d.team).filter(Boolean))];
 
 const filteredData = devices.filter(d => {
   const matchesSearch = searchTerm === '' || 
     d.name.includes(searchTerm) || 
     d.deviceId.includes(searchTerm) ||
+    d.team?.includes(searchTerm) ||
     d.holder?.includes(searchTerm);
   const matchesType = filterType === 'all' || d.type === filterType;
   const matchesStatus = filterStatus === 'all' || d.status === filterStatus;
   const matchesCompany = filterCompany === 'all' || d.company === filterCompany;
-  return matchesSearch && matchesType && matchesStatus && matchesCompany;
+  const matchesTeam = filterTeam === 'all' || d.team === filterTeam;
+  return matchesSearch && matchesType && matchesStatus && matchesCompany && matchesTeam;
 });
 
 
@@ -176,6 +181,14 @@ const confirmImport = () => {
   </select>
   
   <select
+    value={filterTeam}
+    onChange={(e) => setFilterTeam(e.target.value)}
+    className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
+  >
+    {teams.map(t => <option key={t} value={t}>{t === 'all' ? '全部工队' : t}</option>)}
+  </select>
+  
+  <select
     value={filterType}
     onChange={(e) => setFilterType(e.target.value)}
     className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
@@ -194,6 +207,7 @@ const confirmImport = () => {
   <button
     onClick={() => {
       setFilterCompany('all');
+      setFilterTeam('all');
       setFilterType('all');
       setFilterStatus('all');
       setSearchTerm('');
@@ -237,6 +251,7 @@ const confirmImport = () => {
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">类型</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">分公司</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">项目</th>
+    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工队</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">持有人</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">状态</th>
     <th className="px-4 py-3 text-right text-xs font-semibold text-slate-300">操作</th>
@@ -250,6 +265,7 @@ const confirmImport = () => {
     <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{getTypeText(device.type)}</span></td>
     <td className="px-4 py-3 text-slate-300">{device.company || '-'}</td>
     <td className="px-4 py-3 text-slate-300">{device.projectName || '-'}</td>
+    <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">{device.team || '-'}</span></td>
     <td className="px-4 py-3"><div className="text-sm text-slate-300">{device.holder || '-'}</div>{device.holderPhone && <div className="text-xs text-slate-500">{device.holderPhone}</div>}</td>
     <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusStyle(device.status)}`}>{getStatusText(device.status)}</span></td>
     <td className="px-4 py-3 text-right">
@@ -280,8 +296,9 @@ const confirmImport = () => {
           <div><label className="block text-sm text-slate-400 mb-1">设备类型</label><select value={editingItem?.type || 'uwb_band'} onChange={(e) => setEditingItem({ ...editingItem!, type: e.target.value as any })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value="uwb_band">UWB手环</option><option value="uwb_badge">UWB工牌</option><option value="rtk_band">RTK手环</option><option value="rtk_badge">RTK工牌</option><option value="wifi">Wi-Fi定位</option></select></div>
           <div><label className="block text-sm text-slate-400 mb-1">所属分公司</label><input type="text" value={editingItem?.company || ''} onChange={(e) => setEditingItem({ ...editingItem!, company: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-sm text-slate-400 mb-1">所属项目</label><select value={editingItem?.projectId || 1} onChange={(e) => setEditingItem({ ...editingItem!, projectId: parseInt(e.target.value), projectName: e.target.options[e.target.selectedIndex].text })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value={1}>西安地铁8号线</option><option value={2}>西安地铁10号线</option></select></div>
+          <div><label className="block text-sm text-slate-400 mb-1">所属工队</label><input type="text" value={editingItem?.team || ''} onChange={(e) => setEditingItem({ ...editingItem!, team: e.target.value })} placeholder="如：土建工队/机电工队" className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
           <div><label className="block text-sm text-slate-400 mb-1">状态</label><select value={editingItem?.status || 'online'} onChange={(e) => setEditingItem({ ...editingItem!, status: e.target.value as any })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value="online">在线</option><option value="offline">离线</option><option value="fault">故障</option></select></div>
         </div>
         <div className="grid grid-cols-2 gap-4">

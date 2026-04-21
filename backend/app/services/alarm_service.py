@@ -5,7 +5,9 @@ from app.models.device import Device
 from app.models.fence import ElectronicFence
 from app.schemas.alarm_schema import AlarmCreate, AlarmUpdate
 from app.utils.logger import get_logger
+from app.services.notification_service import notification_service
 from datetime import datetime, timedelta
+import asyncio
 
 logger = get_logger("AlarmService")
 
@@ -78,6 +80,35 @@ class AlarmService:
             db.commit()
             db.refresh(new_alarm)
             logger.warning(f"SUCCESSFULLY SAVED ALARM: ID {new_alarm.id}")
+            
+            # 触发通知
+            try:
+                import json
+                import os
+                
+                config_path = "data/system_config.json"
+                recipients = []
+                if os.path.exists(config_path):
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                        recipients = config.get("notificationRecipients", [])
+                
+                if recipients:
+                    alarm_level = new_alarm.severity or "medium"
+                    if alarm_level == "normal":
+                        alarm_level = "low"
+                    elif alarm_level == "high":
+                        alarm_level = "severe"
+                    
+                    asyncio.create_task(notification_service.handle_alarm(
+                        alarm_level=alarm_level,
+                        alarm_type=new_alarm.alarm_type,
+                        alarm_message=new_alarm.description or "安全告警触发",
+                        recipients=recipients
+                    ))
+            except Exception as notify_err:
+                logger.error(f"Notification error: {notify_err}")
+                
             return new_alarm
         except Exception as e:
             db.rollback()

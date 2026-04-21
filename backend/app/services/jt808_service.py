@@ -12,8 +12,15 @@ import random
 from typing import Any
 from app.utils.logger import get_logger
 from app.utils.coord_transform import wgs84_to_gcj02
+<<<<<<< HEAD
+from app.core.database import SessionLocal
+from app.models.location_history import DeviceLocationHistory
+from datetime import datetime
+import uuid
+=======
 from app.services.Device.device_service import device_service
 from app.schemas.device_schema import TrajectoryPoint
+>>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
 logger = get_logger("JT808")
 
@@ -232,7 +239,48 @@ class JT808Manager:
             }
         return self.device_store[phone_num]
 
-    def update_device_data(self, phone_num: str, lat: float = None, lon: float = None):
+    def save_location_history(self, device_id: str, lat: float, lon: float, speed: float = None, direction: float = None):
+        """保存定位历史到数据库 + 实时独立备份"""
+        try:
+            now = datetime.now()
+            db = SessionLocal()
+            location = DeviceLocationHistory(
+                id=str(uuid.uuid4()),
+                device_id=device_id,
+                latitude=lat,
+                longitude=lon,
+                speed=speed,
+                direction=direction,
+                timestamp=now
+            )
+            db.add(location)
+            db.commit()
+            db.close()
+
+            import os, csv
+            backup_dir = "./storage/location_backup"
+            os.makedirs(backup_dir, exist_ok=True)
+            date_str = now.strftime("%Y%m%d")
+            csv_file = os.path.join(backup_dir, f"location_{date_str}.csv")
+            
+            file_exists = os.path.exists(csv_file)
+            with open(csv_file, 'a', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['time', 'device_id', 'lat', 'lng', 'speed', 'direction'])
+                writer.writerow([
+                    now.strftime("%Y-%m-%d %H:%M:%S"),
+                    device_id,
+                    f"{lat:.6f}",
+                    f"{lon:.6f}",
+                    f"{speed or 0:.1f}",
+                    f"{direction or 0:.0f}"
+                ])
+
+        except Exception as e:
+            logger.debug(f"保存定位历史失败: {e}")
+
+    def update_device_data(self, phone_num: str, lat: float = None, lon: float = None, speed: float = None, direction: float = None):
         """更新设备在线状态和坐标（WGS84→GCJ02 纠偏）"""
         self.last_seen[phone_num] = time.time()
 
@@ -246,9 +294,13 @@ class JT808Manager:
                     device["last_latitude"] = gcj_lat
                     device["last_longitude"] = gcj_lon
                     logger.info(f"[{phone_num}] 坐标更新 -> Lat:{gcj_lat:.6f}, Lon:{gcj_lon:.6f}")
+<<<<<<< HEAD
+                    self.save_location_history(phone_num, gcj_lat, gcj_lon, speed, direction)
+=======
                     
                     # 存储到数据库
                     self._save_to_database(phone_num, gcj_lat, gcj_lon)
+>>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
                 else:
                     # GPS 未锁定时上报(0,0)，从列表随机选一个点，模拟动起来的效果
                     lat_rand, lon_rand = random.choice(RANDOM_COORDS)
@@ -383,8 +435,10 @@ class JT808Manager:
                         body = content_clean[header_len:]
                         if len(body) >= 28:
                             lat_int, lon_int = struct.unpack('>I I', body[8:16])
+                            speed_10x, dir_deg = struct.unpack('>H H', body[16:20])
                             lat, lon = lat_int / 10 ** 6, lon_int / 10 ** 6
-                            self.update_device_data(phone_num, lat, lon)
+                            speed = speed_10x / 10.0
+                            self.update_device_data(phone_num, lat, lon, speed, dir_deg)
                         else:
                             self.update_device_data(phone_num)
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))

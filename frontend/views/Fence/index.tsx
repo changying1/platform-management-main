@@ -324,21 +324,8 @@ useEffect(() => {
         
         if (violationTypes[device.id] !== violation.fence.behavior) {
           saveAlarm(device, violation);
-          
-          const toast = document.createElement('div');
-          toast.className = 'fixed top-20 left-1/2 transform -translate-x-1/2 z-[200] bg-red-500/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium animate-in fade-in slide-in-from-top-5 duration-200';
-          toast.innerHTML = `
-            <div class="flex items-center gap-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <span>⚠️ ${device.name} ${violation.type} ${violation.fence.name}</span>
-            </div>
-          `;
-          document.body.appendChild(toast);
-          setTimeout(() => toast.remove(), 1000);
+          var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
+          window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
         }
       }
     });
@@ -359,11 +346,8 @@ useEffect(() => {
         const violation = violations[0];
         newViolationMap[device.id] = violation.fence.behavior;
         
-        const toast = document.createElement('div');
-        toast.className = 'fixed top-20 left-1/2 transform -translate-x-1/2 z-[200] bg-red-500/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium';
-        toast.innerHTML = `<div class="flex items-center gap-3"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>⚠️ ${device.name} ${violation.type} ${violation.fence.name}</span></div>`;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
+        window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
       }
     });
     

@@ -351,9 +351,27 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <span className="text-slate-400">生效时间：</span>
-                  <span className="text-slate-200 text-xs">
-                    {selectedDetail.data.schedule?.start?.slice(0, 16).replace('T', ' ')} ~ {selectedDetail.data.schedule?.end?.slice(0, 16).replace('T', ' ')}
+                  <span className="text-slate-400">生效开始：</span>
+                  <span className="text-slate-200 text-sm">
+                    {selectedDetail.data.schedule?.start ? new Date(selectedDetail.data.schedule.start).toLocaleString() : '永久生效'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <span className="text-slate-400">生效结束：</span>
+                  <span className="text-slate-200 text-sm">
+                    {selectedDetail.data.schedule?.end ? new Date(selectedDetail.data.schedule.end).toLocaleString() : '永久生效'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <span className="text-slate-400">创建时间：</span>
+                  <span className="text-slate-200 text-sm">
+                    {new Date(selectedDetail.data.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <span className="text-slate-400">更新时间：</span>
+                  <span className="text-slate-200 text-sm">
+                    {new Date(selectedDetail.data.updatedAt).toLocaleString()}
                   </span>
                 </div>
               </div>

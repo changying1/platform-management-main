@@ -596,7 +596,7 @@ export default function App() {
       case MenuKey.MANAGEMENT: 
         return <ManagementPanel defaultTab={managementTab} />;
       case MenuKey.SYSTEM_LOG:
-        return <SystemLog />;
+        return <SystemLog onNavigate={setActiveMenu} />;
       default:
         return <Dashboard />;
     }

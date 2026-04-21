@@ -4,6 +4,7 @@ import cv2
 import os
 import uuid
 import re
+import json
 import requests
 import numpy as np
 from datetime import datetime, timedelta
@@ -43,6 +44,26 @@ class AIManager:
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
         print(f"✅ 已加载AI规则: {list(self.algo_handlers.keys())}")
 
+<<<<<<< HEAD
+        # AI检测行为告警等级映射配置（可通过前端系统设置动态调整）
+        self.ai_alarm_level_map = {
+            'helmet': 'HIGH',
+            'helmet_missing': 'HIGH',
+            'safety_harness': 'SEVERE',
+            'safety_harness_missing': 'SEVERE',
+            'smoking': 'HIGH',
+            'fall': 'SEVERE',
+            'person_fall': 'SEVERE',
+            'unauthorized': 'HIGH',
+            'unauthorized_person': 'HIGH',
+            'fire': 'SEVERE',
+            'fire_detected': 'SEVERE',
+            'no_helmet_area': 'MEDIUM',
+            'crowd': 'MEDIUM',
+            'crowd_detection': 'MEDIUM',
+        }
+        print(f"✅ 已加载AI告警等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
+=======
     def _new_alarm_trace_id(self) -> str:
         return f"alarmtrace-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
 
@@ -60,6 +81,7 @@ class AIManager:
         except Exception:
             rendered = f"{message} | args={args}"
         print(rendered)
+>>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
     # =========================
     # 启动监控
@@ -667,9 +689,21 @@ class AIManager:
                 )
                 return
 
-            # 现在的策略：保存报警前 15 秒到报警后 15 秒的视频段
-            clip_after_seconds = 15
-            clip_before_seconds = 15
+            # 从系统配置读取告警前后录制时长
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
+            surround_minutes = 1
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        surround_minutes = config.get('alarmVideoSurroundMinutes', 1)
+                except:
+                    pass
+            surround_seconds = int(surround_minutes * 60)
+            
+            # 保存报警前后各指定秒数的视频段
+            clip_after_seconds = surround_seconds
+            clip_before_seconds = surround_seconds
             mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
             self._emit_alarm_log(
@@ -793,9 +827,15 @@ class AIManager:
         if not alarm_msg:
             alarm_msg = "检测到异常"
 
+<<<<<<< HEAD
+        # 根据检测行为类型获取对应的告警等级
+        severity = self.ai_alarm_level_map.get(alarm_type.lower(), 'HIGH')
+        severity = self.ai_alarm_level_map.get(alarm_type.replace('_', '').lower(), severity)
+=======
         # 方便排查：描述里附带框数量
         if box_count > 0:
             alarm_msg = f"{alarm_msg}（检测框数量: {box_count}）"
+>>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
         db = SessionLocal()
 
@@ -803,7 +843,7 @@ class AIManager:
             record = AlarmRecord(
                 device_id=str(device_id),
                 alarm_type=alarm_type,
-                severity="HIGH",
+                severity=severity,
                 description=alarm_msg,
                 status="pending",
                 timestamp=datetime.now(),

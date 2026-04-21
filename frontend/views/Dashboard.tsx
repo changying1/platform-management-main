@@ -2128,7 +2128,7 @@ devices: currentProject.devices || [],
       <div style={{ textAlign: "center", flex: 1 }}>
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           摄像头在线
-          <span 
+          <span onClick={() => setActiveMenu(MenuKey.VIDEOPLAYBACK)} 
           style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", opacity: 0.7, transition: "opacity 0.2s", position: "relative" }}
           
             onMouseEnter={(e) => {
@@ -2155,7 +2155,6 @@ devices: currentProject.devices || [],
       `;
       e.currentTarget.appendChild(tooltip);
     }}
-    onClick={() => setActiveMenu(MenuKey.VIDEOPLAYBACK)}
     onMouseLeave={(e) => {
       e.currentTarget.style.opacity = "0.7";
       // 移除tooltip
@@ -2193,6 +2192,7 @@ devices: currentProject.devices || [],
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           定位设备在线
   <span 
+    onClick={() => setActiveMenu(MenuKey.FENCE)}
     style={{ 
       cursor: "pointer",
       display: "inline-flex",
@@ -2206,7 +2206,7 @@ devices: currentProject.devices || [],
       // 创建并显示tooltip
       const tooltip = document.createElement('div');
       tooltip.className = 'custom-tooltip';
-      tooltip.textContent = '查看实时监控';
+      tooltip.textContent = '查看电子围栏';
       tooltip.style.cssText = `
         position: absolute;
         bottom: 120%;
@@ -2225,7 +2225,6 @@ devices: currentProject.devices || [],
       `;
       e.currentTarget.appendChild(tooltip);
     }}
-    onClick={() => setActiveMenu(MenuKey.FENCE)}
     onMouseLeave={(e) => {
       e.currentTarget.style.opacity = "0.7";
       // 移除tooltip

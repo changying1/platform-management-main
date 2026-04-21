@@ -92,7 +92,7 @@ const AIChatAssistant: React.FC = () => {
   }, [isDragging]);
 
   const [settings, setSettings] = useState<AISettings>({
-    serviceUrl: 'http://localhost:8888',
+    serviceUrl: '/api/ai',
     kbName: 'default',
     enableRAG: false,
   });

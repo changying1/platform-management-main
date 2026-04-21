@@ -7,6 +7,7 @@ interface Project {
   id: number;
   name: string;
   company: string;           // 所属分公司
+  team: string;              // 所属工队
   manager: string;           // 项目经理
   managerPhone?: string;     // 经理电话
   contact?: string;          // 管理人员
@@ -19,16 +20,19 @@ interface Project {
 
 export default function ProjectManagement() {
 const [projects, setProjects] = useState<Project[]>([
-  { id: 1, name: '西安地铁8号线', company: '第一分公司', manager: '张经理', managerPhone: '13900139001', contact: '李主管', contactPhone: '13900139002', startDate: '2024-01-01', status: 'ongoing', address: '西安市雁塔区' },
-  { id: 2, name: '西安地铁10号线', company: '第二分公司', manager: '李经理', managerPhone: '13900139003', contact: '王主管', contactPhone: '13900139004', startDate: '2024-02-01', status: 'ongoing', address: '西安市未央区' },
-  { id: 3, name: '西安北站扩建', company: '第一分公司', manager: '王经理', managerPhone: '13900139005', contact: '赵主管', contactPhone: '13900139006', startDate: '2023-06-01', status: 'suspended', address: '西安市未央区' },
+  { id: 1, name: '西安地铁8号线', company: '第一分公司', team: '土建工队', manager: '张经理', managerPhone: '13900139001', contact: '李主管', contactPhone: '13900139002', startDate: '2024-01-01', status: 'ongoing', address: '西安市雁塔区' },
+  { id: 2, name: '西安地铁10号线', company: '第二分公司', team: '机电工队', manager: '李经理', managerPhone: '13900139003', contact: '王主管', contactPhone: '13900139004', startDate: '2024-02-01', status: 'ongoing', address: '西安市未央区' },
+  { id: 3, name: '西安北站扩建', company: '第一分公司', team: '装修工队', manager: '王经理', managerPhone: '13900139005', contact: '赵主管', contactPhone: '13900139006', startDate: '2023-06-01', status: 'suspended', address: '西安市未央区' },
+  { id: 4, name: '曲江新区管网工程', company: '第二分公司', team: '土建工队', manager: '刘经理', managerPhone: '13900139007', contact: '陈主管', contactPhone: '13900139008', startDate: '2024-03-01', status: 'ongoing', address: '西安市曲江新区' },
 ]);
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const [filterCompany, setFilterCompany] = useState<string>('all');
+const [filterTeam, setFilterTeam] = useState<string>('all');
 const [filterStatus, setFilterStatus] = useState<string>('all');
 
 const companies = ['all', ...new Set(projects.map(p => p.company))];
+const teams = ['all', ...new Set(projects.map(p => p.team))];
 const statuses = ['all', 'ongoing', 'completed', 'suspended'];
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -38,11 +42,13 @@ const filteredData = projects.filter(p => {
   const matchesSearch = searchTerm === '' || 
     p.name.includes(searchTerm) || 
     p.company.includes(searchTerm) ||
+    p.team.includes(searchTerm) ||
     p.manager.includes(searchTerm) ||
     p.contact?.includes(searchTerm);
   const matchesCompany = filterCompany === 'all' || p.company === filterCompany;
+  const matchesTeam = filterTeam === 'all' || p.team === filterTeam;
   const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
-  return matchesSearch && matchesCompany && matchesStatus;
+  return matchesSearch && matchesCompany && matchesTeam && matchesStatus;
 });
 
   const getStatusStyle = (status: string) => {
@@ -124,6 +130,10 @@ const confirmImport = () => {
     {companies.map(c => <option key={c} value={c}>{c === 'all' ? '全部公司' : c}</option>)}
   </select>
   
+  <select value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)} className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
+    {teams.map(t => <option key={t} value={t}>{t === 'all' ? '全部工队' : t}</option>)}
+  </select>
+  
   <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
     {statuses.map(s => <option key={s} value={s}>{s === 'all' ? '全部状态' : getStatusText(s)}</option>)}
   </select>
@@ -141,6 +151,7 @@ const confirmImport = () => {
             <tr>
 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">项目名称</th>
 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">分公司</th>
+<th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工队</th>
 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">项目经理</th>
 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">管理人员</th>
 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">开工日期</th>
@@ -154,6 +165,7 @@ const confirmImport = () => {
   <tr key={project.id} className="hover:bg-slate-800/30 transition-colors">
     <td className="px-4 py-3 text-slate-300">{project.name}</td>
     <td className="px-4 py-3 text-slate-300">{project.company}</td>
+    <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">{project.team}</span></td>
     <td className="px-4 py-3"><div>{project.manager}</div>{project.managerPhone && <div className="text-xs text-slate-500">{project.managerPhone}</div>}</td>
     <td className="px-4 py-3"><div>{project.contact || '-'}</div>{project.contactPhone && <div className="text-xs text-slate-500">{project.contactPhone}</div>}</td>
     <td className="px-4 py-3 text-slate-300">{project.startDate}</td>
@@ -175,8 +187,9 @@ const confirmImport = () => {
       </div>
       <div className="space-y-4">
         <div><label className="block text-sm text-slate-400 mb-1">项目名称 *</label><input type="text" value={editingItem?.name || ''} onChange={(e) => setEditingItem({ ...editingItem!, name: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-sm text-slate-400 mb-1">所属分公司</label><input type="text" value={editingItem?.company || ''} onChange={(e) => setEditingItem({ ...editingItem!, company: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+          <div><label className="block text-sm text-slate-400 mb-1">所属工队</label><input type="text" value={editingItem?.team || ''} onChange={(e) => setEditingItem({ ...editingItem!, team: e.target.value })} placeholder="如：土建工队、机电工队" className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
           <div><label className="block text-sm text-slate-400 mb-1">状态</label><select value={editingItem?.status || 'ongoing'} onChange={(e) => setEditingItem({ ...editingItem!, status: e.target.value as any })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value="ongoing">进行中</option><option value="completed">已完成</option><option value="suspended">暂停</option></select></div>
         </div>
         <div className="grid grid-cols-2 gap-4">

@@ -15,6 +15,7 @@ import {
   X,
   Save,
   Loader,
+  HardDrive,
 } from 'lucide-react';
 
 // 导入各个管理子组件
@@ -26,7 +27,8 @@ import PermissionManagement from '../src/components/PermissionManagement';
 // import FenceManagement from '../src/components/FenceManagement';
 
 // type ManagementTab = 'person' | 'camera' | 'location' | 'project' | 'fence';
-type ManagementTab = 'project'|  'person' | 'camera' | 'location' | 'permission';;
+type ManagementTab = 'project' | 'person' | 'device' | 'permission';
+type DeviceSubTab = 'camera' | 'location';
 
 interface ManagementPanelProps {
   defaultTab?: ManagementTab;
@@ -34,17 +36,17 @@ interface ManagementPanelProps {
 
 export default function ManagementPanel({ defaultTab = 'person' }: ManagementPanelProps) {
   const [activeTab, setActiveTab] = useState<ManagementTab>(defaultTab);
+  const [deviceSubTab, setDeviceSubTab] = useState<DeviceSubTab>('camera');
 
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab]);
 
   const tabs = [
-    { id: 'project' as ManagementTab, label: '项目管理', icon: FolderTree, description: '项目信息、参建单位' },
+    { id: 'project' as ManagementTab, label: '项目管理', icon: FolderTree, description: '项目、工队、参建单位' },
     { id: 'person' as ManagementTab, label: '人员管理', icon: Users, description: '人员信息、岗位管理' },
-    { id: 'camera' as ManagementTab, label: '摄像头管理', icon: Camera, description: '摄像头设备、流地址配置' },
-    { id: 'location' as ManagementTab, label: '定位装置管理', icon: MapPin, description: 'GPS/UWB/蓝牙定位器' },
-     { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield, description: '角色权限配置' },
+    { id: 'device' as ManagementTab, label: '设备管理', icon: HardDrive, description: '摄像头、定位装置' },
+    { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield, description: '角色权限配置' },
     // { id: 'fence' as ManagementTab, label: '电子围栏管理', icon: Fence, description: '围栏配置、报警规则' },
   ];
 
@@ -52,10 +54,38 @@ export default function ManagementPanel({ defaultTab = 'person' }: ManagementPan
     switch (activeTab) {
       case 'person':
         return <PersonManagement />;
-      case 'camera':
-        return <CameraManagement />;
-      case 'location':
-        return <LocationDeviceManagement />;
+      case 'device':
+        return (
+          <div className="h-full flex flex-col">
+            <div className="mb-4 flex gap-2 p-1 bg-slate-800/50 rounded-lg w-fit">
+              <button
+                onClick={() => setDeviceSubTab('camera')}
+                className={`px-4 py-2 rounded-md text-sm transition-all ${
+                  deviceSubTab === 'camera'
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Camera size={14} className="inline mr-2" />
+                摄像头管理
+              </button>
+              <button
+                onClick={() => setDeviceSubTab('location')}
+                className={`px-4 py-2 rounded-md text-sm transition-all ${
+                  deviceSubTab === 'location'
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <MapPin size={14} className="inline mr-2" />
+                定位装置管理
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {deviceSubTab === 'camera' ? <CameraManagement /> : <LocationDeviceManagement />}
+            </div>
+          </div>
+        );
       case 'project':
         return <ProjectManagement />;
       case 'permission':

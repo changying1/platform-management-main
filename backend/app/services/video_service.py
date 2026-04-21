@@ -1,9 +1,11 @@
 import json
+import shutil
 from sqlalchemy.orm import Session
 from urllib.parse import urlparse
 from app.models.video import VideoDevice
 from app.models.device import Device
 from app.models.alarm_records import AlarmRecord
+from app.models.location_history import DeviceLocationHistory
 from app.schemas.video_schema import VideoCreate, VideoUpdate, CameraCreateRequest
 from app.utils.logger import get_logger
 import requests
@@ -105,6 +107,256 @@ CRUISE_TASKS: Dict[int, dict] = {}
 CRUISE_TASKS_LOCK = threading.Lock()
 
 class VideoService:
+    def __init__(self):
+        self._cleanup_thread_running = True
+        self._mirror_thread_running = True
+        self._mirror_processed = set()
+        self._storage_paths = self._load_storage_paths()
+        self._cleanup_thread = threading.Thread(target=self._periodic_cleanup_worker, daemon=True)
+        self._cleanup_thread.start()
+        self._mirror_thread = threading.Thread(target=self._mirror_sync_worker, daemon=True)
+        self._mirror_thread.start()
+
+    def _mirror_sync_worker(self):
+        while self._mirror_thread_running:
+            try:
+                self._sync_all_new_files()
+            except Exception as e:
+                logger.error(f"镜像同步扫描失败: {e}")
+            time.sleep(60)
+
+    def _sync_all_new_files(self):
+        if len(self._storage_paths) == 0:
+            return
+        primary_root = self._storage_paths[0]["path"]
+        
+        for subdir in ["recordings", "alarm_videos", "alarm_screenshots"]:
+            root_dir = os.path.join(primary_root, subdir)
+            if not os.path.exists(root_dir):
+                continue
+            
+            for dirpath, _, filenames in os.walk(root_dir):
+                for filename in filenames:
+                    if not filename.lower().endswith(('.mp4', '.jpg', '.jpeg', '.png')):
+                        continue
+                    
+                    filepath = os.path.join(dirpath, filename)
+                    file_key = f"{filepath}_{os.path.getmtime(filepath)}"
+                    
+                    if file_key in self._mirror_processed:
+                        continue
+                    
+                    if not self._is_segment_usable(filepath, min_age_seconds=120):
+                        continue
+                    
+                    rel_path = os.path.relpath(filepath, primary_root)
+                    self._mirror_write_file(filepath, rel_path)
+                    self._mirror_processed.add(file_key)
+
+    def _mirror_write_file(self, source_file: str, relative_path: str):
+        for sp in self._storage_paths:
+            if not sp.get("enabled", True) or sp.get("type") == "primary":
+                continue
+            
+            try:
+                mirror_type = sp.get("type", "mirror")
+                
+                if mirror_type == "mirror":
+                    target_path = os.path.join(sp["path"], relative_path)
+                    if os.path.exists(target_path) and os.path.getsize(target_path) == os.path.getsize(source_file):
+                        continue
+                    
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    shutil.copy2(source_file, target_path)
+                    logger.info(f"本地镜像完成: {sp['name']} -> {relative_path}")
+                
+                elif mirror_type == "oss":
+                    self._upload_to_oss(sp, source_file, relative_path)
+                
+                elif mirror_type == "cos":
+                    self._upload_to_cos(sp, source_file, relative_path)
+                
+                elif mirror_type == "s3":
+                    self._upload_to_s3(sp, source_file, relative_path)
+                    
+            except Exception as e:
+                logger.error(f"镜像写入失败 {sp['name']}: {e}")
+
+    def _upload_to_oss(self, config: Dict, source_file: str, object_key: str):
+        try:
+            import oss2
+            auth = oss2.Auth(config["access_key"], config["secret_key"])
+            bucket = oss2.Bucket(auth, config["endpoint"], config["bucket"])
+            bucket.put_object_from_file(object_key, source_file)
+            logger.info(f"OSS 上传完成: {config['name']} -> {object_key}")
+        except Exception as e:
+            logger.error(f"OSS 上传失败: {e}")
+
+    def _upload_to_cos(self, config: Dict, source_file: str, object_key: str):
+        try:
+            from qcloud_cos import CosConfig, CosS3Client
+            cos_config = CosConfig(Region=config["region"], SecretId=config["access_key"], SecretKey=config["secret_key"])
+            client = CosS3Client(cos_config)
+            client.upload_file(config["bucket"], object_key, source_file)
+            logger.info(f"COS 上传完成: {config['name']} -> {object_key}")
+        except Exception as e:
+            logger.error(f"COS 上传失败: {e}")
+
+    def _upload_to_s3(self, config: Dict, source_file: str, object_key: str):
+        try:
+            import boto3
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=config["access_key"],
+                aws_secret_access_key=config["secret_key"],
+                endpoint_url=config.get("endpoint")
+            )
+            s3.upload_file(source_file, config["bucket"], object_key)
+            logger.info(f"S3 上传完成: {config['name']} -> {object_key}")
+        except Exception as e:
+            logger.error(f"S3 上传失败: {e}")
+
+    def _load_storage_paths(self) -> List[Dict]:
+        storage_root = self._get_storage_root()
+        config_file = os.path.join(storage_root, "storage_paths.json")
+        
+        if not os.path.exists(config_file):
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return []
+        
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"加载存储路径配置失败: {e}")
+            return []
+
+    def _save_storage_paths(self, paths: List[Dict]):
+        storage_root = self._get_storage_root()
+        config_file = os.path.join(storage_root, "storage_paths.json")
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(paths, f, ensure_ascii=False, indent=2)
+        self._storage_paths = paths
+
+    def get_storage_paths(self) -> List[Dict]:
+        return self._storage_paths
+
+    def add_storage_path(self, config: Dict) -> bool:
+        path = config.get("path", "")
+        name = config.get("name", "")
+        mirror_type = config.get("type", "mirror")
+        
+        paths = self._storage_paths
+        for sp in paths:
+            if sp.get("path") == path:
+                logger.warning(f"存储路径已存在: {path}")
+                return False
+        
+        if mirror_type == "mirror":
+            try:
+                os.makedirs(path, exist_ok=True)
+                test_file = os.path.join(path, ".test_write")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+            except Exception as e:
+                logger.error(f"无法访问存储路径 {path}: {e}")
+                return False
+        paths.append({
+            "path": path,
+            "name": name,
+            "enabled": True,
+            "type": mirror_type,
+            "endpoint": config.get("endpoint"),
+            "bucket": config.get("bucket"),
+            "access_key": config.get("access_key"),
+            "secret_key": config.get("secret_key"),
+            "region": config.get("region")
+        })
+        self._save_storage_paths(paths)
+        logger.info(f"已添加实时镜像存储: {name} ({mirror_type})")
+        return True
+
+    def delete_storage_path(self, index: int) -> bool:
+        paths = self._storage_paths
+        if 0 <= index < len(paths):
+            removed = paths.pop(index)
+            self._save_storage_paths(paths)
+            logger.info(f"已删除存储路径: {removed['name']}")
+            return True
+        return False
+
+    def set_primary_storage(self, index: int) -> bool:
+        paths = self._storage_paths
+        if 0 < index < len(paths):
+            paths[0], paths[index] = paths[index], paths[0]
+            self._save_storage_paths(paths)
+            logger.info(f"主存储已切换到: {paths[0]['name']}")
+            return True
+        return False
+
+    def _periodic_cleanup_worker(self):
+        while self._cleanup_thread_running:
+            try:
+                self.cleanup_expired_files()
+            except Exception as e:
+                logger.error(f"清理过期文件失败: {e}")
+            time.sleep(3600)
+
+    def cleanup_expired_files(self):
+        config = self._get_system_config()
+        now = datetime.now()
+        
+        video_retention_days = config.get('videoRetentionDays', 15)
+        alarm_video_retention_days = config.get('alarmVideoRetentionDays', 90)
+        alarm_screenshot_retention_days = config.get('alarmScreenshotRetentionDays', 90)
+        track_retention_days = config.get('trackRetentionDays', 30)
+        
+        record_root = self._get_record_root()
+        alarm_video_root = self._get_alarm_video_root()
+        storage_root = self._get_storage_root()
+        alarm_screenshot_root = os.path.join(storage_root, "alarm_screenshots")
+        
+        count_cleaned = 0
+        
+        for root_dir, retention_days in [
+            (record_root, video_retention_days),
+            (alarm_video_root, alarm_video_retention_days),
+            (alarm_screenshot_root, alarm_screenshot_retention_days),
+        ]:
+            if not os.path.exists(root_dir):
+                continue
+            cutoff = now - timedelta(days=retention_days)
+            for dirpath, _, filenames in os.walk(root_dir):
+                for filename in filenames:
+                    if not filename.lower().endswith(('.mp4', '.jpg', '.jpeg', '.png')):
+                        continue
+                    filepath = os.path.join(dirpath, filename)
+                    try:
+                        mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                        if mtime < cutoff:
+                            os.remove(filepath)
+                            count_cleaned += 1
+                    except Exception:
+                        pass
+        
+        track_count_cleaned = 0
+        try:
+            db = SessionLocal()
+            cutoff_time = now - timedelta(days=track_retention_days)
+            track_count_cleaned = db.query(DeviceLocationHistory).filter(
+                DeviceLocationHistory.timestamp < cutoff_time
+            ).delete()
+            db.commit()
+            db.close()
+        except Exception as e:
+            logger.error(f"清理过期轨迹数据失败: {e}")
+        
+        total_cleaned = count_cleaned + track_count_cleaned
+        if total_cleaned > 0:
+            logger.info(f"已清理 {count_cleaned} 个过期录像/截图文件, {track_count_cleaned} 条过期轨迹数据")
+
     def _normalize_flag(self, value: Any) -> bool:
         if isinstance(value, bool):
             return value
@@ -2039,15 +2291,47 @@ class VideoService:
         ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe")
         return ffprobe_path
 
+    def _get_system_config(self) -> dict:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
+        config = {}
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except:
+                pass
+        return config
+
+    def _get_storage_root(self) -> str:
+        if len(self._storage_paths) > 0:
+            storage_root = self._storage_paths[0]["path"]
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            storage_root = os.path.join(base_dir, "static")
+        
+        os.makedirs(storage_root, exist_ok=True)
+        return storage_root
+    
+    def _get_all_record_roots(self) -> list[str]:
+        roots = []
+        for sp in self._storage_paths:
+            if sp.get("enabled", True):
+                record_root = os.path.join(sp["path"], "recordings")
+                os.makedirs(record_root, exist_ok=True)
+                roots.append(record_root)
+        return roots
+
     def _get_record_root(self) -> str:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        record_root = os.path.join(base_dir, "static", "recordings")
-        os.makedirs(record_root, exist_ok=True)
-        return record_root
+        return self._get_all_record_roots()[0]
 
     def _get_alarm_video_root(self) -> str:
+<<<<<<< HEAD
+        storage_root = self._get_storage_root()
+        alarm_root = os.path.join(storage_root, "alarm_videos")
+=======
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         alarm_root = os.path.join(base_dir, "static", "alarms")
+>>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
         os.makedirs(alarm_root, exist_ok=True)
         return alarm_root
 
@@ -2173,6 +2457,18 @@ class VideoService:
         if source_lower.startswith("rtsp://"):
             input_options.extend(["-rtsp_transport", "tcp"])
 
+        config = self._get_system_config()
+        segment_minutes = config.get('videoSegmentMinutes', 0.5)
+        segment_seconds = int(segment_minutes * 60)
+        
+        quality_params = {
+            'high': ['-b:v', '4M', '-c:v', 'libx264'],
+            'medium': ['-b:v', '2M', '-c:v', 'libx264'],
+            'low': ['-b:v', '1M', '-c:v', 'libx265'],
+        }
+        video_quality = config.get('videoQuality', 'high')
+        codec_params = quality_params.get(video_quality, quality_params['high'])
+
         command = [
             ffmpeg_path,
             "-y",
@@ -2181,10 +2477,10 @@ class VideoService:
             "-i", source_url,
             "-map", "0:v:0",
             "-map", "0:a:0?",
-            "-c:v", "copy",
+            *codec_params,
             "-c:a", "aac",
             "-f", "segment",
-            "-segment_time", str(RECORD_SEGMENT_SECONDS),
+            "-segment_time", str(segment_seconds),
             "-segment_atclocktime", "1",
             "-strftime", "1",
             "-reset_timestamps", "1",
@@ -2314,6 +2610,13 @@ class VideoService:
             record_source = self._get_record_source_for_device(v)
             if record_source:
                 self.start_ffmpeg_recording(v.id, record_source)
+    
+    def restart_all_recordings(self, db: Session):
+        # 停止所有正在录制的进程
+        for video_id in list(RECORDING_PROCESSES.keys()):
+            self.stop_ffmpeg_recording(video_id)
+        # 使用新路径重新启动所有录像
+        self.ensure_all_recordings(db)
 
     def _parse_datetime_input(self, value: datetime | str) -> datetime:
         if isinstance(value, datetime):
@@ -2340,31 +2643,48 @@ class VideoService:
         return dt
 
     def _to_static_web_path(self, abs_file_path: str) -> str:
+        storage_root = self._get_storage_root()
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        static_root = os.path.join(base_dir, "static")
-        rel_path = os.path.relpath(abs_file_path, static_root)
-        return "/static/" + rel_path.replace("\\", "/")
+        default_static = os.path.join(base_dir, "static")
+        
+        # 如果在默认 static 目录下，用 /static
+        if abs_file_path.startswith(default_static):
+            rel_path = os.path.relpath(abs_file_path, default_static)
+            return "/static/" + rel_path.replace("\\", "/")
+        
+        # 否则用 /api/videos 动态路由
+        # abs_file_path = 存储根目录/recordings/设备ID/视频.mp4
+        # 相对路径需要去掉 recordings 这一层
+        rel_path = os.path.relpath(abs_file_path, os.path.join(storage_root, "recordings"))
+        return "/api/videos/" + rel_path.replace("\\", "/")
 
     def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
         tuple[str, datetime, datetime]]:
-        record_root = self._get_record_root()
-        device_root = os.path.join(record_root, str(video_id))
-        if not os.path.isdir(device_root):
-            return []
-
+        seen = set()
         candidates: list[tuple[str, datetime, datetime]] = []
-        for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4"))):
-            seg_start = self._parse_segment_start(seg_path)
-            if not seg_start:
+        
+        for record_root in self._get_all_record_roots():
+            device_root = os.path.join(record_root, str(video_id))
+            if not os.path.isdir(device_root):
                 continue
 
-            seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
-            if seg_end <= start_dt or seg_start >= end_dt:
-                continue
-            if not self._is_segment_usable(seg_path):
-                continue
+            for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4"))):
+                seg_filename = os.path.basename(seg_path)
+                if seg_filename in seen:
+                    continue
+                    
+                seg_start = self._parse_segment_start(seg_path)
+                if not seg_start:
+                    continue
 
-            candidates.append((seg_path, seg_start, seg_end))
+                seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                if seg_end <= start_dt or seg_start >= end_dt:
+                    continue
+                if not self._is_segment_usable(seg_path):
+                    continue
+
+                candidates.append((seg_path, seg_start, seg_end))
+                seen.add(seg_filename)
 
         return candidates
 
@@ -2429,31 +2749,39 @@ class VideoService:
 
     def list_recording_segments(self, video_id: int, limit: int = 72):
         self._auto_archive_periodic_playback(video_id)
-        record_root = self._get_record_root()
-        device_root = os.path.join(record_root, str(video_id))
-        if not os.path.isdir(device_root):
-            return []
-
+        seen = set()
         segments = []
-        for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=True):
-            seg_start = self._parse_segment_start(seg_path)
-            if not seg_start:
-                continue
-            if not self._is_segment_usable(seg_path):
+        
+        for record_root in self._get_all_record_roots():
+            device_root = os.path.join(record_root, str(video_id))
+            if not os.path.isdir(device_root):
                 continue
 
-            seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
-            segments.append({
-                "name": os.path.basename(seg_path),
-                "start_time": seg_start.strftime("%Y-%m-%d %H:%M:%S"),
-                "end_time": seg_end.strftime("%Y-%m-%d %H:%M:%S"),
-                "duration_seconds": RECORD_SEGMENT_SECONDS,
-                "size_bytes": int(os.path.getsize(seg_path)),
-                "web_path": self._to_static_web_path(seg_path),
-            })
+            for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=True):
+                seg_filename = os.path.basename(seg_path)
+                if seg_filename in seen:
+                    continue
+                if not self._is_segment_usable(seg_path):
+                    continue
 
-            if len(segments) >= max(1, min(limit, 720)):
-                break
+                seg_start = self._parse_segment_start(seg_path)
+                if not seg_start:
+                    continue
+
+                seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                segments.append({
+                    "name": seg_filename,
+                    "start_time": seg_start.strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_time": seg_end.strftime("%Y-%m-%d %H:%M:%S"),
+                    "duration_seconds": RECORD_SEGMENT_SECONDS,
+                    "size_bytes": int(os.path.getsize(seg_path)),
+                    "web_path": self._to_static_web_path(seg_path),
+                    "source": os.path.basename(os.path.dirname(record_root))
+                })
+                seen.add(seg_filename)
+
+                if len(segments) >= max(1, min(limit, 720)):
+                    break
 
         return segments
 
@@ -2559,6 +2887,11 @@ class VideoService:
 
             if not os.path.exists(final_output_path) or os.path.getsize(final_output_path) == 0:
                 raise ValueError("生成的视频文件无效")
+
+            primary_root = self._get_alarm_video_root()
+            rel_path = os.path.relpath(final_output_path, primary_root)
+            mirror_rel_path = os.path.join("alarm_videos", rel_path)
+            self._mirror_write_file(final_output_path, mirror_rel_path)
 
             return {
                 "status": "success",
