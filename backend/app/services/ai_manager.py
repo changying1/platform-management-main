@@ -44,7 +44,6 @@ class AIManager:
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
         print(f"✅ 已加载AI规则: {list(self.algo_handlers.keys())}")
 
-<<<<<<< HEAD
         # AI检测行为告警等级映射配置（可通过前端系统设置动态调整）
         self.ai_alarm_level_map = {
             'helmet': 'HIGH',
@@ -63,7 +62,7 @@ class AIManager:
             'crowd_detection': 'MEDIUM',
         }
         print(f"✅ 已加载AI告警等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
-=======
+
     def _new_alarm_trace_id(self) -> str:
         return f"alarmtrace-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
 
@@ -81,7 +80,6 @@ class AIManager:
         except Exception:
             rendered = f"{message} | args={args}"
         print(rendered)
->>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
     # =========================
     # 启动监控
@@ -827,15 +825,12 @@ class AIManager:
         if not alarm_msg:
             alarm_msg = "检测到异常"
 
-<<<<<<< HEAD
         # 根据检测行为类型获取对应的告警等级
         severity = self.ai_alarm_level_map.get(alarm_type.lower(), 'HIGH')
         severity = self.ai_alarm_level_map.get(alarm_type.replace('_', '').lower(), severity)
-=======
         # 方便排查：描述里附带框数量
         if box_count > 0:
             alarm_msg = f"{alarm_msg}（检测框数量: {box_count}）"
->>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
         db = SessionLocal()
 

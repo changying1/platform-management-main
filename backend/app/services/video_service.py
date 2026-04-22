@@ -111,6 +111,7 @@ class VideoService:
         self._cleanup_thread_running = True
         self._mirror_thread_running = True
         self._mirror_processed = set()
+        self._storage_paths = []
         self._storage_paths = self._load_storage_paths()
         self._cleanup_thread = threading.Thread(target=self._periodic_cleanup_worker, daemon=True)
         self._cleanup_thread.start()
@@ -2325,13 +2326,11 @@ class VideoService:
         return self._get_all_record_roots()[0]
 
     def _get_alarm_video_root(self) -> str:
-<<<<<<< HEAD
         storage_root = self._get_storage_root()
         alarm_root = os.path.join(storage_root, "alarm_videos")
-=======
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        alarm_root = os.path.join(base_dir, "static", "alarms")
->>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
+        # 旧版逻辑保留:
+        # base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        # alarm_root = os.path.join(base_dir, "static", "alarms")
         os.makedirs(alarm_root, exist_ok=True)
         return alarm_root
 
