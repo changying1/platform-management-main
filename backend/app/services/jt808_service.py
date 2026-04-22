@@ -12,15 +12,9 @@ import random
 from typing import Any
 from app.utils.logger import get_logger
 from app.utils.coord_transform import wgs84_to_gcj02
-<<<<<<< HEAD
-from app.core.database import SessionLocal
-from app.models.location_history import DeviceLocationHistory
 from datetime import datetime
-import uuid
-=======
 from app.services.Device.device_service import device_service
 from app.schemas.device_schema import TrajectoryPoint
->>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
 
 logger = get_logger("JT808")
 
@@ -240,23 +234,9 @@ class JT808Manager:
         return self.device_store[phone_num]
 
     def save_location_history(self, device_id: str, lat: float, lon: float, speed: float = None, direction: float = None):
-        """保存定位历史到数据库 + 实时独立备份"""
+        """保存定位历史到本地 CSV 独立备份"""
         try:
             now = datetime.now()
-            db = SessionLocal()
-            location = DeviceLocationHistory(
-                id=str(uuid.uuid4()),
-                device_id=device_id,
-                latitude=lat,
-                longitude=lon,
-                speed=speed,
-                direction=direction,
-                timestamp=now
-            )
-            db.add(location)
-            db.commit()
-            db.close()
-
             import os, csv
             backup_dir = "./storage/location_backup"
             os.makedirs(backup_dir, exist_ok=True)
@@ -294,13 +274,10 @@ class JT808Manager:
                     device["last_latitude"] = gcj_lat
                     device["last_longitude"] = gcj_lon
                     logger.info(f"[{phone_num}] 坐标更新 -> Lat:{gcj_lat:.6f}, Lon:{gcj_lon:.6f}")
-<<<<<<< HEAD
+                    # 1. 本地 CSV 备份
                     self.save_location_history(phone_num, gcj_lat, gcj_lon, speed, direction)
-=======
-                    
-                    # 存储到数据库
+                    # 2. 实时坐标和轨迹更新
                     self._save_to_database(phone_num, gcj_lat, gcj_lon)
->>>>>>> f687e38f23a292c399d3be1f24666c041a7cfa45
                 else:
                     # GPS 未锁定时上报(0,0)，从列表随机选一个点，模拟动起来的效果
                     lat_rand, lon_rand = random.choice(RANDOM_COORDS)
