@@ -8,9 +8,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from app.services.Fence.fence_service import FenceService
+from app.services.Fence.collect_service import fence_collect_service
 from app.services.Fence.team_service import team_service
 from app.schemas.team_schema import WorkTeamItem
-
+ 
 # TODO: 轨迹回放待迁移到 MongoDB 后恢复
 # import copy
 # import uuid
@@ -68,6 +69,28 @@ class RegionItem(BaseModel):
     company: str
     project: str
     points: List[List[float]]
+
+
+class CollectPointItem(BaseModel):
+    device_id: str
+    lat: float
+    lng: float
+    timestamp: str
+
+
+class CollectPointsResponse(BaseModel):
+    active: bool
+    started_at: Optional[str] = None
+    device_ids: List[str]
+    points: List[CollectPointItem]
+    count: int
+    can_draw: bool
+
+
+class DebugCollectPointRequest(BaseModel):
+    device_id: str
+    lat: float
+    lng: float
 
 
 REGIONS: List[dict] = [
@@ -283,6 +306,44 @@ def get_stats():
             "polygon": len([f for f in fences if f.get("shape") == "polygon"])
         }
     }
+
+
+@router.post("/collect/points", response_model=CollectPointsResponse)
+def start_collect_points():
+    """开始一次新的围栏顶点收集，清空上一次会话结果。"""
+    return fence_collect_service.start_session()
+
+
+@router.get("/collect/points", response_model=CollectPointsResponse)
+def get_collect_points():
+    """获取当前收集会话中已收到的唯一设备点位。"""
+    return fence_collect_service.get_snapshot()
+
+
+@router.delete("/collect/points")
+def stop_collect_points():
+    """结束本次收集会话并清空缓存点位。"""
+    snapshot = fence_collect_service.stop_session()
+    return {"status": "success", "last_snapshot": snapshot}
+
+
+@router.post("/collect/debug-point", response_model=CollectPointsResponse)
+def collect_debug_point(payload: DebugCollectPointRequest | List[DebugCollectPointRequest]):
+    """调试入口：手动写入一个或多个设备点位到当前收集会话。"""
+    items = payload if isinstance(payload, list) else [payload]
+
+    accepted_any = False
+    for item in items:
+        accepted = fence_collect_service.record_point(
+            device_id=item.device_id,
+            lat=item.lat,
+            lng=item.lng,
+        )
+        accepted_any = accepted_any or accepted
+
+    if not accepted_any:
+        raise HTTPException(status_code=409, detail="Collect session is not active")
+    return fence_collect_service.get_snapshot()
 
     # =========================
     # TODO: 以下轨迹回放接口待迁移到 MongoDB 后恢复，目前使用 SQL 模型 DeviceLocationHistory

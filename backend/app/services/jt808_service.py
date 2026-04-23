@@ -9,6 +9,7 @@ import struct
 import threading
 import time
 import random
+from collections import deque
 from typing import Any
 from app.utils.logger import get_logger
 from app.utils.coord_transform import wgs84_to_gcj02
@@ -125,6 +126,9 @@ class JT808Manager:
         self.active_connections = {}  # {phone_num: socket} 设备 TCP 连接
         self.device_seqs = {}     # {phone_num: int} 下发消息序列号
         self.connection_lock = threading.Lock()
+        self.attendance_lock = threading.Lock()
+        self.attendance_events = deque(maxlen=500)  # 最近打卡事件，后续可供前端消费
+        self.latest_attendance_by_device = {}  # {device_id: 最新打卡事件}
 
     def unregister_connection(self, client_sock):
         with self.connection_lock:
@@ -232,6 +236,52 @@ class JT808Manager:
                 "device_name": f"定位器-{phone_num}",
             }
         return self.device_store[phone_num]
+
+    def record_attendance_event(self, phone_num: str, event_type: str, lat: float | None, lon: float | None) -> dict:
+        """
+        记录上下班打卡事件到内存。
+
+        当前阶段只做接收和缓存；后续由其他流程将该事件转发给前端或业务服务。
+        """
+        device = device_service.get_device_by_holder_phone(phone_num)
+        device_id = device.get("device_id") if device else phone_num
+        device_name = None
+        if device:
+            device_name = device.get("name") or device.get("device_name")
+
+        event = {
+            "event_type": event_type,
+            "device_id": device_id,
+            "phone_num": phone_num,
+            "device_name": device_name,
+            "lat": lat,
+            "lon": lon,
+            "received_at": datetime.now().isoformat(),
+            "status": "pending_dispatch",
+        }
+
+        with self.attendance_lock:
+            self.attendance_events.append(event)
+            self.latest_attendance_by_device[device_id] = event
+
+        logger.info(
+            f"[打卡] 已接收{event_type}事件: phone={phone_num}, device_id={device_id}, "
+            f"lon={lon}, lat={lat}"
+        )
+
+        try:
+            from app.services.Fence.collect_service import fence_collect_service
+            accepted = fence_collect_service.record_point(device_id, lat, lon)
+            if accepted:
+                logger.info(f"[围栏收集] 已记录设备 {device_id} 的打卡点位")
+        except Exception as exc:
+            logger.error(f"[围栏收集] 记录打卡点位失败: {exc}")
+
+        return event
+
+    def get_pending_attendance_events(self) -> list[dict]:
+        with self.attendance_lock:
+            return list(self.attendance_events)
 
     def save_location_history(self, device_id: str, lat: float, lon: float, speed: float = None, direction: float = None):
         """保存定位历史到本地 CSV 独立备份"""
@@ -408,8 +458,13 @@ class JT808Manager:
                         self.update_device_data(phone_num)
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
-                    elif msg_id in ["0200", "0203", "0204"]:  # 位置上报
+                    elif msg_id in ["0200", "0203", "0204"]:  # 位置上报 / 上下班打卡
                         body = content_clean[header_len:]
+                        lat = None
+                        lon = None
+                        speed = None
+                        dir_deg = None
+
                         if len(body) >= 28:
                             lat_int, lon_int = struct.unpack('>I I', body[8:16])
                             speed_10x, dir_deg = struct.unpack('>H H', body[16:20])
@@ -418,6 +473,14 @@ class JT808Manager:
                             self.update_device_data(phone_num, lat, lon, speed, dir_deg)
                         else:
                             self.update_device_data(phone_num)
+
+                        if msg_id in ["0203", "0204"]:
+                            event_type = "clock_in" if msg_id == "0203" else "clock_out"
+                            device_state = self.device_store.get(phone_num, {})
+                            event_lat = device_state.get("last_latitude", lat)
+                            event_lon = device_state.get("last_longitude", lon)
+                            self.record_attendance_event(phone_num, event_type, event_lat, event_lon)
+
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
                     else:  # 其他消息通用应答

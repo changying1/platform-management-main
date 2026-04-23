@@ -13,6 +13,7 @@ import { TrajectoryPlayback } from "./components/TrajectoryPlayback";
 import { FenceData, FenceDevice } from "./types";
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
 
 interface TrajectoryPoint {
   lat: number;
@@ -115,10 +116,62 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
 
   const [mouseLngLat, setMouseLngLat] = useState<[number, number] | null>(null);
   const [collectedPoints, setCollectedPoints] = useState<any[]>([]);
+  const collectPollingRef = useRef<number | null>(null);
   const isBrushDrawingRef = useRef(false);
   const brushFinishedRef = useRef(false);
   const circleStartedRef = useRef(false);
   const rectStartedRef = useRef(false);
+
+  const stopCollectPolling = useCallback(() => {
+    if (collectPollingRef.current !== null) {
+      window.clearInterval(collectPollingRef.current);
+      collectPollingRef.current = null;
+    }
+  }, []);
+
+  const fetchCollectedPoints = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/fence/collect/points`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setCollectedPoints(data.points || []);
+    } catch (e) {
+      console.error("获取收集点失败:", e);
+    }
+  }, []);
+
+  const startCollectMode = useCallback(async () => {
+    stopCollectPolling();
+    setCollectedPoints([]);
+
+    try {
+      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "POST" });
+    } catch (e) {
+      console.error("启动围栏收集失败:", e);
+    }
+
+    await fetchCollectedPoints();
+    collectPollingRef.current = window.setInterval(() => {
+      void fetchCollectedPoints();
+    }, 3000);
+  }, [fetchCollectedPoints, stopCollectPolling]);
+
+  const endCollectMode = useCallback(async () => {
+    stopCollectPolling();
+    try {
+      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" });
+    } catch (e) {
+      console.error("结束围栏收集失败:", e);
+    }
+    setCollectedPoints([]);
+  }, [stopCollectPolling]);
+
+  useEffect(() => {
+    return () => {
+      stopCollectPolling();
+      void fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" }).catch(() => {});
+    };
+  }, [stopCollectPolling]);
 
   const {
     mapReady,
@@ -1168,9 +1221,9 @@ const handleEditFence = (fence: FenceData) => {
 <FenceAddModal
   isOpen={showAddModal}
   onClose={() => {
+    void endCollectMode();
     setShowAddModal(false);
     setPendingFenceData(null);
-    setCollectedPoints([]);
   }}
   onNext={(data) => {
     setPendingFenceData(data);
@@ -1226,7 +1279,7 @@ const handleEditFence = (fence: FenceData) => {
     };
     addFence(newFence);
     resetDrawing();
-    setCollectedPoints([]);
+    void endCollectMode();
     setShowAddModal(false);
     setShowSuccess(true);
   }}
@@ -1239,22 +1292,7 @@ const handleEditFence = (fence: FenceData) => {
   devices={devices}
   collectedPoints={collectedPoints}
   onStartCollectMode={() => {
-    const fetchPoints = async () => {
-      try {
-        const res = await fetch('/api/fence/collect/points');
-        const data = await res.json();
-        setCollectedPoints(data.points || []);
-      } catch (e) {
-        console.log('模拟收集点数据');
-        setCollectedPoints([
-          { holder: '张三', lat: 34.28, lng: 109.13, timestamp: new Date().toISOString() },
-          { holder: '李四', lat: 34.285, lng: 109.135, timestamp: new Date().toISOString() },
-        ]);
-      }
-    };
-    fetchPoints();
-    const interval = setInterval(fetchPoints, 3000);
-    return () => clearInterval(interval);
+    void startCollectMode();
   }}
   onEnterDrawMode={() => {
     // 🎯 进入手动绘制模式！初始化所有工具状态

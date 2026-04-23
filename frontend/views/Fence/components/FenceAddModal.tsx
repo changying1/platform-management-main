@@ -352,7 +352,7 @@ const showTopTip = (message: string) => {
           <div className="flex items-center gap-2">
             <Move size={16} className="text-cyan-400" />
             <h2 className="font-bold text-base bg-clip-text text-transparent bg-gradient-to-r from-cyan-300 to-blue-300">
-              {buildMode === "collect" ? "📍 收集定位顶点" :
+              {buildMode === "collect" && step !== "form" ? "📍 收集定位顶点" :
                step === "form" ? (editingFenceId ? "编辑电子围栏" : "新建电子围栏") : "绘制围栏区域"}
             </h2>
           </div>
@@ -364,7 +364,7 @@ const showTopTip = (message: string) => {
           </button>
         </div>
 
-        {buildMode === "collect" ? (
+        {buildMode === "collect" && step !== "form" ? (
           // 📍 收集定位模式
           <div className="p-4 space-y-3">
             <div className="bg-slate-800/50 rounded-xl p-3 flex justify-between items-center">
@@ -674,6 +674,17 @@ const showTopTip = (message: string) => {
       showTopTip("请设置生效时间");
       return;
     }
+
+    if (buildMode === "collect") {
+      onSaveFence({
+        ...formData,
+        center: null,
+        points: collectedPoints.map((point) => [point.lat, point.lng]),
+        orgs: selectedOrgs,
+      });
+      return;
+    }
+
     setStep("draw");
     onNext({
       ...formData,
@@ -683,7 +694,7 @@ const showTopTip = (message: string) => {
   }}
   className="w-full py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg text-sm font-semibold transition-all mt-2"
 >
-  下一步：开始绘制 →
+  {buildMode === "collect" ? "创建围栏" : "下一步：开始绘制 →"}
 </button>
           </div>
         ) : (

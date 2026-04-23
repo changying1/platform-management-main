@@ -35,6 +35,8 @@ export const TrajectoryPlayback: React.FC<TrajectoryPlaybackProps> = ({
 }) => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [hours, setHours] = useState(24);
+  const [maxRetentionDays, setMaxRetentionDays] = useState(30);
+  const [trackRecordInterval, setTrackRecordInterval] = useState(5);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -42,8 +44,72 @@ export const TrajectoryPlayback: React.FC<TrajectoryPlaybackProps> = ({
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9000';
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('systemSettings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const retentionDays = Number(parsed?.trackRetentionDays || 30);
+        const intervalSeconds = Number(parsed?.trackRecordInterval || 5);
+        setMaxRetentionDays(retentionDays > 0 ? retentionDays : 30);
+        setTrackRecordInterval(intervalSeconds > 0 ? intervalSeconds : 5);
+        setHours(Math.max(1, retentionDays * 24));
+      }
+    } catch (err) {
+      console.error('读取系统设置失败:', err);
+    }
+
     fetchDevices();
   }, []);
+
+  const filterTrajectoryByInterval = (trajectory: TrajectoryPoint[]) => {
+    if (trackRecordInterval <= 1 || trajectory.length <= 1) {
+      return trajectory;
+    }
+
+    const filtered: TrajectoryPoint[] = [];
+    let lastAcceptedTime = 0;
+
+    trajectory.forEach((point, index) => {
+      const currentTime = new Date(point.timestamp).getTime();
+      if (index === 0 || index === trajectory.length - 1) {
+        filtered.push(point);
+        lastAcceptedTime = currentTime;
+        return;
+      }
+
+      if (!Number.isFinite(currentTime)) {
+        filtered.push(point);
+        return;
+      }
+
+      if (currentTime - lastAcceptedTime >= trackRecordInterval * 1000) {
+        filtered.push(point);
+        lastAcceptedTime = currentTime;
+      }
+    });
+
+    return filtered;
+  };
+
+  const hourOptions = Array.from(new Set([
+    1,
+    6,
+    12,
+    24,
+    24 * 3,
+    24 * 7,
+    maxRetentionDays * 24,
+  ])).filter((value) => value <= maxRetentionDays * 24).sort((a, b) => a - b);
+
+  const formatHourOptionLabel = (value: number) => {
+    if (value < 24) {
+      return `最近${value}小时`;
+    }
+    if (value % 24 === 0) {
+      return `最近${value / 24}天`;
+    }
+    return `最近${value}小时`;
+  };
 
   const fetchDevices = async () => {
     try {
@@ -75,15 +141,16 @@ export const TrajectoryPlayback: React.FC<TrajectoryPlaybackProps> = ({
         throw new Error('获取轨迹数据失败');
       }
       const data: TrajectoryResponse = await response.json();
+      const filteredTrajectory = filterTrajectoryByInterval(data.trajectory || []);
 
-      if (!data.trajectory || data.trajectory.length === 0) {
+      if (!filteredTrajectory || filteredTrajectory.length === 0) {
         setError(`设备 ${device.name} 在选定时间段内没有轨迹数据`);
         setLoading(false);
         return;
       }
 
       // 直接在当前地图上显示轨迹
-      onSelectDevice(device.device_id, data.trajectory);
+      onSelectDevice(device.device_id, filteredTrajectory);
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取轨迹数据失败');
       console.error('获取轨迹失败:', err);
@@ -131,11 +198,15 @@ export const TrajectoryPlayback: React.FC<TrajectoryPlaybackProps> = ({
                 onChange={(e) => setHours(Number(e.target.value))}
                 className="bg-slate-800 text-white rounded px-2 py-1 border border-slate-600 focus:border-cyan-400 focus:outline-none text-xs"
               >
-                <option value={1}>最近1小时</option>
-                <option value={6}>最近6小时</option>
-                <option value={12}>最近12小时</option>
-                <option value={24}>最近24小时</option>
+                {hourOptions.map((value) => (
+                  <option key={value} value={value}>
+                    {formatHourOptionLabel(value)}
+                  </option>
+                ))}
               </select>
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500">
+              最大显示时间按系统设置同步为 {maxRetentionDays} 天，轨迹点按 {trackRecordInterval} 秒间隔前端过滤。
             </div>
           </div>
 
