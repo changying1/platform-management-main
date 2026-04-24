@@ -122,6 +122,25 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
   const circleStartedRef = useRef(false);
   const rectStartedRef = useRef(false);
 
+  const mergeCollectedPoints = useCallback((incomingPoints: any[]) => {
+    setCollectedPoints((prev) => {
+      const pointMap = new Map<string, any>();
+
+      prev.forEach((point, index) => {
+        const key = point.device_id || point.deviceId || `prev-${index}`;
+        pointMap.set(key, point);
+      });
+
+      incomingPoints.forEach((point, index) => {
+        const key = point.device_id || point.deviceId || `incoming-${index}`;
+        const existing = pointMap.get(key);
+        pointMap.set(key, existing ? { ...existing, ...point } : point);
+      });
+
+      return Array.from(pointMap.values());
+    });
+  }, []);
+
   const stopCollectPolling = useCallback(() => {
     if (collectPollingRef.current !== null) {
       window.clearInterval(collectPollingRef.current);
@@ -134,11 +153,11 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
       const res = await fetch(`${API_BASE_URL}/fence/collect/points`);
       if (!res.ok) return;
       const data = await res.json();
-      setCollectedPoints(data.points || []);
+      mergeCollectedPoints(data.points || []);
     } catch (e) {
       console.error("获取收集点失败:", e);
     }
-  }, []);
+  }, [mergeCollectedPoints]);
 
   const startCollectMode = useCallback(async () => {
     stopCollectPolling();
