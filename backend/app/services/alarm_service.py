@@ -1,10 +1,16 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
+
 from app.schemas.alarm_schema import AlarmCreate, AlarmUpdate
 from app.utils.logger import get_logger
 from app.core.database import get_mongo_db, get_next_sequence
 from app.services.video_service import VideoService
+from app.services.notification_service import notification_service
+
 from datetime import datetime, timedelta
+import asyncio
+
+# 不再恢复 SQL 报警主链
 # from app.models.alarm_records import AlarmRecord
 # from app.models.device import Device
 # from app.models.fence import ElectronicFence
@@ -142,6 +148,84 @@ class AlarmService:
             {"$set": clean_updates}
         )
 
+    def _notify_alarm_created(self, alarm_doc: dict):
+        """
+        低风险保留上游 notification_service 功能。
+
+        注意：
+        1. 报警主链仍然以 MongoDB 写入为准；
+        2. 通知失败不能影响报警保存；
+        3. 这里不依赖 SQL 的 new_alarm 对象，只传 MongoDB alarm dict。
+        """
+        try:
+            alarm_data = self._mongo_alarm_to_out(alarm_doc)
+
+            # 优先兼容 upstream/main 里的 handle_alarm 通知方式
+            handle_alarm = getattr(notification_service, "handle_alarm", None)
+            if callable(handle_alarm):
+                import json
+                import os
+
+                config_path = "data/system_config.json"
+                recipients = []
+
+                if os.path.exists(config_path):
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                        recipients = config.get("notificationRecipients", [])
+
+                if recipients:
+                    alarm_level = alarm_data.get("severity") or "medium"
+                    if alarm_level == "normal":
+                        alarm_level = "low"
+                    elif alarm_level == "high":
+                        alarm_level = "severe"
+
+                    result = handle_alarm(
+                        alarm_level=alarm_level,
+                        alarm_type=alarm_data.get("alarm_type"),
+                        alarm_message=alarm_data.get("description") or "安全告警触发",
+                        recipients=recipients,
+                    )
+
+                    if asyncio.iscoroutine(result):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(result)
+                        except RuntimeError:
+                            asyncio.run(result)
+
+                return
+
+            # 兼容其他可能的方法名
+            notify_func = None
+            for method_name in [
+                "create_alarm_notification",
+                "send_alarm_notification",
+                "notify_alarm",
+                "create_notification",
+            ]:
+                func = getattr(notification_service, method_name, None)
+                if callable(func):
+                    notify_func = func
+                    break
+
+            if notify_func is None:
+                logger.warning("notification_service has no compatible alarm notification method, skipped.")
+                return
+
+            result = notify_func(alarm_data)
+
+            if asyncio.iscoroutine(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(result)
+                except RuntimeError:
+                    asyncio.run(result)
+
+        except Exception as e:
+            logger.warning(f"Alarm notification failed, ignored: {str(e)}")
+    
     def create_alarm(self, db: Session, alarm: AlarmCreate):
         logger.warning(f"ALARM TRIGGERED: Device {alarm.device_id}, Type {alarm.alarm_type}")
 
@@ -149,53 +233,14 @@ class AlarmService:
         duplicate_window_seconds = 5
         one_second_ago = datetime.utcnow() - timedelta(seconds=duplicate_window_seconds)
         exists = self._alarm_collection().find_one({
-            "device_id": alarm.device_id,
+            "device_id": str(alarm.device_id),
             "alarm_type": alarm.alarm_type,
-            "fence_id": alarm.fence_id,
+            "fence_id": self._safe_int(alarm.fence_id),
             "timestamp": {"$gte": one_second_ago},
         })
         if exists:
             logger.info("Duplicate alarm suppressed")
             return self._mongo_alarm_to_out(exists)
-        """
-        device = db.query(Device).filter(Device.id == alarm.device_id).first()
-        if not device:
-            raise HTTPException(status_code=400, detail=f"Device not found: {alarm.device_id}")
-        if alarm.fence_id is not None:
-            fence = db.query(ElectronicFence).filter(ElectronicFence.id == alarm.fence_id).first()
-            if not fence:
-                raise HTTPException(status_code=400, detail=f"Fence not found: {alarm.fence_id}")
-            
-            # 修正描述逻辑：不再重复拼接，直接生成结构化描述
-            behavior_text = "禁入" if fence.behavior == "No Entry" else "禁出"
-            alarm.description = f"[电子围栏-{behavior_text}] {fence.name} 触发报警"
-            
-            # 修正地点逻辑：如果前端传了坐标，保留坐标；否则仅显示围栏名
-            if alarm.location and "," in alarm.location:
-                alarm.location = f"{fence.name} ({alarm.location})"
-            else:
-                alarm.location = fence.name
-
-        # 自动推断 project_id：如果前端没传，通过 device_id 在 project_devices 表查找
-        project_id = alarm.project_id
-        if project_id is None:
-            from app.models.project import project_devices, Project
-            # 先查 project_devices 表获取设备关联的项目
-            row = db.execute(
-                project_devices.select().where(project_devices.c.device_id == alarm.device_id)
-            ).first()
-            if row:
-                project_id = row.project_id
-            else:
-                # 兼容性处理：如果没有关联项目，尝试取数据库中现有的第一个项目 ID
-                first_project = db.query(Project).first()
-                if first_project:
-                    project_id = first_project.id
-                else:
-                    # 如果库里一个项目都没有，则设为 None 以避免外键失败
-                    logger.warning(f"Device {alarm.device_id} has no project association and NO project exists in DB.")
-                    project_id = None
-            """
         
         device = self._get_video_device_by_id(alarm.device_id)
         if not device:
@@ -226,12 +271,19 @@ class AlarmService:
         try:
             self._alarm_collection().insert_one(payload)
             saved = self._find_alarm_doc_by_id(next_id)
+
             logger.warning(f"SUCCESSFULLY SAVED ALARM: ID {next_id}")
-            return self._mongo_alarm_to_out(saved)
+
+            # 低风险保留上游通知功能：
+            # 通知失败只记录 warning，不影响 MongoDB 报警保存和前端显示。
+            self._notify_alarm_created(saved or payload)
+
+            return self._mongo_alarm_to_out(saved or payload)
+
         except Exception as e:
             logger.error(f"DATABASE SAVE ERROR: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Database save error: {str(e)}")
-    
+        
     def get_alarms(self, db: Session, skip: int = 0, limit: int = 100, project_id: int | None = None):
         query = {}
         if project_id is not None:

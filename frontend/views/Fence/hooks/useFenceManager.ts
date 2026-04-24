@@ -79,16 +79,16 @@ export const useFenceManager = () => {
   useEffect(() => {
     const fetchDevices = async () => {
       try {
-        const res = await fetch(`${API_BASE}/fence/devices`);
+        const res = await fetch(`${API_BASE}/device/devices`);
         if (!res.ok) return;
         const data: FenceDevice[] = await res.json();
-        
+
         // 自动清理已经发生改变的模拟位置
         setManualPositions(prev => {
           const next = { ...prev };
           let changed = false;
           Object.keys(next).forEach(id => {
-            const backendDev = data.find(d => d.id === id);
+            const backendDev = data.find(d => d.device_id === id);
             if (backendDev) {
               // 如果后端传来的数据与我们记录的"移动前坐标"不同，说明后端真实上报了新数据
               if (backendDev.lat !== next[id].originalLat || backendDev.lng !== next[id].originalLng) {
@@ -128,7 +128,7 @@ export const useFenceManager = () => {
   });
 
   const filteredDevices = devices.map(device => {
-    const manual = manualPositions[device.id];
+    const manual = manualPositions[device.device_id];
     if (manual) {
       return { ...device, lat: manual.lat, lng: manual.lng };
     }
@@ -148,7 +148,7 @@ export const useFenceManager = () => {
 
   const updateDevicePosition = useCallback((deviceId: string, lat: number, lng: number) => {
     setManualPositions(prev => {
-      const originalDevice = devices.find(d => d.id === deviceId);
+      const originalDevice = devices.find(d => d.device_id === deviceId);
       return {
         ...prev,
         [deviceId]: {

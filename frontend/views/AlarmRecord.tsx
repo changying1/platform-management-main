@@ -28,6 +28,7 @@ interface AlarmRecord {
   location: string;
   deviceName: string;
   deviceId: string;
+  team?: string;
   snapshot?: string;
   videoPath?: string;
   fenceId?: string;
@@ -44,9 +45,10 @@ const mockFenceAlarms: AlarmRecord[] = [
     time: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     level: 'high',
     status: 'pending',
-    location: '基坑禁入区',
+    location: '西安地铁8号线-基坑禁入区',
     deviceName: '张工的安全帽',
     deviceId: '1001',
+    team: '土建工队',
     fenceId: '1',
     fenceName: '基坑禁入区'
   },
@@ -58,9 +60,10 @@ const mockFenceAlarms: AlarmRecord[] = [
     time: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     level: 'medium',
     status: 'pending',
-    location: '办公区禁出区',
+    location: '西安地铁8号线-办公区禁出区',
     deviceName: '李工的安全帽',
     deviceId: '1002',
+    team: '机电工队',
     fenceId: '2',
     fenceName: '办公区禁出区'
   },
@@ -72,9 +75,10 @@ const mockFenceAlarms: AlarmRecord[] = [
     time: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
     level: 'high',
     status: 'resolved',
-    location: '隧道施工区',
+    location: '西安地铁10号线-隧道施工区',
     deviceName: '王工的定位器',
     deviceId: '1003',
+    team: '隧道工队',
     fenceId: '3',
     fenceName: '隧道施工区'
   },
@@ -90,9 +94,10 @@ const mockVideoAlarms: AlarmRecord[] = [
     time: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
     level: 'high',
     status: 'pending',
-    location: '基坑施工区',
+    location: '西安地铁8号线-基坑施工区',
     deviceName: '摄像头-基坑东侧',
     deviceId: 'cam001',
+    team: '安全工队',
     snapshot: '/images/alarm-snapshot.jpg'
   },
   {
@@ -120,17 +125,22 @@ const mockVideoAlarms: AlarmRecord[] = [
     deviceId: 'cam003',
   },
 ];
-// 模拟分公司和项目数据
+// 模拟分公司、项目和工队数据
 const companyTree = [
   {
     id: '中铁一局',
     name: '中铁一局',
-    projects: ['西安地铁8号线', '西安地铁10号线']
+    projects: [
+      { name: '西安地铁8号线', teams: ['土建工队', '机电工队', '安全工队'] },
+      { name: '西安地铁10号线', teams: ['土建工队', '机电工队'] }
+    ]
   },
   {
     id: '中铁隧道局',
     name: '中铁隧道局',
-    projects: ['西安地铁10号线']
+    projects: [
+      { name: '西安地铁10号线', teams: ['隧道工队', '安全工队'] }
+    ]
   }
 ];
 export default function AlarmRecords() {
@@ -151,6 +161,7 @@ const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('reso
 const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
 const [selectedProject, setSelectedProject] = useState<string>('all');
+const [selectedTeam, setSelectedTeam] = useState<string>('all');
 const [filterTreePos, setFilterTreePos] = useState<{ top: number; left: number } | null>(null);
 const filterTreeRef = useRef<HTMLDivElement>(null);
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
@@ -163,6 +174,9 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     item.location && String(item.location).trim()
       ? String(item.location)
       : '未提供位置';
+
+  const rawItem = item as any;
+  const team = rawItem.team || rawItem.team_name || rawItem.work_team || '';
 
   return {
     id: String(item.id),
@@ -181,8 +195,9 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
         ? item.status
         : 'pending',
     location: locationText,
-    deviceName: `设备-${item.device_id}`,
+    deviceName: rawItem.device_name || rawItem.video_name || `设备-${item.device_id}`,
     deviceId: String(item.device_id),
+    team: team || undefined,
     snapshot: toStaticUrl(item.alarm_image_path),
     videoPath: toStaticUrl(item.recording_path),
     fenceId:
@@ -325,7 +340,36 @@ const handleConfirmProcess = async () => {
     if (activeTab !== 'all' && alarm.type !== activeTab) return false;
     // 状态筛选
     if (filterStatus !== 'all' && alarm.status !== filterStatus) return false;
-      // 分公司筛选
+    // 分公司筛选：优先兼容后端字段，其次用位置/描述做低风险前端判断
+    if (selectedCompany !== 'all') {
+      const searchableText = `${alarm.location} ${alarm.description} ${alarm.deviceName} ${alarm.team || ''}`;
+
+      if (selectedCompany === '中铁一局') {
+        if (!searchableText.includes('中铁一局') && !searchableText.includes('8号线')) {
+          return false;
+        }
+      } else if (selectedCompany === '中铁隧道局') {
+        if (!searchableText.includes('中铁隧道局') && !searchableText.includes('10号线') && !searchableText.includes('隧道')) {
+          return false;
+        }
+      }
+    }
+
+    // 项目筛选：当前 selectedProject 是项目名称，不传给后端，只在前端筛选
+    if (selectedProject !== 'all') {
+      const searchableText = `${alarm.location} ${alarm.description} ${alarm.deviceName}`;
+      if (!searchableText.includes(selectedProject)) {
+        return false;
+      }
+    }
+
+    // 工队筛选
+    if (selectedTeam !== 'all') {
+      const searchableText = `${alarm.team || ''} ${alarm.description} ${alarm.location}`;
+      if (!searchableText.includes(selectedTeam)) {
+        return false;
+      }
+    }
 
     // 关键词搜索
     if (searchKeyword && 
@@ -335,14 +379,14 @@ const handleConfirmProcess = async () => {
     !alarm.location.includes(searchKeyword)
 ) return false;
     
-// 日期范围筛选
-const alarmDate = new Date(alarm.time);
-if (startDate && alarmDate < new Date(startDate)) return false;
-if (endDate) {
-  const endDateTime = new Date(endDate);
-  endDateTime.setHours(23, 59, 59, 999);
-  if (alarmDate > endDateTime) return false;
-}
+    // 日期范围筛选
+    const alarmDate = new Date(alarm.time);
+    if (startDate && alarmDate < new Date(startDate)) return false;
+    if (endDate) {
+      const endDateTime = new Date(endDate);
+      endDateTime.setHours(23, 59, 59, 999);
+      if (alarmDate > endDateTime) return false;
+    }
     return true;
   });
 
@@ -355,44 +399,39 @@ if (endDate) {
 
   return (
     <div className="h-full overflow-auto p-6">
-      {/* 标题 */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-          <Bell size={28} className="text-cyan-400" />
-          告警记录
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">查看和管理所有围栏告警及视频分析告警</p>
-      </div>
+      {/* 标题 + 统计卡片 */}
+      <div className="flex justify-between items-start mb-6">
+        {/* 标题 */}
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Bell size={28} className="text-cyan-400" />
+            告警记录
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">查看和管理所有围栏告警及视频分析告警</p>
+        </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 text-sm">总告警数</span>
-            <Bell size={20} className="text-cyan-400" />
+        {/* 统计卡片 - 右上角紧凑布局 */}
+        <div className="flex gap-3">
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-cyan-400/30 px-4 py-2.5 flex items-center gap-2">
+            <Bell size={16} className="text-cyan-400" />
+            <span className="text-slate-400 text-sm">总数</span>
+            <span className="text-cyan-400 font-bold text-base">{stats.total}</span>
           </div>
-          <div className="text-2xl font-bold text-white mt-2">{stats.total}</div>
-        </div>
-        <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-yellow-400/30 p-4">
-          <div className="flex items-center justify-between">
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-yellow-400/30 px-4 py-2.5 flex items-center gap-2">
+            <AlertTriangle size={16} className="text-yellow-400" />
             <span className="text-slate-400 text-sm">待处理</span>
-            <AlertTriangle size={20} className="text-yellow-400" />
+            <span className="text-yellow-400 font-bold text-base">{stats.pending}</span>
           </div>
-          <div className="text-2xl font-bold text-yellow-400 mt-2">{stats.pending}</div>
-        </div>
-        <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-blue-400/30 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 text-sm">围栏告警</span>
-            <ShieldAlert size={20} className="text-blue-400" />
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-blue-400/30 px-4 py-2.5 flex items-center gap-2">
+            <ShieldAlert size={16} className="text-blue-400" />
+            <span className="text-slate-400 text-sm">围栏</span>
+            <span className="text-blue-400 font-bold text-base">{stats.fence}</span>
           </div>
-          <div className="text-2xl font-bold text-white mt-2">{stats.fence}</div>
-        </div>
-        <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-purple-400/30 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 text-sm">视频告警</span>
-            <Video size={20} className="text-purple-400" />
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-purple-400/30 px-4 py-2.5 flex items-center gap-2">
+            <Video size={16} className="text-purple-400" />
+            <span className="text-slate-400 text-sm">视频</span>
+            <span className="text-purple-400 font-bold text-base">{stats.video}</span>
           </div>
-          <div className="text-2xl font-bold text-white mt-2">{stats.video}</div>
         </div>
       </div>
 
@@ -484,6 +523,7 @@ if (endDate) {
           onClick={() => {
             setSelectedCompany('all');
             setSelectedProject('all');
+            setSelectedTeam('all');
             setShowFilterTree(false);
           }}
           className="text-xs text-cyan-400 hover:text-cyan-300"
@@ -498,6 +538,7 @@ if (endDate) {
             onClick={() => {
               setSelectedCompany(selectedCompany === company.id ? 'all' : company.id);
               setSelectedProject('all');
+              setSelectedTeam('all');
             }}
             className={`w-full text-left px-2 py-1.5 rounded-lg text-sm transition-all ${
               selectedCompany === company.id
@@ -509,18 +550,39 @@ if (endDate) {
           </button>
           {selectedCompany === company.id && (
             <div className="ml-4 space-y-1 border-l border-cyan-400/30 pl-2">
-              {company.projects.map(project => (
-                <button
-                  key={project}
-                  onClick={() => setSelectedProject(selectedProject === project ? 'all' : project)}
-                  className={`w-full text-left px-2 py-1 rounded-lg text-xs transition-all ${
-                    selectedProject === project
-                      ? 'bg-cyan-500/20 text-cyan-300'
-                      : 'text-slate-400 hover:bg-slate-700'
-                  }`}
-                >
-                  📄 {project}
-                </button>
+              {company.projects.map((project: { name: string; teams: string[] }) => (
+                <div key={project.name} className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setSelectedProject(selectedProject === project.name ? 'all' : project.name);
+                      setSelectedTeam('all');
+                    }}
+                    className={`w-full text-left px-2 py-1 rounded-lg text-xs transition-all ${
+                      selectedProject === project.name
+                        ? 'bg-cyan-500/20 text-cyan-300'
+                        : 'text-slate-400 hover:bg-slate-700'
+                    }`}
+                  >
+                    📂 {project.name}
+                  </button>
+                  {selectedProject === project.name && (
+                    <div className="ml-4 space-y-1 border-l border-cyan-400/30 pl-2">
+                      {project.teams.map(team => (
+                        <button
+                          key={team}
+                          onClick={() => setSelectedTeam(selectedTeam === team ? 'all' : team)}
+                          className={`w-full text-left px-2 py-0.5 rounded-lg text-xs transition-all ${
+                            selectedTeam === team
+                              ? 'bg-orange-500/20 text-orange-300'
+                              : 'text-slate-500 hover:bg-slate-700'
+                          }`}
+                        >
+                          👥 {team}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -631,70 +693,96 @@ onClick={(e) => {
         </div>
       </div>
 
-      {/* 告警列表 */}
-      <div className="space-y-3">
-        {filteredAlarms.map(alarm => (
-          <div
-            key={alarm.id}
-            onClick={() => setSelectedAlarm(alarm)}
-            className={`bg-slate-900/50 backdrop-blur-sm rounded-xl border p-4 cursor-pointer transition-all hover:border-cyan-400/50 ${
-              alarm.status === 'pending' ? 'border-red-500/30' : 'border-slate-700/50'
-            }`}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3 flex-1">
-                {/* 类型图标 */}
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
-                }`}>
-                  {alarm.type === 'fence' ? (
-                    <ShieldAlert size={20} className="text-blue-400" />
-                  ) : (
-                    <Video size={20} className="text-purple-400" />
-                  )}
-                </div>
-                
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <h3 className="font-semibold text-white">{alarm.title}</h3>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border ${getLevelColor(alarm.level)}`}>
-                      {getLevelText(alarm.level)}
-                    </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${getStatusColor(alarm.status)}`}>
-                      {getStatusText(alarm.status)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-300 mb-2">{alarm.description}</p>
-                  <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <div className="flex items-center gap-1">
-                      <MapPin size={12} />
-                      {alarm.location}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <User size={12} />
-                      {alarm.deviceName}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Clock size={12} />
-                      {new Date(alarm.time).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 操作按钮 */}
-              {alarm.status === 'pending' && (
-<button
-  onClick={(e) => { e.stopPropagation(); handleOpenProcessModal(alarm, 'resolved'); }}
-  className="px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
->
-  <CheckCircle size={12} />
-  处理
-</button>
-              )}
-            </div>
-          </div>
-        ))}
+      {/* 告警列表 - 表格型 */}
+      <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-700/50 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="border-b border-blue-400/20 bg-slate-800/50">
+              <tr>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">类型</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">告警名称</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">等级</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">状态</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">工队</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">位置</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">设备</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">时间</th>
+                <th className="px-4 py-3.5 text-right text-sm font-semibold text-slate-300">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700">
+              {filteredAlarms.map(alarm => (
+                <tr 
+                   key={alarm.id} 
+                   onClick={() => setSelectedAlarm(alarm)}
+                   className={`hover:bg-slate-800/30 cursor-pointer transition-colors ${
+                     alarm.status === 'pending' ? 'bg-red-500/5' : ''
+                   }`}
+                 >
+                   <td className="px-4 py-4">
+                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                       alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                     }`}>
+                       {alarm.type === 'fence' ? (
+                         <ShieldAlert size={16} className="text-blue-400" />
+                       ) : (
+                         <Video size={16} className="text-purple-400" />
+                       )}
+                     </div>
+                   </td>
+                   <td className="px-4 py-4">
+                     <div className="text-base text-white font-medium">{alarm.title}</div>
+                     <div className="text-sm text-slate-400 mt-1">{alarm.description}</div>
+                   </td>
+                   <td className="px-4 py-4">
+                      <span className={`text-xs px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
+                        {getLevelText(alarm.level)}
+                      </span>
+                   </td>
+                   <td className="px-4 py-4">
+                      <span className={`text-xs px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
+                        {getStatusText(alarm.status)}
+                      </span>
+                   </td>
+                   <td className="px-4 py-4">
+                     <span className="px-2 py-0.5 text-xs rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                       {alarm.team || '-'}
+                     </span>
+                   </td>
+                   <td className="px-4 py-4">
+                     <div className="flex items-center gap-1 text-sm text-slate-300">
+                       <MapPin size={14} className="text-slate-500" />
+                       {alarm.location}
+                     </div>
+                   </td>
+                   <td className="px-4 py-4">
+                     <div className="flex items-center gap-1 text-sm text-slate-300">
+                       <User size={14} className="text-slate-500" />
+                       {alarm.deviceName}
+                     </div>
+                   </td>
+                   <td className="px-4 py-4">
+                     <div className="flex items-center gap-1 text-sm text-slate-300">
+                       <Clock size={14} className="text-slate-500" />
+                       {new Date(alarm.time).toLocaleString()}
+                     </div>
+                   </td>
+                   <td className="px-4 py-4 text-right">
+                     {alarm.status === 'pending' && (
+                       <button
+                         onClick={(e) => { e.stopPropagation(); handleOpenProcessModal(alarm, 'resolved'); }}
+                         className="px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                       >
+                         <CheckCircle size={14} />
+                         处理
+                       </button>
+                     )}
+                   </td>
+                 </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         {filteredAlarms.length === 0 && (
           <div className="text-center py-12 text-slate-400">

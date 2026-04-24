@@ -28,7 +28,7 @@ export interface ProjectRegionData {
 }
 
 export interface FenceDevice {
-  id: string;
+  device_id: string;
   name: string;
   lat: number;
   lng: number;

@@ -9,9 +9,13 @@ import struct
 import threading
 import time
 import random
+from collections import deque
 from typing import Any
 from app.utils.logger import get_logger
 from app.utils.coord_transform import wgs84_to_gcj02
+from datetime import datetime
+from app.services.Device.device_service import device_service
+from app.schemas.device_schema import TrajectoryPoint
 
 logger = get_logger("JT808")
 
@@ -122,6 +126,9 @@ class JT808Manager:
         self.active_connections = {}  # {phone_num: socket} 设备 TCP 连接
         self.device_seqs = {}     # {phone_num: int} 下发消息序列号
         self.connection_lock = threading.Lock()
+        self.attendance_lock = threading.Lock()
+        self.attendance_events = deque(maxlen=500)  # 最近打卡事件，后续可供前端消费
+        self.latest_attendance_by_device = {}  # {device_id: 最新打卡事件}
 
     def unregister_connection(self, client_sock):
         with self.connection_lock:
@@ -230,7 +237,80 @@ class JT808Manager:
             }
         return self.device_store[phone_num]
 
-    def update_device_data(self, phone_num: str, lat: float = None, lon: float = None):
+    def record_attendance_event(self, phone_num: str, event_type: str, lat: float | None, lon: float | None) -> dict:
+        """
+        记录上下班打卡事件到内存。
+
+        当前阶段只做接收和缓存；后续由其他流程将该事件转发给前端或业务服务。
+        """
+        device = device_service.get_device_by_holder_phone(phone_num)
+        device_id = device.get("device_id") if device else phone_num
+        device_name = None
+        if device:
+            device_name = device.get("name") or device.get("device_name")
+
+        event = {
+            "event_type": event_type,
+            "device_id": device_id,
+            "phone_num": phone_num,
+            "device_name": device_name,
+            "lat": lat,
+            "lon": lon,
+            "received_at": datetime.now().isoformat(),
+            "status": "pending_dispatch",
+        }
+
+        with self.attendance_lock:
+            self.attendance_events.append(event)
+            self.latest_attendance_by_device[device_id] = event
+
+        logger.info(
+            f"[打卡] 已接收{event_type}事件: phone={phone_num}, device_id={device_id}, "
+            f"lon={lon}, lat={lat}"
+        )
+
+        try:
+            from app.services.Fence.collect_service import fence_collect_service
+            accepted = fence_collect_service.record_point(device_id, lat, lon)
+            if accepted:
+                logger.info(f"[围栏收集] 已记录设备 {device_id} 的打卡点位")
+        except Exception as exc:
+            logger.error(f"[围栏收集] 记录打卡点位失败: {exc}")
+
+        return event
+
+    def get_pending_attendance_events(self) -> list[dict]:
+        with self.attendance_lock:
+            return list(self.attendance_events)
+
+    def save_location_history(self, device_id: str, lat: float, lon: float, speed: float = None, direction: float = None):
+        """保存定位历史到本地 CSV 独立备份"""
+        try:
+            now = datetime.now()
+            import os, csv
+            backup_dir = "./storage/location_backup"
+            os.makedirs(backup_dir, exist_ok=True)
+            date_str = now.strftime("%Y%m%d")
+            csv_file = os.path.join(backup_dir, f"location_{date_str}.csv")
+            
+            file_exists = os.path.exists(csv_file)
+            with open(csv_file, 'a', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['time', 'device_id', 'lat', 'lng', 'speed', 'direction'])
+                writer.writerow([
+                    now.strftime("%Y-%m-%d %H:%M:%S"),
+                    device_id,
+                    f"{lat:.6f}",
+                    f"{lon:.6f}",
+                    f"{speed or 0:.1f}",
+                    f"{direction or 0:.0f}"
+                ])
+
+        except Exception as e:
+            logger.debug(f"保存定位历史失败: {e}")
+
+    def update_device_data(self, phone_num: str, lat: float = None, lon: float = None, speed: float = None, direction: float = None):
         """更新设备在线状态和坐标（WGS84→GCJ02 纠偏）"""
         self.last_seen[phone_num] = time.time()
 
@@ -244,14 +324,66 @@ class JT808Manager:
                     device["last_latitude"] = gcj_lat
                     device["last_longitude"] = gcj_lon
                     logger.info(f"[{phone_num}] 坐标更新 -> Lat:{gcj_lat:.6f}, Lon:{gcj_lon:.6f}")
+                    # 1. 本地 CSV 备份
+                    self.save_location_history(phone_num, gcj_lat, gcj_lon, speed, direction)
+                    # 2. 实时坐标和轨迹更新
+                    self._save_to_database(phone_num, gcj_lat, gcj_lon)
                 else:
                     # GPS 未锁定时上报(0,0)，从列表随机选一个点，模拟动起来的效果
                     lat_rand, lon_rand = random.choice(RANDOM_COORDS)
                     device["last_latitude"] = lat_rand
                     device["last_longitude"] = lon_rand
                     logger.warning(f"[{phone_num}] 坐标(0,0), 随机跳点至 -> Lat:{lat_rand:.6f}, Lon:{lon_rand:.6f}")
+                    
+                    # 存储到数据库（使用默认坐标）
+                    self._save_to_database(phone_num, lat_rand, lon_rand)
         except Exception as e:
             logger.error(f"更新设备 {phone_num} 异常: {e}")
+    
+    def _save_to_database(self, phone_num: str, lat: float, lon: float):
+        """将坐标存储到数据库，同时添加轨迹点"""
+        try:
+            # 根据holderPhone查询设备
+            device = device_service.get_device_by_holder_phone(phone_num)
+            if not device:
+                logger.warning(f"[{phone_num}] 未找到对应的设备，跳过存储")
+                return
+            
+            # 获取设备的device_id
+            device_id = device.get("device_id")
+            if not device_id:
+                logger.warning(f"[{phone_num}] 设备缺少device_id，跳过存储")
+                return
+            
+            # 1. 更新设备的实时坐标
+            from app.schemas.device_schema import DeviceUpdate
+            from datetime import datetime, timezone
+            update_data = DeviceUpdate(
+                lat=lat,
+                lng=lon,
+                lastUpdate=datetime.now(timezone.utc).isoformat()
+            )
+            
+            updated_device = device_service.update_device(device_id, update_data)
+            if updated_device:
+                logger.debug(f"[{phone_num}] 实时坐标已更新到数据库 -> Lat:{lat:.6f}, Lon:{lon:.6f}, DeviceID:{device_id}")
+            else:
+                logger.warning(f"[{phone_num}] 更新设备坐标失败，DeviceID:{device_id}")
+            
+            # 2. 添加轨迹点（用于轨迹回放功能）
+            from app.schemas.device_schema import TrajectoryPoint
+            trajectory_point = TrajectoryPoint(
+                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                lat=lat,
+                lng=lon,
+                speed=0.0,
+                direction=0.0
+            )
+            device_service.add_trajectory_point(device_id, trajectory_point)
+            logger.debug(f"[{phone_num}] 轨迹点已添加 -> Lat:{lat:.6f}, Lon:{lon:.6f}")
+            
+        except Exception as e:
+            logger.error(f"存储坐标到数据库失败 {phone_num}: {e}")
 
     # ----------------------------------------------------------
     #  超时检测：30分钟无心跳自动离线
@@ -326,14 +458,29 @@ class JT808Manager:
                         self.update_device_data(phone_num)
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
-                    elif msg_id in ["0200", "0203", "0204"]:  # 位置上报
+                    elif msg_id in ["0200", "0203", "0204"]:  # 位置上报 / 上下班打卡
                         body = content_clean[header_len:]
+                        lat = None
+                        lon = None
+                        speed = None
+                        dir_deg = None
+
                         if len(body) >= 28:
                             lat_int, lon_int = struct.unpack('>I I', body[8:16])
+                            speed_10x, dir_deg = struct.unpack('>H H', body[16:20])
                             lat, lon = lat_int / 10 ** 6, lon_int / 10 ** 6
-                            self.update_device_data(phone_num, lat, lon)
+                            speed = speed_10x / 10.0
+                            self.update_device_data(phone_num, lat, lon, speed, dir_deg)
                         else:
                             self.update_device_data(phone_num)
+
+                        if msg_id in ["0203", "0204"]:
+                            event_type = "clock_in" if msg_id == "0203" else "clock_out"
+                            device_state = self.device_store.get(phone_num, {})
+                            event_lat = device_state.get("last_latitude", lat)
+                            event_lon = device_state.get("last_longitude", lon)
+                            self.record_attendance_event(phone_num, event_type, event_lat, event_lon)
+
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
                     else:  # 其他消息通用应答

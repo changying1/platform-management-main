@@ -9,6 +9,7 @@ interface Person {
   employeeId: string;
   idCard?: string;           // 身份证号
   workType?: string;         // 工种
+  workTeam?: string;         // 工队
   team?: string;             // 班组
   phone: string;
   entryDate?: string;        // 进场日期
@@ -36,6 +37,7 @@ const [persons, setPersons] = useState<Person[]>([
     employeeId: '10001', 
     idCard: '41010119900307653X',
     workType: '木工', 
+    workTeam: '土建工队',
     team: '木工一班', 
     phone: '13800138001', 
     entryDate: '2024-03-15',
@@ -51,6 +53,7 @@ const [persons, setPersons] = useState<Person[]>([
     employeeId: '10002', 
     idCard: '410101198512154321',
     workType: '钢筋工', 
+    workTeam: '土建工队',
     team: '钢筋一班', 
     phone: '13800138002', 
     entryDate: '2024-03-20',
@@ -66,6 +69,7 @@ const [persons, setPersons] = useState<Person[]>([
     employeeId: '10003', 
     idCard: '410101199512206789',
     workType: '电工', 
+    workTeam: '机电工队',
     team: '电工班', 
     phone: '13800138003', 
     entryDate: '2024-04-01',
@@ -75,10 +79,27 @@ const [persons, setPersons] = useState<Person[]>([
     project: '地铁1号线工程',
     avatar: '/avatars/wangwu.jpg'
   },
+  { 
+    id: 4, 
+    name: '赵六', 
+    employeeId: '10004', 
+    idCard: '410101199208153456',
+    workType: '水暖工', 
+    workTeam: '机电工队',
+    team: '水暖班', 
+    phone: '13800138004', 
+    entryDate: '2024-04-10',
+    status: 'active',
+    emergencyContact: '孙大姐 13800138066',
+    company: '第二分公司',
+    project: '商业综合体项目',
+    avatar: '/avatars/zhaoliu.jpg'
+  },
 ]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState<string>('all');
 const [filterProject, setFilterProject] = useState<string>('all');
+const [filterWorkTeam, setFilterWorkTeam] = useState<string>('all');
 const [filterWorkType, setFilterWorkType] = useState<string>('all');
 const [filterTeam, setFilterTeam] = useState<string>('all');
   const [showModal, setShowModal] = useState(false);
@@ -94,6 +115,8 @@ const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const companies = ['all', ...new Set(persons.map(p => p.company).filter(Boolean))];
 // 获取所有唯一的项目
 const projects = ['all', ...new Set(persons.map(p => p.project).filter(Boolean))];
+// 获取所有唯一的工队
+const workTeams = ['all', ...new Set(persons.map(p => p.workTeam).filter(Boolean))];
 // 获取所有唯一的工种
 const workTypes = ['all', ...new Set(persons.map(p => p.workType).filter(Boolean))];
 // 获取所有唯一的班组
@@ -105,16 +128,18 @@ const filteredData = persons.filter(p => {
   const matchesSearch = searchTerm === '' || 
     p.name.includes(searchTerm) || 
     p.employeeId.includes(searchTerm) ||
+    p.workTeam?.includes(searchTerm) ||
     p.idCard?.includes(searchTerm) ||
     p.phone.includes(searchTerm);
   
   // 分类筛选
   const matchesCompany = filterCompany === 'all' || p.company === filterCompany;
   const matchesProject = filterProject === 'all' || p.project === filterProject;
+  const matchesWorkTeam = filterWorkTeam === 'all' || p.workTeam === filterWorkTeam;
   const matchesWorkType = filterWorkType === 'all' || p.workType === filterWorkType;
   const matchesTeam = filterTeam === 'all' || p.team === filterTeam;
   
-  return matchesSearch && matchesCompany && matchesProject && matchesWorkType && matchesTeam;
+  return matchesSearch && matchesCompany && matchesProject && matchesWorkTeam && matchesWorkType && matchesTeam;
 });
 
 // 下载Excel模板
@@ -249,6 +274,18 @@ const confirmImport = () => {
   </select>
   
   <select
+    value={filterWorkTeam}
+    onChange={(e) => setFilterWorkTeam(e.target.value)}
+    className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
+  >
+    {workTeams.map(workTeam => (
+      <option key={workTeam} value={workTeam}>
+        {workTeam === 'all' ? '全部工队' : workTeam}
+      </option>
+    ))}
+  </select>
+  
+  <select
     value={filterWorkType}
     onChange={(e) => setFilterWorkType(e.target.value)}
     className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
@@ -277,6 +314,7 @@ const confirmImport = () => {
     onClick={() => {
       setFilterCompany('all');
       setFilterProject('all');
+      setFilterWorkTeam('all');
       setFilterWorkType('all');
       setFilterTeam('all');
       setSearchTerm('');
@@ -333,7 +371,7 @@ const confirmImport = () => {
 <div className="flex justify-between items-center mb-3">
   <p className="text-sm text-slate-400">
     共 <span className="text-cyan-400 font-bold">{filteredData.length}</span> 条记录
-    {(filterCompany !== 'all' || filterProject !== 'all' || filterWorkType !== 'all' || filterTeam !== 'all' || searchTerm) && (
+    {(filterCompany !== 'all' || filterProject !== 'all' || filterWorkTeam !== 'all' || filterWorkType !== 'all' || filterTeam !== 'all' || searchTerm) && (
       <span className="ml-2 text-xs">(已筛选)</span>
     )}
   </p>
@@ -349,6 +387,7 @@ const confirmImport = () => {
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工号</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">分公司</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">项目</th>
+    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工队</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工种</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">班组</th>
     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">进场日期</th>
@@ -375,6 +414,7 @@ const confirmImport = () => {
       <td className="px-4 py-3 text-slate-300">{person.employeeId}</td>
       <td className="px-4 py-3 text-slate-300">{person.company || '—'}</td>
       <td className="px-4 py-3 text-slate-300">{person.project || '—'}</td>
+      <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{person.workTeam || '—'}</span></td>
       <td className="px-4 py-3 text-slate-300">{person.workType || '—'}</td>
       <td className="px-4 py-3 text-slate-300">{person.team || '—'}</td>
       <td className="px-4 py-3 text-slate-300">{person.entryDate || '—'}</td>
@@ -511,6 +551,16 @@ const confirmImport = () => {
       onChange={(e) => setEditingItem({ ...editingItem!, project: e.target.value })}
       className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
       placeholder="所属项目"
+    />
+  </div>
+  <div>
+    <label className="block text-sm text-slate-400 mb-1">工队</label>
+    <input
+      type="text"
+      value={editingItem?.workTeam || ''}
+      onChange={(e) => setEditingItem({ ...editingItem!, workTeam: e.target.value })}
+      className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      placeholder="如：土建工队/机电工队"
     />
   </div>
   <div>

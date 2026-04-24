@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2 } from "lucide-react";
+import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause } from "lucide-react";
 import { useFenceManager } from "./hooks/useFenceManager";
 import { useFenceMap } from "./hooks/useFenceMap";
 import { FenceSidebar } from "./components/FenceSidebar";
@@ -9,9 +9,19 @@ import { FenceAddModal } from "./components/FenceAddModal";
 import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
+import { TrajectoryPlayback } from "./components/TrajectoryPlayback";
 import { FenceData, FenceDevice } from "./types";
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
+
+interface TrajectoryPoint {
+  lat: number;
+  lng: number;
+  timestamp: string;
+  speed?: number;
+  direction?: number;
+}
 
 interface AlarmRecord {
   id: string;
@@ -48,6 +58,14 @@ export default function FenceManagement() {
   const [tempShape, setTempShape] = useState<any>({});
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState<[number, number] | null>(null);
+  const [showTrajectoryPlayback, setShowTrajectoryPlayback] = useState(false);
+  const [playbackTrajectory, setPlaybackTrajectory] = useState<TrajectoryPoint[]>([]);
+  const [playbackDeviceId, setPlaybackDeviceId] = useState<string | null>(null);
+  const [hasAutoFit, setHasAutoFit] = useState(false);
+  const [isPlayingTrajectory, setIsPlayingTrajectory] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentPointIndex, setCurrentPointIndex] = useState(0);
+  const [movingMarker, setMovingMarker] = useState<any>(null);
 
 const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceData; type: string }) => {
   const newAlarm: AlarmRecord = {
@@ -98,10 +116,81 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
 
   const [mouseLngLat, setMouseLngLat] = useState<[number, number] | null>(null);
   const [collectedPoints, setCollectedPoints] = useState<any[]>([]);
+  const collectPollingRef = useRef<number | null>(null);
   const isBrushDrawingRef = useRef(false);
   const brushFinishedRef = useRef(false);
   const circleStartedRef = useRef(false);
   const rectStartedRef = useRef(false);
+
+  const mergeCollectedPoints = useCallback((incomingPoints: any[]) => {
+    setCollectedPoints((prev) => {
+      const pointMap = new Map<string, any>();
+
+      prev.forEach((point, index) => {
+        const key = point.device_id || point.deviceId || `prev-${index}`;
+        pointMap.set(key, point);
+      });
+
+      incomingPoints.forEach((point, index) => {
+        const key = point.device_id || point.deviceId || `incoming-${index}`;
+        const existing = pointMap.get(key);
+        pointMap.set(key, existing ? { ...existing, ...point } : point);
+      });
+
+      return Array.from(pointMap.values());
+    });
+  }, []);
+
+  const stopCollectPolling = useCallback(() => {
+    if (collectPollingRef.current !== null) {
+      window.clearInterval(collectPollingRef.current);
+      collectPollingRef.current = null;
+    }
+  }, []);
+
+  const fetchCollectedPoints = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/fence/collect/points`);
+      if (!res.ok) return;
+      const data = await res.json();
+      mergeCollectedPoints(data.points || []);
+    } catch (e) {
+      console.error("获取收集点失败:", e);
+    }
+  }, [mergeCollectedPoints]);
+
+  const startCollectMode = useCallback(async () => {
+    stopCollectPolling();
+    setCollectedPoints([]);
+
+    try {
+      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "POST" });
+    } catch (e) {
+      console.error("启动围栏收集失败:", e);
+    }
+
+    await fetchCollectedPoints();
+    collectPollingRef.current = window.setInterval(() => {
+      void fetchCollectedPoints();
+    }, 3000);
+  }, [fetchCollectedPoints, stopCollectPolling]);
+
+  const endCollectMode = useCallback(async () => {
+    stopCollectPolling();
+    try {
+      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" });
+    } catch (e) {
+      console.error("结束围栏收集失败:", e);
+    }
+    setCollectedPoints([]);
+  }, [stopCollectPolling]);
+
+  useEffect(() => {
+    return () => {
+      stopCollectPolling();
+      void fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" }).catch(() => {});
+    };
+  }, [stopCollectPolling]);
 
   const {
     mapReady,
@@ -194,6 +283,7 @@ const handleClearDraw = () => {
 };
 
 const handleSaveFenceWithRules = (ruleData: any) => {
+  const shape = ruleData.shape === 'circle' ? 'circle' : 'polygon';
   const newFence = {
     id: Date.now().toString(),
     name: ruleData.name,
@@ -203,8 +293,8 @@ const handleSaveFenceWithRules = (ruleData: any) => {
     description: ruleData.description,
     behavior: ruleData.behavior,
     severity: ruleData.severity,
-    type: ruleData.shape === 'circle' ? 'Circle' : 'Polygon',
-    shape: ruleData.shape,
+    type: shape === 'circle' ? 'Circle' : 'Polygon',
+    shape: shape,
     center: ruleData.center,
     points: ruleData.points,
     radius: ruleData.radius || 100,
@@ -246,7 +336,7 @@ const handleSaveFenceAfterDraw = () => {
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
-      shape: pendingFenceData.shape,
+      shape: "circle",
       center: tempCenter,
       points: pendingFenceData.points,
       radius: pendingFenceData.radius,
@@ -272,7 +362,7 @@ const handleSaveFenceAfterDraw = () => {
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
-      shape: pendingFenceData.shape,
+      shape: "polygon",
       center: pendingFenceData.center,
       points: tempPoints,
       radius: pendingFenceData.radius,
@@ -306,21 +396,8 @@ useEffect(() => {
         
         if (violationTypes[device.id] !== violation.fence.behavior) {
           saveAlarm(device, violation);
-          
-          const toast = document.createElement('div');
-          toast.className = 'fixed top-20 left-1/2 transform -translate-x-1/2 z-[200] bg-red-500/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium animate-in fade-in slide-in-from-top-5 duration-200';
-          toast.innerHTML = `
-            <div class="flex items-center gap-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <span>⚠️ ${device.name} ${violation.type} ${violation.fence.name}</span>
-            </div>
-          `;
-          document.body.appendChild(toast);
-          setTimeout(() => toast.remove(), 1000);
+          var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
+          window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
         }
       }
     });
@@ -341,11 +418,8 @@ useEffect(() => {
         const violation = violations[0];
         newViolationMap[device.id] = violation.fence.behavior;
         
-        const toast = document.createElement('div');
-        toast.className = 'fixed top-20 left-1/2 transform -translate-x-1/2 z-[200] bg-red-500/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium';
-        toast.innerHTML = `<div class="flex items-center gap-3"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>⚠️ ${device.name} ${violation.type} ${violation.fence.name}</span></div>`;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
+        window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
       }
     });
     
@@ -372,7 +446,7 @@ renderFences(
   renderDevices(devices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
     updateDevicePosition(deviceId, latitude, longitude);
   });
-  
+
 renderDraft(
   activeDrawTool,
   tempPoints,
@@ -381,7 +455,119 @@ renderDraft(
   // 🔒 画笔工具绝对不传鼠标！只有多边形才需要跟随线！
   activeDrawTool === 'polygon' ? mouseLngLat : null
 );
-}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, devices, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData]);
+
+// 渲染轨迹回放
+if (playbackTrajectory.length > 0 && mapRef.current) {
+  const AMap = window.AMap;
+  const map = mapRef.current;
+
+  // 清除之前的轨迹
+  if ((map as any)._trajectoryOverlays) {
+    (map as any)._trajectoryOverlays.forEach((overlay: any) => map.remove(overlay));
+  }
+  (map as any)._trajectoryOverlays = [];
+
+  const path = playbackTrajectory.map((p) => [p.lng, p.lat]);
+
+  // 轨迹线
+  const polyline = new AMap.Polyline({
+    path: path,
+    strokeColor: '#3b82f6',
+    strokeWeight: 4,
+    strokeOpacity: 0.8,
+    showDir: true,
+  });
+  map.add(polyline);
+  (map as any)._trajectoryOverlays.push(polyline);
+
+  // 起点标记
+  const startPoint = playbackTrajectory[0];
+  const startMarker = new AMap.Marker({
+    position: [startPoint.lng, startPoint.lat],
+    content: `<div style="width: 24px; height: 24px; background: #22c55e; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">始</div>`,
+    offset: new AMap.Pixel(-12, -12),
+  });
+  map.add(startMarker);
+  (map as any)._trajectoryOverlays.push(startMarker);
+
+  // 终点标记
+  const endPoint = playbackTrajectory[playbackTrajectory.length - 1];
+  const endMarker = new AMap.Marker({
+    position: [endPoint.lng, endPoint.lat],
+    content: `<div style="width: 24px; height: 24px; background: #ef4444; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">终</div>`,
+    offset: new AMap.Pixel(-12, -12),
+  });
+  map.add(endMarker);
+  (map as any)._trajectoryOverlays.push(endMarker);
+
+  // 自适应视图 - 只在第一次加载时执行
+  if (!hasAutoFit) {
+    map.setFitView([polyline, startMarker, endMarker], false, [50, 50, 50, 50]);
+    setHasAutoFit(true);
+  }
+}
+}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, devices, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, playbackTrajectory]);
+
+// 轨迹播放动画
+useEffect(() => {
+  if (!isPlaying || !mapRef.current || playbackTrajectory.length === 0) return;
+
+  const map = mapRef.current;
+  const AMap = window.AMap;
+
+  // 创建移动标记（如果不存在）
+  if (!movingMarker && playbackTrajectory.length > 0) {
+    const startPoint = playbackTrajectory[0];
+    const marker = new AMap.Marker({
+      position: [startPoint.lng, startPoint.lat],
+      content: `<div style="width: 32px; height: 32px; background: #3b82f6; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5); animation: pulse 1.5s infinite;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+      </div>`,
+      offset: new AMap.Pixel(-16, -16),
+    });
+    map.add(marker);
+    setMovingMarker(marker);
+  }
+
+  // 播放动画
+  const interval = setInterval(() => {
+    setCurrentPointIndex((prev) => {
+      const next = prev + 1;
+      if (next >= playbackTrajectory.length) {
+        // 播放结束，回到起点
+        setIsPlaying(false);
+        if (movingMarker && playbackTrajectory.length > 0) {
+          const startPoint = playbackTrajectory[0];
+          movingMarker.setPosition([startPoint.lng, startPoint.lat]);
+        }
+        return 0;
+      }
+
+      // 更新标记位置
+      const point = playbackTrajectory[next];
+      if (movingMarker) {
+        movingMarker.setPosition([point.lng, point.lat]);
+      }
+
+      return next;
+    });
+  }, 500); // 每500ms移动一个点
+
+  return () => {
+    clearInterval(interval);
+  };
+}, [isPlaying, playbackTrajectory, movingMarker]);
+
+// 清理移动标记
+useEffect(() => {
+  return () => {
+    if (movingMarker && mapRef.current) {
+      mapRef.current.remove(movingMarker);
+    }
+  };
+}, [movingMarker]);
 
 useEffect(() => {
   if (!showDrawToolbar || !mapReady || !mapRef.current) return;
@@ -430,6 +616,10 @@ if (activeDrawTool === 'circle') {
     if (!circleStartedRef.current) {
       circleCenter = [lat, lng];
       setTempCenter(circleCenter);
+      // 初始化半径为默认值
+      const initialRadius = 100;
+      setTempShape({ center: circleCenter, radius: initialRadius });
+      setPendingFenceData(prev => ({ ...prev, radius: initialRadius }));
       circleStartedRef.current = true;
       map.setDefaultCursor('cell');
     } 
@@ -450,6 +640,7 @@ if (activeDrawTool === 'circle') {
     const radius = Math.max(5, Math.sqrt(dx * dx + dy * dy));
     
     setPendingFenceData(prev => ({ ...prev, radius }));
+    setTempShape(prev => ({ ...prev, radius }));
     renderDraft('circle', [], circleCenter, radius, null);
   };
   
@@ -481,7 +672,17 @@ if (activeDrawTool === 'rectangle') {
     } 
     // 🟦 第2次点击：确定对角，结束！
     else {
-      setTempPoints([rectStart!, [lat, lng]]);
+      const [x1, y1] = rectStart!;
+      const [x2, y2] = [lat, lng];
+      // 计算矩形的四个角
+      const rectanglePoints = [
+        [x1, y1],  // 第一个角
+        [x1, y2],  // 左上角
+        [x2, y2],  // 第二个角
+        [x2, y1],  // 右下角
+        [x1, y1]   // 回到第一个角，闭合路径
+      ];
+      setTempPoints(rectanglePoints);
       rectStartedRef.current = false;
       map.setDefaultCursor('crosshair');
     }
@@ -733,6 +934,8 @@ const handleCancelDraw = () => {
 };
 
 const handleFenceFormSubmit = (data: any) => {
+  const shape = data.shape === "circle" ? "circle" : "polygon";
+  
   if (editingFenceId) {
     updateFence(editingFenceId, {
       name: data.name,
@@ -741,7 +944,8 @@ const handleFenceFormSubmit = (data: any) => {
       description: data.description,
       behavior: data.behavior,
       severity: data.severity,
-      type: data.shape === "circle" ? "Circle" : "Polygon",
+      type: shape === "circle" ? "Circle" : "Polygon",
+      shape: shape,
       center: data.center,
       points: data.points,
       radius: data.radius,
@@ -753,7 +957,7 @@ const handleFenceFormSubmit = (data: any) => {
     setEditingFenceId(null);
     alert("围栏更新成功！");
   } else {
-    setPendingFenceData(data);
+    setPendingFenceData({ ...data, shape: shape });
   }
   
   setShowAddModal(false);
@@ -814,6 +1018,61 @@ const handleEditFence = (fence: FenceData) => {
 
   <div ref={mapContainerRef} className="w-full h-full" />
 </div>
+
+{/* 轨迹播放控制按钮 */}
+{isPlayingTrajectory && (
+  <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+    {/* 播放/暂停按钮 */}
+    <button
+      onClick={() => {
+        if (isPlaying) {
+          setIsPlaying(false);
+        } else {
+          setIsPlaying(true);
+        }
+      }}
+      className="bg-blue-500/90 hover:bg-blue-400 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105"
+    >
+      {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+      {isPlaying ? '暂停' : '播放'}
+    </button>
+    
+    {/* 进度显示 */}
+    {playbackTrajectory.length > 0 && (
+      <div className="bg-slate-900/90 text-white px-3 py-2 rounded-full shadow-2xl text-sm">
+        {currentPointIndex + 1} / {playbackTrajectory.length}
+      </div>
+    )}
+    
+    {/* 中止回放按钮 */}
+    <button
+      onClick={() => {
+        setPlaybackTrajectory([]);
+        setPlaybackDeviceId(null);
+        setIsPlayingTrajectory(false);
+        setIsPlaying(false);
+        setCurrentPointIndex(0);
+        setHasAutoFit(false);
+        // 清除地图上的轨迹和移动标记
+        if (mapRef.current) {
+          const map = mapRef.current;
+          if ((map as any)._trajectoryOverlays) {
+            (map as any)._trajectoryOverlays.forEach((overlay: any) => map.remove(overlay));
+            (map as any)._trajectoryOverlays = [];
+          }
+          if (movingMarker) {
+            map.remove(movingMarker);
+            setMovingMarker(null);
+          }
+        }
+      }}
+      className="bg-red-500/90 hover:bg-red-400 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105"
+    >
+      <X size={18} />
+      中止
+    </button>
+  </div>
+)}
     
 <div className="absolute bottom-24 right-4 z-20 bg-slate-900/90 backdrop-blur-md border border-cyan-400/30 rounded-lg p-3 min-w-[180px] shadow-2xl">
   <div className="text-xs text-cyan-400 mb-2 font-bold">图例说明</div>
@@ -909,10 +1168,18 @@ const handleEditFence = (fence: FenceData) => {
     setShowAddModal(true);
     setSidebarCollapsed(true);
   }}
-  className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-900 px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-cyan-500/30"
+  className="absolute bottom-6 left-[calc(50%-80px)] -translate-x-1/2 z-30 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-900 px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-cyan-500/30"
 >
-  <Plus size={22} />
+  <Plus size={20} />
   设置新围栏
+</button>
+
+<button
+  onClick={() => setShowTrajectoryPlayback(true)}
+  className="absolute bottom-6 left-[calc(50%+80px)] -translate-x-1/2 z-30 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-400 hover:to-indigo-400 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 font-bold transition-all hover:scale-105 hover:shadow-blue-500/30"
+>
+  <Navigation size={20} />
+  轨迹回放
 </button>
 
 <button
@@ -973,9 +1240,9 @@ const handleEditFence = (fence: FenceData) => {
 <FenceAddModal
   isOpen={showAddModal}
   onClose={() => {
+    void endCollectMode();
     setShowAddModal(false);
     setPendingFenceData(null);
-    setCollectedPoints([]);
   }}
   onNext={(data) => {
     setPendingFenceData(data);
@@ -1031,7 +1298,7 @@ const handleEditFence = (fence: FenceData) => {
     };
     addFence(newFence);
     resetDrawing();
-    setCollectedPoints([]);
+    void endCollectMode();
     setShowAddModal(false);
     setShowSuccess(true);
   }}
@@ -1044,22 +1311,7 @@ const handleEditFence = (fence: FenceData) => {
   devices={devices}
   collectedPoints={collectedPoints}
   onStartCollectMode={() => {
-    const fetchPoints = async () => {
-      try {
-        const res = await fetch('/api/fence/collect/points');
-        const data = await res.json();
-        setCollectedPoints(data.points || []);
-      } catch (e) {
-        console.log('模拟收集点数据');
-        setCollectedPoints([
-          { holder: '张三', lat: 34.28, lng: 109.13, timestamp: new Date().toISOString() },
-          { holder: '李四', lat: 34.285, lng: 109.135, timestamp: new Date().toISOString() },
-        ]);
-      }
-    };
-    fetchPoints();
-    const interval = setInterval(fetchPoints, 3000);
-    return () => clearInterval(interval);
+    void startCollectMode();
   }}
   onEnterDrawMode={() => {
     // 🎯 进入手动绘制模式！初始化所有工具状态
@@ -1113,6 +1365,25 @@ const handleEditFence = (fence: FenceData) => {
   show={showSuccess}
   onClose={() => setShowSuccess(false)}
 />
+
+{showTrajectoryPlayback && (
+  <TrajectoryPlayback
+    onSelectDevice={(deviceId, trajectory) => {
+      // 清除之前的播放状态
+      if (movingMarker && mapRef.current) {
+        mapRef.current.remove(movingMarker);
+        setMovingMarker(null);
+      }
+      setPlaybackDeviceId(deviceId);
+      setPlaybackTrajectory(trajectory);
+      setIsPlayingTrajectory(true);
+      setIsPlaying(false);
+      setCurrentPointIndex(0);
+      setHasAutoFit(false);
+    }}
+    onClose={() => setShowTrajectoryPlayback(false)}
+  />
+)}
   </div>
   );
 }

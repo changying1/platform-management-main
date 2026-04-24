@@ -15,6 +15,7 @@ interface Camera {
   company?: string;          // 所属分公司
   projectId: number;
   projectName?: string;
+  team?: string;              // 所属工队
   admin?: string;            // 管理员
   adminPhone?: string;       // 管理员电话
   status: 'online' | 'offline' | 'fault' | 'maintaining';
@@ -41,18 +42,29 @@ const fetchCameras = async () => {
       company: device.company,
       projectId: device.project_id || 1,
       projectName: device.project,
+      team: device.team || '土建工队',
       status: device.status === 1 ? 'online' : 'offline',
       type: device.device_type,
       remark: device.remark,
       rtspUrl: device.rtsp_url
     }));
-    setCameras(camerasData);
+    if (camerasData.length > 0) {
+      setCameras(camerasData);
+    }
   } catch (error) {
     console.error('获取摄像头列表失败:', error);
   }
 };
 
 useEffect(() => {
+  // 默认数据
+  const defaultCameras = [
+    { id: 1, name: '塔吊1号摄像头', deviceCode: 'CAM-001', channelNo: 1, location: '西塔塔吊', company: '第一分公司', projectId: 1, projectName: '地铁8号线', team: '土建工队', admin: '李工', adminPhone: '13900139001', status: 'online', type: 'dome', rtspUrl: '' },
+    { id: 2, name: '大门出入口', deviceCode: 'CAM-002', channelNo: 2, location: '工地主入口', company: '第一分公司', projectId: 1, projectName: '地铁8号线', team: '安全工队', admin: '王工', adminPhone: '13900139002', status: 'online', type: 'bullet', rtspUrl: '' },
+    { id: 3, name: '钢筋加工区', deviceCode: 'CAM-003', channelNo: 3, location: '钢筋棚', company: '第二分公司', projectId: 2, projectName: '商业综合体', team: '机电工队', admin: '张工', adminPhone: '13900139003', status: 'offline', type: 'bullet', rtspUrl: '' },
+    { id: 4, name: '模板作业区', deviceCode: 'CAM-004', channelNo: 4, location: '东区模板场', company: '第二分公司', projectId: 2, projectName: '商业综合体', team: '土建工队', admin: '刘工', adminPhone: '13900139004', status: 'online', type: 'dome', rtspUrl: '' },
+  ];
+  setCameras(defaultCameras);
   fetchCameras();
 }, []);
 
@@ -66,22 +78,26 @@ useEffect(() => {
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterCompany, setFilterCompany] = useState<string>('all');
+  const [filterTeam, setFilterTeam] = useState<string>('all');
 
   const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
   const types = ['all', ...new Set(cameras.map(c => c.type))];
   const statuses = ['all', 'online', 'offline', 'fault', 'maintaining'];
   const companies = ['all', ...new Set(cameras.map(c => c.company).filter(Boolean))];
+  const teams = ['all', ...new Set(cameras.map(c => c.team).filter(Boolean))];
 
   const filteredData = cameras.filter(c => {
     const matchesSearch = searchTerm === '' || 
       c.name.includes(searchTerm) || 
       c.deviceCode.includes(searchTerm) ||
+      c.team?.includes(searchTerm) ||
       c.location.includes(searchTerm);
     const matchesType = filterType === 'all' || c.type === filterType;
     const matchesStatus = filterStatus === 'all' || c.status === filterStatus;
     const matchesCompany = filterCompany === 'all' || c.company === filterCompany;
-    return matchesSearch && matchesType && matchesStatus && matchesCompany;
+    const matchesTeam = filterTeam === 'all' || c.team === filterTeam;
+    return matchesSearch && matchesType && matchesStatus && matchesCompany && matchesTeam;
   });
 
   const getStatusStyle = (status: string) => {
@@ -230,6 +246,18 @@ const confirmImport = () => {
         </select>
         
         <select
+          value={filterTeam}
+          onChange={(e) => setFilterTeam(e.target.value)}
+          className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
+        >
+          {teams.map(team => (
+            <option key={team} value={team}>
+              {team === 'all' ? '全部工队' : team}
+            </option>
+          ))}
+        </select>
+        
+        <select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
           className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-cyan-400"
@@ -256,6 +284,7 @@ const confirmImport = () => {
         <button
           onClick={() => {
             setFilterCompany('all');
+            setFilterTeam('all');
             setFilterType('all');
             setFilterStatus('all');
             setSearchTerm('');
@@ -290,7 +319,7 @@ const confirmImport = () => {
       <div className="flex justify-between items-center mb-3">
         <p className="text-sm text-slate-400">
           共 <span className="text-cyan-400 font-bold">{filteredData.length}</span> 条记录
-          {(filterCompany !== 'all' || filterType !== 'all' || filterStatus !== 'all' || searchTerm) && (
+          {(filterCompany !== 'all' || filterTeam !== 'all' || filterType !== 'all' || filterStatus !== 'all' || searchTerm) && (
             <span className="ml-2 text-xs">(已筛选)</span>
           )}
         </p>
@@ -307,6 +336,7 @@ const confirmImport = () => {
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">位置</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">分公司</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">项目</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">工队</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">管理员</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300">状态</th>
               <th className="px-4 py-3 text-center text-xs font-semibold text-slate-300">操作</th>
@@ -325,6 +355,7 @@ const confirmImport = () => {
                 <td className="px-4 py-3 text-slate-300">{camera.location}</td>
                 <td className="px-4 py-3 text-slate-300">{camera.company || '-'}</td>
                 <td className="px-4 py-3 text-slate-300">{camera.projectName || '-'}</td>
+                <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">{camera.team || '-'}</span></td>
                 <td className="px-4 py-3">
                   <div className="text-sm text-slate-300">{camera.admin || '-'}</div>
                   {camera.adminPhone && <div className="text-xs text-slate-500">{camera.adminPhone}</div>}
@@ -465,7 +496,7 @@ const confirmImport = () => {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">所属项目</label>
                   <select
@@ -476,6 +507,16 @@ const confirmImport = () => {
                     <option value={1}>西安地铁8号线</option>
                     <option value={2}>西安地铁10号线</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">所属工队</label>
+                  <input
+                    type="text"
+                    value={editingItem?.team || ''}
+                    onChange={(e) => setEditingItem({ ...editingItem!, team: e.target.value })}
+                    className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+                    placeholder="如：土建工队/机电工队"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">状态</label>
