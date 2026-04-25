@@ -2705,11 +2705,25 @@ class VideoService:
                 stderr=log_file,
                 creationflags=creationflags
             )
+
+            time.sleep(1.5)
+            if process.poll() is not None:
+                logger.error(
+                    f"录像进程启动后立即退出 video_id={video_id}, returncode={process.returncode}, "
+                    f"请查看日志: {log_path}"
+                )
+                try:
+                    log_file.close()
+                except Exception:
+                    pass
+                return None
+
             RECORDING_PROCESSES[video_id] = {
                 "process": process,
                 "log_file": log_file,
                 "source_url": source_url,
             }
+            logger.info(f"录像进程已启动 video_id={video_id}, pid={process.pid}, output={segment_pattern}")
             return process
         except Exception as e:
             logger.error(f"录像启动失败 video_id={video_id}: {e}")
@@ -2807,20 +2821,58 @@ class VideoService:
         videos = [v for v in videos if v]
 
         for v in videos:
-            entry = RECORDING_PROCESSES.get(v.id)
+            video_id = int(v.id) if str(v.id).isdigit() else v.id
+            entry = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
+
+            should_start = True
+
             if isinstance(entry, dict):
                 proc = entry.get("process")
-                if proc and proc.poll() is None:
-                    continue
+                if proc is not None:
+                    try:
+                        if proc.poll() is None:
+                            should_start = False
+                        else:
+                            logger.warning(
+                                f"录像进程已退出，准备重启 video_id={video_id}, returncode={proc.returncode}"
+                            )
+                            log_file = entry.get("log_file")
+                            if log_file:
+                                try:
+                                    log_file.close()
+                                except Exception:
+                                    pass
+                            RECORDING_PROCESSES.pop(video_id, None)
+                            RECORDING_PROCESSES.pop(str(video_id), None)
+                    except Exception as e:
+                        logger.warning(f"检查录像进程状态失败，准备重启 video_id={video_id}: {e}")
+                        RECORDING_PROCESSES.pop(video_id, None)
+                        RECORDING_PROCESSES.pop(str(video_id), None)
+
             elif entry is not None:
                 try:
                     if entry.poll() is None:
-                        continue
-                except Exception:
-                    pass
+                        should_start = False
+                    else:
+                        logger.warning(
+                            f"录像进程已退出，准备重启 video_id={video_id}, returncode={entry.returncode}"
+                        )
+                        RECORDING_PROCESSES.pop(video_id, None)
+                        RECORDING_PROCESSES.pop(str(video_id), None)
+                except Exception as e:
+                    logger.warning(f"检查录像进程状态失败，准备重启 video_id={video_id}: {e}")
+                    RECORDING_PROCESSES.pop(video_id, None)
+                    RECORDING_PROCESSES.pop(str(video_id), None)
+
+            if not should_start:
+                continue
+
             record_source = self._get_record_source_for_device(v)
             if record_source:
-                self.start_ffmpeg_recording(v.id, record_source)
+                logger.info(f"启动/重启录像 video_id={video_id}, source={record_source}")
+                self.start_ffmpeg_recording(video_id, record_source)
+            else:
+                logger.warning(f"无法启动录像，video_id={video_id} 缺少可录制地址")
     
     def restart_all_recordings(self, db: Session):
         # 停止所有正在录制的进程

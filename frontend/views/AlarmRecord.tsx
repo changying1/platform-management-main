@@ -13,7 +13,8 @@ import {
   Calendar,
   Search,
   X,
-  Filter
+  Filter,
+  ImageIcon
 } from 'lucide-react';
 
 // 告警记录类型
@@ -157,6 +158,7 @@ const datePickerRef = useRef<HTMLDivElement>(null);
 const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
+const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
 const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
@@ -768,16 +770,34 @@ onClick={(e) => {
                      </div>
                    </td>
                    <td className="px-4 py-4 text-right">
-                     {alarm.status === 'pending' && (
-                       <button
-                         onClick={(e) => { e.stopPropagation(); handleOpenProcessModal(alarm, 'resolved'); }}
-                         className="px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
-                       >
-                         <CheckCircle size={14} />
-                         处理
-                       </button>
-                     )}
-                   </td>
+                    <div className="flex justify-end gap-2">
+                      {alarm.snapshot && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewImage(alarm.snapshot!);
+                          }}
+                          className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                        >
+                          <ImageIcon size={14} />
+                          报警截图
+                        </button>
+                      )}
+
+                      {alarm.status === 'pending' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenProcessModal(alarm, 'resolved');
+                          }}
+                          className="px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                        >
+                          <CheckCircle size={14} />
+                          处理
+                        </button>
+                      )}
+                    </div>
+                  </td>
                  </tr>
               ))}
             </tbody>
@@ -848,6 +868,18 @@ onClick={(e) => {
                   <span className="text-slate-400">详细信息：</span>
                   <p className="text-slate-200 mt-1">{selectedAlarm.description}</p>
                 </div>
+                {selectedAlarm.snapshot && (
+                  <div className="col-span-2">
+                    <span className="text-slate-400">报警截图：</span>
+                    <button
+                      onClick={() => setPreviewImage(selectedAlarm.snapshot!)}
+                      className="ml-2 px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                    >
+                      <ImageIcon size={14} />
+                      查看报警截图
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -941,6 +973,31 @@ onClick={(e) => {
           取消
         </button>
       </div>
+    </div>
+  </div>
+)}
+{/* 报警截图预览弹窗 */}
+{previewImage && (
+  <div
+    className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+    onClick={() => setPreviewImage(null)}
+  >
+    <div
+      className="relative bg-slate-900 rounded-2xl border border-cyan-400/30 shadow-2xl p-4 max-w-[90vw] max-h-[90vh]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        onClick={() => setPreviewImage(null)}
+        className="absolute right-3 top-3 z-10 p-1.5 bg-black/50 hover:bg-black/70 rounded-lg"
+      >
+        <X size={18} className="text-white" />
+      </button>
+
+      <img
+        src={previewImage}
+        alt="报警截图"
+        className="max-w-[85vw] max-h-[82vh] rounded-lg object-contain"
+      />
     </div>
   </div>
 )}
