@@ -5,17 +5,18 @@
 import cv2
 import os
 import numpy as np
+from bson import ObjectId
+from app.core.database import get_personnel_collection
 
 
 class FaceService:
     def __init__(self, pose_model_path="app/models/yolo11n-pose.pt",
-                 face_db_dir="app/data/face_db", similarity_threshold=0.60):
+                 similarity_threshold=0.60):
         self.pose_model_path = pose_model_path
-        self.face_db_dir = face_db_dir
         self.similarity_threshold = similarity_threshold
         self.pose_model = None
         self.face_model = None
-        self.known_db = {}  # {name: {"vector": tensor, "info": str}}
+        self.known_db = {}  # {personnel_id: {"vector": tensor, "info": str, "person": dict}}
         self._loaded = False
 
     def ensure_loaded(self):
@@ -47,51 +48,103 @@ class FaceService:
         self.face_model = InceptionResnetV1(pretrained='vggface2').eval()
         print("✅ [人脸服务] FaceNet 模型加载完成")
 
+    def _get_static_file_path(self, url_path: str):
+        """
+        将 /static/faces/xxx.png 转成本地绝对路径：
+        backend/static/faces/xxx.png
+        """
+        if not url_path:
+            return None
+
+        normalized = url_path.replace("\\", "/")
+
+        if normalized.startswith("/static/"):
+            backend_root = os.getcwd()
+            relative_path = normalized.lstrip("/")
+            return os.path.join(backend_root, relative_path)
+
+        # 兼容万一数据库里存的是绝对路径
+        if os.path.isabs(normalized):
+            return normalized
+
+        return os.path.join(os.getcwd(), normalized)
+
     def _load_face_database(self):
         """
-        从底库目录加载人脸特征（模拟数据库用户表）。
-        目录结构：
-            app/data/face_db/
-                ├── 张三.jpg        → 注册名: 张三
-                ├── 李四-工号001.jpg → 注册名: 李四
-                └── 王五.png        → 注册名: 王五
-        文件名（去掉扩展名，取第一个 '-' 前的部分）作为人员姓名。
+        从 MongoDB personnel 集合加载人脸底库。
+        依赖字段：
+            username
+            dept
+            phone
+            role
+            faceImage: /static/faces/xxx.png
         """
-        base_dir = os.getcwd()
-        db_dir = os.path.join(base_dir, self.face_db_dir)
+        self.known_db = {}
 
-        if not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-            print(f"📂 [人脸服务] 已创建底库目录: {db_dir}")
-            print(f"   └─ 请放入人脸图片（文件名即人名），格式: 姓名.jpg")
+        try:
+            collection = get_personnel_collection()
+            people = list(collection.find({
+                "faceImage": {"$exists": True, "$ne": ""}
+            }))
+        except Exception as e:
+            print(f"❌ [人脸服务] 读取 MongoDB personnel 失败: {e}")
             return
 
-        image_exts = {'.jpg', '.jpeg', '.png', '.bmp'}
-        count = 0
-        print("⚙️ [人脸服务] 正在扫描底库并录入人脸特征...")
+        if not people:
+            print("⚠️ [人脸服务] MongoDB personnel 中没有可用的人脸照片")
+            return
 
-        for filename in sorted(os.listdir(db_dir)):
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in image_exts:
+        count = 0
+        print("⚙️ [人脸服务] 正在从 MongoDB personnel 录入人脸特征...")
+
+        for person in people:
+            personnel_id = str(person.get("_id"))
+            name = person.get("username", "") or "未命名人员"
+            dept = person.get("dept", "")
+            role = person.get("role", "")
+            phone = person.get("phone", "")
+            face_image = person.get("faceImage", "")
+
+            img_path = self._get_static_file_path(face_image)
+
+            if not img_path or not os.path.exists(img_path):
+                print(f"   ❌ [录入跳过] {name} 图片不存在: {img_path}")
                 continue
-            name = os.path.splitext(filename)[0].split("-")[0]
-            img_path = os.path.join(db_dir, filename)
+
             try:
                 crops = self._find_and_crop_faces(img_path)
                 if crops:
                     vec = self._extract_face_vector(crops[0]["face_crop"])
-                    self.known_db[name] = {
-                        "vector": vec,
-                        "info": f"姓名: {name}",  # 模拟用户信息
-                    }
-                    count += 1
-                    print(f"   ✅ [录入成功] {name}")
-                else:
-                    print(f"   ❌ [录入跳过] {filename} (未检测到人脸)")
-            except Exception as e:
-                print(f"   ❌ [录入失败] {filename}: {e}")
 
-        print(f"✨ [人脸服务] 底库初始化完成，当前包含 {count} 人")
+                    info_parts = [f"姓名: {name}"]
+                    if dept:
+                        info_parts.append(f"部门: {dept}")
+                    if role:
+                        info_parts.append(f"角色: {role}")
+                    if phone:
+                        info_parts.append(f"电话: {phone}")
+
+                    self.known_db[personnel_id] = {
+                        "vector": vec,
+                        "info": "，".join(info_parts),
+                        "person": {
+                            "id": personnel_id,
+                            "username": name,
+                            "dept": dept,
+                            "role": role,
+                            "phone": phone,
+                            "faceImage": face_image,
+                        }
+                    }
+
+                    count += 1
+                    print(f"   ✅ [录入成功] {name} ({personnel_id})")
+                else:
+                    print(f"   ❌ [录入跳过] {name} (未检测到人脸): {img_path}")
+            except Exception as e:
+                print(f"   ❌ [录入失败] {name}: {e}")
+
+        print(f"✨ [人脸服务] MongoDB 人脸底库初始化完成，当前包含 {count} 人")
 
     def _pre_process_facenet(self, cv2_img):
         import torch
@@ -170,21 +223,26 @@ class FaceService:
             match_info = ""
             best_similarity = 0.0
 
-            for name, db_entry in self.known_db.items():
+            match_person = None
+
+            for personnel_id, db_entry in self.known_db.items():
                 similarity = F.cosine_similarity(
                     current_vec.unsqueeze(0), db_entry["vector"].unsqueeze(0)
                 ).item()
                 if similarity > best_similarity:
                     best_similarity = similarity
                     if similarity > self.similarity_threshold:
-                        match_name = name
+                        person = db_entry.get("person", {})
+                        match_name = person.get("username", "未知人员")
                         match_info = db_entry.get("info", "")
+                        match_person = person
 
             results.append({
                 "name": match_name,
                 "info": match_info,
                 "similarity": best_similarity,
                 "coords": fd["coords"],
+                "person": match_person,
             })
 
         return results

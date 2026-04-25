@@ -42,6 +42,7 @@ from app.controllers import (
     auth_controller,
     project_controller,
     backup_controller,
+    personnel_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -142,6 +143,7 @@ def serve_alarm_video(file_path: str):
 
 # 路由挂载
 app.include_router(admin_controller.router)
+app.include_router(personnel_controller.router)
 app.include_router(device_controller.router)
 app.include_router(video_controller.router)
 app.include_router(fence_controller.router)

@@ -134,6 +134,9 @@ class AlarmService:
             "recording_status": doc.get("recording_status") or "pending",
             "recording_error": doc.get("recording_error") or "",
             "alarm_image_path": doc.get("alarm_image_path") or "",
+            "personnel_id": doc.get("personnel_id") or "",
+            "person_name": doc.get("person_name") or doc.get("person", {}).get("username") or "未知",
+            "person": doc.get("person") or {},
         }
 
     def _find_alarm_doc_by_id(self, alarm_id: int | str):

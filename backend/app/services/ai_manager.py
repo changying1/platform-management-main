@@ -680,7 +680,19 @@ class AIManager:
 
                 # 标注信息 (模拟人员名称展示)
                 # 备注：实际可关联 face_recognition 的结果
-                person_info = "人员: 模拟用户(李工)"
+                person = box.get("person") or {}
+                person_name = (
+                    box.get("personName")
+                    or person.get("username")
+                    or person.get("name")
+                    or ""
+                )
+
+                if person_name:
+                    person_info = f"人员: {person_name}"
+                else:
+                    person_info = "人员: 未知"
+
                 display_text = f"{label_type}\n{person_info}\n{msg}"
 
                 # 绘制文字背景条
@@ -844,10 +856,28 @@ class AIManager:
         alarm_msg = details.get("msg") if isinstance(details, dict) else None
 
         box_count = 0
+        person_info = {}
+        person_name = ""
+        personnel_id = ""
+
         if isinstance(details, dict) and isinstance(details.get("boxes"), list) and details["boxes"]:
             first_box = details["boxes"][0] or {}
             alarm_msg = alarm_msg or first_box.get("msg")
             box_count = len(details["boxes"])
+
+            person_info = first_box.get("person") or {}
+            person_name = (
+                first_box.get("personName")
+                or person_info.get("username")
+                or person_info.get("name")
+                or ""
+            )
+            personnel_id = str(
+                person_info.get("id")
+                or person_info.get("_id")
+                or first_box.get("personnel_id")
+                or ""
+            )
 
         if not alarm_type:
             alarm_type = "unknown"
@@ -882,6 +912,11 @@ class AIManager:
                 "recording_status": "pending",
                 "recording_error": "",
                 "alarm_image_path": image_path or "",
+
+                # 人脸识别融合后的人员信息
+                "personnel_id": personnel_id,
+                "person_name": person_name or "未知",
+                "person": person_info or {},
             }
 
             self._alarm_collection().insert_one(payload)

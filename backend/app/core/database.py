@@ -91,10 +91,11 @@ def get_mongo_db():
 def get_worker_collection():
     return mongo_db["worker"]
 
+def get_personnel_collection():
+    return mongo_db["personnel"]
 
 def get_video_device_collection():
     return mongo_db["video_device"]
-
 
 def get_alarm_record_collection():
     return mongo_db["alarm_record"]
