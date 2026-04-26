@@ -12,7 +12,7 @@ RECOGNITION_INTERVAL = float(os.getenv("AI_FACE_RECOGNITION_INTERVAL", "3"))
 def _get_face_service():
     global _face_service
     if _face_service is None:
-        from app.services.face_service import FaceService
+        from app.services.ai_features.face_service import FaceService
         _face_service = FaceService()
     return _face_service
 

@@ -4,7 +4,7 @@ _face_service = None
 def get_face_service():
     global _face_service
     if _face_service is None:
-        from app.services.face_service import FaceService
+        from app.services.ai_features.face_service import FaceService
         _face_service = FaceService()
     return _face_service
 
