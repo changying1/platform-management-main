@@ -222,13 +222,24 @@ class VideoService:
         config_file = os.path.join(storage_root, "storage_paths.json")
         
         if not os.path.exists(config_file):
-            with open(config_file, 'w', encoding='utf-8') as f:
+            with open(config_file, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
             return []
         
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with open(config_file, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+
+            if isinstance(data, list):
+                return data
+
+            if isinstance(data, dict):
+                paths = data.get("paths")
+                if isinstance(paths, list):
+                    return paths
+
+            logger.warning(f"存储路径配置格式异常，已重置为空列表: {config_file}")
+            return []
         except Exception as e:
             logger.error(f"加载存储路径配置失败: {e}")
             return []
