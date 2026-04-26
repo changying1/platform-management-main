@@ -75,8 +75,6 @@ class VideoUpdate(BaseModel):
     status: Optional[VideoStatus] = None
     remark: Optional[str] = None
     is_active: Optional[int] = None
-    company: Optional[str] = None
-    project: Optional[str] = None
 
 class VideoOut(VideoBase):
     """

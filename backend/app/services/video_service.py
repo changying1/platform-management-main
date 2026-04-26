@@ -2,10 +2,8 @@ import json
 import shutil
 from sqlalchemy.orm import Session
 from urllib.parse import urlparse
-from app.models.video import VideoDevice
-from app.models.device import Device
-from app.models.alarm_records import AlarmRecord
-from app.models.location_history import DeviceLocationHistory
+from typing import Optional, List, Dict, Any, Set, Tuple
+from types import SimpleNamespace
 from app.schemas.video_schema import VideoCreate, VideoUpdate, CameraCreateRequest
 from app.utils.logger import get_logger
 import requests
@@ -22,7 +20,8 @@ import hashlib
 import base64
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Set, Tuple
+
+VideoDevice = Any
 
 RECORDING_PROCESSES = {}
 
@@ -37,7 +36,7 @@ def suppress_verbose_logging():
 
 suppress_verbose_logging()
 
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, get_video_device_collection, get_next_sequence, get_mongo_db
 
 try:
     import onvif
@@ -118,6 +117,159 @@ class VideoService:
         self._mirror_thread = threading.Thread(target=self._mirror_sync_worker, daemon=True)
         self._mirror_thread.start()
 
+    def _video_collection(self):
+        return get_video_device_collection()
+
+    def _get_video_doc_by_id(self, video_id: int | str) -> Optional[dict]:
+        collection = self._video_collection()
+        return collection.find_one({"id": str(video_id)})
+    
+    def _alarm_collection(self):
+        return get_mongo_db()["alarm_record"]
+
+    def _find_pending_alarm_doc(self, device_id: int | str, alarm_type: str):
+        return self._alarm_collection().find_one({
+            "device_id": str(device_id),
+            "alarm_type": alarm_type,
+            "status": "pending",
+        })
+
+    def _create_monitoring_alarm_doc(
+        self,
+        device_id: int | str,
+        alarm_type: str,
+        severity: str,
+        description: str,
+        location: str | None,
+    ):
+        next_id = int(get_next_sequence("alarm_record_id"))
+        payload = {
+            "id": next_id,
+            "device_id": str(device_id),
+            "fence_id": None,
+            "project_id": None,
+            "alarm_type": alarm_type,
+            "severity": severity,
+            "timestamp": datetime.utcnow(),
+            "description": description,
+            "status": "pending",
+            "handled_at": None,
+            "location": location,
+            "recording_path": "",
+            "recording_status": "pending",
+            "recording_error": "",
+            "alarm_image_path": "",
+        }
+        self._alarm_collection().insert_one(payload)
+        return payload
+
+    def _resolve_monitoring_alarm_doc(self, alarm_id: int | str):
+        self._alarm_collection().update_one(
+            {"id": int(alarm_id)},
+            {
+                "$set": {
+                    "status": "resolved",
+                    "handled_at": datetime.utcnow(),
+                }
+            }
+        )
+
+    def _get_video_runtime_by_id(self, video_id: int | str):
+        doc = self._get_video_doc_by_id(video_id)
+        if not doc:
+            return None
+
+        runtime_doc = dict(doc)
+        runtime_doc.pop("_id", None)
+
+        runtime_doc["id"] = int(runtime_doc["id"]) if str(runtime_doc.get("id", "")).isdigit() else runtime_doc.get("id")
+        runtime_doc["port"] = runtime_doc.get("port", 80)
+        runtime_doc["channel_no"] = runtime_doc.get("channel_no", 1)
+        runtime_doc["supports_ptz"] = runtime_doc.get("supports_ptz", 1)
+        runtime_doc["supports_preset"] = runtime_doc.get("supports_preset", 1)
+        runtime_doc["supports_cruise"] = runtime_doc.get("supports_cruise", 1)
+        runtime_doc["supports_zoom"] = runtime_doc.get("supports_zoom", 1)
+        runtime_doc["supports_focus"] = runtime_doc.get("supports_focus", 0)
+        runtime_doc["status"] = runtime_doc.get("status") or "offline"
+        runtime_doc["is_active"] = runtime_doc.get("is_active", 1)
+        runtime_doc["sleeping"] = runtime_doc.get("sleeping", False)
+        runtime_doc["privacy_enabled"] = runtime_doc.get("privacy_enabled", False)
+        runtime_doc["storage_abnormal"] = runtime_doc.get("storage_abnormal", False)
+        runtime_doc["low_battery"] = runtime_doc.get("low_battery", False)
+        runtime_doc["weak_signal"] = runtime_doc.get("weak_signal", False)
+        runtime_doc["weekly_quota_bytes"] = runtime_doc.get("weekly_quota_bytes", DEFAULT_WEEKLY_QUOTA_BYTES)
+
+        return SimpleNamespace(**runtime_doc)
+
+    def _update_video_fields(self, video_id: int | str, updates: dict):
+        clean_updates = {k: v for k, v in (updates or {}).items() if k != "_id"}
+        if not clean_updates:
+            return
+        clean_updates["updatedAt"] = datetime.utcnow()
+        self._video_collection().update_one(
+            {"id": str(video_id)},
+            {"$set": clean_updates}
+        )
+
+    def _prepare_video_payload(self, payload: dict) -> dict:
+        payload = dict(payload or {})
+
+        payload["stream_protocol"] = self._normalize_stream_protocol(payload.get("stream_protocol"))
+        payload["platform_type"] = payload.get("platform_type") or "onvif"
+        payload["access_source"] = payload.get("access_source") or "local"
+        payload["ptz_source"] = payload.get("ptz_source") or "onvif"
+        payload["channel_no"] = payload.get("channel_no") or 1
+        payload["supports_ptz"] = payload.get("supports_ptz", 1)
+        payload["supports_preset"] = payload.get("supports_preset", 1)
+        payload["supports_cruise"] = payload.get("supports_cruise", 1)
+        payload["supports_zoom"] = payload.get("supports_zoom", 1)
+        payload["supports_focus"] = payload.get("supports_focus", 0)
+        payload["status"] = payload.get("status") or "offline"
+        payload["is_active"] = payload.get("is_active", 1)
+        payload["company"] = payload.get("company")
+        payload["project"] = payload.get("project")
+        payload["sleeping"] = payload.get("sleeping", False)
+        payload["privacy_enabled"] = payload.get("privacy_enabled", False)
+        payload["storage_abnormal"] = payload.get("storage_abnormal", False)
+        payload["low_battery"] = payload.get("low_battery", False)
+        payload["weak_signal"] = payload.get("weak_signal", False)
+        payload["weekly_quota_bytes"] = payload.get("weekly_quota_bytes", DEFAULT_WEEKLY_QUOTA_BYTES)
+
+        return payload
+
+    def _mongo_video_to_out(self, doc: dict) -> dict:
+        if not doc:
+            return {}
+
+        return {
+            "id": str(doc.get("id", "")),
+            "name": doc.get("name"),
+            "ip_address": doc.get("ip_address"),
+            "port": doc.get("port", 80),
+            "username": doc.get("username"),
+            "password": doc.get("password"),
+            "stream_url": doc.get("stream_url"),
+            "rtsp_url": doc.get("rtsp_url"),
+            "stream_protocol": doc.get("stream_protocol"),
+            "platform_type": doc.get("platform_type"),
+            "access_source": doc.get("access_source"),
+            "ptz_source": doc.get("ptz_source"),
+            "device_serial": doc.get("device_serial"),
+            "channel_no": doc.get("channel_no", 1),
+            "supports_ptz": doc.get("supports_ptz", 1),
+            "supports_preset": doc.get("supports_preset", 1),
+            "supports_cruise": doc.get("supports_cruise", 1),
+            "supports_zoom": doc.get("supports_zoom", 1),
+            "supports_focus": doc.get("supports_focus", 0),
+            "latitude": doc.get("latitude"),
+            "longitude": doc.get("longitude"),
+            "status": doc.get("status"),
+            "remark": doc.get("remark"),
+            "is_active": doc.get("is_active", 1),
+            "company": doc.get("company"),
+            "project": doc.get("project"),
+        }
+    
     def _mirror_sync_worker(self):
         while self._mirror_thread_running:
             try:
@@ -129,27 +281,28 @@ class VideoService:
     def _sync_all_new_files(self):
         if len(self._storage_paths) == 0:
             return
+
         primary_root = self._storage_paths[0]["path"]
-        
+
         for subdir in ["recordings", "alarm_videos", "alarm_screenshots"]:
             root_dir = os.path.join(primary_root, subdir)
             if not os.path.exists(root_dir):
                 continue
-            
+
             for dirpath, _, filenames in os.walk(root_dir):
                 for filename in filenames:
-                    if not filename.lower().endswith(('.mp4', '.jpg', '.jpeg', '.png')):
+                    if not filename.lower().endswith((".mp4", ".jpg", ".jpeg", ".png")):
                         continue
-                    
+
                     filepath = os.path.join(dirpath, filename)
                     file_key = f"{filepath}_{os.path.getmtime(filepath)}"
-                    
+
                     if file_key in self._mirror_processed:
                         continue
-                    
+
                     if not self._is_segment_usable(filepath, min_age_seconds=120):
                         continue
-                    
+
                     rel_path = os.path.relpath(filepath, primary_root)
                     self._mirror_write_file(filepath, rel_path)
                     self._mirror_processed.add(file_key)
@@ -158,30 +311,31 @@ class VideoService:
         for sp in self._storage_paths:
             if not sp.get("enabled", True) or sp.get("type") == "primary":
                 continue
-            
+
             try:
                 mirror_type = sp.get("type", "mirror")
-                
+
                 if mirror_type == "mirror":
                     target_path = os.path.join(sp["path"], relative_path)
+
                     if os.path.exists(target_path) and os.path.getsize(target_path) == os.path.getsize(source_file):
                         continue
-                    
+
                     os.makedirs(os.path.dirname(target_path), exist_ok=True)
                     shutil.copy2(source_file, target_path)
                     logger.info(f"本地镜像完成: {sp['name']} -> {relative_path}")
-                
+
                 elif mirror_type == "oss":
                     self._upload_to_oss(sp, source_file, relative_path)
-                
+
                 elif mirror_type == "cos":
                     self._upload_to_cos(sp, source_file, relative_path)
-                
+
                 elif mirror_type == "s3":
                     self._upload_to_s3(sp, source_file, relative_path)
-                    
+
             except Exception as e:
-                logger.error(f"镜像写入失败 {sp['name']}: {e}")
+                logger.error(f"镜像写入失败 {sp.get('name')}: {e}")
 
     def _upload_to_oss(self, config: Dict, source_file: str, object_key: str):
         try:
@@ -196,7 +350,11 @@ class VideoService:
     def _upload_to_cos(self, config: Dict, source_file: str, object_key: str):
         try:
             from qcloud_cos import CosConfig, CosS3Client
-            cos_config = CosConfig(Region=config["region"], SecretId=config["access_key"], SecretKey=config["secret_key"])
+            cos_config = CosConfig(
+                Region=config["region"],
+                SecretId=config["access_key"],
+                SecretKey=config["secret_key"],
+            )
             client = CosS3Client(cos_config)
             client.upload_file(config["bucket"], object_key, source_file)
             logger.info(f"COS 上传完成: {config['name']} -> {object_key}")
@@ -207,10 +365,10 @@ class VideoService:
         try:
             import boto3
             s3 = boto3.client(
-                's3',
+                "s3",
                 aws_access_key_id=config["access_key"],
                 aws_secret_access_key=config["secret_key"],
-                endpoint_url=config.get("endpoint")
+                endpoint_url=config.get("endpoint"),
             )
             s3.upload_file(source_file, config["bucket"], object_key)
             logger.info(f"S3 上传完成: {config['name']} -> {object_key}")
@@ -220,15 +378,26 @@ class VideoService:
     def _load_storage_paths(self) -> List[Dict]:
         storage_root = self._get_storage_root()
         config_file = os.path.join(storage_root, "storage_paths.json")
-        
+
         if not os.path.exists(config_file):
-            with open(config_file, 'w', encoding='utf-8') as f:
+            with open(config_file, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
             return []
-        
+
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with open(config_file, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+
+            if isinstance(data, list):
+                return data
+
+            if isinstance(data, dict):
+                paths = data.get("paths")
+                if isinstance(paths, list):
+                    return paths
+
+            logger.warning(f"存储路径配置格式异常，已重置为空列表: {config_file}")
+            return []
         except Exception as e:
             logger.error(f"加载存储路径配置失败: {e}")
             return []
@@ -236,8 +405,10 @@ class VideoService:
     def _save_storage_paths(self, paths: List[Dict]):
         storage_root = self._get_storage_root()
         config_file = os.path.join(storage_root, "storage_paths.json")
-        with open(config_file, 'w', encoding='utf-8') as f:
+
+        with open(config_file, "w", encoding="utf-8") as f:
             json.dump(paths, f, ensure_ascii=False, indent=2)
+
         self._storage_paths = paths
 
     def get_storage_paths(self) -> List[Dict]:
@@ -247,23 +418,25 @@ class VideoService:
         path = config.get("path", "")
         name = config.get("name", "")
         mirror_type = config.get("type", "mirror")
-        
+
         paths = self._storage_paths
+
         for sp in paths:
             if sp.get("path") == path:
                 logger.warning(f"存储路径已存在: {path}")
                 return False
-        
+
         if mirror_type == "mirror":
             try:
                 os.makedirs(path, exist_ok=True)
                 test_file = os.path.join(path, ".test_write")
-                with open(test_file, 'w') as f:
+                with open(test_file, "w", encoding="utf-8") as f:
                     f.write("test")
                 os.remove(test_file)
             except Exception as e:
                 logger.error(f"无法访问存储路径 {path}: {e}")
                 return False
+
         paths.append({
             "path": path,
             "name": name,
@@ -273,28 +446,33 @@ class VideoService:
             "bucket": config.get("bucket"),
             "access_key": config.get("access_key"),
             "secret_key": config.get("secret_key"),
-            "region": config.get("region")
+            "region": config.get("region"),
         })
+
         self._save_storage_paths(paths)
         logger.info(f"已添加实时镜像存储: {name} ({mirror_type})")
         return True
 
     def delete_storage_path(self, index: int) -> bool:
         paths = self._storage_paths
+
         if 0 <= index < len(paths):
             removed = paths.pop(index)
             self._save_storage_paths(paths)
-            logger.info(f"已删除存储路径: {removed['name']}")
+            logger.info(f"已删除存储路径: {removed.get('name')}")
             return True
+
         return False
 
     def set_primary_storage(self, index: int) -> bool:
         paths = self._storage_paths
+
         if 0 < index < len(paths):
             paths[0], paths[index] = paths[index], paths[0]
             self._save_storage_paths(paths)
-            logger.info(f"主存储已切换到: {paths[0]['name']}")
+            logger.info(f"主存储已切换到: {paths[0].get('name')}")
             return True
+
         return False
 
     def _periodic_cleanup_worker(self):
@@ -308,19 +486,18 @@ class VideoService:
     def cleanup_expired_files(self):
         config = self._get_system_config()
         now = datetime.now()
-        
-        video_retention_days = config.get('videoRetentionDays', 15)
-        alarm_video_retention_days = config.get('alarmVideoRetentionDays', 90)
-        alarm_screenshot_retention_days = config.get('alarmScreenshotRetentionDays', 90)
-        track_retention_days = config.get('trackRetentionDays', 30)
-        
+
+        video_retention_days = config.get("videoRetentionDays", 15)
+        alarm_video_retention_days = config.get("alarmVideoRetentionDays", 90)
+        alarm_screenshot_retention_days = config.get("alarmScreenshotRetentionDays", 90)
+
         record_root = self._get_record_root()
         alarm_video_root = self._get_alarm_video_root()
         storage_root = self._get_storage_root()
         alarm_screenshot_root = os.path.join(storage_root, "alarm_screenshots")
-        
+
         count_cleaned = 0
-        
+
         for root_dir, retention_days in [
             (record_root, video_retention_days),
             (alarm_video_root, alarm_video_retention_days),
@@ -328,12 +505,16 @@ class VideoService:
         ]:
             if not os.path.exists(root_dir):
                 continue
+
             cutoff = now - timedelta(days=retention_days)
+
             for dirpath, _, filenames in os.walk(root_dir):
                 for filename in filenames:
-                    if not filename.lower().endswith(('.mp4', '.jpg', '.jpeg', '.png')):
+                    if not filename.lower().endswith((".mp4", ".jpg", ".jpeg", ".png")):
                         continue
+
                     filepath = os.path.join(dirpath, filename)
+
                     try:
                         mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
                         if mtime < cutoff:
@@ -341,22 +522,9 @@ class VideoService:
                             count_cleaned += 1
                     except Exception:
                         pass
-        
-        track_count_cleaned = 0
-        try:
-            db = SessionLocal()
-            cutoff_time = now - timedelta(days=track_retention_days)
-            track_count_cleaned = db.query(DeviceLocationHistory).filter(
-                DeviceLocationHistory.timestamp < cutoff_time
-            ).delete()
-            db.commit()
-            db.close()
-        except Exception as e:
-            logger.error(f"清理过期轨迹数据失败: {e}")
-        
-        total_cleaned = count_cleaned + track_count_cleaned
-        if total_cleaned > 0:
-            logger.info(f"已清理 {count_cleaned} 个过期录像/截图文件, {track_count_cleaned} 条过期轨迹数据")
+
+        if count_cleaned > 0:
+            logger.info(f"已清理 {count_cleaned} 个过期录像/截图文件")
 
     def _normalize_flag(self, value: Any) -> bool:
         if isinstance(value, bool):
@@ -492,12 +660,10 @@ class VideoService:
         weak_signal = self._normalize_flag(getattr(db_video, "weak_signal", False))
 
         alarm_active = bool(
-            db.query(AlarmRecord)
-            .filter(
-                AlarmRecord.device_id == str(db_video.id),
-                AlarmRecord.status == "pending",
-            )
-            .first()
+            self._alarm_collection().find_one({
+                "device_id": str(db_video.id),
+                "status": "pending",
+            })
         )
 
         status_tags: list[str] = []
@@ -544,7 +710,7 @@ class VideoService:
     def _sync_single_monitoring_alarm(
         self,
         db: Session,
-        db_video: VideoDevice,
+        db_video,
         alarm_type: str,
         severity: str,
         description: str,
@@ -552,34 +718,23 @@ class VideoService:
     ) -> bool:
         """将监控状态同步为报警记录：active=True 生成待处理报警，False 自动恢复。"""
         device_id = str(db_video.id)
-        pending_alarm = (
-            db.query(AlarmRecord)
-            .filter(
-                AlarmRecord.device_id == device_id,
-                AlarmRecord.alarm_type == alarm_type,
-                AlarmRecord.status == "pending",
-            )
-            .first()
-        )
+        pending_alarm = self._find_pending_alarm_doc(device_id, alarm_type)
 
         if active:
             if pending_alarm:
                 return False
-            db.add(
-                AlarmRecord(
-                    device_id=device_id,
-                    alarm_type=alarm_type,
-                    severity=severity,
-                    description=description,
-                    location=db_video.name or f"视频设备-{device_id}",
-                    status="pending",
-                )
+
+            self._create_monitoring_alarm_doc(
+                device_id=device_id,
+                alarm_type=alarm_type,
+                severity=severity,
+                description=description,
+                location=db_video.name or f"视频设备-{device_id}",
             )
             return True
 
         if pending_alarm:
-            pending_alarm.status = "resolved"
-            pending_alarm.handled_at = datetime.utcnow() + timedelta(hours=8)
+            self._resolve_monitoring_alarm_doc(pending_alarm["id"])
             return True
 
         return False
@@ -666,7 +821,7 @@ class VideoService:
         return changed
 
     def get_monitoring_summary(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return None
 
@@ -696,13 +851,6 @@ class VideoService:
             weekly_remaining_bytes=weekly_remaining_bytes,
         )
         status_summary = self._build_device_status_summary(db, db_video)
-
-        if has_alarm_changes:
-            try:
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to persist monitoring alarms: {e}")
 
         return {
             "device_id": db_video.id,
@@ -878,7 +1026,7 @@ class VideoService:
             return {"status": "error", "message": f"摄像头校时失败: {e}"}
 
     def sync_camera_time_if_needed(self, db: Session, video_id: int, force: bool = False) -> dict:
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return {"status": "error", "message": "设备不存在"}
         return self._sync_camera_time_for_video(db_video, force=force)
@@ -980,8 +1128,9 @@ class VideoService:
         return False
 
     def ptz_stop_move(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
-        if not db_video: raise ValueError("Device not found")
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            raise ValueError("Device not found")
 
         if self._is_ezviz_ptz(db_video):
             return self._ezviz_ptz_stop(db_video)
@@ -1018,8 +1167,9 @@ class VideoService:
             raise ValueError(f"停止失败: {e}")
 
     def ptz_start_move(self, db: Session, video_id: int, direction: str, speed: float = 0.5):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
-        if not db_video: raise ValueError("Device not found")
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            raise ValueError("Device not found")
 
         if self._is_ezviz_ptz(db_video):
             return self._ezviz_ptz_start(db_video, direction, speed)
@@ -1054,7 +1204,7 @@ class VideoService:
         dwell_seconds: float,
         rounds: Optional[int],
     ):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1068,12 +1218,11 @@ class VideoService:
             if missing:
                 raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
 
-        db_video.cruise_preset_tokens_json = json.dumps([str(x) for x in preset_tokens], ensure_ascii=False)
-        db_video.cruise_dwell_seconds = float(dwell_seconds or 8.0)
-        db_video.cruise_rounds = rounds
-
-        db.commit()
-        db.refresh(db_video)
+        self._update_video_fields(video_id, {
+            "cruise_preset_tokens_json": json.dumps([str(x) for x in preset_tokens], ensure_ascii=False),
+            "cruise_dwell_seconds": float(dwell_seconds or 8.0),
+            "cruise_rounds": rounds,
+        })
 
         return {
             "status": "success",
@@ -1084,7 +1233,7 @@ class VideoService:
         }
 
     def get_current_cruise_config(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1597,7 +1746,7 @@ class VideoService:
             raise ValueError(f"PTZ_STOP_FAILED: {first_error}")
 
     def get_stream_info(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return None
 
@@ -1606,7 +1755,7 @@ class VideoService:
         return self._get_stream_info_local(db_video)
 
     def _create_ptz_and_media(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
         camera, ptz, media = self._get_onvif_service(db_video)
@@ -1614,7 +1763,7 @@ class VideoService:
         return db_video, camera, ptz, media, token
 
     def list_presets(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1695,7 +1844,7 @@ class VideoService:
         return result
 
     def set_preset(self, db: Session, video_id: int, name: Optional[str] = None, preset_token: Optional[str] = None):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1803,7 +1952,7 @@ class VideoService:
     #         raise ValueError(f"创建预置点失败: {e}")
 
     def goto_preset(self, db: Session, video_id: int, preset_token: str, speed: float = 0.5):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1818,11 +1967,11 @@ class VideoService:
 
         _, _, ptz, _, token = self._create_ptz_and_media(db, video_id)
         req = {
-            'ProfileToken': token,
-            'PresetToken': preset_token,
-            'Speed': {
-                'PanTilt': {'x': speed, 'y': speed},
-                'Zoom': {'x': speed}
+            "ProfileToken": token,
+            "PresetToken": preset_token,
+            "Speed": {
+                "PanTilt": {"x": speed, "y": speed},
+                "Zoom": {"x": speed}
             }
         }
         try:
@@ -1832,7 +1981,7 @@ class VideoService:
             raise ValueError(f"调用预置点失败: {e}")
 
     def remove_preset(self, db: Session, video_id: int, preset_token: str):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1859,7 +2008,7 @@ class VideoService:
         if not preset_tokens:
             raise ValueError("preset_tokens 不能为空")
 
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -1962,7 +2111,7 @@ class VideoService:
         if len(preset_tokens) < 2:
             raise ValueError("巡航至少需要两个预置点")
 
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
+        db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             raise ValueError("Device not found")
 
@@ -2061,54 +2210,73 @@ class VideoService:
     # -------------------------------------------------------------------------
     def add_camera_to_media_server(self, db: Session, camera_data: CameraCreateRequest):
         logger.info(f"Adding stream: {camera_data.name}")
+
+        collection = self._video_collection()
         ip_address = camera_data.ip_address or self._extract_ip_from_rtsp(camera_data.rtsp_url) or ""
         port = camera_data.port or 80
 
-        # 先落库拿到稳定ID，再用 ID 作为 stream_name，避免名称改动导致流路径漂移。
-        new_video = VideoDevice(
-            name=camera_data.name,
-            ip_address=ip_address,
-            port=port,
-            username=camera_data.username,
-            password=camera_data.password,
-            stream_url="",
-            rtsp_url=camera_data.rtsp_url,
-            stream_protocol=self._normalize_stream_protocol(camera_data.stream_protocol),
-            platform_type=(camera_data.platform_type or "onvif"),
-            access_source=(camera_data.access_source or "local"),
-            ptz_source=(camera_data.ptz_source or "onvif"),
-            device_serial=camera_data.device_serial,
-            channel_no=camera_data.channel_no or 1,
-            supports_ptz=1,
-            supports_preset=1,
-            supports_cruise=1,
-            supports_zoom=1,
-            supports_focus=0,
-            latitude=camera_data.latitude,
-            longitude=camera_data.longitude,
-            status="online",
-            remark=camera_data.remark,
-        )
-        db.add(new_video)
-        db.commit()
-        db.refresh(new_video)
+        next_id = str(get_next_sequence("video_device_id"))
 
-        # 新增或替换设备后先尝试同步摄像头时间，避免 OSD 时间持续漂移。
+        payload = {
+            "id": next_id,
+            "name": camera_data.name,
+            "ip_address": ip_address,
+            "port": port,
+            "username": camera_data.username,
+            "password": camera_data.password,
+            "stream_url": "",
+            "rtsp_url": camera_data.rtsp_url,
+            "stream_protocol": self._normalize_stream_protocol(camera_data.stream_protocol),
+            "platform_type": (camera_data.platform_type or "onvif"),
+            "access_source": (camera_data.access_source or "local"),
+            "ptz_source": (camera_data.ptz_source or "onvif"),
+            "device_serial": camera_data.device_serial,
+            "channel_no": camera_data.channel_no or 1,
+            "supports_ptz": 1,
+            "supports_preset": 1,
+            "supports_cruise": 1,
+            "supports_zoom": 1,
+            "supports_focus": 0,
+            "latitude": camera_data.latitude,
+            "longitude": camera_data.longitude,
+            "status": "online",
+            "remark": camera_data.remark,
+            "is_active": 1,
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow(),
+            "sleeping": False,
+            "privacy_enabled": False,
+            "storage_abnormal": False,
+            "low_battery": False,
+            "weak_signal": False,
+            "weekly_quota_bytes": DEFAULT_WEEKLY_QUOTA_BYTES,
+        }
+
+        collection.insert_one(payload)
+
+        new_video = self._get_video_runtime_by_id(next_id)
+        if not new_video:
+            raise ValueError("设备写入 Mongo 成功，但读取失败")
+
+        # 新增设备后先尝试同步摄像头时间，避免 OSD 时间持续漂移
         sync_result = self._sync_camera_time_for_video(new_video, force=True)
         if sync_result.get("status") == "error":
-            logger.warning(f"Initial camera time sync failed for video_id={new_video.id}: {sync_result.get('message')}")
+            logger.warning(
+                f"Initial camera time sync failed for video_id={new_video.id}: {sync_result.get('message')}"
+            )
 
         stream_name = str(new_video.id)
 
         # 启动推流并更新播放地址
         self.start_ffmpeg_stream(camera_data.rtsp_url, stream_name)
         flv_url = f"{NMS_HOST}/live/{stream_name}.flv"
-        new_video.stream_url = flv_url
-        db.commit()
-        db.refresh(new_video)
 
+        self._update_video_fields(next_id, {"stream_url": flv_url})
+
+        updated_video = self._get_video_doc_by_id(next_id)
         self.start_ffmpeg_recording(new_video.id, camera_data.rtsp_url)
-        return new_video
+
+        return self._mongo_video_to_out(updated_video)
 
     def sync_hikvision_devices(self, db: Session):
         # 当前项目以 RTSP/ONVIF 手动接入为主，保留同步接口避免路由调用时报错。
@@ -2116,58 +2284,103 @@ class VideoService:
         return []
 
     def create_video(self, db: Session, video_data: VideoCreate):
-        payload = video_data.model_dump()
-        payload["stream_protocol"] = self._normalize_stream_protocol(payload.get("stream_protocol"))
-        payload["platform_type"] = payload.get("platform_type") or "onvif"
-        payload["access_source"] = payload.get("access_source") or "local"
-        payload["ptz_source"] = payload.get("ptz_source") or "onvif"
-        payload["channel_no"] = payload.get("channel_no") or 1
-        new_video = VideoDevice(**payload)
-        db.add(new_video)
-        db.commit()
-        db.refresh(new_video)
-        return new_video
+        collection = self._video_collection()
+
+        payload = self._prepare_video_payload(video_data.model_dump())
+        next_id = str(get_next_sequence("video_device_id"))
+        payload["id"] = next_id
+        payload["createdAt"] = datetime.utcnow()
+        payload["updatedAt"] = datetime.utcnow()
+
+        collection.insert_one(payload)
+        created = collection.find_one({"id": next_id})
+        return self._mongo_video_to_out(created)
 
     def get_videos(self, db: Session, skip: int = 0, limit: int = 100):
-        return db.query(VideoDevice).offset(skip).limit(limit).all()
+        collection = self._video_collection()
+        docs = list(collection.find({}, {"_id": 0}))
+        docs.sort(key=lambda x: int(str(x.get("id", "0"))))
+        docs = docs[max(0, int(skip)): max(0, int(skip)) + max(1, int(limit))]
+        return [self._mongo_video_to_out(doc) for doc in docs]
 
     def update_video(self, db: Session, video_id: int, video_data: VideoUpdate):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
-        if not db_video: return None
+        collection = self._video_collection()
+        video_id = str(video_id)
+
+        existing = collection.find_one({"id": video_id})
+        if not existing:
+            return None
+
         update_payload = video_data.model_dump(exclude_unset=True)
+
         if "stream_protocol" in update_payload:
             update_payload["stream_protocol"] = self._normalize_stream_protocol(update_payload.get("stream_protocol"))
 
-        for key, value in update_payload.items():
-            setattr(db_video, key, value)
+        if "platform_type" in update_payload and not update_payload.get("platform_type"):
+            update_payload["platform_type"] = "onvif"
+        if "access_source" in update_payload and not update_payload.get("access_source"):
+            update_payload["access_source"] = "local"
+        if "ptz_source" in update_payload and not update_payload.get("ptz_source"):
+            update_payload["ptz_source"] = "onvif"
+        if "channel_no" in update_payload and not update_payload.get("channel_no"):
+            update_payload["channel_no"] = 1
 
-        if db_video.rtsp_url and (not db_video.stream_url or "/live/" not in str(db_video.stream_url)):
-            db_video.stream_url = f"{NMS_HOST}/live/{video_id}.flv"
+        merged = {**existing, **update_payload}
 
-        db.commit()
-        db.refresh(db_video)
-        if video_id in ONVIF_CLIENT_CACHE: del ONVIF_CLIENT_CACHE[video_id]
-        if video_id in CAMERA_TIME_SYNC_CACHE: del CAMERA_TIME_SYNC_CACHE[video_id]
-        return db_video
+        if merged.get("rtsp_url") and (not merged.get("stream_url") or "/live/" not in str(merged.get("stream_url"))):
+            merged["stream_url"] = f"{NMS_HOST}/live/{video_id}.flv"
+
+        merged["updatedAt"] = datetime.utcnow()
+
+        collection.update_one(
+            {"id": video_id},
+            {"$set": {k: v for k, v in merged.items() if k != "_id"}}
+        )
+
+        updated = collection.find_one({"id": video_id})
+
+        for key in (video_id, str(video_id), int(video_id) if str(video_id).isdigit() else None):
+            if key is None:
+                continue
+            if key in ONVIF_CLIENT_CACHE:
+                del ONVIF_CLIENT_CACHE[key]
+            if key in EZVIZ_PTZ_LAST_DIRECTION:
+                del EZVIZ_PTZ_LAST_DIRECTION[key]
+            if key in EZVIZ_PTZ_LAST_STOP_AT:
+                del EZVIZ_PTZ_LAST_STOP_AT[key]
+            if key in CAMERA_TIME_SYNC_CACHE:
+                del CAMERA_TIME_SYNC_CACHE[key]
+
+        return self._mongo_video_to_out(updated)
 
     def delete_video(self, db: Session, video_id: int):
-        db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
-        if db_video:
-            stream_name = str(db_video.id)
-            self.stop_ffmpeg_stream(stream_name)
-            self.stop_ffmpeg_recording(video_id)
-            self.stop_cruise(video_id)
+        collection = self._video_collection()
+        video_id = str(video_id)
 
-            db.delete(db_video)
-            db.commit()
-            if video_id in ONVIF_CLIENT_CACHE:
-                del ONVIF_CLIENT_CACHE[video_id]
-            if video_id in EZVIZ_PTZ_LAST_DIRECTION:
-                del EZVIZ_PTZ_LAST_DIRECTION[video_id]
-            if video_id in EZVIZ_PTZ_LAST_STOP_AT:
-                del EZVIZ_PTZ_LAST_STOP_AT[video_id]
-            return True
-        return False
+        db_video = collection.find_one({"id": video_id})
+        if not db_video:
+            return False
+
+        stream_name = str(db_video.get("id"))
+        self.stop_ffmpeg_stream(stream_name)
+        self.stop_ffmpeg_recording(video_id)
+        self.stop_cruise(video_id)
+
+        collection.delete_one({"id": video_id})
+
+        for key in (video_id, str(video_id), int(video_id) if str(video_id).isdigit() else None):
+            if key is None:
+                continue
+            if key in ONVIF_CLIENT_CACHE:
+                del ONVIF_CLIENT_CACHE[key]
+            if key in EZVIZ_PTZ_LAST_DIRECTION:
+                del EZVIZ_PTZ_LAST_DIRECTION[key]
+            if key in EZVIZ_PTZ_LAST_STOP_AT:
+                del EZVIZ_PTZ_LAST_STOP_AT[key]
+            if key in CAMERA_TIME_SYNC_CACHE:
+                del CAMERA_TIME_SYNC_CACHE[key]
+
+        return True
 
     def get_stream_url(self, db: Session, video_id: int):
         stream_info = self.get_stream_info(db, video_id)
@@ -2320,6 +2533,13 @@ class VideoService:
                 record_root = os.path.join(sp["path"], "recordings")
                 os.makedirs(record_root, exist_ok=True)
                 roots.append(record_root)
+
+        if not roots:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            default_record_root = os.path.join(base_dir, "static", "recordings")
+            os.makedirs(default_record_root, exist_ok=True)
+            roots.append(default_record_root)
+
         return roots
 
     def _get_record_root(self) -> str:
@@ -2496,11 +2716,25 @@ class VideoService:
                 stderr=log_file,
                 creationflags=creationflags
             )
+
+            time.sleep(1.5)
+            if process.poll() is not None:
+                logger.error(
+                    f"录像进程启动后立即退出 video_id={video_id}, returncode={process.returncode}, "
+                    f"请查看日志: {log_path}"
+                )
+                try:
+                    log_file.close()
+                except Exception:
+                    pass
+                return None
+
             RECORDING_PROCESSES[video_id] = {
                 "process": process,
                 "log_file": log_file,
                 "source_url": source_url,
             }
+            logger.info(f"录像进程已启动 video_id={video_id}, pid={process.pid}, output={segment_pattern}")
             return process
         except Exception as e:
             logger.error(f"录像启动失败 video_id={video_id}: {e}")
@@ -2593,22 +2827,63 @@ class VideoService:
             return False
 
     def ensure_all_recordings(self, db: Session):
-        videos = db.query(VideoDevice).all()
+        docs = list(self._video_collection().find({}, {"_id": 0}))
+        videos = [self._get_video_runtime_by_id(doc.get("id")) for doc in docs]
+        videos = [v for v in videos if v]
+
         for v in videos:
-            entry = RECORDING_PROCESSES.get(v.id)
+            video_id = int(v.id) if str(v.id).isdigit() else v.id
+            entry = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
+
+            should_start = True
+
             if isinstance(entry, dict):
                 proc = entry.get("process")
-                if proc and proc.poll() is None:
-                    continue
+                if proc is not None:
+                    try:
+                        if proc.poll() is None:
+                            should_start = False
+                        else:
+                            logger.warning(
+                                f"录像进程已退出，准备重启 video_id={video_id}, returncode={proc.returncode}"
+                            )
+                            log_file = entry.get("log_file")
+                            if log_file:
+                                try:
+                                    log_file.close()
+                                except Exception:
+                                    pass
+                            RECORDING_PROCESSES.pop(video_id, None)
+                            RECORDING_PROCESSES.pop(str(video_id), None)
+                    except Exception as e:
+                        logger.warning(f"检查录像进程状态失败，准备重启 video_id={video_id}: {e}")
+                        RECORDING_PROCESSES.pop(video_id, None)
+                        RECORDING_PROCESSES.pop(str(video_id), None)
+
             elif entry is not None:
                 try:
                     if entry.poll() is None:
-                        continue
-                except Exception:
-                    pass
+                        should_start = False
+                    else:
+                        logger.warning(
+                            f"录像进程已退出，准备重启 video_id={video_id}, returncode={entry.returncode}"
+                        )
+                        RECORDING_PROCESSES.pop(video_id, None)
+                        RECORDING_PROCESSES.pop(str(video_id), None)
+                except Exception as e:
+                    logger.warning(f"检查录像进程状态失败，准备重启 video_id={video_id}: {e}")
+                    RECORDING_PROCESSES.pop(video_id, None)
+                    RECORDING_PROCESSES.pop(str(video_id), None)
+
+            if not should_start:
+                continue
+
             record_source = self._get_record_source_for_device(v)
             if record_source:
-                self.start_ffmpeg_recording(v.id, record_source)
+                logger.info(f"启动/重启录像 video_id={video_id}, source={record_source}")
+                self.start_ffmpeg_recording(video_id, record_source)
+            else:
+                logger.warning(f"无法启动录像，video_id={video_id} 缺少可录制地址")
     
     def restart_all_recordings(self, db: Session):
         # 停止所有正在录制的进程
@@ -2887,9 +3162,18 @@ class VideoService:
             if not os.path.exists(final_output_path) or os.path.getsize(final_output_path) == 0:
                 raise ValueError("生成的视频文件无效")
 
-            primary_root = self._get_alarm_video_root()
+            if output_type == "alarm":
+                mirror_subdir = "alarm_videos"
+                primary_root = self._get_alarm_video_root()
+            elif output_type == "temp":
+                mirror_subdir = os.path.join("playback_videos", "temp_cache")
+                primary_root = self._get_temp_playback_root()
+            else:
+                mirror_subdir = "playback_videos"
+                primary_root = self._get_playback_video_root()
+
             rel_path = os.path.relpath(final_output_path, primary_root)
-            mirror_rel_path = os.path.join("alarm_videos", rel_path)
+            mirror_rel_path = os.path.join(mirror_subdir, rel_path)
             self._mirror_write_file(final_output_path, mirror_rel_path)
 
             return {

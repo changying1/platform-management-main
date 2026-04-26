@@ -339,9 +339,9 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
   src: string; 
   deviceName: string; 
   type?: 'manual' | 'alarm';
-  playlist?: SavedPlayback[];
-  currentPlayback?: SavedPlayback;
-  onPlaybackChange?: (playback: SavedPlayback) => void;
+  playlist?: ExtendedSavedPlayback[];
+  currentPlayback?: ExtendedSavedPlayback;
+  onPlaybackChange?: (playback: ExtendedSavedPlayback) => void;
 }>(
   ({ src, deviceName, type, playlist = [], currentPlayback, onPlaybackChange }, ref) => {
     // ✅ 直接使用传入的 src（后端返回的真实视频路径）
@@ -1229,9 +1229,9 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
   // VideoCard 组件
 const VideoCard = ({ playback, onPlay, onShowScreenshot }: { 
   key?: any;
-  playback: SavedPlayback; 
+  playback: ExtendedSavedPlayback;
   onPlay: () => void;
-  onShowScreenshot?: (playback: SavedPlayback) => void | Promise<void>;
+  onShowScreenshot?: (playback: ExtendedSavedPlayback) => void | Promise<void>;
 }) => {
     const videoRef = React.useRef<HTMLVideoElement>(null);
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -1677,7 +1677,15 @@ const VoicePlaybackContent = ({
       alarmSecond,
     };
   };
-
+const getScreenshotUrl = (playback?: ExtendedSavedPlayback | null) => {
+  const alarmInfo = playback?.alarmInfo;
+  return (
+    alarmInfo?.screenshotUrl ||
+    alarmInfo?.screenshot?.url ||
+    alarmInfo?.screenshot?.thumbnail ||
+    ''
+  );
+};
 export default function VideoPlayback() {
     // ✅ 从 Store 取出操作函数
     const { removePlayback, clearAll } = usePlaybackStore();
@@ -1690,12 +1698,11 @@ export default function VideoPlayback() {
     const [selectedProject, setSelectedProject] = useState<string>('all');
     const [selectedTeam, setSelectedTeam] = useState<string>('all');
     const [activeTab, setActiveTab] = useState<TabType>('all');
-    const [selectedPlayback, setSelectedPlayback] = useState<SavedPlayback | null>(null);
     const [searchKeyword, setSearchKeyword] = useState('');
     const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
     const [showProjectDropdown, setShowProjectDropdown] = useState(false);
     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
-    const [selectedAlarm, setSelectedAlarm] = useState<SavedPlayback | null>(null);
+    const [selectedPlayback, setSelectedPlayback] = useState<ExtendedSavedPlayback | null>(null);
     const videoPlayerRef = useRef<VideoPlayerRef>(null);
 
   // ✅ 修改2：删除模拟数据，改用真实 API 数据
@@ -1703,10 +1710,10 @@ export default function VideoPlayback() {
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmScreenshots, setAlarmScreenshots] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
-  
-  const [filteredPlaybacks, setFilteredPlaybacks] = useState<SavedPlayback[]>([]);
+  const [selectedAlarm, setSelectedAlarm] = useState<ExtendedSavedPlayback | null>(null);
+  const [filteredPlaybacks, setFilteredPlaybacks] = useState<ExtendedSavedPlayback[]>([]);
+  const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
-  const [currentPlayback, setCurrentPlayback] = useState<SavedPlayback | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   // ✅ 40:9 更窄卡片，10列×4行 = 40个，刚好填满页面
@@ -1820,8 +1827,8 @@ useEffect(() => {
 }, [selectedDevice?.id, devices.length]);
   // ✅ 真实API + 兜底，全部设备也有数据！
   useEffect(() => {
-    const convertToSavedPlayback = (): SavedPlayback[] => {
-      const list: SavedPlayback[] = [];
+    const convertToSavedPlayback = (): ExtendedSavedPlayback[] => {
+      const list: ExtendedSavedPlayback[] = [];
       
       // ✅ 用第一个设备当默认（全部设备时也显示内容）
       const baseDevice = selectedDevice || devices[0];
@@ -1847,15 +1854,66 @@ useEffect(() => {
       
       // 🚨 优先用真实报警视频（可播放）
       // 🔗 自动解析文件名计算报警在视频里的秒数位置！
-      const screenshotFilenames = alarmScreenshots
-        .map(item => item.name)
-        .filter(Boolean);
             
       alarmVideos.forEach(video => {
         const duration = video.duration_seconds || 60;
         // ✅ 通过文件名计算：报警在视频里的第几秒
-        const { alarmSecond, screenshotUrl } = matchAlarmScreenshot(video.name, screenshotFilenames);
-        
+        const matchedScreenshot = (() => {
+          const screenshots = alarmScreenshots as any[];
+
+          if (!screenshots || screenshots.length === 0) {
+            return null;
+          }
+
+          const videoTime = new Date(video.updated_at).getTime();
+
+          let best: any = null;
+          let bestDiff = Number.POSITIVE_INFINITY;
+
+          for (const shot of screenshots) {
+            const shotTime = new Date(shot.updated_at).getTime();
+
+            if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
+              continue;
+            }
+
+            const diff = Math.abs(shotTime - videoTime);
+
+            if (diff < bestDiff) {
+              best = shot;
+              bestDiff = diff;
+            }
+          }
+
+          // 允许 5 分钟内匹配；如果没有合适时间，也兜底取最新一张
+          if (best && bestDiff <= 5 * 60 * 1000) {
+            return best;
+          }
+
+          return screenshots[0] || null;
+        })();
+
+        const screenshotRawPath =
+          matchedScreenshot?.web_path ||
+          matchedScreenshot?.thumbnail_path ||
+          matchedScreenshot?.thumbnail ||
+          matchedScreenshot?.url ||
+          '';
+
+        const screenshotUrl = screenshotRawPath ? toVideoUrl(screenshotRawPath) : '';
+
+        const alarmSecond = (() => {
+          if (!matchedScreenshot) return 10;
+
+          const videoTime = new Date(video.updated_at).getTime();
+          const shotTime = new Date(matchedScreenshot.updated_at).getTime();
+
+          if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
+            return 10;
+          }
+
+          return Math.max(0, Math.min(duration - 1, Math.round((shotTime - videoTime) / 1000)));
+        })();
         list.push({
           id: `alarm_${video.name}`,
           deviceId: baseDevice.id,
@@ -1875,7 +1933,15 @@ useEffect(() => {
             score: 0.95,
             timestamp: video.updated_at,
             personnel: '未知',
-            screenshotUrl,  // ✅ 对应截图！
+            screenshotUrl,
+            screenshot: matchedScreenshot
+              ? {
+                  id: matchedScreenshot.name || matchedScreenshot.id || String(video.name),
+                  url: screenshotUrl,
+                  thumbnail: screenshotUrl,
+                  timestamp: matchedScreenshot.updated_at || video.updated_at,
+                }
+              : undefined,
           },
         });
       });
@@ -1938,7 +2004,7 @@ useEffect(() => {
    
 
     // 播放选中的回放
-    const handlePlay = (playback: SavedPlayback) => {
+    const handlePlay = (playback: ExtendedSavedPlayback) => {
       setSelectedPlayback(playback);
     };
 
@@ -2413,6 +2479,18 @@ onShowScreenshot={async (playback) => {
                         <span className="text-slate-400 block mb-1">报警信息</span>
                         <span className="text-red-200/80 text-sm">{currentPlayback.alarmInfo.msg}</span>
                       </div>
+                      <div className="mt-3 pt-3 border-t border-red-400/20">
+                        <button
+                          onClick={() => {
+                            setSelectedAlarm(currentPlayback);
+                            setShowScreenshotModal(true);
+                          }}
+                          className="w-full px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-2"
+                        >
+                          <Camera size={15} />
+                          查看报警截图
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -2498,14 +2576,17 @@ onShowScreenshot={async (playback) => {
             <div className="flex flex-col md:flex-row gap-6 p-6">
               <div className="flex-1">
                 <div className="rounded-lg overflow-hidden border border-cyan-400/30 bg-black/50">
-<img 
-  src={selectedAlarm.alarmInfo.screenshot?.url || selectedAlarm.alarmInfo.screenshotUrl || ''}
-  alt="告警截图"
-  className="w-full h-auto"
-  onError={(e) => {
-    (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300"%3E%3Crect width="400" height="300" fill="%231e293b"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" fill="%2364748b"%3E点击截图按钮获取真实画面%3C/text%3E%3C/svg%3E';
-  }}
-/>
+{getScreenshotUrl(selectedAlarm) ? (
+  <img
+    src={getScreenshotUrl(selectedAlarm)}
+    alt="告警截图"
+    className="w-full max-h-[420px] object-contain rounded-lg border border-cyan-400/30"
+  />
+) : (
+  <div className="w-full h-[220px] flex items-center justify-center rounded-lg border border-yellow-400/30 bg-yellow-500/10 text-yellow-200 text-sm">
+    当前报警未匹配到截图
+  </div>
+)}
                 </div>
                 <p className="text-xs text-slate-500 text-center mt-2">告警发生时刻截图</p>
               </div>

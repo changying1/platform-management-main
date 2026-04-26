@@ -1,4 +1,5 @@
 from .registry import ai_rule
+from .face_fusion import attach_faces_to_boxes
 
 # ==========================================
 # 分类别置信度阈值
@@ -49,6 +50,8 @@ def detect_safety_helmet(service, frame):
                         "coords": b["coords"],
                     })
             if violation_boxes:
+                violation_boxes = attach_faces_to_boxes(frame, violation_boxes)
+
                 return service._check_cooldown_and_multi_alarm(
                     "未佩戴安全帽",
                     violation_boxes,

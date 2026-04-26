@@ -3,6 +3,10 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import declarative_base
 
+from pymongo import MongoClient, ReturnDocument
+from pymongo.database import Database
+import os
+
 Base = declarative_base()
 
 import app.models.admin_user
@@ -25,6 +29,11 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "smart_helmet_mongo")
+
+mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
+mongo_db: Database = mongo_client[MONGO_DB_NAME]
 
 def ensure_schema_compatibility():
     """Best-effort patch for legacy databases missing newly added columns."""
@@ -74,3 +83,35 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_mongo_db():
+    return mongo_db
+
+
+def get_worker_collection():
+    return mongo_db["worker"]
+
+def get_personnel_collection():
+    return mongo_db["personnel"]
+
+def get_video_device_collection():
+    return mongo_db["video_device"]
+
+def get_alarm_record_collection():
+    return mongo_db["alarm_record"]
+
+
+def get_next_sequence(name: str) -> int:
+    """
+    预留自增序列生成器。
+    如果后面需要把 alarm_record.id 做成数字流水号，可以启用 counters 集合。
+    当前先保留接口，后面再决定是否真的使用。
+    """
+    counters = mongo_db["counters"]
+    result = counters.find_one_and_update(
+        {"_id": name},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return int(result["seq"])

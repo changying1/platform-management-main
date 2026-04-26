@@ -64,13 +64,14 @@ export const PersonnelForm: React.FC<PersonnelFormProps> = ({
       return;
     }
 
-    const newAdmin: AdminUser = {
-      id: Date.now().toString(),
+    const newAdmin: AdminUser & { password?: string } = {
+      id: "",
       username: form.username,
       dept: form.dept,
       phone: form.phone,
+      password: form.password,
       role: form.role,
-      addedDate: new Date().toLocaleDateString(),
+      addedDate: "",
       parentId: form.role === "HQ Manager" ? null : form.parentId,
     };
 
@@ -83,7 +84,6 @@ export const PersonnelForm: React.FC<PersonnelFormProps> = ({
       role: "Worker",
       parentId: "",
     });
-    alert("人员添加成功！");
   };
 
   return (
