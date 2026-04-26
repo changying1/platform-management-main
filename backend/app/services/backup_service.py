@@ -440,10 +440,18 @@ class BackupService:
             
             storage_cfg = os.path.join(extract_dir, "storage_paths.json")
             if os.path.exists(storage_cfg):
-                with open(storage_cfg, 'r', encoding='utf-8') as f:
+                with open(storage_cfg, 'r', encoding='utf-8-sig') as f:
                     config = json.load(f)
-                    for sp in config.get("paths", []):
-                        video_service.add_storage_path(sp)
+
+                if isinstance(config, list):
+                    paths = config
+                elif isinstance(config, dict):
+                    paths = config.get("paths", [])
+                else:
+                    paths = []
+
+                for sp in paths:
+                    video_service.add_storage_path(sp)
                 logger.info("存储路径配置已恢复")
             
             shutil.rmtree(extract_dir, ignore_errors=True)
