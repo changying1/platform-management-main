@@ -1,22 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Save, Loader, Users, Camera, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface Person {
   avatar?: string;
-  id: number;
+  faceFile?: File | null;
+  id: string;
   name: string;
   employeeId: string;
-  idCard?: string;           // 身份证号
-  workType?: string;         // 工种
-  workTeam?: string;         // 工队
-  team?: string;             // 班组
+  idCard?: string;
+  workType?: string;
+  workTeam?: string;
+  team?: string;
   phone: string;
-  entryDate?: string;        // 进场日期
+  entryDate?: string;
   status: 'active' | 'inactive';
-  emergencyContact?: string; // 紧急联系人
-  company?: string;          // 所属分公司
-  project?: string;          // 所属项目
+  emergencyContact?: string;
+  company?: string;
+  project?: string;
 }
 
 // 详情信息展示组件
@@ -27,75 +28,38 @@ const InfoItem = ({ label, value }: { label: string; value?: string }) => (
   </div>
 );
 
+const API_BASE = 'http://127.0.0.1:9000';
+
+const getImageUrl = (path?: string) => {
+  if (!path) return '/default-avatar.png';
+  if (path.startsWith('blob:')) return path;
+  if (path.startsWith('http')) return path;
+  if (path.startsWith('/static/')) return `${API_BASE}${path}`;
+  return path;
+};
+
+const mapApiToPerson = (item: any): Person => ({
+  id: item.id,
+  name: item.username || item.name || '',
+  employeeId: item.employeeId || '',
+  idCard: item.idCard || '',
+  workType: item.workType || '',
+  workTeam: item.workTeam || '',
+  team: item.team || '',
+  phone: item.phone || '',
+  entryDate: item.entryDate || item.addedDate || '',
+  status: item.status || 'active',
+  emergencyContact: item.emergencyContact || '',
+  company: item.company || '',
+  project: item.project || '',
+  avatar: item.faceImage || item.avatar || '',
+});
+
 export default function PersonManagement() {
   const [showDetailModal, setShowDetailModal] = useState(false);  // 详情弹窗显示
 const [viewingPerson, setViewingPerson] = useState<Person | null>(null);  // 查看的人员
-const [persons, setPersons] = useState<Person[]>([
-  { 
-    id: 1, 
-    name: '张三', 
-    employeeId: '10001', 
-    idCard: '41010119900307653X',
-    workType: '木工', 
-    workTeam: '土建工队',
-    team: '木工一班', 
-    phone: '13800138001', 
-    entryDate: '2024-03-15',
-    status: 'active',
-    emergencyContact: '李桂花 13800138099',
-    company: '第一分公司',
-    project: '地铁1号线工程',
-    avatar: '/avatars/zhangsan.png'
-  },
-  { 
-    id: 2, 
-    name: '李四', 
-    employeeId: '10002', 
-    idCard: '410101198512154321',
-    workType: '钢筋工', 
-    workTeam: '土建工队',
-    team: '钢筋一班', 
-    phone: '13800138002', 
-    entryDate: '2024-03-20',
-    status: 'active',
-    emergencyContact: '王秀英 13800138088',
-    company: '第二分公司',
-    project: '商业综合体项目',
-    avatar: '/avatars/lisi.jpeg'
-  },
-  { 
-    id: 3, 
-    name: '王五', 
-    employeeId: '10003', 
-    idCard: '410101199512206789',
-    workType: '电工', 
-    workTeam: '机电工队',
-    team: '电工班', 
-    phone: '13800138003', 
-    entryDate: '2024-04-01',
-    status: 'inactive',
-    emergencyContact: '赵丽华 13800138077',
-    company: '第一分公司',
-    project: '地铁1号线工程',
-    avatar: '/avatars/wangwu.jpg'
-  },
-  { 
-    id: 4, 
-    name: '赵六', 
-    employeeId: '10004', 
-    idCard: '410101199208153456',
-    workType: '水暖工', 
-    workTeam: '机电工队',
-    team: '水暖班', 
-    phone: '13800138004', 
-    entryDate: '2024-04-10',
-    status: 'active',
-    emergencyContact: '孙大姐 13800138066',
-    company: '第二分公司',
-    project: '商业综合体项目',
-    avatar: '/avatars/zhaoliu.jpg'
-  },
-]);
+const [persons, setPersons] = useState<Person[]>([]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState<string>('all');
 const [filterProject, setFilterProject] = useState<string>('all');
@@ -108,7 +72,27 @@ const [filterTeam, setFilterTeam] = useState<string>('all');
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadData, setUploadData] = useState<any[]>([]);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
+const fetchPersons = async () => {
+  try {
+    setLoading(true);
+    const res = await fetch(`${API_BASE}/personnel/`);
+    if (!res.ok) {
+      throw new Error('获取人员列表失败');
+    }
 
+    const data = await res.json();
+    setPersons(data.map(mapApiToPerson));
+  } catch (error) {
+    console.error(error);
+    alert('获取人员列表失败，请检查后端服务');
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  fetchPersons();
+}, []);
 
 
 // 获取所有唯一的分公司
@@ -343,19 +327,21 @@ const confirmImport = () => {
     <button
       onClick={() => {
         setEditingItem({
-          id: 0,
+          id: '',
           name: '',
           employeeId: '',
           idCard: '',
           company: '',
           project: '',
           workType: '',
+          workTeam: '',
           team: '',
           phone: '',
           entryDate: '',
           status: 'active',
           emergencyContact: '',
           avatar: '',
+          faceFile: null,
         });
         setShowModal(true);
       }}
@@ -401,7 +387,7 @@ const confirmImport = () => {
     <tr key={person.id} className="hover:bg-slate-800/30 transition-colors">
       <td className="px-4 py-3">
         <img 
-          src={person.avatar || '/default-avatar.png'} 
+          src={getImageUrl(person.avatar)}
           className="w-8 h-8 rounded-full object-cover cursor-pointer hover:ring-2 ring-cyan-400"
           onClick={() => {
             setViewingPerson(person);
@@ -440,9 +426,22 @@ const confirmImport = () => {
             <Edit2 size={16} />
           </button>
           <button 
-            onClick={() => {
-              if (confirm('确定删除该人员吗？')) {
+            onClick={async () => {
+              if (!confirm('确定删除该人员吗？')) return;
+
+              try {
+                const res = await fetch(`${API_BASE}/personnel/${person.id}`, {
+                  method: 'DELETE',
+                });
+
+                if (!res.ok) {
+                  throw new Error('删除失败');
+                }
+
                 setPersons(persons.filter(p => p.id !== person.id));
+              } catch (error) {
+                console.error(error);
+                alert('删除人员失败');
               }
             }}
             className="p-1 hover:bg-red-500/20 rounded text-red-400"
@@ -475,7 +474,7 @@ const confirmImport = () => {
         <div className="flex justify-center">
           <div className="relative">
             <img 
-              src={editingItem?.avatar || '/default-avatar.png'} 
+              src={getImageUrl(editingItem?.avatar)}
               className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400/50"
               alt="头像"
             />
@@ -489,7 +488,11 @@ const confirmImport = () => {
                   const file = e.target.files?.[0];
                   if (file) {
                     const imageUrl = URL.createObjectURL(file);
-                    setEditingItem({ ...editingItem!, avatar: imageUrl });
+                    setEditingItem({
+                      ...editingItem!,
+                      avatar: imageUrl,
+                      faceFile: file,
+                    });
                   }
                 }}
               />
@@ -634,20 +637,100 @@ const confirmImport = () => {
       
       <div className="flex gap-3 mt-8">
         <button 
-          onClick={() => {
+          onClick={async () => {
             if (!editingItem?.name || !editingItem?.employeeId) {
               alert('请填写姓名和工号');
               return;
             }
-            
-            if (editingItem.id) {
-              setPersons(persons.map(p => p.id === editingItem.id ? editingItem : p));
-            } else {
-              const newId = Math.max(...persons.map(p => p.id), 0) + 1;
-              setPersons([...persons, { ...editingItem, id: newId } as Person]);
+
+            try {
+              setLoading(true);
+
+              const payload = {
+                username: editingItem.name,
+                dept: editingItem.workTeam || editingItem.company || '',
+                phone: editingItem.phone || '',
+                role: 'Worker',
+                parentId: null,
+
+                employeeId: editingItem.employeeId,
+                idCard: editingItem.idCard || '',
+                company: editingItem.company || '',
+                project: editingItem.project || '',
+                workType: editingItem.workType || '',
+                workTeam: editingItem.workTeam || '',
+                team: editingItem.team || '',
+                entryDate: editingItem.entryDate || '',
+                status: editingItem.status || 'active',
+                emergencyContact: editingItem.emergencyContact || '',
+              };
+
+              let saved: any;
+
+              if (editingItem.id) {
+                const res = await fetch(`${API_BASE}/personnel/${editingItem.id}`, {
+                  method: 'PUT',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(payload),
+                });
+
+                if (!res.ok) {
+                  throw new Error('更新人员失败');
+                }
+
+                saved = await res.json();
+              } else {
+                const res = await fetch(`${API_BASE}/personnel/`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(payload),
+                });
+
+                if (!res.ok) {
+                  throw new Error('新增人员失败');
+                }
+
+                saved = await res.json();
+              }
+
+              if (editingItem.faceFile) {
+                const formData = new FormData();
+                formData.append('file', editingItem.faceFile);
+
+                const uploadRes = await fetch(`${API_BASE}/personnel/${saved.id}/face`, {
+                  method: 'POST',
+                  body: formData,
+                });
+
+                if (!uploadRes.ok) {
+                  throw new Error('人员已保存，但头像上传失败');
+                }
+
+                saved = await uploadRes.json();
+              }
+
+              const savedPerson = mapApiToPerson(saved);
+
+              setPersons(prev => {
+                const exists = prev.some(p => p.id === savedPerson.id);
+                if (exists) {
+                  return prev.map(p => p.id === savedPerson.id ? savedPerson : p);
+                }
+                return [...prev, savedPerson];
+              });
+
+              setShowModal(false);
+              setEditingItem(null);
+            } catch (error) {
+              console.error(error);
+              alert(error instanceof Error ? error.message : '保存失败');
+            } finally {
+              setLoading(false);
             }
-            setShowModal(false);
-            setEditingItem(null);
           }}
           className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900"
         >
@@ -681,7 +764,7 @@ const confirmImport = () => {
       <div className="flex justify-center mb-6">
         <div className="relative">
           <img 
-            src={viewingPerson.avatar || '/default-avatar.png'} 
+            src={getImageUrl(viewingPerson.avatar)}
             className="w-32 h-32 rounded-full object-cover border-4 border-cyan-400/50"
             alt={viewingPerson.name}
           />

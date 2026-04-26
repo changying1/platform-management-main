@@ -42,6 +42,7 @@ from app.controllers import (
     auth_controller,
     project_controller,
     backup_controller,
+    personnel_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
     jt_thread = threading.Thread(target=jt808_manager.start_server, daemon=True)
     jt_thread.start()
     
+    """
     # 2. 视频录像状态自检 (增加异常保护)
     db = SessionLocal()
     try:
@@ -78,7 +80,8 @@ async def lifespan(app: FastAPI):
         logger.error(f"Video Recording Check Failed: {e}. (System will continue to run)")
     finally:
         db.close()
-
+    """
+    
     yield
     
     # 【关闭阶段】
@@ -88,7 +91,7 @@ async def lifespan(app: FastAPI):
 
 # --- App 初始化 ---
 # Base.metadata.create_all(bind=engine)
-ensure_schema_compatibility()
+# ensure_schema_compatibility()
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
@@ -140,6 +143,7 @@ def serve_alarm_video(file_path: str):
 
 # 路由挂载
 app.include_router(admin_controller.router)
+app.include_router(personnel_controller.router)
 app.include_router(device_controller.router)
 app.include_router(video_controller.router)
 app.include_router(fence_controller.router)
