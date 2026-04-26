@@ -8,6 +8,309 @@
             "性别": "男"
         }
     ],
+    "alarm_record": [
+        {
+            "_id": {
+                "$oid": "69eaf4570ba4a5c67c2f8fcb"
+            },
+            "id": 13,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-24T12:40:55.181Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (76%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarms/alarm_13_2_20260424_124040_20260424_124110.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777005655_6cda42.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69eaf51907db7a3b054de925"
+            },
+            "id": 14,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-24T12:44:09.186Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (31%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "",
+            "recording_status": "pending",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777005849_2e43de.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ec65096507fce165ca626d"
+            },
+            "id": 15,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T14:54:01.961Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (37%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/api/videos/../alarm_videos/alarm_15_2_20260425_145301_20260425_145501.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777100041_3e0d6f.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ec742d86a98cc80de83c21"
+            },
+            "id": 16,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T15:58:37.718Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (28%)（检测框数量: 2）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_16_2_20260425_155737_20260425_155937.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777103917_4531ed.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ec755c86a98cc80de83c22"
+            },
+            "id": 17,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T16:03:40.086Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (13%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_17_2_20260425_160240_20260425_160440.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777104220_260ae9.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ecaf9a23d70dfd260b44fc"
+            },
+            "id": 18,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:12:10.990Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (72%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_18_2_20260425_201111_20260425_201311.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119130_b81f95.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ecb1c6896e94106e3f6561"
+            },
+            "id": 19,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:21:26.591Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (18%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_19_2_20260425_202026_20260425_202226.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119686_ee916e.jpg",
+            "personnel_id": "",
+            "person_name": "未知",
+            "person": {}
+        },
+        {
+            "_id": {
+                "$oid": "69ecb2f6df02f79452299907"
+            },
+            "id": 20,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:26:30.464Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (51%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_20_2_20260425_202530_20260425_202730.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119990_53cdf8.jpg",
+            "personnel_id": "",
+            "person_name": "未知",
+            "person": {}
+        },
+        {
+            "_id": {
+                "$oid": "69ecb3a6513a9188cb0c4dd7"
+            },
+            "id": 21,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:29:26.278Z"
+            },
+            "description": "模拟用户：李工 - 检测到人员未佩戴安全帽 (20%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "",
+            "recording_status": "failed",
+            "recording_error": "录像裁剪失败",
+            "alarm_image_path": "/static/alarms/2_1777120166_b7f1b3.jpg",
+            "personnel_id": "",
+            "person_name": "模拟用户：李工",
+            "person": {
+                "id": "",
+                "username": "模拟用户：李工",
+                "name": "模拟用户：李工",
+                "phone": "",
+                "workType": "",
+                "team": "",
+                "faceImage": "",
+                "isMock": true
+            }
+        }
+    ],
+    "personnel": [
+        {
+            "_id": {
+                "$oid": "69ec85375d43b82ee78286e5"
+            },
+            "username": "张三",
+            "dept": "总部",
+            "phone": "13800000000",
+            "password": "123456",
+            "role": "HQ Manager",
+            "parentId": null,
+            "addedDate": "2026-04-25",
+            "created_at": {
+                "$date": "2026-04-25T17:11:19.292Z"
+            },
+            "updated_at": {
+                "$date": "2026-04-25T19:17:42.138Z"
+            },
+            "faceImage": "/static/faces/69ec85375d43b82ee78286e5_f87514f1599d4f2983028aa54948eb53.png"
+        }
+    ],
+    "video_device": [
+        {
+            "_id": {
+                "$oid": "69e8c0fc8ce4cd62897717c6"
+            },
+            "name": "12",
+            "ip_address": null,
+            "port": 80,
+            "username": "",
+            "password": "",
+            "stream_url": "",
+            "rtsp_url": null,
+            "stream_protocol": "ezopen",
+            "platform_type": "ezviz",
+            "access_source": "cloud",
+            "ptz_source": "ezviz",
+            "device_serial": "GM7974925",
+            "channel_no": 1,
+            "supports_ptz": 1,
+            "supports_preset": 1,
+            "supports_cruise": 1,
+            "supports_zoom": 1,
+            "supports_focus": 0,
+            "latitude": null,
+            "longitude": null,
+            "remark": "",
+            "is_active": 1,
+            "company": "string",
+            "project": "string",
+            "status": "online",
+            "id": "2",
+            "createdAt": {
+                "$date": "2026-04-22T12:37:16.309Z"
+            },
+            "updatedAt": {
+                "$date": "2026-04-25T06:53:04.107Z"
+            },
+            "cruise_dwell_seconds": 8.0,
+            "cruise_preset_tokens_json": "[\"176\", \"178\", \"177\"]",
+            "cruise_rounds": null,
+            "cruise_preset_tokens": null
+        }
+    ],
+    "electronic_fence": [
+        {
+            "_id": {
+                "$oid": "69ea170be6fa33a5d5c82146"
+            },
+            "id": 101,
+            "name": "测试围栏A",
+            "behavior": "No Entry",
+            "project_id": 88
+        }
+    ],
+    "counters": [
+        {
+            "_id": "video_device_id",
+            "seq": 3
+        },
+        {
+            "_id": "alarm_record_id",
+            "seq": 21
+        }
+    ],
     "device": [
         {
             "_id": {
