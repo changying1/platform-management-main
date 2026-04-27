@@ -125,6 +125,7 @@ class JT808Manager:
         self.device_store = {}    # {phone_num: {实时数据字典}} 供外部读取
         self.active_connections = {}  # {phone_num: socket} 设备 TCP 连接
         self.device_seqs = {}     # {phone_num: int} 下发消息序列号
+        self.tts_ack_waiters = {} # {phone_num: threading.Event} 等待 TTS ACK 的事件
         self.connection_lock = threading.Lock()
         self.attendance_lock = threading.Lock()
         self.attendance_events = deque(maxlen=500)  # 最近打卡事件，后续可供前端消费
@@ -137,6 +138,40 @@ class JT808Manager:
                     del self.active_connections[phone]
                     logger.info(f"【连接断开】设备 {phone} 连接已清理")
                     break
+    def register_connection(self, phone_num: str, client_sock: socket.socket, seq_num: int | None = None):
+        with self.connection_lock:
+            self.active_connections[phone_num] = client_sock
+            if seq_num is not None:
+                self.device_seqs[phone_num] = seq_num
+
+
+    def register_tts_ack_waiter(self, phone_num: str, seq_num: int):
+        waiter = {"event": threading.Event(), "result": None}
+        with self.connection_lock:
+            self.tts_ack_waiters[(phone_num, seq_num)] = waiter
+        return waiter
+
+
+    def resolve_tts_ack(self, phone_num: str, seq_num: int, result_code: int):
+        with self.connection_lock:
+            waiter = self.tts_ack_waiters.pop((phone_num, seq_num), None)
+        if waiter:
+            waiter["result"] = result_code
+            waiter["event"].set()
+
+
+    def wait_for_tts_ack(self, phone_num: str, seq_num: int, timeout: float):
+        with self.connection_lock:
+            waiter = self.tts_ack_waiters.get((phone_num, seq_num))
+        if waiter is None:
+            return None
+
+        if waiter["event"].wait(timeout):
+            return waiter["result"]
+
+        with self.connection_lock:
+            self.tts_ack_waiters.pop((phone_num, seq_num), None)
+        return None
 
     def get_next_seq(self, phone_num: str) -> int:
         with self.connection_lock:
@@ -144,7 +179,7 @@ class JT808Manager:
             self.device_seqs[phone_num] = next_seq
             return next_seq
 
-    def send_tts(self, phone_num: str, text: str) -> dict[str, Any]:
+    def send_tts(self, phone_num: str, text: str, await_ack: bool = False, ack_timeout: float = 5.0) -> dict[str, Any]:
         text = text.strip()
         device = self.ensure_device_exists(phone_num)
 
@@ -186,9 +221,41 @@ class JT808Manager:
             }
 
         seq_num = self.get_next_seq(phone_num)
+        waiter = self.register_tts_ack_waiter(phone_num, seq_num) if await_ack else None
+
         try:
             client_sock.sendall(generate_8300_tts_command(phone_num, seq_num, text))
             logger.info(f"[TTS] 文本播报已下发到设备 {phone_num}: {text}")
+
+            if await_ack and waiter is not None:
+                ack_result = self.wait_for_tts_ack(phone_num, seq_num, ack_timeout)
+
+                if ack_result == 0:
+                    return {
+                        "phone": phone_num,
+                        "success": True,
+                        "message": "TTS acknowledged by terminal",
+                        "device_name": device.get("device_name", f"定位器-{phone_num}"),
+                        "sequence": seq_num,
+                    }
+
+                if ack_result is None:
+                    return {
+                        "phone": phone_num,
+                        "success": False,
+                        "message": "No terminal ACK received in time",
+                        "device_name": device.get("device_name", f"定位器-{phone_num}"),
+                        "sequence": seq_num,
+                    }
+
+                return {
+                    "phone": phone_num,
+                    "success": False,
+                    "message": f"Terminal ACK rejected with code {ack_result}",
+                    "device_name": device.get("device_name", f"定位器-{phone_num}"),
+                    "sequence": seq_num,
+                }
+
             return {
                 "phone": phone_num,
                 "success": True,
@@ -196,8 +263,14 @@ class JT808Manager:
                 "device_name": device.get("device_name", f"定位器-{phone_num}"),
                 "sequence": seq_num,
             }
+
         except Exception as exc:
             logger.error(f"[TTS] 文本播报下发失败 {phone_num}: {exc}")
+
+            if waiter is not None:
+                with self.connection_lock:
+                    self.tts_ack_waiters.pop((phone_num, seq_num), None)
+
             self.unregister_connection(client_sock)
             return {
                 "phone": phone_num,
@@ -436,29 +509,43 @@ class JT808Manager:
                     phone_num = content_clean[4:10].hex().upper()
                     seq_num = struct.unpack('>H', content_clean[10:12])[0]
 
+                    with self.connection_lock:
+                        self.device_seqs[phone_num] = seq_num
+
                     is_subpackage = (msg_attr & 0x2000) != 0
                     header_len = 16 if is_subpackage else 12
 
                     # ---- 消息分发 ----
                     if msg_id == "0100":  # 终端注册
                         logger.info(f"[注册] 设备: {phone_num}")
+                        self.register_connection(phone_num, client_sock, seq_num)
                         self.update_device_data(phone_num)
-                        with self.connection_lock:
-                            self.active_connections[phone_num] = client_sock
                         client_sock.sendall(generate_8100_reply(phone_num, seq_num))
 
                     elif msg_id == "0102":  # 终端鉴权
                         logger.info(f"[鉴权] 设备: {phone_num}")
+                        self.register_connection(phone_num, client_sock, seq_num)
                         self.update_device_data(phone_num)
-                        with self.connection_lock:
-                            self.active_connections[phone_num] = client_sock
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
                     elif msg_id == "0002":  # 心跳
+                        self.register_connection(phone_num, client_sock, seq_num)
                         self.update_device_data(phone_num)
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
+                    elif msg_id == "0001":  # 终端通用应答
+                        self.register_connection(phone_num, client_sock, seq_num)
+                        self.update_device_data(phone_num)
+
+                        body = content_clean[header_len:]
+                        if len(body) >= 5:
+                            ack_seq, ack_msg_id, ack_result = struct.unpack(">H H B", body[:5])
+                            if ack_msg_id == 0x8300:
+                                logger.info(f"[TTS-ACK] 设备 {phone_num} 回应 seq={ack_seq}, result={ack_result}")
+                                self.resolve_tts_ack(phone_num, ack_seq, ack_result)
+
                     elif msg_id in ["0200", "0203", "0204"]:  # 位置上报 / 上下班打卡
+                        self.register_connection(phone_num, client_sock, seq_num)
                         body = content_clean[header_len:]
                         lat = None
                         lon = None
@@ -484,6 +571,7 @@ class JT808Manager:
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
                     else:  # 其他消息通用应答
+                        self.register_connection(phone_num, client_sock, seq_num)
                         self.update_device_data(phone_num)
                         client_sock.sendall(generate_8001_reply(msg_id, phone_num, seq_num))
 
