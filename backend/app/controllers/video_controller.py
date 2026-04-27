@@ -117,7 +117,8 @@ def get_ai_rules():
         "supervisor_count",
         "ladder_angle",
         "hole_curb",
-        "unauthorized_person"
+        "unauthorized_person",
+        "firefighting_equipment_v2"
     ]
     
     display_names = {
@@ -129,7 +130,8 @@ def get_ai_rules():
         "supervisor_count": "现场监督人数统计",
         "ladder_angle": "梯子角度类",
         "hole_curb": "孔口挡坎违规类",
-        "unauthorized_person": "围栏入侵管理类"
+        "unauthorized_person": "围栏入侵管理类",
+        "firefighting_equipment_v2": "动火消防器材V2"
     }
     
     result = []

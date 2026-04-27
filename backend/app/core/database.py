@@ -44,8 +44,32 @@ def ensure_schema_compatibility():
         "alarm_records": {
             "project_id": "ALTER TABLE alarm_records ADD COLUMN project_id INT NULL",
         },
+        "projects": {
+            "description": "ALTER TABLE projects ADD COLUMN description TEXT NULL",
+            "manager": "ALTER TABLE projects ADD COLUMN manager VARCHAR(100) NULL",
+            "status": "ALTER TABLE projects ADD COLUMN status VARCHAR(20) NULL",
+            "remark": "ALTER TABLE projects ADD COLUMN remark VARCHAR(255) NULL",
+            "branch_id": "ALTER TABLE projects ADD COLUMN branch_id INT NULL",
+        },
+        "branches": {
+            "province": "ALTER TABLE branches ADD COLUMN province VARCHAR(50) NULL",
+            "lng": "ALTER TABLE branches ADD COLUMN lng DOUBLE NULL",
+            "lat": "ALTER TABLE branches ADD COLUMN lat DOUBLE NULL",
+            "address": "ALTER TABLE branches ADD COLUMN address VARCHAR(255) NULL",
+            "project": "ALTER TABLE branches ADD COLUMN project VARCHAR(100) NULL",
+            "manager": "ALTER TABLE branches ADD COLUMN manager VARCHAR(50) NULL",
+            "phone": "ALTER TABLE branches ADD COLUMN phone VARCHAR(20) NULL",
+            "device_count": "ALTER TABLE branches ADD COLUMN device_count INT NULL",
+            "status": "ALTER TABLE branches ADD COLUMN status VARCHAR(20) NULL",
+            "updated_at": "ALTER TABLE branches ADD COLUMN updated_at DATETIME NULL",
+            "remark": "ALTER TABLE branches ADD COLUMN remark TEXT NULL",
+        },
         "devices": {
             "ip_address": "ALTER TABLE devices ADD COLUMN ip_address VARCHAR(50) NULL"
+        },
+        "group_calls": {
+            "member_ids": "ALTER TABLE group_calls ADD COLUMN member_ids TEXT NULL",
+            "status": "ALTER TABLE group_calls ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'",
         },
         "video_devices": {
             "rtsp_url": "ALTER TABLE video_devices ADD COLUMN rtsp_url TEXT NULL",
@@ -94,12 +118,19 @@ def get_worker_collection():
 def get_personnel_collection():
     return mongo_db["personnel"]
 
+def get_device_collection():
+    """MongoDB 定位设备集合，不是视频摄像头集合"""
+    return mongo_db["device"]
+
 def get_video_device_collection():
     return mongo_db["video_device"]
 
 def get_alarm_record_collection():
     return mongo_db["alarm_record"]
 
+def get_tts_message_job_collection():
+    """MongoDB TTS消息任务集合"""
+    return mongo_db["tts_message_job"]
 
 def get_next_sequence(name: str) -> int:
     """
