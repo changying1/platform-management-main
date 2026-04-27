@@ -267,12 +267,12 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
 ) : (
   // 先把违规设备排前面
 [...devices].sort((a, b) => {
-  const aViolate = !!violationTypes?.[a.id];
-  const bViolate = !!violationTypes?.[b.id];
-  return bViolate - aViolate; // 违规 = 1，排在前面
+  const aViolate = !!violationTypes?.[a.device_id];
+  const bViolate = !!violationTypes?.[b.device_id];
+  return Number(bViolate) - Number(aViolate); // 违规 = 1，排在前面
 }).map(device => (
   <div
-    key={device.id}
+    key={device.device_id}
     className="p-2 rounded-lg bg-slate-800/30 border border-slate-700/50"
   >
     <div className="flex items-center justify-between">
@@ -280,7 +280,7 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
         <div className="flex items-center gap-1.5">
           <div className="font-medium text-slate-200 text-sm">{device.name}</div>
           {/* 违规标记 */}
-          {violationTypes?.[device.id] && (
+          {violationTypes?.[device.device_id] && (
             <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" title="违规中"></span>
           )}
         </div>

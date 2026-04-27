@@ -3,7 +3,7 @@ from fastapi import HTTPException
 
 from app.schemas.alarm_schema import AlarmCreate, AlarmUpdate
 from app.utils.logger import get_logger
-from app.core.database import get_mongo_db, get_next_sequence
+from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.services.video_service import VideoService
 from app.services.notification_service import notification_service
 
@@ -31,20 +31,19 @@ class AlarmService:
         return video_service._get_video_runtime_by_id(int(device_id))
     
     def _alarm_collection(self):
-        return get_mongo_db()["alarm_record"]
+        return get_mongo_collection("alarm_record", same_db_as="fence")
 
     def _fence_collection(self):
-        mongo = get_mongo_db()
-        for name in ["electronic_fence", "electronic_fences", "fence", "fences"]:
-            if name in mongo.list_collection_names():
-                return mongo[name]
-        return None
+        return get_mongo_collection("fence")
 
     def _project_device_collection(self):
-        mongo = get_mongo_db()
         for name in ["project_device", "project_devices"]:
-            if name in mongo.list_collection_names():
-                return mongo[name]
+            db = get_compatible_mongo_db(name)
+            try:
+                if name in db.list_collection_names():
+                    return db[name]
+            except Exception:
+                continue
         return None
 
     def _find_fence_doc_by_id(self, fence_id: int | str):
@@ -229,7 +228,14 @@ class AlarmService:
         except Exception as e:
             logger.warning(f"Alarm notification failed, ignored: {str(e)}")
     
-    def create_alarm(self, db: Session, alarm: AlarmCreate):
+    def create_alarm(self, db: Session | AlarmCreate | None = None, alarm: AlarmCreate | None = None):
+        if alarm is None and isinstance(db, AlarmCreate):
+            alarm = db
+            db = None
+
+        if alarm is None:
+            raise HTTPException(status_code=400, detail="Alarm payload is required")
+
         logger.warning(f"ALARM TRIGGERED: Device {alarm.device_id}, Type {alarm.alarm_type}")
 
         # 1. 重复报警抑制 (1秒内完全相同的设备+类型+围栏报警视为重复)
