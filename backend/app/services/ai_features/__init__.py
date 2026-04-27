@@ -30,6 +30,7 @@ from .lifting_warning import lifting_warning
 from .post_lifting_check import post_lifting_check
 
 from .firefighting_equipment import firefighting_equipment
+from .firefighting_equipment_v2 import firefighting_equipment_v2
 from .combustible_cleanup import combustible_cleanup
 from .hotwork_supervisor_duty import hotwork_supervisor_duty
 from .residual_fire_disposal import residual_fire_disposal

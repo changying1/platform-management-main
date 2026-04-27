@@ -55,6 +55,7 @@ class AIManager:
             'unauthorized_person': 'HIGH',
             'fire': 'SEVERE',
             'fire_detected': 'SEVERE',
+            '消防措施不足': 'SEVERE',
             'no_helmet_area': 'MEDIUM',
             'crowd': 'MEDIUM',
             'crowd_detection': 'MEDIUM',
