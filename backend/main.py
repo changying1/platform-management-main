@@ -48,6 +48,7 @@ from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
 from app.services.video_service import VideoService
 from app.services.jt808_service import jt808_manager
+from app.services.tts_queue_service import tts_queue_service
 
 # --- 日志配置 ---
 logging.basicConfig(
@@ -68,6 +69,9 @@ async def lifespan(app: FastAPI):
     jt_thread = threading.Thread(target=jt808_manager.start_server, daemon=True)
     jt_thread.start()
     
+    # 2. 启动 TTS 语音播报队列 worker
+    logger.info("Starting TTS queue worker...")
+    tts_queue_service.start()
     """
     # 2. 视频录像状态自检 (增加异常保护)
     db = SessionLocal()
@@ -88,10 +92,11 @@ async def lifespan(app: FastAPI):
     set_main_event_loop(None)
     logger.info("Shutting down services...")
     jt808_manager.running = False
+    tts_queue_service.stop()
 
 # --- App 初始化 ---
 # Base.metadata.create_all(bind=engine)
-# ensure_schema_compatibility()
+ensure_schema_compatibility()
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
@@ -145,6 +150,7 @@ def serve_alarm_video(file_path: str):
 app.include_router(admin_controller.router)
 app.include_router(personnel_controller.router)
 app.include_router(device_controller.router)
+app.include_router(device_controller.db_router)
 app.include_router(video_controller.router)
 app.include_router(fence_controller.router)
 app.include_router(team_controller.router)
