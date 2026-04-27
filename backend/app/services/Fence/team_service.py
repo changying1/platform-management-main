@@ -1,10 +1,9 @@
-from pymongo import MongoClient
 from app.schemas.team_schema import TeamCreate, TeamUpdate
+from app.core.database import get_compatible_mongo_db
 from app.utils.logger import get_logger
 from datetime import datetime
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client["platform"]
+db = get_compatible_mongo_db("team")
 teams_collection = db["team"]
 fences_collection = db["fence"]
 

@@ -257,4 +257,24 @@ def get_trajectory(device_id: str, hours: int = 24):
     return {"device_id": device_id, "trajectory": trajectory}
 
 
+class DevicePositionUpdate(BaseModel):
+    device_id: str
+    lat: float
+    lng: float
+
+
+@router.post("/update-position")
+def update_device_position(payload: DevicePositionUpdate):
+    """更新设备位置"""
+    # 使用现有的update_device方法来更新设备位置
+    device_data = DeviceUpdate(
+        lat=payload.lat,
+        lng=payload.lng
+    )
+    updated_device = device_service.update_device(payload.device_id, device_data)
+    if not updated_device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    return {"status": "success", "device_id": payload.device_id, "lat": payload.lat, "lng": payload.lng}
+
+
 from datetime import datetime

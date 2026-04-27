@@ -107,7 +107,7 @@ export const useFenceManager = () => {
     };
 
     fetchDevices();
-    const timer = setInterval(fetchDevices, 500);
+    const timer = setInterval(fetchDevices, 3000);
     return () => clearInterval(timer);
   }, []);
 
@@ -161,6 +161,27 @@ export const useFenceManager = () => {
     });
   }, [devices]);
 
+  // 保存设备位置到数据库
+  const saveDevicePosition = useCallback(async (deviceId: string, lat: number, lng: number) => {
+    try {
+      const res = await fetch(`${API_BASE}/device/update-position`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId, lat, lng }),
+      });
+
+      if (!res.ok) {
+        console.error("保存设备位置失败:", await res.text());
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error("保存设备位置异常:", err);
+      return false;
+    }
+  }, []);
+
   // 统计数据
   const stats = {
     totalFences: fences.length,
@@ -210,7 +231,6 @@ export const useFenceManager = () => {
       const newFence = await res.json();
       // 刷新围栏列表
       await fetchFences();
-      window.dispatchEvent(new CustomEvent("fenceAdded", { detail: newFence }));
       return newFence;
     } catch (err) {
       console.error("创建围栏异常:", err);
@@ -243,59 +263,6 @@ export const useFenceManager = () => {
     }
   }, [fetchFences]);
 
-  // ============================
-  //  违规检测（纯前端计算）
-  // ============================
-  const checkViolations = useCallback((device: FenceDevice) => {
-    const violations: { fence: FenceData; type: string }[] = [];
-
-    fences.forEach(fence => {
-      // 只检查同项目围栏
-      if (fence.company !== device.company || fence.project !== device.project) return;
-
-      // 检查围栏是否生效
-      const now = new Date();
-      const start = new Date(fence.schedule.start);
-      const end = new Date(fence.schedule.end);
-      const isActive = now >= start && now <= end;
-      if (!isActive) return;
-
-      // 检查位置是否在围栏内
-      let inside = false;
-      if (fence.type === "Circle" && fence.center) {
-        const distance = Math.sqrt(
-          Math.pow(device.lat - fence.center[0], 2) +
-          Math.pow(device.lng - fence.center[1], 2)
-        ) * 111000;
-        inside = distance <= (fence.radius || 0);
-      } else if (fence.type === "Polygon" && fence.points) {
-        inside = isPointInPolygon([device.lat, device.lng], fence.points);
-      }
-
-      // 根据行为判断违规
-      if (fence.behavior === "No Entry" && inside) {
-        violations.push({ fence, type: "非法闯入" });
-      } else if (fence.behavior === "No Exit" && !inside) {
-        violations.push({ fence, type: "非法越界" });
-      }
-    });
-
-    return violations;
-  }, [fences]);
-
-  // 点是否在多边形内
-  const isPointInPolygon = (point: [number, number], polygon: [number, number][]) => {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      const xi = polygon[i][0], yi = polygon[i][1];
-      const xj = polygon[j][0], yj = polygon[j][1];
-      const intersect = ((yi > point[1]) != (yj > point[1])) &&
-        (point[0] < (xj - xi) * (point[1] - yi) / (yj - yi) + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  };
-
   const resetDrawing = useCallback(() => {
     setDrawingMode("none");
     setTempPoints([]);
@@ -312,6 +279,7 @@ export const useFenceManager = () => {
     fences,
     teams,
     devices,
+    filteredDevices,
     regions,
     stats,
     filter,
@@ -325,10 +293,10 @@ export const useFenceManager = () => {
     addFence,
     updateFence,
     deleteFence,
-    checkViolations,
     getFenceColor,
     debugMode,
     setDebugMode,
     updateDevicePosition,
+    saveDevicePosition,
   };
 };

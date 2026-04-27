@@ -327,8 +327,7 @@ const commonOptions = {
       
       let color = "#22c55e"; 
       if (device.status !== "online") color = "#64748b";
-      else if (vType === "No Entry") color = "#ef4444";
-      else if (vType === "No Exit") color = "#06b6d4";
+      else if (vType) color = "#ef4444";
       else if (isControlled) color = "#3b82f6";
 
       const content = `
