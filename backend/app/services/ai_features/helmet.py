@@ -9,7 +9,7 @@ import os
 CONF_HEAD = 0.1     # 对未戴帽（头）的置信度阈值
 CONF_HELMET = 0.6   # 对已戴帽（安全帽）的置信度阈值
 ALARM_COOLDOWN_SECONDS = 120
-HELMET_MODEL_PATH = "app/models/yolo26_helmet.pt"
+HELMET_MODEL_PATH = "app/yolo_models/yolo26-helmet.pt"
 _HELMET_MODEL = None
 
 
