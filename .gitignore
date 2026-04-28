@@ -55,4 +55,4 @@ backend/static/*
 *.bin
 
 *.pth
-backend/LargeLanguageModel/*
+backend/LargeLanguageModel/*"*.pt" 
