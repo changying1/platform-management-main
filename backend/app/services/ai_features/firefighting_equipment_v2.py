@@ -76,17 +76,19 @@ class FireEquipmentService:
         try:
             full_path = self._resolve_model_path()
             if not os.path.exists(full_path):
-                print(f"[fire_equipment_v2] model not found: {full_path}")
+                print(f"[fire_equipment_v2] 未找到模型文件: {full_path}")
                 return False
 
             from ultralytics import YOLO
 
+            print("[fire_equipment_v2] 正在加载动火消防器材模型...")
             loaded_model = YOLO(full_path)
             loaded_model.to("cuda" if self._cuda_available() else "cpu")
             self.model = loaded_model
+            print("[fire_equipment_v2] 动火消防器材模型加载完成")
             return True
         except Exception as exc:
-            print(f"[fire_equipment_v2] model load failed: {exc}")
+            print(f"[fire_equipment_v2] 模型加载失败: {exc}")
             return False
 
     def get_raw_detection(self, frame, conf: float = 0.5):
@@ -99,7 +101,7 @@ class FireEquipmentService:
         try:
             results = self.model(frame, conf=conf, verbose=False)[0]
         except Exception as exc:
-            print(f"[fire_equipment_v2] inference failed: {exc}")
+            print(f"[fire_equipment_v2] 推理失败: {exc}")
             return None
 
         equipment = []
@@ -196,11 +198,27 @@ def judge_fire_equipment_violation(service, detect_result):
     if not violation_boxes:
         return False, None
 
-    return service._check_cooldown_and_multi_alarm(
+    print(
+        "[fire_equipment_v2] 检测到动火消防器材违规: "
+        f"火源区域={len(fire_zones)} "
+        f"灭火器={len(extinguishers)} "
+        f"消防水桶={len(buckets)} "
+        f"灭火毯={len(blankets)} "
+        f"违规区域={len(violation_boxes)}"
+    )
+
+    is_alarm, details = service._check_cooldown_and_multi_alarm(
         ALARM_TYPE,
         violation_boxes,
         cooldown_seconds=ALARM_COOLDOWN_SECONDS,
     )
+
+    if is_alarm:
+        print("[fire_equipment_v2] 已触发报警")
+    else:
+        print("[fire_equipment_v2] 检测到违规，但命中冷却时间，未重复报警")
+
+    return is_alarm, details
 
 
 def _has_nearby_equipment(equipment_list, fire_zone, threshold_px: int = DISTANCE_THRESHOLD_PX) -> bool:

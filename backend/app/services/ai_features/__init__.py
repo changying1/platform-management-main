@@ -18,6 +18,7 @@ from .machine_radius import machine_radius
 from .soft_soil_operation import soft_soil_operation
 from .lighting_condition import lighting_condition
 from .person_spacing import person_spacing
+from .person_distance import person_distance
 from .pipeline_operation import pipeline_operation
 from .foundation_protection import foundation_protection
 from .surrounding_load import surrounding_load

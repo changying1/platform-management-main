@@ -111,6 +111,7 @@ def get_ai_rules():
     allowed_keys = [
         "helmet",
         "smoking",
+        "person_distance",
         "face_recognition",
         "signage",
         "behavior",
@@ -124,6 +125,7 @@ def get_ai_rules():
     display_names = {
         "helmet": "安全帽检测",
         "smoking": "抽烟检测",
+        "person_distance": "多人作业人员间距检测",
         "face_recognition": "人脸识别",
         "signage": "现场标识类",
         "behavior": "作业行为类",
