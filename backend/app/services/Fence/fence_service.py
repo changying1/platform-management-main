@@ -499,11 +499,14 @@ class FenceService:
             "device_id": device_id,
             "fence_id": fence_id,
             "alarm_type": alarm_type,
+            "type": alarm_type,  # 前端期望的字段名
             "severity": self._normalize_alarm_severity(fence),
             "timestamp": now.isoformat(),
             "description": description,
             "location": location,
-            "person_name": device.get("holder") or device.get("name") or device.get("device_name") or "未知"
+            "person_name": device.get("holder") or device.get("name") or device.get("device_name") or "未知",
+            "msg": description,  # 前端期望的消息字段
+            "is_alarm": True  # 标记为警报，触发前端弹窗和声音
         }
         push_alarm_threadsafe(alarm_data)
         
