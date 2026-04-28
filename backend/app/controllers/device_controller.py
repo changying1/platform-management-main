@@ -2,11 +2,26 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
-from app.schemas.device_schema import DeviceCreate, DeviceUpdate, DeviceItem, DeviceWithTrajectory, TrajectoryPoint
+
+from bson import ObjectId
+from pymongo import ReturnDocument
+
+from app.core.database import get_device_collection
+from app.schemas.device_schema import (
+    DbDeviceCreate,
+    DbDeviceOut,
+    DbDeviceUpdate,
+    DeviceCreate,
+    DeviceUpdate,
+    DeviceItem,
+    DeviceWithTrajectory,
+    TrajectoryPoint,
+)
 from app.services.Device.device_service import device_service
 from app.services.jt808_service import jt808_manager
 
 router = APIRouter(prefix="/device", tags=["设备管理"])
+db_router = APIRouter(prefix="/devices", tags=["Mongo Devices"])
 
 
 class DeviceCreateRequest(BaseModel):
@@ -40,6 +55,29 @@ class TrajectoryPointRequest(BaseModel):
     lng: float
     speed: Optional[float] = None
     direction: Optional[float] = None
+
+def _mongo_device_query(device_id: str) -> dict:
+    if ObjectId.is_valid(device_id):
+        return {"$or": [{"_id": device_id}, {"_id": ObjectId(device_id)}]}
+    return {"_id": device_id}
+
+
+def _mongo_device_to_response(device: dict) -> dict:
+    if not device:
+        return {}
+
+    return {
+        "id": str(device.get("_id") or device.get("id") or ""),
+        "device_name": device.get("device_name") or device.get("name") or "",
+        "device_type": device.get("device_type") or "JT808",
+        "ip_address": device.get("ip_address") or "0.0.0.0",
+        "port": device.get("port") or 8989,
+        "stream_url": device.get("stream_url"),
+        "owner_id": device.get("owner_id"),
+        "is_online": bool(device.get("is_online", False)),
+        "last_latitude": device.get("last_latitude"),
+        "last_longitude": device.get("last_longitude"),
+    }
 
 
 @router.get("/list", response_model=List[DeviceItem])
@@ -256,5 +294,130 @@ def get_trajectory(device_id: str, hours: int = 24):
     trajectory = device_service.get_trajectory(device_id, hours)
     return {"device_id": device_id, "trajectory": trajectory}
 
+@db_router.get("/", response_model=List[DbDeviceOut])
+def get_db_devices():
+    """获取 MongoDB 定位设备列表，不影响 /video 的 video_device"""
+    collection = get_device_collection()
+    mongo_devices = list(collection.find({}))
 
-from datetime import datetime
+    result = [_mongo_device_to_response(device) for device in mongo_devices]
+
+    existing_ids = {str(item.get("id")) for item in result}
+    existing_stream_urls = {
+        str(item.get("stream_url"))
+        for item in result
+        if item.get("stream_url")
+    }
+
+    # 合并 JT808 内存里的实时设备状态
+    for phone, m_dev in jt808_manager.device_store.items():
+        phone_str = str(phone)
+
+        if phone_str in existing_ids or phone_str in existing_stream_urls:
+            for item in result:
+                if item.get("id") == phone_str or item.get("stream_url") == phone_str:
+                    item["last_latitude"] = m_dev.get("last_latitude") or item.get("last_latitude")
+                    item["last_longitude"] = m_dev.get("last_longitude") or item.get("last_longitude")
+                    item["is_online"] = bool(m_dev.get("is_online", False))
+                    break
+            continue
+
+        result.append({
+            "id": phone_str,
+            "device_name": m_dev.get("device_name", f"定位器-{phone_str}"),
+            "device_type": "JT808",
+            "ip_address": "0.0.0.0",
+            "port": 8989,
+            "stream_url": phone_str,
+            "owner_id": 1,
+            "is_online": bool(m_dev.get("is_online", False)),
+            "last_latitude": m_dev.get("last_latitude"),
+            "last_longitude": m_dev.get("last_longitude"),
+        })
+
+    return result
+
+
+@db_router.post("/", response_model=DbDeviceOut)
+def create_db_device(device_in: DbDeviceCreate):
+    """新增 MongoDB 定位设备"""
+    collection = get_device_collection()
+    data = device_in.model_dump()
+
+    custom_id = str(data.pop("id", "")).strip()
+    now = datetime.now().isoformat()
+
+    doc = {
+        **data,
+        "is_online": False,
+        "last_latitude": None,
+        "last_longitude": None,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    if custom_id:
+        doc["_id"] = custom_id
+
+    collection.insert_one(doc)
+    return _mongo_device_to_response(doc)
+
+
+@db_router.put("/{device_id}", response_model=DbDeviceOut)
+def update_db_device(device_id: str, device_in: DbDeviceUpdate):
+    """更新 MongoDB 定位设备"""
+    collection = get_device_collection()
+    update_data = device_in.model_dump(exclude_unset=True)
+
+    if not update_data:
+        existing = collection.find_one(_mongo_device_query(device_id))
+        if not existing:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return _mongo_device_to_response(existing)
+
+    update_data["updatedAt"] = datetime.now().isoformat()
+
+    result = collection.find_one_and_update(
+        _mongo_device_query(device_id),
+        {"$set": update_data},
+        return_document=ReturnDocument.AFTER,
+    )
+
+    if not result:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return _mongo_device_to_response(result)
+
+
+@db_router.delete("/{device_id}")
+def delete_db_device(device_id: str):
+    """删除 MongoDB 定位设备"""
+    collection = get_device_collection()
+    result = collection.delete_one(_mongo_device_query(device_id))
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return {"status": "success"}
+
+
+router.include_router(db_router)
+
+class DevicePositionUpdate(BaseModel):
+    device_id: str
+    lat: float
+    lng: float
+
+
+@router.post("/update-position")
+def update_device_position(payload: DevicePositionUpdate):
+    """更新设备位置"""
+    # 使用现有的update_device方法来更新设备位置
+    device_data = DeviceUpdate(
+        lat=payload.lat,
+        lng=payload.lng
+    )
+    updated_device = device_service.update_device(payload.device_id, device_data)
+    if not updated_device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    return {"status": "success", "device_id": payload.device_id, "lat": payload.lat, "lng": payload.lng}
