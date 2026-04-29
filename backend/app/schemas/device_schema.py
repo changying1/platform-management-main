@@ -16,9 +16,12 @@ class DeviceBase(BaseModel):
     lng: float
     company: str
     project: str
+    type: Optional[str] = None
+    team: Optional[str] = None
     status: str
     holder: str
     holderPhone: Optional[str] = None
+    remark: Optional[str] = None
 
 
 class DeviceCreate(DeviceBase):
@@ -32,9 +35,12 @@ class DeviceUpdate(BaseModel):
     lng: Optional[float] = None
     company: Optional[str] = None
     project: Optional[str] = None
+    type: Optional[str] = None
+    team: Optional[str] = None
     status: Optional[str] = None
     holder: Optional[str] = None
     holderPhone: Optional[str] = None
+    remark: Optional[str] = None
     trajectory: Optional[List[TrajectoryPoint]] = None
 
 

@@ -27,8 +27,50 @@ export interface ApiDevice {
   owner_id?: number | null;
 }
 
+export interface LocationDevice {
+  device_id: string;
+  name: string;
+  lat?: number;
+  lng?: number;
+  company: string;
+  project: string;
+  type?: "uwb_band" | "uwb_badge" | "rtk_band" | "rtk_badge" | "wifi" | string;
+  team?: string;
+  status: "online" | "offline" | "fault" | string;
+  holder: string;
+  holderPhone?: string;
+  remark?: string;
+  lastUpdate?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // 导出具体的数据库操作接口
 export const deviceApi = {
+  getLocationDevices: async () => {
+    const response = await apiClient.get<LocationDevice[]>("/device/list");
+    return response.data;
+  },
+
+  addLocationDevice: async (device: LocationDevice) => {
+    const response = await apiClient.post<LocationDevice>("/device/add", {
+      lat: 0,
+      lng: 0,
+      ...device,
+    });
+    return response.data;
+  },
+
+  updateLocationDevice: async (deviceId: string, data: Partial<LocationDevice>) => {
+    const response = await apiClient.put<LocationDevice>(`/device/update/${deviceId}`, data);
+    return response.data;
+  },
+
+  deleteLocationDevice: async (deviceId: string) => {
+    await apiClient.delete(`/device/delete/${deviceId}`);
+    return deviceId;
+  },
+
   // 1. 获取所有设备列表 (对应数据库查询 SELECT * FROM devices)
   getAllDevices: async () => {
     const response = await apiClient.get<ApiDevice[]>("/devices/");
