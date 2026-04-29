@@ -43,6 +43,7 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+*.pt
 
 media_server/media/
 
@@ -54,6 +55,4 @@ backend/static/*
 *.bin
 
 *.pth
-backend/LargeLanguageModel/*
-backend/app/yolo_models/*
-backend/app/static/*
+backend/LargeLanguageModel/*"*.pt" 

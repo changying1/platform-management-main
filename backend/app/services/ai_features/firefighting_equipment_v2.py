@@ -10,14 +10,14 @@ from .registry import ai_rule
 DISTANCE_THRESHOLD_PX = int(os.getenv("FIRE_DISTANCE_THRESHOLD_PX", "1000"))
 ALARM_TYPE = "消防措施不足"
 ALARM_MESSAGE = "动火作业现场未满足消防安全要求：半径10m内无灭火器/消防水桶，且无正确使用的灭火毯"
-ALARM_COOLDOWN_SECONDS = 300
+ALARM_COOLDOWN_SECONDS = 3
 
 _FIRE_SERVICE = None
 _FIRE_SERVICE_LOCK = threading.Lock()
 
 
 class FireEquipmentService:
-    def __init__(self, model_path: str = "app/models/fire_equipment.pt"):
+    def __init__(self, model_path: str = "C:\\Users\\DELL\\Desktop\\platform-management-main\\backend\\app\\yolo_models\\fire_equipment.pt"):
         self.model_path = model_path
         self.model = None
         self.class_names = {
@@ -76,17 +76,20 @@ class FireEquipmentService:
         try:
             full_path = self._resolve_model_path()
             if not os.path.exists(full_path):
-                print(f"[fire_equipment_v2] model not found: {full_path}")
+                print(f"❌ [错误] 找不到消防器材模型: {full_path}")
                 return False
 
             from ultralytics import YOLO
 
+            device = "cuda" if self._cuda_available() else "cpu"
+            print(f"⏳ [AI消防器材] 正在加载消防器材模型 ({device}模式)...")
             loaded_model = YOLO(full_path)
-            loaded_model.to("cuda" if self._cuda_available() else "cpu")
+            loaded_model.to(device)
             self.model = loaded_model
+            print("✅ [AI消防器材] 消防器材模型加载完成")
             return True
         except Exception as exc:
-            print(f"[fire_equipment_v2] model load failed: {exc}")
+            print(f"❌ [严重错误] 消防器材模型加载失败: {exc}")
             return False
 
     def get_raw_detection(self, frame, conf: float = 0.5):
@@ -99,7 +102,7 @@ class FireEquipmentService:
         try:
             results = self.model(frame, conf=conf, verbose=False)[0]
         except Exception as exc:
-            print(f"[fire_equipment_v2] inference failed: {exc}")
+            print(f"⚠️ [AI消防器材] 推理失败: {exc}")
             return None
 
         equipment = []
@@ -153,7 +156,7 @@ def _get_fire_service() -> FireEquipmentService:
 
     with _FIRE_SERVICE_LOCK:
         if _FIRE_SERVICE is None:
-            _FIRE_SERVICE = FireEquipmentService(model_path="app/models/fire_equipment.pt")
+            _FIRE_SERVICE = FireEquipmentService(model_path="app/yolo_models/fire_equipment.pt")
 
     return _FIRE_SERVICE
 

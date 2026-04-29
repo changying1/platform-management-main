@@ -154,13 +154,20 @@ export default function FenceManagement() {
     setCollectedPoints((prev) => {
       const pointMap = new Map<string, any>();
 
-      prev.forEach((point, index) => {
-        const key = point.device_id || point.deviceId || `prev-${index}`;
+      // 按坐标去重（精度保留6位小数）
+      const getPointKey = (point: any) => {
+        const lat = typeof point.lat === 'number' ? point.lat.toFixed(6) : String(point.lat);
+        const lng = typeof point.lng === 'number' ? point.lng.toFixed(6) : String(point.lng);
+        return `${lat},${lng}`;
+      };
+
+      prev.forEach((point) => {
+        const key = getPointKey(point);
         pointMap.set(key, point);
       });
 
-      incomingPoints.forEach((point, index) => {
-        const key = point.device_id || point.deviceId || `incoming-${index}`;
+      incomingPoints.forEach((point) => {
+        const key = getPointKey(point);
         const existing = pointMap.get(key);
         pointMap.set(key, existing ? { ...existing, ...point } : point);
       });

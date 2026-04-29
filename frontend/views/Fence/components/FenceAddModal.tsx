@@ -160,7 +160,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
     startTime: "",
     endTime: "",
     description: "",
-    severity: "low" as "low" | "medium" | "high" | "critical",
+    severity: "medium" as "low" | "medium" | "high" | "severe",
     selectedDeviceIds: [] as string[],
   });
 
@@ -420,283 +420,294 @@ const showTopTip = (message: string) => {
             </div>
           </div>
         ) : step === "form" ? (
-          // 表单部分
-          <div className="p-3 space-y-2 max-h-[500px] overflow-y-auto">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                围栏名称 <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="例如：一号基坑禁区"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-<div className="relative">
-  <label className="block text-xs font-medium text-slate-300 mb-1">绑定组织（可多选）*</label>
-  
-  <div
-    onClick={() => setOrgDropdownOpen(!orgDropdownOpen)}
-    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 cursor-pointer hover:border-cyan-400 transition-colors min-h-[44px]"
-  >
-    {selectedOrgs.length === 0 ? (
-      <span className="text-slate-500 text-sm">请选择分公司 / 项目 / 作业队</span>
-    ) : (
-      <div className="flex flex-wrap gap-1">
-        {selectedOrgs.slice(0, 4).map(org => (
-          <span key={org.id} className="bg-cyan-500/20 text-cyan-300 text-xs px-2 py-0.5 rounded-full">
-            {org.name}
-          </span>
-        ))}
-        {selectedOrgs.length > 4 && (
-          <span className="text-slate-400 text-xs">+{selectedOrgs.length - 4}</span>
-        )}
-      </div>
-    )}
-  </div>
-  
-  {/* 🎯 同一个下拉框，分组显示 */}
-  {orgDropdownOpen && (
-    <>
-      <div className="fixed inset-0 z-10" onClick={() => setOrgDropdownOpen(false)} />
-      <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-20 max-h-[320px] overflow-y-auto">
-        {/* 第一组：分公司 */}
-        <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-          ─── 分公司 ───
-        </div>
-        {["第一分公司", "第二分公司", "第三分公司"].map(name => {
-          const isSel = selectedOrgs.some(o => o.name === name);
-          return (
-            <div 
-              key={name}
-              onClick={() => {
-                if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'company' }]);
-              }}
-              className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-              }`}
-            >
-              <span className="w-4 h-4 rounded border flex items-center justify-center">
-                {isSel && '✓'}
-              </span>
-              {name}
-            </div>
-          );
-        })}
-        
-        {/* 第二组：项目 */}
-        <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-          ─── 项目 ───
-        </div>
-        {["西安地铁15号线", "曲江智慧园区", "成都天府机场"].map(name => {
-          const isSel = selectedOrgs.some(o => o.name === name);
-          return (
-            <div 
-              key={name}
-              onClick={() => {
-                if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'project' }]);
-              }}
-              className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-              }`}
-            >
-              <span className="w-4 h-4 rounded border flex items-center justify-center">
-                {isSel && '✓'}
-              </span>
-              {name}
-            </div>
-          );
-        })}
-        
-        {/* 第三组：作业队 */}
-        <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-          ─── 作业队 ───
-        </div>
-        {["土方作业队", "钢筋班组", "起重作业队", "机电安装队", "消防班组"].map(name => {
-          const isSel = selectedOrgs.some(o => o.name === name);
-          return (
-            <div 
-              key={name}
-              onClick={() => {
-                if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'team' }]);
-              }}
-              className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-              }`}
-            >
-              <span className="w-4 h-4 rounded border flex items-center justify-center">
-                {isSel && '✓'}
-              </span>
-              {name}
-            </div>
-          );
-        })}
-      </div>
-    </>
-  )}
-</div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">围栏规则</label>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setFormData({ ...formData, behavior: "No Entry" })}
-                  className={`flex-1 py-1 text-sm rounded-lg border transition-all ${
-                    formData.behavior === "No Entry"
-                      ? "bg-rose-500/20 border-rose-400 text-rose-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  禁止进入
-                </button>
-                <button
-                  onClick={() => setFormData({ ...formData, behavior: "No Exit" })}
-                  className={`flex-1 py-1 text-sm rounded-lg border transition-all ${
-                    formData.behavior === "No Exit"
-                      ? "bg-cyan-500/20 border-cyan-400 text-cyan-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  禁止离开
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">围栏形状</label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, shape: "circle" })}
-                  className={`flex-1 py-1 text-sm rounded-lg border transition-all flex items-center justify-center gap-1 ${
-                    formData.shape === "circle"
-                      ? "bg-cyan-500/20 border-cyan-400 text-cyan-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  <Circle size={12} /> 圆形
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, shape: "polygon" })}
-                  className={`flex-1 py-1 text-sm rounded-lg border transition-all flex items-center justify-center gap-1 ${
-                    formData.shape === "polygon"
-                      ? "bg-cyan-500/20 border-cyan-400 text-cyan-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  <Hexagon size={12} /> 多边形
-                </button>
-              </div>
-              
-              {formData.shape === "circle" && (
-                <div className="mt-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">半径（米）</label>
-                  <input
-                    type="number"
-                    value={formData.radius}
-                    onChange={(e) => setFormData({ ...formData, radius: Number(e.target.value) })}
-                    min={10}
-                    max={1000}
-                    step={10}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1 text-sm text-slate-200"
-                  />
+          // 🎯 表单部分 - 与手动绘制面板保持一致
+          <>
+            {/* 头部 */}
+            <div className="px-5 py-3 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-b border-cyan-400/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-cyan-300">设置围栏规则</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {buildMode === "collect" ? `已收集: ${collectedPoints.length} 个顶点` : `已绘制: ${formData.shape === 'circle' ? '圆形' : '多边形'}`}
+                  </p>
                 </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">生效时间</label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="datetime-local"
-                  value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200"
-                />
-                <input
-                  type="datetime-local"
-                  value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">严重程度</label>
-              <div className="flex gap-2">
                 <button
-                  onClick={() => setFormData({ ...formData, severity: "general" })}
-                  className={`flex-1 py-1 text-xs rounded-lg border ${
-                    formData.severity === "general"
-                      ? "bg-blue-500/20 border-blue-400 text-blue-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
+                  onClick={onClose}
+                  className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors"
                 >
-                  一般
-                </button>
-                <button
-                  onClick={() => setFormData({ ...formData, severity: "risk" })}
-                  className={`flex-1 py-1 text-xs rounded-lg border ${
-                    formData.severity === "risk"
-                      ? "bg-orange-500/20 border-orange-400 text-orange-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  风险
-                </button>
-                <button
-                  onClick={() => setFormData({ ...formData, severity: "severe" })}
-                  className={`flex-1 py-1 text-xs rounded-lg border ${
-                    formData.severity === "severe"
-                      ? "bg-red-500/20 border-red-400 text-red-300"
-                      : "border-slate-700 text-slate-400"
-                  }`}
-                >
-                  严重
+                  <X size={16} className="text-red-400" />
                 </button>
               </div>
             </div>
 
-<button
-  onClick={() => {
-    if (!formData.name || selectedOrgs.length === 0) {
-      alert("请填写围栏名称并选择至少一个绑定组织");
-      return;
-    }
-    if (!formData.startTime || !formData.endTime) {
-      showTopTip("请设置生效时间");
-      return;
-    }
+            {/* 表单内容 */}
+            <div className="p-4 space-y-3 max-h-[45vh] overflow-y-auto">
+              {/* 围栏名称 */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  围栏名称 *
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="请输入围栏名称"
+                  className="w-full px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors"
+                />
+              </div>
 
-    if (buildMode === "collect") {
-      onSaveFence({
-        ...formData,
-        center: null,
-        points: collectedPoints.map((point) => [point.lat, point.lng]),
-        orgs: selectedOrgs,
-      });
-      return;
-    }
+              {/* 绑定组织 */}
+              <div className="space-y-3 relative">
+                <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <Users size={14} className="text-cyan-400" />
+                  绑定组织（可多选）*
+                </label>
+                
+                <div
+                  onClick={() => setOrgDropdownOpen(!orgDropdownOpen)}
+                  className="w-full px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg cursor-pointer hover:border-cyan-400 transition-colors min-h-[48px]"
+                >
+                  {selectedOrgs.length === 0 ? (
+                    <span className="text-slate-300">点击选择 分公司 / 项目 / 作业队</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedOrgs.slice(0, 3).map(org => (
+                        <span key={org.id} className="bg-cyan-500/20 text-cyan-300 text-xs px-2 py-0.5 rounded-full">
+                          {org.name}
+                        </span>
+                      ))}
+                      {selectedOrgs.length > 3 && (
+                        <span className="text-slate-400 text-xs">+{selectedOrgs.length - 3}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
+                {orgDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setOrgDropdownOpen(false)} />
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-cyan-400/30 rounded-lg shadow-2xl z-20 max-h-[320px] overflow-y-auto py-1">
+                      {/* 分公司 */}
+                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
+                        ─── 分公司 ───
+                      </div>
+                      {["第一分公司", "第二分公司", "第三分公司"].map(name => {
+                        const isSel = selectedOrgs.some(o => o.name === name);
+                        return (
+                          <div 
+                            key={name}
+                            onClick={() => {
+                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
+                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'company' }]);
+                            }}
+                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
+                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
+                              {isSel && '✓'}
+                            </span>
+                            {name}
+                          </div>
+                        );
+                      })}
+                      
+                      {/* 项目 */}
+                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
+                        ─── 项目 ───
+                      </div>
+                      {["西安地铁15号线", "曲江智慧园区", "成都天府机场"].map(name => {
+                        const isSel = selectedOrgs.some(o => o.name === name);
+                        return (
+                          <div 
+                            key={name}
+                            onClick={() => {
+                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
+                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'project' }]);
+                            }}
+                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
+                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
+                              {isSel && '✓'}
+                            </span>
+                            {name}
+                          </div>
+                        );
+                      })}
+                      
+                      {/* 作业队 */}
+                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
+                        ─── 作业队 ───
+                      </div>
+                      {["土方作业队", "钢筋班组", "起重作业队", "机电安装队", "消防班组"].map(name => {
+                        const isSel = selectedOrgs.some(o => o.name === name);
+                        return (
+                          <div 
+                            key={name}
+                            onClick={() => {
+                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
+                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'team' }]);
+                            }}
+                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
+                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
+                              {isSel && '✓'}
+                            </span>
+                            {name}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
 
-    setStep("draw");
-    onNext({
-      ...formData,
-      center: null,
-      points: [],
-    });
-  }}
-  className="w-full py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg text-sm font-semibold transition-all mt-2"
->
-  {buildMode === "collect" ? "创建围栏" : "下一步：开始绘制 →"}
-</button>
-          </div>
+              {/* 出入规则 */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-cyan-400" />
+                  出入规则
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setFormData({ ...formData, behavior: 'No Exit' })}
+                    className={`py-2.5 px-3 rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                      formData.behavior === 'No Exit'
+                        ? 'bg-cyan-500/30 border-cyan-400 text-cyan-300'
+                        : 'bg-slate-800/30 border-slate-600 text-slate-400 hover:border-cyan-400/50'
+                    }`}
+                  >
+                    禁止外出
+                  </button>
+                  <button
+                    onClick={() => setFormData({ ...formData, behavior: 'No Entry' })}
+                    className={`py-2.5 px-3 rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                      formData.behavior === 'No Entry'
+                        ? 'bg-cyan-500/30 border-cyan-400 text-cyan-300'
+                        : 'bg-slate-800/30 border-slate-600 text-slate-400 hover:border-cyan-400/50'
+                    }`}
+                  >
+                    禁止进入
+                  </button>
+                </div>
+              </div>
+
+              {/* 严重程度 */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-cyan-400" />
+                  严重程度
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { value: 'low', label: '低', color: 'green' },
+                    { value: 'medium', label: '中', color: 'yellow' },
+                    { value: 'high', label: '高', color: 'orange' },
+                    { value: 'severe', label: '严重', color: 'red' },
+                  ].map((level) => (
+                    <button
+                      key={level.value}
+                      onClick={() => setFormData({ ...formData, severity: level.value as any })}
+                      className={`py-2 rounded-lg border transition-all text-sm ${
+                        formData.severity === level.value
+                          ? `bg-${level.color}-500/30 border-${level.color}-400 text-${level.color}-300`
+                          : 'bg-slate-800/30 border-slate-600 text-slate-400'
+                      }`}
+                      style={formData.severity === level.value ? {
+                        backgroundColor: level.color === 'green' ? 'rgba(34,197,94,0.2)' :
+                          level.color === 'yellow' ? 'rgba(234,179,8,0.2)' :
+                          level.color === 'orange' ? 'rgba(249,115,22,0.2)' : 'rgba(239,68,68,0.2)',
+                        borderColor: level.color === 'green' ? 'rgb(74,222,128)' :
+                          level.color === 'yellow' ? 'rgb(250,204,21)' :
+                          level.color === 'orange' ? 'rgb(251,146,60)' : 'rgb(248,113,113)',
+                        color: level.color === 'green' ? 'rgb(74,222,128)' :
+                          level.color === 'yellow' ? 'rgb(250,204,21)' :
+                          level.color === 'orange' ? 'rgb(251,146,60)' : 'rgb(248,113,113)',
+                      } : {}}
+                    >
+                      {level.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 生效时间段 */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <Clock size={14} className="text-cyan-400" />
+                  生效时间段
+                </label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-400 text-sm w-12">开始</span>
+                    <input
+                      type="datetime-local"
+                      value={formData.startTime}
+                      onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                      className="flex-1 px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-400 text-sm w-12">结束</span>
+                    <input
+                      type="datetime-local"
+                      value={formData.endTime}
+                      onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                      className="flex-1 px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 底部按钮 */}
+            <div className="px-5 py-4 border-t border-cyan-400/30 bg-slate-900/50">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => buildMode === "collect" ? setBuildMode("select") : setStep("draw")}
+                  className="flex-1 py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  返回绘制
+                </button>
+                <button
+                  onClick={() => {
+                    if (!formData.name || selectedOrgs.length === 0) {
+                      alert("请填写围栏名称并选择至少一个绑定组织");
+                      return;
+                    }
+                    if (!formData.startTime || !formData.endTime) {
+                      showTopTip("请设置生效时间");
+                      return;
+                    }
+
+                    if (buildMode === "collect") {
+                      onSaveFence({
+                        ...formData,
+                        center: null,
+                        points: collectedPoints.map((point) => [point.lat, point.lng]),
+                        orgs: selectedOrgs,
+                      });
+                      return;
+                    }
+
+                    setStep("draw");
+                    onNext({
+                      ...formData,
+                      center: null,
+                      points: [],
+                    });
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium shadow-lg shadow-cyan-500/20"
+                >
+                  保存围栏
+                </button>
+              </div>
+            </div>
+          </>
         ) : (
           // 绘制指引部分
           <div className="p-3">
