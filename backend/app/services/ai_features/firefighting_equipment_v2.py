@@ -285,3 +285,4 @@ def firefighting_equipment_v2(service, frame):
         return False, None
 
     return judge_fire_equipment_violation(service, detect_result)
+#提交

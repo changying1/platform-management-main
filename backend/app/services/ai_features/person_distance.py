@@ -175,3 +175,4 @@ def person_distance(service, frame):
         print("[AI person_distance] 检测到人员间距违规，但命中冷却时间，未重复报警")
 
     return is_alarm, details
+#提交

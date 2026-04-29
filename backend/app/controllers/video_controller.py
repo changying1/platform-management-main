@@ -627,3 +627,4 @@ def list_alarm_screenshots_for_device(video_id: int, limit: int = 120, sort: str
         return {"code": 0, "data": screenshots, "total": len(screenshots)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取告警截图列表失败: {e}")
+#提交
