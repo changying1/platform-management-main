@@ -10,15 +10,18 @@ from .registry import ai_rule
 DISTANCE_THRESHOLD_PX = int(os.getenv("FIRE_DISTANCE_THRESHOLD_PX", "1000"))
 ALARM_TYPE = "消防措施不足"
 ALARM_MESSAGE = "动火作业现场未满足消防安全要求：半径10m内无灭火器/消防水桶，且无正确使用的灭火毯"
-ALARM_COOLDOWN_SECONDS = 3
+ALARM_COOLDOWN_SECONDS = int(os.getenv("AI_FIRE_EQUIPMENT_COOLDOWN_SECONDS", "300"))
 
 _FIRE_SERVICE = None
 _FIRE_SERVICE_LOCK = threading.Lock()
 
 
 class FireEquipmentService:
-    def __init__(self, model_path: str = "C:\\Users\\DELL\\Desktop\\platform-management-main\\backend\\app\\yolo_models\\fire_equipment.pt"):
-        self.model_path = model_path
+    def __init__(self, model_path: str | None = None):
+        self.model_path = model_path or os.getenv(
+            "AI_FIRE_EQUIPMENT_MODEL_PATH",
+            "app/yolo_models/fire_equipment.pt",
+        )
         self.model = None
         self.class_names = {
             0: "fire_bucket",
@@ -156,7 +159,7 @@ def _get_fire_service() -> FireEquipmentService:
 
     with _FIRE_SERVICE_LOCK:
         if _FIRE_SERVICE is None:
-            _FIRE_SERVICE = FireEquipmentService(model_path="app/yolo_models/fire_equipment.pt")
+            _FIRE_SERVICE = FireEquipmentService()
 
     return _FIRE_SERVICE
 
@@ -199,11 +202,27 @@ def judge_fire_equipment_violation(service, detect_result):
     if not violation_boxes:
         return False, None
 
-    return service._check_cooldown_and_multi_alarm(
+    print(
+        "[fire_equipment_v2] 检测到动火消防器材违规: "
+        f"火源区域={len(fire_zones)} "
+        f"灭火器={len(extinguishers)} "
+        f"消防水桶={len(buckets)} "
+        f"灭火毯={len(blankets)} "
+        f"违规区域={len(violation_boxes)}"
+    )
+
+    is_alarm, details = service._check_cooldown_and_multi_alarm(
         ALARM_TYPE,
         violation_boxes,
         cooldown_seconds=ALARM_COOLDOWN_SECONDS,
     )
+
+    if is_alarm:
+        print("[fire_equipment_v2] 已触发报警")
+    else:
+        print("[fire_equipment_v2] 检测到违规，但命中冷却时间，未重复报警")
+
+    return is_alarm, details
 
 
 def _has_nearby_equipment(equipment_list, fire_zone, threshold_px: int = DISTANCE_THRESHOLD_PX) -> bool:

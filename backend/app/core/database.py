@@ -134,6 +134,12 @@ def get_compatible_mongo_db(collection_name: str | None = None):
             return existing_empty_db
     return mongo_db
 
+def get_personnel_collection():
+    return mongo_db["personnel"]
+
+def get_device_collection():
+    """MongoDB 定位设备集合，不是视频摄像头集合"""
+    return mongo_db["device"]
 
 def get_mongo_collection(collection_name: str, same_db_as: str | None = None):
     if same_db_as:

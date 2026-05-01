@@ -62,7 +62,7 @@ class FenceCollectService:
 
     def _snapshot_no_lock(self) -> dict:
         # 获取所有唯一设备ID
-        device_ids = list({p["device_id"] for p in self._points})
+        device_ids = list(dict.fromkeys(p["device_id"] for p in self._points))
         return {
             "active": self._active,
             "started_at": self._started_at,
