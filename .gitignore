@@ -43,6 +43,7 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+*.pt
 
 media_server/media/
 
@@ -52,6 +53,6 @@ ffmpeg-8.0.1-essentials_build/bin/*
 !ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe
 backend/static/*
 *.bin
-*.pt
+
 *.pth
-backend/LargeLanguageModel/*
+backend/LargeLanguageModel/*"*.pt" 

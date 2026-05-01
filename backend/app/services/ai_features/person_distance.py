@@ -8,7 +8,7 @@ from .registry import ai_rule
 
 PERSON_DISTANCE_MODEL_PATH = os.getenv(
     "AI_PERSON_DISTANCE_MODEL_PATH",
-    "app/ai_models/yolo26_person_distance.pt",
+    "app/yolo_models/yolo26_person_distance.pt",
 )
 PERSON_DISTANCE_CONFIDENCE = float(os.getenv("AI_PERSON_DISTANCE_CONFIDENCE", "0.3"))
 PERSON_DISTANCE_SAFE_METERS = float(os.getenv("AI_PERSON_DISTANCE_SAFE_METERS", "1.5"))

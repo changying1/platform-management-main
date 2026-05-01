@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause } from "lucide-react";
+import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause, AlertCircle, ShieldAlert } from "lucide-react";
 import { useFenceManager } from "./hooks/useFenceManager";
 import { useFenceMap } from "./hooks/useFenceMap";
 import { FenceSidebar } from "./components/FenceSidebar";
@@ -10,7 +10,7 @@ import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
 import { TrajectoryPlayback } from "./components/TrajectoryPlayback";
-import { FenceData, FenceDevice } from "./types";
+import { FenceData } from "./types";
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
@@ -23,20 +23,23 @@ interface TrajectoryPoint {
   direction?: number;
 }
 
-interface AlarmRecord {
-  id: string;
-  type: 'fence' | 'video';
-  title: string;
+interface AlarmResponse {
+  device_id?: string | number;
+  fence_id?: string | number | null;
+  alarm_type?: string;
+  status?: string;
+}
+
+interface FenceAlarm {
+  id: number;
+  device_id: string;
+  fence_id: string;
+  alarm_type: string;
+  severity: string;
+  timestamp: string;
   description: string;
-  time: string;
-  level: 'high' | 'medium' | 'low';
-  status: 'pending' | 'resolved' | 'ignored';
   location: string;
-  deviceName: string;
-  deviceId: string;
-  snapshot?: string;
-  fenceId?: string;
-  fenceName?: string;
+  person_name: string;
 }
 
 export default function FenceManagement() {
@@ -49,8 +52,25 @@ export default function FenceManagement() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [pendingFenceData, setPendingFenceData] = useState<any>(null); 
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; fenceId: string | null }>({ show: false, fenceId: null });
-  const [alarmRecords, setAlarmRecords] = useState<AlarmRecord[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
+  
+  // 新增：WebSocket相关状态
+  const [fenceAlarm, setFenceAlarm] = useState<FenceAlarm | null>(null);
+  const alarmWsRef = useRef<WebSocket | null>(null);
+  const alarmReconnectTimerRef = useRef<number | null>(null);
+  const alarmCloseTimerRef = useRef<number | null>(null);
+  
+  // 新增：获取WebSocket URL
+  const getAlarmWebSocketUrl = () => {
+    try {
+      const apiUrl = new URL(API_BASE_URL);
+      const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+      return `${wsProtocol}//${apiUrl.host}/ws/alarm`;
+    } catch {
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${wsProtocol}//${window.location.hostname}:9000/ws/alarm`;
+    }
+  };
 
   const [showDrawToolbar, setShowDrawToolbar] = useState(false);
   const [activeDrawTool, setActiveDrawTool] = useState<DrawTool>('rectangle');
@@ -67,33 +87,11 @@ export default function FenceManagement() {
   const [currentPointIndex, setCurrentPointIndex] = useState(0);
   const [movingMarker, setMovingMarker] = useState<any>(null);
 
-const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceData; type: string }) => {
-  const newAlarm: AlarmRecord = {
-    id: `fence_${Date.now()}_${Math.random()}`,
-    type: 'fence',
-    title: violation.type === '非法闯入' ? '非法闯入' : '非法越界',
-    description: `${device.name}${violation.type}${violation.fence.name}`,
-    time: new Date().toISOString(),
-    level: violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low',
-    status: 'pending',
-    location: violation.fence.name,
-    deviceName: device.name,
-    deviceId: device.id,
-    fenceId: violation.fence.id,
-    fenceName: violation.fence.name
-  };
-  
-  const existingAlarms = JSON.parse(localStorage.getItem('alarm_records') || '[]');
-  existingAlarms.unshift(newAlarm);
-  localStorage.setItem('alarm_records', JSON.stringify(existingAlarms.slice(0, 100)));
-  
-  window.dispatchEvent(new CustomEvent('alarmAdded', { detail: newAlarm }));
-}, []);
-
   const {
     fences,
     teams,
     devices,
+    filteredDevices,
     regions,
     stats,
     filter,
@@ -107,12 +105,42 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
     addFence,
     updateFence,
     deleteFence,
-    checkViolations,
     getFenceColor,
     debugMode,
     setDebugMode,
     updateDevicePosition,
+    saveDevicePosition,
   } = useFenceManager();
+  
+  // 新增：播放警报音效
+  const playAlarmSound = () => {
+    // 创建简单的蜂鸣音（使用Web Audio API）
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const now = audioContext.currentTime;
+      
+      // 创建4个频率的警报音
+      for (let i = 0; i < 4; i++) {
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        // 快速升降的频率
+        osc.frequency.setValueAtTime(800 + i * 200, now + i * 0.15);
+        osc.frequency.setValueAtTime(400 + i * 100, now + i * 0.15 + 0.1);
+        
+        gain.gain.setValueAtTime(0.3, now + i * 0.15);
+        gain.gain.setValueAtTime(0, now + i * 0.15 + 0.12);
+        
+        osc.start(now + i * 0.15);
+        osc.stop(now + i * 0.15 + 0.12);
+      }
+    } catch (err) {
+      console.warn("音频上下文创建失败:", err);
+    }
+  };
 
   const [mouseLngLat, setMouseLngLat] = useState<[number, number] | null>(null);
   const [collectedPoints, setCollectedPoints] = useState<any[]>([]);
@@ -126,13 +154,20 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
     setCollectedPoints((prev) => {
       const pointMap = new Map<string, any>();
 
-      prev.forEach((point, index) => {
-        const key = point.device_id || point.deviceId || `prev-${index}`;
+      // 按坐标去重（精度保留6位小数）
+      const getPointKey = (point: any) => {
+        const lat = typeof point.lat === 'number' ? point.lat.toFixed(6) : String(point.lat);
+        const lng = typeof point.lng === 'number' ? point.lng.toFixed(6) : String(point.lng);
+        return `${lat},${lng}`;
+      };
+
+      prev.forEach((point) => {
+        const key = getPointKey(point);
         pointMap.set(key, point);
       });
 
-      incomingPoints.forEach((point, index) => {
-        const key = point.device_id || point.deviceId || `incoming-${index}`;
+      incomingPoints.forEach((point) => {
+        const key = getPointKey(point);
         const existing = pointMap.get(key);
         pointMap.set(key, existing ? { ...existing, ...point } : point);
       });
@@ -208,6 +243,141 @@ const saveAlarm = useCallback((device: FenceDevice, violation: { fence: FenceDat
   const projects = filter.company && filter.company !== "all"
     ? ["all", ...new Set(fences.filter(f => f.company === filter.company).map(f => f.project))]
     : ["all", ...new Set(fences.map(f => f.project))];
+
+const fetchPendingFenceAlarms = useCallback(async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/alarms/?skip=0&limit=500`);
+    if (!res.ok) return;
+
+    const alarms: AlarmResponse[] = await res.json();
+    const next: Record<string, "No Entry" | "No Exit" | null> = {};
+
+    alarms.forEach((alarm) => {
+      const status = String(alarm.status || "").toLowerCase();
+      const alarmType = String(alarm.alarm_type || "");
+      const isPending = status !== "resolved" && status !== "ignored";
+      const isFenceAlarm = alarm.fence_id !== undefined && alarm.fence_id !== null || alarmType.includes("电子围栏");
+      const deviceId = alarm.device_id !== undefined && alarm.device_id !== null ? String(alarm.device_id) : "";
+
+      if (!isPending || !isFenceAlarm || !deviceId) return;
+      next[deviceId] = "No Entry";
+    });
+
+    setViolationTypes(next);
+  } catch (e) {
+    console.error("同步围栏告警状态失败:", e);
+  }
+}, []);
+
+useEffect(() => {
+  void fetchPendingFenceAlarms();
+  const timer = window.setInterval(() => {
+    void fetchPendingFenceAlarms();
+  }, 10000);
+
+  return () => window.clearInterval(timer);
+}, [fetchPendingFenceAlarms]);
+
+// 新增：WebSocket连接逻辑
+useEffect(() => {
+  const wsUrl = getAlarmWebSocketUrl();
+  let disposed = false;
+
+  const connect = () => {
+    if (disposed) return;
+
+    try {
+      if (alarmWsRef.current) {
+        alarmWsRef.current.close();
+        alarmWsRef.current = null;
+      }
+
+      const ws = new WebSocket(wsUrl);
+      alarmWsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("围栏报警WebSocket已连接:", wsUrl);
+      };
+
+      ws.onmessage = (event) => {
+        let data: any;
+        try {
+          data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        } catch {
+          return;
+        }
+
+        // 检查是否为围栏报警
+        if (data.device_id && data.fence_id && (data.alarm_type?.includes("电子围栏") || data.description?.includes("电子围栏"))) {
+          // 更新违规设备状态
+          setViolationTypes(prev => ({
+            ...prev,
+            [String(data.device_id)]: data.alarm_type?.includes("闯入") ? "No Entry" : "No Exit"
+          }));
+
+          // 显示报警弹窗
+          setFenceAlarm({
+            id: data.id,
+            device_id: String(data.device_id),
+            fence_id: String(data.fence_id),
+            alarm_type: data.alarm_type,
+            severity: data.severity,
+            timestamp: data.timestamp,
+            description: data.description,
+            location: data.location,
+            person_name: data.person_name
+          });
+
+          // 播放警报音效
+          playAlarmSound();
+
+          // 3秒后自动关闭弹窗
+          if (alarmCloseTimerRef.current) {
+            window.clearTimeout(alarmCloseTimerRef.current);
+          }
+          alarmCloseTimerRef.current = window.setTimeout(() => {
+            setFenceAlarm(null);
+          }, 3000);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("围栏报警WebSocket错误:", err);
+      };
+
+      ws.onclose = () => {
+        console.log("围栏报警连接关闭，准备重连");
+        if (disposed) return;
+        if (alarmReconnectTimerRef.current) {
+          window.clearTimeout(alarmReconnectTimerRef.current);
+        }
+        alarmReconnectTimerRef.current = window.setTimeout(connect, 2000);
+      };
+    } catch (err) {
+      console.error("围栏报警WebSocket连接初始化失败:", err);
+    }
+  };
+
+  connect();
+
+  return () => {
+    disposed = true;
+
+    if (alarmReconnectTimerRef.current) {
+      window.clearTimeout(alarmReconnectTimerRef.current);
+      alarmReconnectTimerRef.current = null;
+    }
+    if (alarmCloseTimerRef.current) {
+      window.clearTimeout(alarmCloseTimerRef.current);
+      alarmCloseTimerRef.current = null;
+    }
+
+    if (alarmWsRef.current) {
+      alarmWsRef.current.close();
+      alarmWsRef.current = null;
+    }
+  };
+}, []);
 
 const resetDrawing = () => {
   setDrawingMode("none");
@@ -385,54 +555,6 @@ const handleSaveFenceAfterDraw = () => {
 useEffect(() => {
   if (!mapReady) return;
   
-  const interval = setInterval(() => {
-    const newViolationMap: Record<string, "No Entry" | "No Exit" | null> = {};
-    
-    devices.forEach(device => {
-      const violations = checkViolations(device);
-      if (violations.length > 0) {
-        const violation = violations[0];
-        newViolationMap[device.id] = violation.fence.behavior;
-        
-        if (violationTypes[device.id] !== violation.fence.behavior) {
-          saveAlarm(device, violation);
-          var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
-          window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
-        }
-      }
-    });
-    
-    setViolationTypes(newViolationMap);
-  }, 1000);
-  
-  return () => clearInterval(interval);
-}, [mapReady, devices, fences, checkViolations, violationTypes, saveAlarm]);
-
-useEffect(() => {
-  const handleFenceAdded = () => {
-    const newViolationMap: Record<string, "No Entry" | "No Exit" | null> = {};
-    
-    devices.forEach(device => {
-      const violations = checkViolations(device);
-      if (violations.length > 0) {
-        const violation = violations[0];
-        newViolationMap[device.id] = violation.fence.behavior;
-        
-        var level = violation.fence.severity === 'severe' ? 'high' : violation.fence.severity === 'risk' ? 'medium' : 'low';
-        window.showFenceAlarm(device.name, violation.type, violation.fence.name, level);
-      }
-    });
-    
-    setViolationTypes(newViolationMap);
-  };
-  
-  window.addEventListener('fenceAdded', handleFenceAdded);
-  return () => window.removeEventListener('fenceAdded', handleFenceAdded);
-}, [devices, checkViolations]);
-
-useEffect(() => {
-  if (!mapReady) return;
-  
 renderFences(
   fences, 
   regions, 
@@ -443,7 +565,7 @@ renderFences(
   getFenceColor
 );
   
-  renderDevices(devices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
+  renderDevices(filteredDevices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
     updateDevicePosition(deviceId, latitude, longitude);
   });
 
@@ -506,7 +628,7 @@ if (playbackTrajectory.length > 0 && mapRef.current) {
     setHasAutoFit(true);
   }
 }
-}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, devices, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, playbackTrajectory]);
+}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, playbackTrajectory]);
 
 // 轨迹播放动画
 useEffect(() => {
@@ -568,6 +690,22 @@ useEffect(() => {
     }
   };
 }, [movingMarker]);
+
+// 监听debugMode变化，退出调试模式时保存设备位置
+const [prevDebugMode, setPrevDebugMode] = useState(false);
+
+useEffect(() => {
+  // 当debugMode从true变为false时，保存所有手动调整过的设备位置
+  if (prevDebugMode && !debugMode) {
+    // 获取所有设备（包含手动调整后的位置）
+    filteredDevices.forEach(async (device) => {
+      // 保存每个设备的当前位置
+      await saveDevicePosition(device.device_id, device.lat, device.lng);
+    });
+  }
+  // 更新前一个debugMode状态
+  setPrevDebugMode(debugMode);
+}, [debugMode, filteredDevices, saveDevicePosition, prevDebugMode]);
 
 useEffect(() => {
   if (!showDrawToolbar || !mapReady || !mapRef.current) return;
@@ -995,6 +1133,46 @@ const handleEditFence = (fence: FenceData) => {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)] relative">
+      {/* 新增：围栏报警弹窗 */}
+      {fenceAlarm && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setFenceAlarm(null)} />
+          <div className="relative bg-gradient-to-br from-red-900 to-red-700 border-2 border-red-500 rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in slide-in-from-bottom-10">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg animate-pulse">
+                  <ShieldAlert size={32} className="text-white" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold text-white mb-2">围栏报警</h3>
+                <div className="space-y-2 text-red-100">
+                  <p className="text-lg font-medium">{fenceAlarm.alarm_type}</p>
+                  <p>设备: {fenceAlarm.device_id}</p>
+                  <p>围栏: {fenceAlarm.fence_id}</p>
+                  <p>人员: {fenceAlarm.person_name}</p>
+                  <p>位置: {fenceAlarm.location}</p>
+                  <p className="text-sm text-red-300 mt-2">{new Date(fenceAlarm.timestamp).toLocaleString()}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setFenceAlarm(null)}
+                className="text-white hover:text-red-200 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={() => setFenceAlarm(null)}
+                className="bg-white text-red-700 font-bold px-6 py-2 rounded-lg hover:bg-red-100 transition-colors"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <FenceFilterBar 
         filter={filter}
         setFilter={setFilter}

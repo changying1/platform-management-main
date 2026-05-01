@@ -1,4 +1,15 @@
 {
+    "electronic_fence": [
+        {
+            "_id": {
+                "$oid": "69ea170be6fa33a5d5c82146"
+            },
+            "id": 101,
+            "name": "测试围栏A",
+            "behavior": "No Entry",
+            "project_id": 88
+        }
+    ],
     "worker": [
         {
             "_id": {
@@ -6,245 +17,6 @@
             },
             "id": "1001",
             "性别": "男"
-        }
-    ],
-    "alarm_record": [
-        {
-            "_id": {
-                "$oid": "69eaf4570ba4a5c67c2f8fcb"
-            },
-            "id": 13,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-24T12:40:55.181Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (76%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarms/alarm_13_2_20260424_124040_20260424_124110.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777005655_6cda42.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69eaf51907db7a3b054de925"
-            },
-            "id": 14,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-24T12:44:09.186Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (31%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "",
-            "recording_status": "pending",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777005849_2e43de.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69ec65096507fce165ca626d"
-            },
-            "id": 15,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T14:54:01.961Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (37%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/api/videos/../alarm_videos/alarm_15_2_20260425_145301_20260425_145501.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777100041_3e0d6f.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69ec742d86a98cc80de83c21"
-            },
-            "id": 16,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T15:58:37.718Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (28%)（检测框数量: 2）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarm_videos/alarm_16_2_20260425_155737_20260425_155937.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777103917_4531ed.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69ec755c86a98cc80de83c22"
-            },
-            "id": 17,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T16:03:40.086Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (13%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarm_videos/alarm_17_2_20260425_160240_20260425_160440.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777104220_260ae9.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69ecaf9a23d70dfd260b44fc"
-            },
-            "id": 18,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T20:12:10.990Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (72%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarm_videos/alarm_18_2_20260425_201111_20260425_201311.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777119130_b81f95.jpg"
-        },
-        {
-            "_id": {
-                "$oid": "69ecb1c6896e94106e3f6561"
-            },
-            "id": 19,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T20:21:26.591Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (18%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarm_videos/alarm_19_2_20260425_202026_20260425_202226.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777119686_ee916e.jpg",
-            "personnel_id": "",
-            "person_name": "未知",
-            "person": {}
-        },
-        {
-            "_id": {
-                "$oid": "69ecb2f6df02f79452299907"
-            },
-            "id": 20,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T20:26:30.464Z"
-            },
-            "description": "检测到人员未佩戴安全帽 (51%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "/static/alarm_videos/alarm_20_2_20260425_202530_20260425_202730.mp4",
-            "recording_status": "saved",
-            "recording_error": "",
-            "alarm_image_path": "/static/alarms/2_1777119990_53cdf8.jpg",
-            "personnel_id": "",
-            "person_name": "未知",
-            "person": {}
-        },
-        {
-            "_id": {
-                "$oid": "69ecb3a6513a9188cb0c4dd7"
-            },
-            "id": 21,
-            "device_id": "2",
-            "fence_id": null,
-            "project_id": null,
-            "alarm_type": "未佩戴安全帽",
-            "severity": "HIGH",
-            "timestamp": {
-                "$date": "2026-04-25T20:29:26.278Z"
-            },
-            "description": "模拟用户：李工 - 检测到人员未佩戴安全帽 (20%)（检测框数量: 1）",
-            "status": "pending",
-            "handled_at": null,
-            "location": null,
-            "recording_path": "",
-            "recording_status": "failed",
-            "recording_error": "录像裁剪失败",
-            "alarm_image_path": "/static/alarms/2_1777120166_b7f1b3.jpg",
-            "personnel_id": "",
-            "person_name": "模拟用户：李工",
-            "person": {
-                "id": "",
-                "username": "模拟用户：李工",
-                "name": "模拟用户：李工",
-                "phone": "",
-                "workType": "",
-                "team": "",
-                "faceImage": "",
-                "isMock": true
-            }
-        }
-    ],
-    "personnel": [
-        {
-            "_id": {
-                "$oid": "69ec85375d43b82ee78286e5"
-            },
-            "username": "张三",
-            "dept": "总部",
-            "phone": "13800000000",
-            "password": "123456",
-            "role": "HQ Manager",
-            "parentId": null,
-            "addedDate": "2026-04-25",
-            "created_at": {
-                "$date": "2026-04-25T17:11:19.292Z"
-            },
-            "updated_at": {
-                "$date": "2026-04-25T19:17:42.138Z"
-            },
-            "faceImage": "/static/faces/69ec85375d43b82ee78286e5_f87514f1599d4f2983028aa54948eb53.png"
         }
     ],
     "video_device": [
@@ -290,17 +62,6 @@
             "cruise_preset_tokens": null
         }
     ],
-    "electronic_fence": [
-        {
-            "_id": {
-                "$oid": "69ea170be6fa33a5d5c82146"
-            },
-            "id": 101,
-            "name": "测试围栏A",
-            "behavior": "No Entry",
-            "project_id": 88
-        }
-    ],
     "counters": [
         {
             "_id": "video_device_id",
@@ -309,6 +70,57 @@
         {
             "_id": "alarm_record_id",
             "seq": 21
+        }
+    ],
+    "team": [
+        {
+            "_id": {
+                "$oid": "69e32e47dd52fc7bc5b99d1e"
+            },
+            "team_id": "team1",
+            "name": "施工一队",
+            "color": "text-blue-400",
+            "fence_ids": [
+                "1"
+            ],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32e5fdd52fc7bc5b99d20"
+            },
+            "team_id": "team2",
+            "name": "施工二队",
+            "color": "text-purple-400",
+            "fence_ids": [],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32eabdd52fc7bc5b99d23"
+            },
+            "team_id": "team3",
+            "name": "特种作业队",
+            "color": "text-amber-400",
+            "fence_ids": [
+                "2",
+                "3"
+            ],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e33440dd52fc7bc5b99d2b"
+            },
+            "team_id": "team4",
+            "name": "四号作业队",
+            "color": "text-amber-400",
+            "fence_ids": [],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
         }
     ],
     "device": [
@@ -327,58 +139,61 @@
             "holderPhone": "138****1234",
             "lastUpdate": "2024-01-01T00:00:00Z",
             "createdAt": "2024-01-01T00:00:00Z",
-            "updatedAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2026-04-29T21:08:14.520963",
             "trajectory": [
                 {
                     "timestamp": "2024-01-01T09:00:00Z",
                     "lat": 34.28,
                     "lng": 109.13,
                     "speed": 5.2,
-                    "direction": 45
+                    "direction": 45.0
                 },
                 {
                     "timestamp": "2024-01-01T09:30:00Z",
                     "lat": 34.281,
                     "lng": 109.131,
                     "speed": 3.8,
-                    "direction": 90
+                    "direction": 90.0
                 },
                 {
                     "timestamp": "2026-04-19T18:00:00Z",
                     "lat": 34.2845,
                     "lng": 109.1345,
                     "speed": 2.5,
-                    "direction": 45
+                    "direction": 45.0
                 },
                 {
                     "timestamp": "2026-04-19T18:05:00Z",
                     "lat": 34.2848,
                     "lng": 109.135,
                     "speed": 3.2,
-                    "direction": 60
+                    "direction": 60.0
                 },
                 {
                     "timestamp": "2026-04-19T18:10:00Z",
                     "lat": 34.2852,
                     "lng": 109.1358,
                     "speed": 2.8,
-                    "direction": 90
+                    "direction": 90.0
                 },
                 {
                     "timestamp": "2026-04-19T18:15:00Z",
                     "lat": 34.2855,
                     "lng": 109.1365,
                     "speed": 3.5,
-                    "direction": 120
+                    "direction": 120.0
                 },
                 {
                     "timestamp": "2026-04-19T18:20:00Z",
                     "lat": 34.285,
                     "lng": 109.137,
-                    "speed": 2,
-                    "direction": 180
+                    "speed": 2.0,
+                    "direction": 180.0
                 }
-            ]
+            ],
+            "remark": "",
+            "team": "土建工队",
+            "type": ""
         },
         {
             "_id": {
@@ -389,7 +204,7 @@
             "lat": 34.284,
             "lng": 109.134,
             "company": "中铁一局",
-            "project": "西安地铁8号线",
+            "project": "西安地铁6号线",
             "status": "online",
             "holder": "李四",
             "holderPhone": "139****5678",
@@ -4102,6 +3917,96 @@
                     "direction": 0.0
                 }
             ]
+        },
+        {
+            "_id": {
+                "$oid": "69f202d0f88305b50f40c046"
+            },
+            "device_id": "UWB001",
+            "name": "UWB定位手环-001",
+            "type": "uwb_band",
+            "company": "第一分公司",
+            "project": "西安地铁8号线",
+            "team": "土建工队",
+            "holder": "张三",
+            "holderPhone": "13800138001",
+            "status": "online",
+            "remark": "",
+            "lat": 0,
+            "lng": 0,
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69f202d0f88305b50f40c047"
+            },
+            "device_id": "UWB002",
+            "name": "UWB定位工牌-002",
+            "type": "uwb_badge",
+            "company": "第一分公司",
+            "project": "西安地铁8号线",
+            "team": "土建工队",
+            "holder": "李四",
+            "holderPhone": "13800138002",
+            "status": "online",
+            "remark": "",
+            "lat": 0,
+            "lng": 0,
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69f202d0f88305b50f40c048"
+            },
+            "device_id": "RTK001",
+            "name": "RTK手环-003",
+            "type": "rtk_band",
+            "company": "第二分公司",
+            "project": "西安地铁10号线",
+            "team": "机电工队",
+            "holder": "王五",
+            "holderPhone": "13800138003",
+            "status": "offline",
+            "remark": "",
+            "lat": 0,
+            "lng": 0,
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69f202d0f88305b50f40c049"
+            },
+            "device_id": "RTK002",
+            "name": "RTK工牌-004",
+            "type": "rtk_badge",
+            "company": "第二分公司",
+            "project": "西安地铁10号线",
+            "team": "安全工队",
+            "holder": "赵六",
+            "holderPhone": "13800138004",
+            "status": "fault",
+            "remark": "",
+            "lat": 0,
+            "lng": 0,
+            "trajectory": []
+        },
+        {
+            "_id": {
+                "$oid": "69f202d0f88305b50f40c04a"
+            },
+            "device_id": "WIFI001",
+            "name": "Wi-Fi定位服务器",
+            "type": "wifi",
+            "company": "第一分公司",
+            "project": "西安地铁8号线",
+            "team": "机电工队",
+            "holder": "机房管理员",
+            "holderPhone": "13800138005",
+            "status": "online",
+            "remark": "",
+            "lat": 0,
+            "lng": 0,
+            "trajectory": []
         }
     ],
     "fence": [
@@ -4142,7 +4047,7 @@
             "fence_id": "2",
             "name": "办公区禁出区",
             "company": "中铁一局",
-            "project": "西安地铁8号线",
+            "project": "西安地铁6号线",
             "shape": "polygon",
             "behavior": "No Exit",
             "severity": "normal",
@@ -4171,7 +4076,7 @@
                 "end": "2024-12-31T23:59:59"
             },
             "effective_time": "00:00-23:59",
-            "worker_count": 0,
+            "worker_count": 1,
             "remark": "办公区域，工作时间禁止外出",
             "alarm_type": "medium",
             "is_active": true,
@@ -4214,652 +4119,251 @@
                 "end": "2024-12-31T23:59:59"
             },
             "effective_time": "00:00-23:59",
-            "worker_count": 0,
+            "worker_count": 3,
             "remark": "隧道施工区域，禁止无关人员进入",
             "alarm_type": "medium",
             "is_active": true,
             "createdAt": "2024-01-01T00:00:00Z",
             "updatedAt": "2024-01-01T00:00:00Z"
-        },
-        {
-            "_id": {
-                "$oid": "69df6eddbf52a6c7a38e38de"
-            },
-            "fence_id": "1776250589069",
-            "name": "啊实打实的",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.282144,
-                        109.121816
-                    ],
-                    [
-                        34.282144,
-                        109.12773
-                    ],
-                    [
-                        34.278771,
-                        109.12773
-                    ],
-                    [
-                        34.278771,
-                        109.121816
-                    ],
-                    [
-                        34.282144,
-                        109.121816
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-15T18:56:29.069287",
-                "end": "2027-04-15T18:56:29.069287"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T18:56:29.069287",
-            "updatedAt": "2026-04-15T18:56:29.069287"
-        },
-        {
-            "_id": {
-                "$oid": "69df6f10bf52a6c7a38e38df"
-            },
-            "fence_id": "1776250640015",
-            "name": "撒大苏打撒丁",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.294703,
-                        109.127435
-                    ],
-                    [
-                        34.294703,
-                        109.127371
-                    ],
-                    [
-                        34.294598,
-                        109.12718
-                    ],
-                    [
-                        34.294281,
-                        109.126924
-                    ],
-                    [
-                        34.294017,
-                        109.126541
-                    ],
-                    [
-                        34.293753,
-                        109.126158
-                    ],
-                    [
-                        34.293437,
-                        109.125966
-                    ],
-                    [
-                        34.293173,
-                        109.125647
-                    ],
-                    [
-                        34.292962,
-                        109.125519
-                    ],
-                    [
-                        34.292645,
-                        109.125392
-                    ],
-                    [
-                        34.292382,
-                        109.125328
-                    ],
-                    [
-                        34.29196,
-                        109.1252
-                    ],
-                    [
-                        34.291643,
-                        109.125136
-                    ],
-                    [
-                        34.291221,
-                        109.125136
-                    ],
-                    [
-                        34.290799,
-                        109.1252
-                    ],
-                    [
-                        34.290482,
-                        109.125328
-                    ],
-                    [
-                        34.290218,
-                        109.125583
-                    ],
-                    [
-                        34.29006,
-                        109.125711
-                    ],
-                    [
-                        34.289744,
-                        109.126094
-                    ],
-                    [
-                        34.289533,
-                        109.12635
-                    ],
-                    [
-                        34.289374,
-                        109.126669
-                    ],
-                    [
-                        34.289163,
-                        109.127116
-                    ],
-                    [
-                        34.288847,
-                        109.127691
-                    ],
-                    [
-                        34.288688,
-                        109.128329
-                    ],
-                    [
-                        34.288425,
-                        109.129351
-                    ],
-                    [
-                        34.288213,
-                        109.130373
-                    ],
-                    [
-                        34.28795,
-                        109.131458
-                    ],
-                    [
-                        34.287844,
-                        109.132416
-                    ],
-                    [
-                        34.287528,
-                        109.135993
-                    ],
-                    [
-                        34.287528,
-                        109.136184
-                    ],
-                    [
-                        34.287475,
-                        109.136504
-                    ],
-                    [
-                        34.287422,
-                        109.137014
-                    ],
-                    [
-                        34.287369,
-                        109.137653
-                    ],
-                    [
-                        34.287369,
-                        109.138419
-                    ],
-                    [
-                        34.287317,
-                        109.13925
-                    ],
-                    [
-                        34.287264,
-                        109.139952
-                    ],
-                    [
-                        34.287211,
-                        109.140846
-                    ],
-                    [
-                        34.287105,
-                        109.14174
-                    ],
-                    [
-                        34.287053,
-                        109.142826
-                    ],
-                    [
-                        34.286947,
-                        109.14372
-                    ],
-                    [
-                        34.286842,
-                        109.14455
-                    ],
-                    [
-                        34.286789,
-                        109.144678
-                    ],
-                    [
-                        34.286789,
-                        109.144806
-                    ],
-                    [
-                        34.286947,
-                        109.144806
-                    ],
-                    [
-                        34.287105,
-                        109.144806
-                    ],
-                    [
-                        34.287317,
-                        109.144806
-                    ],
-                    [
-                        34.287739,
-                        109.144678
-                    ],
-                    [
-                        34.288213,
-                        109.144614
-                    ],
-                    [
-                        34.288741,
-                        109.14455
-                    ],
-                    [
-                        34.28948,
-                        109.144167
-                    ],
-                    [
-                        34.290377,
-                        109.143784
-                    ],
-                    [
-                        34.292751,
-                        109.14289
-                    ],
-                    [
-                        34.294123,
-                        109.141996
-                    ],
-                    [
-                        34.29465,
-                        109.141612
-                    ],
-                    [
-                        34.295072,
-                        109.141229
-                    ],
-                    [
-                        34.295495,
-                        109.140655
-                    ],
-                    [
-                        34.295653,
-                        109.140463
-                    ],
-                    [
-                        34.295758,
-                        109.140399
-                    ],
-                    [
-                        34.295758,
-                        109.140335
-                    ],
-                    [
-                        34.295758,
-                        109.140144
-                    ],
-                    [
-                        34.295758,
-                        109.140016
-                    ],
-                    [
-                        34.295758,
-                        109.139824
-                    ],
-                    [
-                        34.295706,
-                        109.139633
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-15T18:57:20.015015",
-                "end": "2027-04-15T18:57:20.015015"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T18:57:20.015015",
-            "updatedAt": "2026-04-15T18:57:20.015015"
-        },
-        {
-            "_id": {
-                "$oid": "69df6f29bf52a6c7a38e38e0"
-            },
-            "fence_id": "1776250665967",
-            "name": "啊实打实大苏打实打实的",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.293788,
-                        109.167862
-                    ],
-                    [
-                        34.28132,
-                        109.176506
-                    ],
-                    [
-                        34.283015,
-                        109.160536
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-15T18:57:45.967421",
-                "end": "2027-04-15T18:57:45.967421"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T18:57:45.967421",
-            "updatedAt": "2026-04-15T18:57:45.967421"
-        },
-        {
-            "_id": {
-                "$oid": "69df6fc9bf52a6c7a38e38e1"
-            },
-            "fence_id": "1776250825768",
-            "name": "445646546",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "circle",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "center": [
-                    34.297837,
-                    109.158018
-                ],
-                "radius": 100.0
-            },
-            "schedule": {
-                "start": "2026-04-15T19:00:25.768459",
-                "end": "2027-04-15T19:00:25.768459"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T19:00:25.768459",
-            "updatedAt": "2026-04-15T19:00:25.768459"
-        },
-        {
-            "_id": {
-                "$oid": "69df6fd9bf52a6c7a38e38e2"
-            },
-            "fence_id": "1776250841014",
-            "name": "4456465阿斯顿撒旦",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "circle",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "center": [
-                    34.294115,
-                    109.155326
-                ],
-                "radius": 100.0
-            },
-            "schedule": {
-                "start": "2026-04-15T19:00:41.014603",
-                "end": "2027-04-15T19:00:41.014603"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T19:00:41.015110",
-            "updatedAt": "2026-04-15T19:00:41.015110"
-        },
-        {
-            "_id": {
-                "$oid": "69df6fe5bf52a6c7a38e38e3"
-            },
-            "fence_id": "1776250853888",
-            "name": "44",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.28988,
-                        109.156
-                    ],
-                    [
-                        34.28988,
-                        109.161086
-                    ],
-                    [
-                        34.285587,
-                        109.161086
-                    ],
-                    [
-                        34.285587,
-                        109.156
-                    ],
-                    [
-                        34.28988,
-                        109.156
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-15T19:00:53.888684",
-                "end": "2027-04-15T19:00:53.888684"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T19:00:53.888684",
-            "updatedAt": "2026-04-15T19:00:53.888684"
-        },
-        {
-            "_id": {
-                "$oid": "69df70b0bf52a6c7a38e38e4"
-            },
-            "fence_id": "1776251056092",
-            "name": "44",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "circle",
-            "behavior": "No Exit",
-            "severity": "medium",
-            "geometry": {
-                "center": [
-                    34.301068,
-                    109.192686
-                ],
-                "radius": 453.835442150672
-            },
-            "schedule": {
-                "start": "2026-04-15T19:04:16.092369",
-                "end": "2027-04-15T19:04:16.092369"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-15T19:04:16.092369",
-            "updatedAt": "2026-04-15T19:04:16.092369"
-        },
-        {
-            "_id": {
-                "$oid": "69e9c636557a4c6affed9de6"
-            },
-            "fence_id": "1776928310632",
-            "name": "s",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Entry",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.280123,
-                        109.130456
-                    ],
-                    [
-                        34.281234,
-                        109.131567
-                    ],
-                    [
-                        34.282345,
-                        109.132678
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-23T15:11:50.632313",
-                "end": "2027-04-23T15:11:50.632313"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-23T15:11:50.632313",
-            "updatedAt": "2026-04-23T15:11:50.632313"
-        },
-        {
-            "_id": {
-                "$oid": "69e9c6b3557a4c6affed9de7"
-            },
-            "fence_id": "1776928435364",
-            "name": "啊实打实的",
-            "company": "",
-            "project": "",
-            "project_region_id": null,
-            "shape": "polygon",
-            "behavior": "No Entry",
-            "severity": "medium",
-            "geometry": {
-                "points": [
-                    [
-                        34.2801,
-                        109.1301
-                    ],
-                    [
-                        34.2813,
-                        109.1322
-                    ],
-                    [
-                        34.2789,
-                        109.132
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2026-04-23T15:13:55.364912",
-                "end": "2027-04-23T15:13:55.364912"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2026-04-23T15:13:55.364912",
-            "updatedAt": "2026-04-23T15:13:55.364912"
         }
     ],
-    "team": [
+    "alarm_record": [
         {
             "_id": {
-                "$oid": "69e32e47dd52fc7bc5b99d1e"
+                "$oid": "69eaf4570ba4a5c67c2f8fcb"
             },
-            "team_id": "team1",
-            "name": "施工一队",
-            "color": "text-blue-400",
-            "fence_ids": [
-                "1"
-            ],
-            "company": "中铁一局",
-            "project": "西安地铁8号线"
+            "id": 13,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-24T12:40:55.181Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (76%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarms/alarm_13_2_20260424_124040_20260424_124110.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777005655_6cda42.jpg"
         },
         {
             "_id": {
-                "$oid": "69e32e5fdd52fc7bc5b99d20"
+                "$oid": "69eaf51907db7a3b054de925"
             },
-            "team_id": "team2",
-            "name": "施工二队",
-            "color": "text-purple-400",
-            "fence_ids": [],
-            "company": "中铁一局",
-            "project": "西安地铁8号线"
+            "id": 14,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-24T12:44:09.186Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (31%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "",
+            "recording_status": "pending",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777005849_2e43de.jpg"
         },
         {
             "_id": {
-                "$oid": "69e32eabdd52fc7bc5b99d23"
+                "$oid": "69ec65096507fce165ca626d"
             },
-            "team_id": "team3",
-            "name": "特种作业队",
-            "color": "text-amber-400",
-            "fence_ids": [
-                "2",
-                "3"
-            ],
-            "company": "中铁隧道局",
-            "project": "西安地铁10号线"
+            "id": 15,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T14:54:01.961Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (37%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/api/videos/../alarm_videos/alarm_15_2_20260425_145301_20260425_145501.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777100041_3e0d6f.jpg"
         },
         {
             "_id": {
-                "$oid": "69e33440dd52fc7bc5b99d2b"
+                "$oid": "69ec742d86a98cc80de83c21"
             },
-            "team_id": "team4",
-            "name": "四号作业队",
-            "color": "text-amber-400",
-            "fence_ids": [],
-            "company": "中铁隧道局",
-            "project": "西安地铁10号线"
+            "id": 16,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T15:58:37.718Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (28%)（检测框数量: 2）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_16_2_20260425_155737_20260425_155937.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777103917_4531ed.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ec755c86a98cc80de83c22"
+            },
+            "id": 17,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T16:03:40.086Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (13%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_17_2_20260425_160240_20260425_160440.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777104220_260ae9.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ecaf9a23d70dfd260b44fc"
+            },
+            "id": 18,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:12:10.990Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (72%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_18_2_20260425_201111_20260425_201311.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119130_b81f95.jpg"
+        },
+        {
+            "_id": {
+                "$oid": "69ecb1c6896e94106e3f6561"
+            },
+            "id": 19,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:21:26.591Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (18%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_19_2_20260425_202026_20260425_202226.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119686_ee916e.jpg",
+            "personnel_id": "",
+            "person_name": "未知",
+            "person": {}
+        },
+        {
+            "_id": {
+                "$oid": "69ecb2f6df02f79452299907"
+            },
+            "id": 20,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:26:30.464Z"
+            },
+            "description": "检测到人员未佩戴安全帽 (51%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "/static/alarm_videos/alarm_20_2_20260425_202530_20260425_202730.mp4",
+            "recording_status": "saved",
+            "recording_error": "",
+            "alarm_image_path": "/static/alarms/2_1777119990_53cdf8.jpg",
+            "personnel_id": "",
+            "person_name": "未知",
+            "person": {}
+        },
+        {
+            "_id": {
+                "$oid": "69ecb3a6513a9188cb0c4dd7"
+            },
+            "id": 21,
+            "device_id": "2",
+            "fence_id": null,
+            "project_id": null,
+            "alarm_type": "未佩戴安全帽",
+            "severity": "HIGH",
+            "timestamp": {
+                "$date": "2026-04-25T20:29:26.278Z"
+            },
+            "description": "模拟用户：李工 - 检测到人员未佩戴安全帽 (20%)（检测框数量: 1）",
+            "status": "pending",
+            "handled_at": null,
+            "location": null,
+            "recording_path": "",
+            "recording_status": "failed",
+            "recording_error": "录像裁剪失败",
+            "alarm_image_path": "/static/alarms/2_1777120166_b7f1b3.jpg",
+            "personnel_id": "",
+            "person_name": "模拟用户：李工",
+            "person": {
+                "id": "",
+                "username": "模拟用户：李工",
+                "name": "模拟用户：李工",
+                "phone": "",
+                "workType": "",
+                "team": "",
+                "faceImage": "",
+                "isMock": true
+            }
+        }
+    ],
+    "personnel": [
+        {
+            "_id": {
+                "$oid": "69ec85375d43b82ee78286e5"
+            },
+            "username": "张三",
+            "dept": "总部",
+            "phone": "13800000000",
+            "password": "123456",
+            "role": "HQ Manager",
+            "parentId": null,
+            "addedDate": "2026-04-25",
+            "created_at": {
+                "$date": "2026-04-25T17:11:19.292Z"
+            },
+            "updated_at": {
+                "$date": "2026-04-25T19:17:42.138Z"
+            },
+            "faceImage": "/static/faces/69ec85375d43b82ee78286e5_f87514f1599d4f2983028aa54948eb53.png"
         }
     ]
 }

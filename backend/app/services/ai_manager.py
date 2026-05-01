@@ -267,7 +267,7 @@ class AIManager:
     def _snapshot_monitor_loop(self, device_id, device_serial, channel_no, algo_type_str, stop_event):
         active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
         # 萤石抓图接口开销较高，默认 1.2s 一帧，必要时可通过环境变量调优。
-        interval_seconds = max(0.8, float(os.getenv("AI_EZVIZ_SNAPSHOT_INTERVAL_SECONDS", "1.2")))
+        interval_seconds = max(0.8, float(os.getenv("AI_EVZIZ_SNAPSHOT_INTERVAL_SECONDS", "1.0")))
 
         print(f"📸 萤石抓图检测启动: serial={device_serial}, channel={channel_no}, interval={interval_seconds}s")
 

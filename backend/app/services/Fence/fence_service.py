@@ -1,21 +1,20 @@
 import json
 import math
 from datetime import datetime, time, timedelta
-from pymongo import MongoClient
 from app.schemas.fence_schema import FenceCreate, FenceUpdate, ProjectRegionCreate, ProjectRegionUpdate
-from app.schemas.alarm_schema import AlarmCreate
-from app.services.alarm_service import AlarmService
+from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.utils.logger import get_logger
+from app.core.ws_manager import push_alarm_threadsafe
 
-# MongoDB 连接配置
-client = MongoClient("mongodb://localhost:27017/")
-db = client["platform"]
+# MongoDB 连接配置：优先使用含 fence 集合的兼容库，告警写入同一个库
+db = get_compatible_mongo_db("fence")
 fences_collection = db["fence"]
 regions_collection = db["project_regions"]
-devices_collection = db["devices"]
-alarms_collection = db["alarms"]
+devices_collection = get_mongo_collection("device")
+alarms_collection = db["alarm_record"]
 
 logger = get_logger("FenceService")
+FENCE_TOUCH_TOLERANCE_METERS = 3.0
 
 
 class FenceService:
@@ -62,7 +61,8 @@ class FenceService:
         return False
 
     def is_device_inside_project_region(self, region: dict, device: dict) -> bool:
-        if not device.get("last_latitude") or not device.get("last_longitude"):
+        lat, lng = self._get_device_lat_lng(device)
+        if lat is None or lng is None:
             return False
         try:
             poly_points = json.loads(region.get("coordinates_json", "[]"))
@@ -72,7 +72,7 @@ class FenceService:
                     poly.append((float(p[1]), float(p[0])))
                 elif isinstance(p, dict):
                     poly.append((float(p.get("lng")), float(p.get("lat"))))
-            return self._is_inside_polygon((device.get("last_longitude"), device.get("last_latitude")), poly)
+            return self._is_inside_polygon((lng, lat), poly)
         except Exception:
             return False
 
@@ -136,15 +136,32 @@ class FenceService:
     def _check_existing_devices(self, fence: dict):
         """Check all devices against the newly created fence."""
         logger.info(f"Checking existing devices for fence {fence.get('name')}")
-        devices = list(devices_collection.find({"last_latitude": {"$ne": None}, "last_longitude": {"$ne": None}}))
+        devices = list(devices_collection.find({
+            "$or": [
+                {
+                    "last_latitude": {"$exists": True, "$ne": None},
+                    "last_longitude": {"$exists": True, "$ne": None},
+                },
+                {
+                    "lat": {"$exists": True, "$ne": None},
+                    "lng": {"$exists": True, "$ne": None},
+                },
+            ]
+        }))
 
         count = 0
+        checked = 0
         for device in devices:
+            lat, lng = self._get_device_lat_lng(device)
+            if lat is None or lng is None:
+                continue
+            checked += 1
             if self.check_device_against_fence(fence, device):
                 count += 1
         
+        # 只更新围栏计数，不打印详细信息
         self._update_fence_count(fence)
-        logger.info(f"Fence creation check: Triggered {count} alarms.")
+        logger.info(f"Fence creation check: checked {checked} devices, triggered {count} alarms.")
 
     def update_fence(self, fence_id: str, fence_data: FenceUpdate):
         logger.info(f"Updating fence ID: {fence_id}")
@@ -201,13 +218,16 @@ class FenceService:
         Check if a specific device (with new coordinates) violates any active fence.
         This is typically called by a location update stream.
         """
-        # Update device location first
-        device = devices_collection.find_one({"id": device_id})
-        if device:
-            devices_collection.update_one({"id": device_id}, {"$set": {"last_latitude": lat, "last_longitude": lng}})
-        else:
-            logger.warning(f"Device {device_id} not found during fence check.")
+        if lat is None or lng is None:
             return
+
+        device = (
+            devices_collection.find_one({"device_id": str(device_id)})
+            or devices_collection.find_one({"id": str(device_id)})
+            or {"device_id": str(device_id), "name": f"定位设备-{device_id}"}
+        )
+        device["last_latitude"] = float(lat)
+        device["last_longitude"] = float(lng)
 
         active_fences = list(fences_collection.find({"is_active": True}))
         for fence in active_fences:
@@ -246,39 +266,127 @@ class FenceService:
         m = int(parts[1]) if len(parts) > 1 else 0
         return time(h, m)
 
-    def is_device_inside_fence(self, fence: dict, device: dict) -> bool:
-        """Helper to determine if a device is currently inside a fence boundary."""
-        if not device.get("last_latitude") or not device.get("last_longitude"):
+    def _get_device_lat_lng(self, device: dict) -> tuple[float | None, float | None]:
+        lat = device.get("last_latitude")
+        lng = device.get("last_longitude")
+        if lat is None:
+            lat = device.get("lat")
+        if lng is None:
+            lng = device.get("lng")
+        if lat is None or lng is None:
+            return None, None
+        try:
+            return float(lat), float(lng)
+        except (TypeError, ValueError):
+            return None, None
+
+    def _extract_lat_lng(self, point) -> tuple[float, float] | None:
+        try:
+            if isinstance(point, list) and len(point) >= 2:
+                return float(point[0]), float(point[1])
+            if isinstance(point, dict):
+                return float(point.get("lat")), float(point.get("lng"))
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    def _to_local_xy(self, lat: float, lng: float, ref_lat: float, ref_lng: float) -> tuple[float, float]:
+        meters_per_degree_lat = 111320.0
+        meters_per_degree_lng = 111320.0 * math.cos(math.radians(ref_lat))
+        return (
+            (lng - ref_lng) * meters_per_degree_lng,
+            (lat - ref_lat) * meters_per_degree_lat,
+        )
+
+    def _distance_to_segment_meters(
+        self,
+        point: tuple[float, float],
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> float:
+        px, py = point
+        ax, ay = start
+        bx, by = end
+        dx = bx - ax
+        dy = by - ay
+        if dx == 0 and dy == 0:
+            return math.hypot(px - ax, py - ay)
+
+        t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+        t = max(0.0, min(1.0, t))
+        closest_x = ax + t * dx
+        closest_y = ay + t * dy
+        return math.hypot(px - closest_x, py - closest_y)
+
+    def _is_point_near_polygon_boundary(
+        self,
+        lat: float,
+        lng: float,
+        polygon_points: list,
+        tolerance_meters: float = FENCE_TOUCH_TOLERANCE_METERS,
+    ) -> bool:
+        coords = []
+        for point in polygon_points:
+            coord = self._extract_lat_lng(point)
+            if coord is not None:
+                coords.append(coord)
+
+        if len(coords) < 2:
             return False
 
-        gcj_lat, gcj_lng = device.get("last_latitude"), device.get("last_longitude")
+        local_point = self._to_local_xy(lat, lng, lat, lng)
+        local_coords = [self._to_local_xy(p_lat, p_lng, lat, lng) for p_lat, p_lng in coords]
+
+        for idx, start in enumerate(local_coords):
+            end = local_coords[(idx + 1) % len(local_coords)]
+            if self._distance_to_segment_meters(local_point, start, end) <= tolerance_meters:
+                return True
+        return False
+
+    def _get_fence_position(self, fence: dict, device: dict) -> tuple[bool, bool]:
+        lat, lng = self._get_device_lat_lng(device)
+        if lat is None or lng is None:
+            return False, False
+
         shape = fence.get("shape")
         geometry = fence.get("geometry", {})
 
         if shape == "circle":
             try:
                 center = geometry.get("center")
-                radius = geometry.get("radius", 0)
-                if isinstance(center, list) and len(center) >= 2:
-                    center_lat, center_lng = float(center[0]), float(center[1])
-                    dist = self._get_distance(gcj_lat, gcj_lng, center_lat, center_lng)
-                    return dist <= radius
+                radius = float(geometry.get("radius", 0) or 0)
+                center_coord = self._extract_lat_lng(center)
+                if center_coord is None:
+                    return False, False
+                center_lat, center_lng = center_coord
+                distance = self._get_distance(lat, lng, center_lat, center_lng)
+                inside = distance < max(0.0, radius - FENCE_TOUCH_TOLERANCE_METERS)
+                touching = abs(distance - radius) <= FENCE_TOUCH_TOLERANCE_METERS
+                return inside, touching
             except Exception:
-                return False
+                return False, False
 
-        elif shape == "polygon":
+        if shape == "polygon":
             try:
                 polygon_points = geometry.get("points", [])
                 poly = []
-                for p in polygon_points:
-                    if isinstance(p, list) and len(p) >= 2:
-                        poly.append((float(p[1]), float(p[0])))
-                    elif isinstance(p, dict):
-                        poly.append((float(p.get("lng")), float(p.get("lat"))))
-                return self._is_inside_polygon((gcj_lng, gcj_lat), poly)
+                for point in polygon_points:
+                    coord = self._extract_lat_lng(point)
+                    if coord is not None:
+                        point_lat, point_lng = coord
+                        poly.append((point_lng, point_lat))
+                inside = self._is_inside_polygon((lng, lat), poly)
+                touching = self._is_point_near_polygon_boundary(lat, lng, polygon_points)
+                return inside and not touching, touching
             except Exception:
-                return False
-        return False
+                return False, False
+
+        return False, False
+
+    def is_device_inside_fence(self, fence: dict, device: dict) -> bool:
+        """Helper to determine if a device is currently inside a fence boundary."""
+        inside, touching = self._get_fence_position(fence, device)
+        return inside or touching
 
     def _update_fence_count(self, fence: dict):
         """Recalculate and update the worker_count (violator count) for a fence."""
@@ -287,33 +395,122 @@ class FenceService:
             fences_collection.update_one({"fence_id": fence.get("fence_id")}, {"$set": {"worker_count": 0}})
             return
 
-        devices = list(devices_collection.find({"last_latitude": {"$ne": None}}))
+        devices = list(devices_collection.find({
+            "$or": [
+                {
+                    "last_latitude": {"$exists": True, "$ne": None},
+                    "last_longitude": {"$exists": True, "$ne": None},
+                },
+                {
+                    "lat": {"$exists": True, "$ne": None},
+                    "lng": {"$exists": True, "$ne": None},
+                },
+            ]
+        }))
         count = 0
         for device in devices:
             if self.check_device_violation(fence, device):
                 count += 1
         
+        # 只更新计数，不打印日志
         fences_collection.update_one({"fence_id": fence.get("fence_id")}, {"$set": {"worker_count": count}})
 
     def check_device_violation(self, fence: dict, device: dict) -> bool:
         """Determine if a device is violating a fence's rules."""
-        is_inside = self.is_device_inside_fence(fence, device)
+        lat, lng = self._get_device_lat_lng(device)
+        if lat is None or lng is None:
+            return False
+
+        is_inside, is_touching = self._get_fence_position(fence, device)
         
         behavior = fence.get("behavior")
         if behavior == "No Entry":
-            return is_inside
+            return is_inside or is_touching
         elif behavior == "No Exit":
-            # If targeted to a project region, only violate if inside region but outside fence
-            project_region_id = fence.get("project_region_id")
-            if project_region_id:
-                region = regions_collection.find_one({"_id": project_region_id})
-                if region:
-                    is_in_region = self.is_device_inside_project_region(region, device)
-                    return is_in_region and not is_inside
-                return False # Avoid global alarms if region ID is set but region doesn't exist
-            else:
-                return not is_inside
-        return is_inside
+            # 对于No Exit行为，需要检查设备的company和project是否与围栏一致
+            fence_company = fence.get("company")
+            fence_project = fence.get("project")
+            device_company = device.get("company")
+            device_project = device.get("project")
+            
+            # 只有当设备的company和project与围栏一致，并且设备在围栏外时，才返回True
+            company_match = not fence_company or fence_company == device_company
+            project_match = not fence_project or fence_project == device_project
+            
+            return (not is_inside or is_touching) and company_match and project_match
+        return is_inside or is_touching
+
+    def _normalize_alarm_severity(self, fence: dict) -> str:
+        raw = str(fence.get("alarm_type") or fence.get("severity") or "medium").lower()
+        severity_map = {
+            "severe": "high",
+            "risk": "medium",
+            "general": "low",
+            "normal": "low",
+        }
+        return severity_map.get(raw, raw if raw in {"high", "medium", "low"} else "medium")
+
+    def _create_fence_alarm(self, fence: dict, device: dict, alarm_type: str, description: str, location: str) -> bool:
+        device_id = str(device.get("device_id") or device.get("id") or "")
+        fence_id = str(fence.get("fence_id") or fence.get("id") or "")
+        if not device_id or not fence_id:
+            return False
+
+        existing_alarm = alarms_collection.find_one({
+            "device_id": device_id,
+            "fence_id": fence_id,
+            "status": "pending",
+        })
+        if existing_alarm:
+            return False
+
+        next_id = int(get_next_sequence("alarm_record_id", db=db))
+        now = datetime.utcnow()
+        payload = {
+            "id": next_id,
+            "device_id": device_id,
+            "fence_id": fence_id,
+            "project_id": fence.get("project_id"),
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": alarm_type,
+            "severity": self._normalize_alarm_severity(fence),
+            "timestamp": now,
+            "description": description,
+            "status": "pending",
+            "handled_at": None,
+            "location": location,
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": device.get("holderPhone") or "",
+            "person_name": device.get("holder") or device.get("name") or device.get("device_name") or "未知",
+            "person": {
+                "username": device.get("holder") or device.get("name") or device.get("device_name") or "未知",
+            },
+        }
+        alarms_collection.insert_one(payload)
+        logger.warning(f"Fence alarm saved to alarm_record: alarm_id={next_id}, device={device_id}, fence={fence_id}")
+        
+        # Push alarm to frontend via WebSocket
+        alarm_data = {
+            "id": next_id,
+            "device_id": device_id,
+            "fence_id": fence_id,
+            "alarm_type": alarm_type,
+            "type": alarm_type,  # 前端期望的字段名
+            "severity": self._normalize_alarm_severity(fence),
+            "timestamp": now.isoformat(),
+            "description": description,
+            "location": location,
+            "person_name": device.get("holder") or device.get("name") or device.get("device_name") or "未知",
+            "msg": description,  # 前端期望的消息字段
+            "is_alarm": True  # 标记为警报，触发前端弹窗和声音
+        }
+        push_alarm_threadsafe(alarm_data)
+        
+        return True
 
     def check_device_against_fence(
         self, fence: dict, device: dict
@@ -323,28 +520,18 @@ class FenceService:
         Returns True if an alarm was triggered, False otherwise.
         """
         violation = self.check_device_violation(fence, device)
-        gcj_lat, gcj_lng = device.get("last_latitude"), device.get("last_longitude")
+        gcj_lat, gcj_lng = self._get_device_lat_lng(device)
 
         if violation:
             description = ""
             behavior = fence.get("behavior")
+            device_name = device.get("device_name") or device.get("name") or device.get("device_id") or device.get("id")
             if behavior == "No Entry":
-                description = f"Device {device.get('device_name')} entered restricted area: {fence.get('name')}"
+                description = f"Device {device_name} entered restricted area: {fence.get('name')}"
             else:
-                description = f"Device {device.get('device_name')} left designated area: {fence.get('name')}"
+                description = f"Device {device_name} left designated area: {fence.get('name')}"
 
             # Check for duplicate ACTIVE alarms for this device and fence
-            existing_alarm = alarms_collection.find_one({
-                "device_id": device.get("id"),
-                "fence_id": fence.get("fence_id"),
-                "status": "pending"
-            })
-
-            if existing_alarm:
-                return False  # Already alarmed
-
-            logger.warning(f"  VIOLATION DETECTED: {description}")
-            alarm_service = AlarmService()
             loc_str = f"{gcj_lat:.6f}, {gcj_lng:.6f}"
 
             # Determine distinct alarm type based on behavior
@@ -352,18 +539,12 @@ class FenceService:
             if behavior == "No Entry":
                 current_alarm_type = "电子围栏闯入"
 
-            alarm_data = AlarmCreate(
-                device_id=device.get("id"),
-                fence_id=fence.get("fence_id"),
-                alarm_type=current_alarm_type,
-                severity=fence.get("alarm_type", "high"),
-                description=description,
-                location=loc_str,
-                status="pending",
-            )
             try:
-                alarm_service.create_alarm(alarm_data)
-                return True
+                # 只有在真正创建报警时才记录详细信息
+                alarm_created = self._create_fence_alarm(fence, device, current_alarm_type, description, loc_str)
+                if alarm_created:
+                    logger.warning(f"Fence alarm created: {description}")
+                return alarm_created
             except Exception as e:
                 logger.error(f"Failed to create alarm: {e}")
 

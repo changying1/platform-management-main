@@ -777,9 +777,14 @@ useEffect(() => {
           }
 
           const firstBox = boxes[0];
+          const alarmType = firstBox?.type || alarmLike?.type || "未知警报";
+          const alarmMsg = firstBox?.msg || alarmLike?.msg || "检测到异常";
+          const deviceName = alarmLike?.device_name || alarmLike?.device_id || maximizedVideo?.name || "未知设备";
+          const fenceName = alarmLike?.fence_name || alarmLike?.location || "未绑定围栏";
+          
           setAlarmAlert({
-            type: firstBox?.type || alarmLike?.type || "未知警报",
-            msg: firstBox?.msg || alarmLike?.msg || "检测到异常",
+            type: alarmType,
+            msg: alarmMsg,
             score: Number(firstBox?.score ?? alarmLike?.score ?? 0) || 0,
             timestamp: Date.now(),
           });
@@ -792,6 +797,16 @@ useEffect(() => {
           alarmCloseTimerRef.current = window.setTimeout(() => {
             setAlarmAlert(null);
           }, 3000);
+
+          if (window.showFenceAlarm) {
+            let level: 'low' | 'medium' | 'high' = 'medium';
+            if (alarmType.includes('严重') || alarmType.includes('高') || alarmMsg.includes('严重')) {
+              level = 'high';
+            } else if (alarmType.includes('一般') || alarmType.includes('低')) {
+              level = 'low';
+            }
+            window.showFenceAlarm(deviceName, alarmMsg, fenceName, level, '视频AI检测报警');
+          }
         };
 
         ws.onerror = (err) => {

@@ -27,13 +27,16 @@ db_router = APIRouter(prefix="/devices", tags=["Mongo Devices"])
 class DeviceCreateRequest(BaseModel):
     device_id: str
     name: str
-    lat: float
-    lng: float
+    lat: float = 0.0
+    lng: float = 0.0
     company: str
     project: str
-    status: str
-    holder: str
+    type: Optional[str] = None
+    team: Optional[str] = None
+    status: str = "offline"
+    holder: str = ""
     holderPhone: Optional[str] = None
+    remark: Optional[str] = None
     trajectory: List[TrajectoryPoint] = []
 
 
@@ -43,9 +46,12 @@ class DeviceUpdateRequest(BaseModel):
     lng: Optional[float] = None
     company: Optional[str] = None
     project: Optional[str] = None
+    type: Optional[str] = None
+    team: Optional[str] = None
     status: Optional[str] = None
     holder: Optional[str] = None
     holderPhone: Optional[str] = None
+    remark: Optional[str] = None
     trajectory: Optional[List[TrajectoryPoint]] = None
 
 
@@ -55,6 +61,34 @@ class TrajectoryPointRequest(BaseModel):
     lng: float
     speed: Optional[float] = None
     direction: Optional[float] = None
+
+
+def _device_to_response(device: dict) -> dict:
+    last_update = (
+        device.get("lastUpdate")
+        or device.get("updatedAt")
+        or device.get("createdAt")
+        or ""
+    )
+
+    return {
+        "device_id": device.get("device_id"),
+        "name": device.get("name"),
+        "lat": device.get("lat", 0.0),
+        "lng": device.get("lng", 0.0),
+        "company": device.get("company", ""),
+        "project": device.get("project", ""),
+        "type": device.get("type", ""),
+        "team": device.get("team", ""),
+        "status": device.get("status", "offline"),
+        "holder": device.get("holder", ""),
+        "holderPhone": device.get("holderPhone", ""),
+        "remark": device.get("remark", ""),
+        "lastUpdate": last_update,
+        "createdAt": device.get("createdAt"),
+        "updatedAt": device.get("updatedAt"),
+        "trajectory": device.get("trajectory", []),
+    }
 
 def _mongo_device_query(device_id: str) -> dict:
     if ObjectId.is_valid(device_id):
@@ -84,25 +118,7 @@ def _mongo_device_to_response(device: dict) -> dict:
 def get_devices():
     """获取所有设备"""
     devices = device_service.get_devices()
-    result = []
-    for device in devices:
-        device_item = {
-            "device_id": device.get("device_id"),
-            "name": device.get("name"),
-            "lat": device.get("lat"),
-            "lng": device.get("lng"),
-            "company": device.get("company"),
-            "project": device.get("project"),
-            "status": device.get("status"),
-            "holder": device.get("holder"),
-            "holderPhone": device.get("holderPhone", ""),
-            "lastUpdate": device.get("lastUpdate"),
-            "createdAt": device.get("createdAt"),
-            "updatedAt": device.get("updatedAt"),
-            "trajectory": device.get("trajectory", [])
-        }
-        result.append(device_item)
-    return result
+    return [_device_to_response(device) for device in devices]
 
 
 @router.get("/devices", response_model=List[DeviceItem])
@@ -112,19 +128,7 @@ def get_all_devices():
     result = []
 
     for device in devices:
-        device_item = {
-            "device_id": device.get("device_id"),
-            "name": device.get("name"),
-            "lat": device.get("lat"),
-            "lng": device.get("lng"),
-            "company": device.get("company"),
-            "project": device.get("project"),
-            "status": device.get("status"),
-            "holder": device.get("holder"),
-            "holderPhone": device.get("holderPhone", ""),
-            "lastUpdate": device.get("lastUpdate")
-        }
-        result.append(device_item)
+        result.append(_device_to_response(device))
 
     for phone, dev_data in jt808_manager.device_store.items():
         lat = dev_data.get("last_latitude")
@@ -150,9 +154,12 @@ def get_all_devices():
                     "lng": lng,
                     "company": "未知",
                     "project": "未知",
+                    "type": "JT808",
+                    "team": "",
                     "status": "online" if is_online else "offline",
                     "holder": "未知",
                     "holderPhone": phone,
+                    "remark": "",
                     "lastUpdate": datetime.now().isoformat()
                 })
 
@@ -165,21 +172,7 @@ def get_device(device_id: str):
     device = device_service.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="设备不存在")
-    return {
-        "device_id": device.get("device_id"),
-        "name": device.get("name"),
-        "lat": device.get("lat"),
-        "lng": device.get("lng"),
-        "company": device.get("company"),
-        "project": device.get("project"),
-        "status": device.get("status"),
-        "holder": device.get("holder"),
-        "holderPhone": device.get("holderPhone", ""),
-        "lastUpdate": device.get("lastUpdate"),
-        "createdAt": device.get("createdAt"),
-        "updatedAt": device.get("updatedAt"),
-        "trajectory": device.get("trajectory", [])
-    }
+    return _device_to_response(device)
 
 
 @router.post("/add", response_model=DeviceItem)
@@ -192,27 +185,16 @@ def add_device(payload: DeviceCreateRequest):
         lng=payload.lng,
         company=payload.company,
         project=payload.project,
+        type=payload.type,
+        team=payload.team,
         status=payload.status,
         holder=payload.holder,
         holderPhone=payload.holderPhone,
+        remark=payload.remark,
         trajectory=payload.trajectory
     )
     new_device = device_service.create_device(device_data)
-    return {
-        "device_id": new_device.get("device_id"),
-        "name": new_device.get("name"),
-        "lat": new_device.get("lat"),
-        "lng": new_device.get("lng"),
-        "company": new_device.get("company"),
-        "project": new_device.get("project"),
-        "status": new_device.get("status"),
-        "holder": new_device.get("holder"),
-        "holderPhone": new_device.get("holderPhone", ""),
-        "lastUpdate": new_device.get("lastUpdate"),
-        "createdAt": new_device.get("createdAt"),
-        "updatedAt": new_device.get("updatedAt"),
-        "trajectory": new_device.get("trajectory", [])
-    }
+    return _device_to_response(new_device)
 
 
 @router.put("/update/{device_id}", response_model=DeviceItem)
@@ -224,29 +206,18 @@ def update_device(device_id: str, payload: DeviceUpdateRequest):
         lng=payload.lng,
         company=payload.company,
         project=payload.project,
+        type=payload.type,
+        team=payload.team,
         status=payload.status,
         holder=payload.holder,
         holderPhone=payload.holderPhone,
+        remark=payload.remark,
         trajectory=payload.trajectory
     )
     updated_device = device_service.update_device(device_id, device_data)
     if not updated_device:
         raise HTTPException(status_code=404, detail="设备不存在")
-    return {
-        "device_id": updated_device.get("device_id"),
-        "name": updated_device.get("name"),
-        "lat": updated_device.get("lat"),
-        "lng": updated_device.get("lng"),
-        "company": updated_device.get("company"),
-        "project": updated_device.get("project"),
-        "status": updated_device.get("status"),
-        "holder": updated_device.get("holder"),
-        "holderPhone": updated_device.get("holderPhone", ""),
-        "lastUpdate": updated_device.get("lastUpdate"),
-        "createdAt": updated_device.get("createdAt"),
-        "updatedAt": updated_device.get("updatedAt"),
-        "trajectory": updated_device.get("trajectory", [])
-    }
+    return _device_to_response(updated_device)
 
 
 @router.delete("/delete/{device_id}")
@@ -271,21 +242,7 @@ def add_trajectory(device_id: str, payload: TrajectoryPointRequest):
     updated_device = device_service.add_trajectory_point(device_id, point)
     if not updated_device:
         raise HTTPException(status_code=404, detail="设备不存在")
-    return {
-        "device_id": updated_device.get("device_id"),
-        "name": updated_device.get("name"),
-        "lat": updated_device.get("lat"),
-        "lng": updated_device.get("lng"),
-        "company": updated_device.get("company"),
-        "project": updated_device.get("project"),
-        "status": updated_device.get("status"),
-        "holder": updated_device.get("holder"),
-        "holderPhone": updated_device.get("holderPhone", ""),
-        "lastUpdate": updated_device.get("lastUpdate"),
-        "createdAt": updated_device.get("createdAt"),
-        "updatedAt": updated_device.get("updatedAt"),
-        "trajectory": updated_device.get("trajectory", [])
-    }
+    return _device_to_response(updated_device)
 
 
 @router.get("/{device_id}/trajectory")
@@ -403,3 +360,21 @@ def delete_db_device(device_id: str):
 
 router.include_router(db_router)
 
+class DevicePositionUpdate(BaseModel):
+    device_id: str
+    lat: float
+    lng: float
+
+
+@router.post("/update-position")
+def update_device_position(payload: DevicePositionUpdate):
+    """更新设备位置"""
+    # 使用现有的update_device方法来更新设备位置
+    device_data = DeviceUpdate(
+        lat=payload.lat,
+        lng=payload.lng
+    )
+    updated_device = device_service.update_device(payload.device_id, device_data)
+    if not updated_device:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    return {"status": "success", "device_id": payload.device_id, "lat": payload.lat, "lng": payload.lng}

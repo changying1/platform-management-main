@@ -1,12 +1,10 @@
-from pymongo import MongoClient
 from app.schemas.device_schema import DeviceCreate, DeviceUpdate, TrajectoryPoint
+from app.core.database import get_mongo_collection
 from app.utils.logger import get_logger
 from datetime import datetime
 from typing import List, Optional
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client["platform"]
-devices_collection = db["device"]
+devices_collection = get_mongo_collection("device")
 
 logger = get_logger("DeviceService")
 
@@ -53,9 +51,12 @@ class DeviceService:
             "lng": device_data.lng,
             "company": device_data.company,
             "project": device_data.project,
+            "type": device_data.type or "",
+            "team": device_data.team or "",
             "status": device_data.status,
             "holder": device_data.holder,
             "holderPhone": device_data.holderPhone or "",
+            "remark": device_data.remark or "",
             "lastUpdate": now,
             "createdAt": now,
             "updatedAt": now,
@@ -81,12 +82,18 @@ class DeviceService:
             update_data["company"] = device_data.company
         if device_data.project is not None:
             update_data["project"] = device_data.project
+        if device_data.type is not None:
+            update_data["type"] = device_data.type
+        if device_data.team is not None:
+            update_data["team"] = device_data.team
         if device_data.status is not None:
             update_data["status"] = device_data.status
         if device_data.holder is not None:
             update_data["holder"] = device_data.holder
         if device_data.holderPhone is not None:
             update_data["holderPhone"] = device_data.holderPhone
+        if device_data.remark is not None:
+            update_data["remark"] = device_data.remark
         if device_data.trajectory is not None:
             update_data["trajectory"] = [t.model_dump() if isinstance(t, TrajectoryPoint) else t for t in device_data.trajectory]
 
@@ -101,7 +108,8 @@ class DeviceService:
         if updated_device:
             updated_device["device_id"] = updated_device.pop("id", None) or updated_device.get("device_id")
 
-        logger.info(f"Updated device: {device_id}")
+        if device_data.lat is not None and device_data.lng is not None:
+            self._check_fence_status(device_id, device_data.lat, device_data.lng)
         return updated_device
 
     def delete_device(self, device_id: str) -> bool:
@@ -131,7 +139,15 @@ class DeviceService:
             updated_device["device_id"] = updated_device.pop("id", None) or updated_device.get("device_id")
 
         logger.info(f"Added trajectory point to device: {device_id}")
+        self._check_fence_status(device_id, point.lat, point.lng)
         return updated_device
+
+    def _check_fence_status(self, device_id: str, lat: float, lng: float):
+        try:
+            from app.services.Fence.fence_service import FenceService
+            FenceService().check_fence_status(device_id, lat, lng)
+        except Exception as exc:
+            logger.error(f"Fence check failed for device {device_id}: {exc}")
 
     def get_trajectory(self, device_id: str, hours: int = 24) -> List[dict]:
         """获取设备轨迹（默认最近24小时）"""
