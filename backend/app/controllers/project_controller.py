@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.core.database import get_db
+from app.core.database import get_db, get_mongo_collection
 from app.models.project import Project
 from app.models.admin_user import User
-from app.models.device import Device
 from app.models.fence import ProjectRegion, ElectronicFence
 from app.schemas.project_schema import (
     ProjectCreate,
@@ -17,6 +16,9 @@ from app.schemas.project_schema import (
 )
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+# MongoDB 设备集合（用于获取项目设备数量）
+devices_collection = get_mongo_collection("device")
 
 @router.get("/", response_model=List[ProjectListItem])
 def get_projects(
@@ -43,6 +45,9 @@ def get_projects(
         for region in project.regions:
             fence_count += len(region.fences)
         
+        # 从 MongoDB 获取设备数量（避免使用缺失的 project_devices 表）
+        device_count = devices_collection.count_documents({"project": project.name})
+        
         result.append(ProjectListItem(
             id=project.id,
             name=project.name,
@@ -52,7 +57,7 @@ def get_projects(
             remark=project.remark,
             branch_id=project.branch_id,
             user_count=len(project.users),
-            device_count=len(project.devices),
+            device_count=device_count,
             region_count=len(project.regions),
             fence_count=fence_count
         ))
@@ -68,6 +73,17 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     
+    # 从 MongoDB 获取项目的设备列表（避免使用缺失的 project_devices 表）
+    mongo_devices = list(devices_collection.find({"project": project.name}))
+    devices_response = []
+    for dev in mongo_devices:
+        devices_response.append(DeviceBasic(
+            id=dev.get("device_id") or dev.get("id") or "",
+            device_name=dev.get("name") or dev.get("device_name") or "",
+            device_type=dev.get("type") or "",
+            is_online=dev.get("status") == "online"
+        ))
+    
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -77,7 +93,7 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
         remark=project.remark,
         branch_id=project.branch_id,
         users=[UserBasic.from_orm(u) for u in project.users],
-        devices=[DeviceBasic.from_orm(d) for d in project.devices],
+        devices=devices_response,
         regions=[RegionBasic.from_orm(r) for r in project.regions]
     )
 
@@ -101,10 +117,8 @@ def create_project(project_data: ProjectCreate, db: Session = Depends(get_db)):
         users = db.query(User).filter(User.id.in_(project_data.user_ids)).all()
         new_project.users = users
     
-    # 添加关联的设备
-    if project_data.device_ids:
-        devices = db.query(Device).filter(Device.id.in_(project_data.device_ids)).all()
-        new_project.devices = devices
+    # 设备关联不再使用 SQLAlchemy（避免缺失的 project_devices 表）
+    # 设备通过 MongoDB 的 project 字段关联
     
     # 添加关联的项目区域
     if project_data.region_ids:
@@ -118,6 +132,17 @@ def create_project(project_data: ProjectCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_project)
     
+    # 从 MongoDB 获取项目的设备列表
+    mongo_devices = list(devices_collection.find({"project": new_project.name}))
+    devices_response = []
+    for dev in mongo_devices:
+        devices_response.append(DeviceBasic(
+            id=dev.get("device_id") or dev.get("id") or "",
+            device_name=dev.get("name") or dev.get("device_name") or "",
+            device_type=dev.get("type") or "",
+            is_online=dev.get("status") == "online"
+        ))
+    
     return ProjectResponse(
         id=new_project.id,
         name=new_project.name,
@@ -127,7 +152,7 @@ def create_project(project_data: ProjectCreate, db: Session = Depends(get_db)):
         remark=new_project.remark,
         branch_id=new_project.branch_id,
         users=[UserBasic.from_orm(u) for u in new_project.users],
-        devices=[DeviceBasic.from_orm(d) for d in new_project.devices],
+        devices=devices_response,
         regions=[RegionBasic.from_orm(r) for r in new_project.regions]
     )
 
@@ -163,10 +188,8 @@ def update_project(
         users = db.query(User).filter(User.id.in_(project_data.user_ids)).all()
         project.users = users
     
-    # 更新设备关联
-    if project_data.device_ids is not None:
-        devices = db.query(Device).filter(Device.id.in_(project_data.device_ids)).all()
-        project.devices = devices
+    # 设备关联不再使用 SQLAlchemy（避免缺失的 project_devices 表）
+    # 设备通过 MongoDB 的 project 字段关联
     
     # 更新项目区域关联
     if project_data.region_ids is not None:
@@ -183,6 +206,17 @@ def update_project(
     db.commit()
     db.refresh(project)
     
+    # 从 MongoDB 获取项目的设备列表
+    mongo_devices = list(devices_collection.find({"project": project.name}))
+    devices_response = []
+    for dev in mongo_devices:
+        devices_response.append(DeviceBasic(
+            id=dev.get("device_id") or dev.get("id") or "",
+            device_name=dev.get("name") or dev.get("device_name") or "",
+            device_type=dev.get("type") or "",
+            is_online=dev.get("status") == "online"
+        ))
+    
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -192,7 +226,7 @@ def update_project(
         remark=project.remark,
         branch_id=project.branch_id,
         users=[UserBasic.from_orm(u) for u in project.users],
-        devices=[DeviceBasic.from_orm(d) for d in project.devices],
+        devices=devices_response,
         regions=[RegionBasic.from_orm(r) for r in project.regions]
     )
 

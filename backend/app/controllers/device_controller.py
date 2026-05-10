@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -167,11 +167,21 @@ def get_all_devices():
 
 
 @router.get("/{device_id}", response_model=DeviceItem)
-def get_device(device_id: str):
-    """根据device_id获取设备"""
+def get_device(device_id: str, hours: Optional[int] = None):
+    """根据device_id获取设备（支持按时间筛选轨迹）"""
     device = device_service.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="设备不存在")
+    
+    # 如果指定了hours参数，筛选最近hours小时内的轨迹
+    if hours is not None and hours > 0 and device.get("trajectory"):
+        # 使用UTC时区的当前时间，与轨迹中的timestamp保持一致
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        device["trajectory"] = [
+            point for point in device["trajectory"]
+            if datetime.fromisoformat(point.get("timestamp", "").replace("Z", "+00:00")) >= cutoff_time
+        ]
+    
     return _device_to_response(device)
 
 
