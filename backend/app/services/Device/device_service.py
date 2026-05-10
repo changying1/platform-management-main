@@ -51,9 +51,12 @@ class DeviceService:
             "lng": device_data.lng,
             "company": device_data.company,
             "project": device_data.project,
+            "type": device_data.type or "",
+            "team": device_data.team or "",
             "status": device_data.status,
             "holder": device_data.holder,
             "holderPhone": device_data.holderPhone or "",
+            "remark": device_data.remark or "",
             "lastUpdate": now,
             "createdAt": now,
             "updatedAt": now,
@@ -79,12 +82,18 @@ class DeviceService:
             update_data["company"] = device_data.company
         if device_data.project is not None:
             update_data["project"] = device_data.project
+        if device_data.type is not None:
+            update_data["type"] = device_data.type
+        if device_data.team is not None:
+            update_data["team"] = device_data.team
         if device_data.status is not None:
             update_data["status"] = device_data.status
         if device_data.holder is not None:
             update_data["holder"] = device_data.holder
         if device_data.holderPhone is not None:
             update_data["holderPhone"] = device_data.holderPhone
+        if device_data.remark is not None:
+            update_data["remark"] = device_data.remark
         if device_data.trajectory is not None:
             update_data["trajectory"] = [t.model_dump() if isinstance(t, TrajectoryPoint) else t for t in device_data.trajectory]
 
