@@ -60,8 +60,10 @@
       const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
       return `${wsProtocol}//${apiUrl.host}/ws/alarm`;
     } catch {
+      // ✅ 用当前访问的 host！包含端口号！
+      // ✅ 支持 localhost:3000 和 内网穿透域名:43862！
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return `${wsProtocol}//${window.location.hostname}:9000/ws/alarm`;
+      return `${wsProtocol}//${window.location.host}/ws/alarm`;
     }
   };
 
@@ -985,7 +987,14 @@ useEffect(() => {
   const fetchDevices = async () => {
       try {
           setLoading(true);
+          
+          // ✅ DEBUG: 打印关键信息到控制台！
+          console.log('🌐 当前访问地址:', window.location.href);
+          console.log('🌐 当前端口:', window.location.port);
+          console.log('🌐 API_BASE_URL:', API_BASE_URL);
+          
           const data = await getAllVideos();
+          console.log('✅ 视频设备返回数据:', data);
           
           // 根据设备名称绑定公司和项目
           const devicesWithMapping = data.map(device => {

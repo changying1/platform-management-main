@@ -1,5 +1,5 @@
 // src/components/admin/ProjectManagement.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, X, FolderTree, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -18,13 +18,76 @@ interface Project {
   address: string;
 }
 
+const SQL_PROJECTS: Project[] = [
+  { id: 1, name: '西安东站项目', company: '第一分公司', team: '土建工队', manager: '李明', managerPhone: '13900002001', contact: '李明', contactPhone: '13900002001', startDate: '2026-04-05', status: 'ongoing', address: '西安市雁塔区' },
+  { id: 2, name: '西安地铁8号线', company: '第一分公司', team: '土建工队', manager: '王磊', managerPhone: '13900002002', contact: '王磊', contactPhone: '13900002002', startDate: '2026-04-05', status: 'ongoing', address: '西安市未央区' },
+  { id: 3, name: '咸阳机场T5航站楼', company: '第一分公司', team: '机电工队', manager: '张强', managerPhone: '13900002003', contact: '张强', contactPhone: '13900002003', startDate: '2026-04-05', status: 'ongoing', address: '咸阳市渭城区' },
+  { id: 4, name: '北京地铁17号线', company: '第二分公司', team: '土建工队', manager: '刘洋', managerPhone: '13900002004', contact: '刘洋', contactPhone: '13900002004', startDate: '2026-04-05', status: 'ongoing', address: '北京市朝阳区' },
+  { id: 5, name: '北京丰台站改造', company: '第二分公司', team: '装修工队', manager: '陈浩', managerPhone: '13900002005', contact: '陈浩', contactPhone: '13900002005', startDate: '2026-04-05', status: 'ongoing', address: '北京市丰台区' },
+  { id: 6, name: '上海浦东机场联络线', company: '第三分公司', team: '土建工队', manager: '赵鹏', managerPhone: '13900002006', contact: '赵鹏', contactPhone: '13900002006', startDate: '2026-04-05', status: 'ongoing', address: '上海市浦东新区' },
+  { id: 7, name: '上海轨道交通市域线', company: '第三分公司', team: '机电工队', manager: '周涛', managerPhone: '13900002007', contact: '周涛', contactPhone: '13900002007', startDate: '2026-04-05', status: 'suspended', address: '上海市闵行区' },
+  { id: 8, name: '广州白云站', company: '第四分公司', team: '土建工队', manager: '吴刚', managerPhone: '13900002008', contact: '吴刚', contactPhone: '13900002008', startDate: '2026-04-05', status: 'ongoing', address: '广州市白云区' },
+  { id: 9, name: '广湛高铁广州段', company: '第四分公司', team: '土建工队', manager: '郑伟', managerPhone: '13900002009', contact: '郑伟', contactPhone: '13900002009', startDate: '2026-04-05', status: 'ongoing', address: '广州市番禺区' },
+  { id: 10, name: '成都地铁18号线', company: '第五分公司', team: '土建工队', manager: '孙鹏', managerPhone: '13900002010', contact: '孙鹏', contactPhone: '13900002010', startDate: '2026-04-05', status: 'ongoing', address: '成都市武侯区' },
+  { id: 11, name: '天府站综合交通枢纽', company: '第五分公司', team: '土建工队', manager: '黄鑫', managerPhone: '13900002011', contact: '黄鑫', contactPhone: '13900002011', startDate: '2026-04-05', status: 'suspended', address: '成都市天府新区' },
+  { id: 12, name: '武汉光谷综合体', company: '第六分公司', team: '装修工队', manager: '林峰', managerPhone: '13900002012', contact: '林峰', contactPhone: '13900002012', startDate: '2026-04-05', status: 'ongoing', address: '武汉市东湖高新区' },
+  { id: 13, name: '武汉地铁12号线', company: '第六分公司', team: '土建工队', manager: '郭强', managerPhone: '13900002013', contact: '郭强', contactPhone: '13900002013', startDate: '2026-04-05', status: 'ongoing', address: '武汉市武昌区' },
+  { id: 14, name: '沈阳地铁4号线', company: '第七分公司', team: '土建工队', manager: '唐勇', managerPhone: '13900002014', contact: '唐勇', contactPhone: '13900002014', startDate: '2026-04-05', status: 'ongoing', address: '沈阳市和平区' },
+  { id: 15, name: '沈阳北站改造', company: '第七分公司', team: '土建工队', manager: '冯磊', managerPhone: '13900002015', contact: '冯磊', contactPhone: '13900002015', startDate: '2026-04-05', status: 'ongoing', address: '沈阳市沈河区' },
+  { id: 16, name: '南京北站', company: '第八分公司', team: '土建工队', manager: '韩涛', managerPhone: '13900002016', contact: '韩涛', contactPhone: '13900002016', startDate: '2026-04-05', status: 'ongoing', address: '南京市浦口区' },
+  { id: 17, name: '南京地铁11号线', company: '第八分公司', team: '土建工队', manager: '曹阳', managerPhone: '13900002017', contact: '曹阳', contactPhone: '13900002017', startDate: '2026-04-05', status: 'ongoing', address: '南京市江北新区' },
+  { id: 18, name: '深圳前海枢纽', company: '第九分公司', team: '土建工队', manager: '彭博', managerPhone: '13900002018', contact: '彭博', contactPhone: '13900002018', startDate: '2026-04-05', status: 'ongoing', address: '深圳市前海新区' },
+  { id: 19, name: '深圳地铁13号线', company: '第九分公司', team: '土建工队', manager: '曾伟', managerPhone: '13900002019', contact: '曾伟', contactPhone: '13900002019', startDate: '2026-04-05', status: 'ongoing', address: '深圳市南山区' },
+  { id: 20, name: '重庆东站', company: '第十分公司', team: '土建工队', manager: '肖勇', managerPhone: '13900002020', contact: '肖勇', contactPhone: '13900002020', startDate: '2026-04-05', status: 'ongoing', address: '重庆市南岸区' },
+  { id: 21, name: '重庆轨道交通27号线', company: '第十分公司', team: '土建工队', manager: '董强', managerPhone: '13900002021', contact: '董强', contactPhone: '13900002021', startDate: '2026-04-05', status: 'ongoing', address: '重庆市沙坪坝区' },
+];
+
+// ✅ 内网穿透智能适配！
+const detectBackendUrl = (): string => {
+  if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+  if (window.location.port === '3000') return '';
+  return `${window.location.protocol}//${window.location.host}`;
+};
+const API_BASE = detectBackendUrl();
+
 export default function ProjectManagement() {
-const [projects, setProjects] = useState<Project[]>([
-  { id: 1, name: '西安地铁8号线', company: '第一分公司', team: '土建工队', manager: '张经理', managerPhone: '13900139001', contact: '李主管', contactPhone: '13900139002', startDate: '2024-01-01', status: 'ongoing', address: '西安市雁塔区' },
-  { id: 2, name: '西安地铁10号线', company: '第二分公司', team: '机电工队', manager: '李经理', managerPhone: '13900139003', contact: '王主管', contactPhone: '13900139004', startDate: '2024-02-01', status: 'ongoing', address: '西安市未央区' },
-  { id: 3, name: '西安北站扩建', company: '第一分公司', team: '装修工队', manager: '王经理', managerPhone: '13900139005', contact: '赵主管', contactPhone: '13900139006', startDate: '2023-06-01', status: 'suspended', address: '西安市未央区' },
-  { id: 4, name: '曲江新区管网工程', company: '第二分公司', team: '土建工队', manager: '刘经理', managerPhone: '13900139007', contact: '陈主管', contactPhone: '13900139008', startDate: '2024-03-01', status: 'ongoing', address: '西安市曲江新区' },
-]);
+const [projects, setProjects] = useState<Project[]>(SQL_PROJECTS);
+const [loading, setLoading] = useState(false);
+
+const fetchProjects = async () => {
+  try {
+    setLoading(true);
+    const res = await fetch(`${API_BASE}/projects/`);
+    if (res.ok) {
+      const data = await res.json();
+      const apiData = Array.isArray(data) ? data : data.value || data.data || [];
+      if (apiData.length > 1) {
+        const mappedProjects: Project[] = apiData.map((p: any) => ({
+          id: p.id,
+          name: p.project_name || p.name || '',
+          company: '默认分公司',
+          team: '土建工队',
+          manager: p.manager_name || p.manager || '',
+          managerPhone: '',
+          contact: p.manager_name || '',
+          contactPhone: '',
+          startDate: p.created_at?.split('T')[0] || p.start_date || '2024-01-01',
+          status: p.status === 'active' ? 'ongoing' : p.status === 'completed' ? 'completed' : 'suspended',
+          address: p.address || '',
+        }));
+        setProjects(mappedProjects);
+      }
+    }
+  } catch (error) {
+    console.error(error);
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  fetchProjects();
+}, []);
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const [filterCompany, setFilterCompany] = useState<string>('all');

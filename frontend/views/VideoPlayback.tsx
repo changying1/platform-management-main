@@ -1271,16 +1271,35 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const [thumbnail, setThumbnail] = useState<string>('');
     const [realDuration, setRealDuration] = useState<number>(playback.duration);
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
 
-    // ✅ 自动加载视频第一帧 + 真实时长
+    // ✅ 优先使用报警截图作为预览图，没有再从视频提取
     React.useEffect(() => {
+      // 1. 优先使用已有的报警截图
+      const existingScreenshot = playback.alarmInfo?.screenshotUrl || 
+                                playback.alarmInfo?.screenshot?.url || 
+                                playback.alarmInfo?.screenshot?.thumbnail;
+      
+      if (existingScreenshot) {
+        setThumbnail(existingScreenshot);
+        setIsLoading(false);
+        setLoadError(false);
+        return;
+      }
+
+      // 2. 没有截图时，尝试从视频加载第一帧
       const video = videoRef.current;
-      if (!video || !playback.filePath) return;
+      if (!video || !playback.filePath) {
+        setIsLoading(false);
+        setLoadError(true);
+        return;
+      }
 
       const handleLoadedMetadata = () => {
-        // ✅ 获取视频真实时长
+        setIsLoading(false);
         setRealDuration(Math.round(video.duration));
-        video.currentTime = 0.5;
+        video.currentTime = 0.1;
       };
 
       const handleSeeked = () => {
@@ -1295,19 +1314,42 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
         }
       };
 
+      const handleError = () => {
+        setIsLoading(false);
+        setLoadError(true);
+        console.error('视频加载失败:', playback.filePath);
+      };
+
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       video.addEventListener('seeked', handleSeeked);
+      video.addEventListener('error', handleError);
+
+      video.load();
 
       return () => {
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
         video.removeEventListener('seeked', handleSeeked);
+        video.removeEventListener('error', handleError);
       };
-    }, [playback.filePath]);
+    }, [playback.filePath, playback.alarmInfo]);
 
     const getThumbColor = (name: string) => {
       const colors = ['bg-red-500/20', 'bg-blue-500/20', 'bg-green-500/20', 'bg-yellow-500/20', 'bg-purple-500/20'];
       const index = name.length % colors.length;
       return colors[index];
+    };
+
+    // 生成备用封面颜色渐变
+    const getGradientBackground = (name: string) => {
+      const gradients = [
+        'linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%)',
+        'linear-gradient(135deg, #3a1c71 0%, #d76d77 100%)',
+        'linear-gradient(135deg, #134e5e 0%, #71b280 100%)',
+        'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+        'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+      ];
+      const index = name.length % gradients.length;
+      return gradients[index];
     };
 
     return (
@@ -1321,13 +1363,33 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
               className={`absolute inset-0 w-full h-full bg-center ${!thumbnail ? getThumbColor(playback.deviceName) : ''}`}
               style={thumbnail ? { 
                 backgroundImage: `url(${thumbnail})`, 
-                backgroundSize: '100% 100%',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
                 backgroundColor: '#000'
-              } : {}}
+              } : {
+                background: getGradientBackground(playback.deviceName || '')
+              }}
             >
-              {!thumbnail && (
-                <div className="w-full h-full flex items-center justify-center">
-                  <VideoIcon size={40} className="text-white/40" />
+              {/* 加载中状态 */}
+              {isLoading && (
+                <div className="w-full h-full flex items-center justify-center bg-black/50">
+                  <Loader2 size={32} className="text-cyan-400 animate-spin" />
+                </div>
+              )}
+              
+              {/* 无缩略图且未加载时显示图标 */}
+              {!thumbnail && !isLoading && (
+                <div className="w-full h-full flex flex-col items-center justify-center">
+                  <VideoIcon size={40} className="text-white/60 mb-2" />
+                  <span className="text-white/40 text-xs">{playback.deviceName || '视频'}</span>
+                </div>
+              )}
+
+              {/* 加载失败提示 */}
+              {loadError && !thumbnail && (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-black/50">
+                  <AlertCircle size={32} className="text-red-400 mb-2" />
+                  <span className="text-white/60 text-xs">视频加载失败</span>
                 </div>
               )}
             </div>

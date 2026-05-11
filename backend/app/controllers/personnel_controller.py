@@ -5,7 +5,7 @@ import os
 import shutil
 from uuid import uuid4
 
-router = APIRouter(prefix="/personnel", tags=["Personnel"])
+router = APIRouter(prefix="/api/personnel", tags=["Personnel"])
 service = PersonnelService()
 
 

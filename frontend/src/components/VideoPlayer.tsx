@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:9000';
+// ✅ 内网穿透智能适配！
+const detectBackendUrl = (): string => {
+  if ((import.meta as any).env?.VITE_API_BASE_URL) return (import.meta as any).env?.VITE_API_BASE_URL;
+  if (window.location.port === '3000') return '';
+  return `${window.location.protocol}//${window.location.host}`;
+};
+const API_BASE_URL = detectBackendUrl();
 
 interface VideoPlayerProps {
   src: string;

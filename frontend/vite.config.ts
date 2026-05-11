@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: "0.0.0.0",
+      allowedHosts: true,
 
       // ✅ 新增这一段（关键）
       proxy: {
@@ -23,6 +24,35 @@ export default defineConfig(({ mode }) => {
         "/alarms": {
           target: "http://127.0.0.1:9000",
           changeOrigin: true,
+        },
+        "/fence": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/device": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/personnel": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/video": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/projects": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/static": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/ws": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+          ws: true,
         },
       },
     },

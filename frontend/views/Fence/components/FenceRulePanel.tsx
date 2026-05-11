@@ -285,14 +285,13 @@ export const FenceRulePanel: React.FC<FenceRulePanelProps> = ({
         <div className="space-y-3">
           <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
             <AlertTriangle size={14} className="text-cyan-400" />
-            严重程度
+            告警等级（仅三级）
           </label>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {[
-              { value: 'low', label: '低', color: 'green' },
-              { value: 'medium', label: '中', color: 'yellow' },
-              { value: 'high', label: '高', color: 'orange' },
-              { value: 'severe', label: '严重', color: 'red' },
+              { value: 'general', label: '低', color: 'blue' },
+              { value: 'risk', label: '中', color: 'orange' },
+              { value: 'severe', label: '高', color: 'red' },
             ].map((level) => (
               <button
                 key={level.value}

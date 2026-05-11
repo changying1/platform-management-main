@@ -1,7 +1,8 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { AdminUser } from "../types";
 
-const API_BASE = "http://localhost:9000";
+// ✅ 相对路径！支持 localhost 和内网穿透！
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 export function usePersonnelStore() {
   const [admins, setAdmins] = useState<AdminUser[]>([]);

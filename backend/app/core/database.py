@@ -18,7 +18,7 @@ import app.models.alarm_records
 import app.models.location_history
 
 
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:123456@127.0.0.1:3306/company-management?charset=utf8mb4"
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@127.0.0.1:3306/company-management?charset=utf8mb4"
 
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)

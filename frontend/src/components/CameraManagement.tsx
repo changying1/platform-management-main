@@ -26,45 +26,77 @@ interface Camera {
   faultReason?: string;      // 故障原因
 }
 
+const SQL_CAMERAS: Camera[] = [
+  { id: 999, name: '海康球机摄像头1号', deviceCode: 'GM7974925', channelNo: 1, location: '施工现场', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '管理员', adminPhone: '13800138000', status: 'online', type: 'dome', rtspUrl: 'ezviz://GM7974925', remark: '萤石云真实设备-MongoDB' },
+  { id: 1, name: '北门枪机摄像头', deviceCode: 'DS-2CD12345-I5', channelNo: 1, location: '项目北门入口', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '李保安', adminPhone: '13800138001', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.61:554/Streaming/Channels/101', remark: 'DS-2CD3T46WD-I3' },
+  { id: 2, name: '南门枪机摄像头', deviceCode: 'DS-2CD12346-I5', channelNo: 2, location: '项目南门入口', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '李保安', adminPhone: '13800138001', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.62:554/Streaming/Channels/101', remark: 'DS-2CD3T46WD-I3' },
+  { id: 3, name: '东门枪机摄像头', deviceCode: 'DS-2CD12347-I5', channelNo: 3, location: '项目东门入口', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '王保安', adminPhone: '13800138002', status: 'offline', type: 'bullet', rtspUrl: 'rtsp://192.168.1.63:554/Streaming/Channels/101', remark: '设备离线' },
+  { id: 4, name: '西门枪机摄像头', deviceCode: 'DS-2CD12348-I5', channelNo: 4, location: '项目西门入口', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '王保安', adminPhone: '13800138002', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.64:554/Streaming/Channels/101', remark: 'DS-2CD3T46WD-I3' },
+  { id: 5, name: '塔吊球机摄像头', deviceCode: 'DS-2DE4325', channelNo: 5, location: '1号塔吊', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '起重工队', admin: '张起重', adminPhone: '13800138003', status: 'online', type: 'dome', rtspUrl: 'rtsp://192.168.1.65:554/Streaming/Channels/101', remark: '23倍光学变倍球机' },
+  { id: 6, name: '钢筋加工区球机', deviceCode: 'DS-2DE4326', channelNo: 6, location: '钢筋加工区', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '刘钢筋', adminPhone: '13800138004', status: 'online', type: 'dome', rtspUrl: 'rtsp://192.168.1.66:554/Streaming/Channels/101', remark: '球机摄像头' },
+  { id: 7, name: '木工加工区枪机', deviceCode: 'DS-2CD12349-I5', channelNo: 7, location: '木工加工区', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '陈木工', adminPhone: '13800138005', status: 'fault', type: 'bullet', rtspUrl: 'rtsp://192.168.1.67:554/Streaming/Channels/101', remark: '图像异常需维修' },
+  { id: 8, name: '混凝土搅拌区枪机', deviceCode: 'DS-2CD12350-I5', channelNo: 8, location: '混凝土搅拌区', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '王搅拌', adminPhone: '13800138006', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.68:554/Streaming/Channels/101', remark: '' },
+  { id: 9, name: '宿舍区枪机摄像头', deviceCode: 'DS-2CD12351-I5', channelNo: 9, location: '工人宿舍区', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '后勤组', admin: '赵后勤', adminPhone: '13800138007', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.69:554/Streaming/Channels/101', remark: '' },
+  { id: 10, name: '食堂区枪机摄像头', deviceCode: 'DS-2CD12352-I5', channelNo: 10, location: '工人食堂', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '后勤组', admin: '赵后勤', adminPhone: '13800138007', status: 'online', type: 'bullet', rtspUrl: 'rtsp://192.168.1.70:554/Streaming/Channels/101', remark: '' },
+  { id: 11, name: '办公区球机', deviceCode: 'DS-2DE4327', channelNo: 11, location: '办公楼大厅', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '行政组', admin: '孙行政', adminPhone: '13800138008', status: 'online', type: 'dome', rtspUrl: 'rtsp://192.168.1.71:554/Streaming/Channels/101', remark: '' },
+  { id: 12, name: '仓库区枪机', deviceCode: 'DS-2CD12353-I5', channelNo: 12, location: '材料仓库', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '材料组', admin: '周材料', adminPhone: '13800138009', status: 'offline', type: 'bullet', rtspUrl: 'rtsp://192.168.1.72:554/Streaming/Channels/101', remark: '电源故障' },
+  { id: 13, name: '基坑全景球机', deviceCode: 'DS-2DE4328', channelNo: 13, location: '深基坑', company: '默认分公司', projectId: 1, projectName: '默认项目', team: '土建工队', admin: '吴安全', adminPhone: '13800138010', status: 'maintaining', type: 'dome', rtspUrl: 'rtsp://192.168.1.73:554/Streaming/Channels/101', remark: '维修中-云台故障' },
+];
+
 export default function CameraManagement() {
-const [cameras, setCameras] = useState<Camera[]>([]);
+const [cameras, setCameras] = useState<Camera[]>(SQL_CAMERAS);
 
 const fetchCameras = async () => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/devices`);
-    const data = await response.json();
-    const camerasData = data.map((device: any) => ({
-      id: device.id,
-      name: device.name,
-      deviceCode: device.device_code,
-      channelNo: 1,
-      location: device.install_location || '',
-      company: device.company,
-      projectId: device.project_id || 1,
-      projectName: device.project,
-      team: device.team || '土建工队',
-      status: device.status === 1 ? 'online' : 'offline',
-      type: device.device_type,
-      remark: device.remark,
-      rtspUrl: device.rtsp_url
-    }));
-    if (camerasData.length > 0) {
-      setCameras(camerasData);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/devices`);
+      if (response.ok) {
+        const data = await response.json();
+        const apiData = Array.isArray(data) ? data : data.value || data.data || [];
+        if (apiData.length > 3) {
+          const realCameras = apiData.map((device: any) => ({
+            id: device.id,
+            name: device.name,
+            deviceCode: device.device_code,
+            channelNo: 1,
+            location: device.install_location || '',
+            company: '默认分公司',
+            projectId: 1,
+            projectName: '默认项目',
+            team: '土建工队',
+            admin: '管理员',
+            adminPhone: '13800138000',
+            status: device.status === 1 ? 'online' : 'offline',
+            type: device.device_type,
+            rtspUrl: device.rtsp_url
+          }));
+          
+          const ezvizCamera = {
+            id: 999,
+            name: '海康球机摄像头1号',
+            deviceCode: 'GM7974925',
+            channelNo: 1,
+            location: '施工现场',
+            company: '默认分公司',
+            projectId: 1,
+            projectName: '默认项目',
+            team: '土建工队',
+            admin: '管理员',
+            adminPhone: '13800138000',
+            status: 'online' as const,
+            type: 'dome' as const,
+            rtspUrl: 'ezviz://GM7974925',
+            remark: '萤石云设备'
+          };
+          
+          setCameras([ezvizCamera, ...realCameras]);
+        }
+      }
+    } catch (error) {
+      console.error('获取摄像头列表失败:', error);
     }
-  } catch (error) {
-    console.error('获取摄像头列表失败:', error);
-  }
-};
+  };
 
 useEffect(() => {
-  // 默认数据
-  const defaultCameras = [
-    { id: 1, name: '塔吊1号摄像头', deviceCode: 'CAM-001', channelNo: 1, location: '西塔塔吊', company: '第一分公司', projectId: 1, projectName: '地铁8号线', team: '土建工队', admin: '李工', adminPhone: '13900139001', status: 'online', type: 'dome', rtspUrl: '' },
-    { id: 2, name: '大门出入口', deviceCode: 'CAM-002', channelNo: 2, location: '工地主入口', company: '第一分公司', projectId: 1, projectName: '地铁8号线', team: '安全工队', admin: '王工', adminPhone: '13900139002', status: 'online', type: 'bullet', rtspUrl: '' },
-    { id: 3, name: '钢筋加工区', deviceCode: 'CAM-003', channelNo: 3, location: '钢筋棚', company: '第二分公司', projectId: 2, projectName: '商业综合体', team: '机电工队', admin: '张工', adminPhone: '13900139003', status: 'offline', type: 'bullet', rtspUrl: '' },
-    { id: 4, name: '模板作业区', deviceCode: 'CAM-004', channelNo: 4, location: '东区模板场', company: '第二分公司', projectId: 2, projectName: '商业综合体', team: '土建工队', admin: '刘工', adminPhone: '13900139004', status: 'online', type: 'dome', rtspUrl: '' },
-  ];
-  setCameras(defaultCameras);
   fetchCameras();
 }, []);
 

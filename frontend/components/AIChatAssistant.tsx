@@ -20,7 +20,7 @@ const AIChatAssistant: React.FC = () => {
     {
       id: 1,
       role: 'assistant',
-      content: '您好！我是智能助手，请问有什么可以帮助您的？\n\n💡 提示：请确保后端服务已启动：\ncd backend/LargeLanguageModel\npython main.py',
+      content: '您好！我是一名专业的工地管理智能助手，请问有什么可以帮助您的？',
       timestamp: new Date(),
     },
   ]);
@@ -194,7 +194,7 @@ const AIChatAssistant: React.FC = () => {
       const errorMessage: Message = {
         id: Date.now() + 1,
         role: 'assistant',
-        content: `❌ 连接失败\n\n错误原因: ${errorDetails}\n\n🔧 排查步骤:\n1️⃣ 确认已启动服务: python main.py\n2️⃣ 服务地址: ${settings.serviceUrl}\n3️⃣ 检查端口 8888 是否被占用\n4️⃣ 按 F12 打开控制台查看详细错误`,
+        content: `❌ 连接失败\n\n错误原因: ${errorDetails}\n\n🔧 排查步骤:\n1️⃣ 确认主后端已启动 (端口 9000)\n2️⃣ 服务已集成，无需单独启动 LLM 服务!\n3️⃣ 按 F12 打开控制台查看详细错误\n\n💡 AI 助手已集成到主后端!`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);

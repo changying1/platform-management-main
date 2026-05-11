@@ -46,6 +46,7 @@ from app.controllers import (
     project_controller,
     backup_controller,
     personnel_controller,
+    llm_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -293,55 +294,18 @@ app.include_router(dashboard_controller.router)
 app.include_router(auth_controller.router)
 app.include_router(project_controller.router)
 app.include_router(backup_controller.router)
+app.include_router(llm_controller.router)
 
-LLM_SERVICE_URL = "http://localhost:8888"
+print("=" * 60)
+print("✅ AI 助手服务已集成到主后端!")
+print("📡 接口地址: http://localhost:9000/api/ai")
+print("🔍 健康检查: http://localhost:9000/api/ai/health")
+print("=" * 60)
 
-@app.api_route("/api/ai/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_llm_service(request: Request, path: str):
-    """将 /api/ai/* 请求转发到 LLM 服务"""
-    timeout = httpx.Timeout(60.0, connect=10.0)
-    
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        url = f"{LLM_SERVICE_URL}/{path}"
-        
-        try:
-            query_params = dict(request.query_params)
-            
-            if request.method == "POST" and request.headers.get("content-type", "").startswith("multipart/form-data"):
-                form = await request.form()
-                files = {}
-                data = {}
-                for key, value in form.items():
-                    if hasattr(value, 'file') and value.file:
-                        files[key] = (value.filename, await value.read(), value.content_type)
-                    else:
-                        data[key] = value
-                
-                response = await client.request(
-                    method=request.method,
-                    url=url,
-                    params=query_params,
-                    files=files if files else None,
-                    data=data if data else None,
-                )
-            else:
-                body = await request.body()
-                response = await client.request(
-                    method=request.method,
-                    url=url,
-                    params=query_params,
-                    content=body,
-                    headers={key: value for key, value in request.headers.items() if key.lower() not in ["host", "content-length"]},
-                )
-            
-            return StreamingResponse(
-                response.aiter_bytes(),
-                status_code=response.status_code,
-                headers=dict(response.headers),
-            )
-            
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="LLM 服务未启动，请先启动 LargeLanguageModel/main.py")
+# LLM_SERVICE_URL = "http://localhost:8888"  # 已集成，无需转发
+
+# LLM 服务已集成到主后端，无需代理转发
+# 原代理代码已注释，直接由 llm_controller 处理
 
 @app.get("/")
 def root():
