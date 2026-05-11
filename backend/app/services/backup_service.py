@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from pathlib import Path
+from urllib.parse import urlparse, unquote
 import threading
 import time
 import json
@@ -15,8 +16,16 @@ logger = get_logger("BackupService")
 
 
 class BackupTarget:
-    def __init__(self, target_type: str, path: str, name: str, enabled: bool = True, config: Dict = None):
-        self.type = target_type  # local, s3, aliyun, tencent
+    def __init__(
+        self,
+        target_type: str = None,
+        path: str = "",
+        name: str = "",
+        enabled: bool = True,
+        config: Dict = None,
+        type: str = None,
+    ):
+        self.type = target_type or type  # local, s3, aliyun, tencent
         self.path = path
         self.name = name
         self.enabled = enabled
@@ -179,19 +188,158 @@ class BackupService:
                 time.sleep(60)
 
     def _get_backup_config(self) -> Dict:
-        try:
-            settings_path = "./storage/system_settings.json"
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except:
-            pass
+        for settings_path in self._get_settings_paths():
+            try:
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+            except Exception as e:
+                logger.warning(f"读取备份配置失败 {settings_path}: {e}")
+
         return {
             "autoBackup": True,
             "backupFrequency": "daily",
             "backupTime": "02:00",
             "backupRetention": 7
         }
+
+    def _get_settings_paths(self) -> List[str]:
+        backend_root = Path(__file__).resolve().parents[2]
+        project_root = backend_root.parent
+        return [
+            str(backend_root / "system_config.json"),
+            str(project_root / "storage" / "system_settings.json"),
+            str(backend_root / "storage" / "system_settings.json"),
+            os.path.join("./storage", "system_settings.json"),
+        ]
+
+    def _get_mysql_config(self) -> Dict[str, str]:
+        config = {
+            "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
+            "port": os.getenv("MYSQL_PORT", "3306"),
+            "user": os.getenv("MYSQL_USER", "root"),
+            "password": os.getenv("MYSQL_PASSWORD", "123456"),
+            "database": os.getenv("MYSQL_DATABASE", "company-management"),
+        }
+
+        try:
+            from app.core.database import SQLALCHEMY_DATABASE_URL
+
+            parsed = urlparse(SQLALCHEMY_DATABASE_URL)
+            config.update({
+                "host": parsed.hostname or config["host"],
+                "port": str(parsed.port or config["port"]),
+                "user": unquote(parsed.username or config["user"]),
+                "password": unquote(parsed.password or config["password"]),
+                "database": unquote(parsed.path.lstrip("/") or config["database"]),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to read SQLAlchemy database URL for backup config: {e}")
+
+        return config
+
+    def _find_mysql_client(self, executable: str) -> str:
+        client = shutil.which(executable) or executable
+        mysql_home = os.getenv("MYSQL_HOME", "")
+        if client == executable and mysql_home:
+            candidate = os.path.join(mysql_home, "bin", f"{executable}.exe")
+            if os.path.exists(candidate):
+                return candidate
+        return client
+
+    def create_mysql_backup(self) -> Dict:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"mysql_backup_{timestamp}.sql.gz"
+        backup_path = os.path.join(self.backup_root, filename)
+
+        try:
+            os.makedirs(self.backup_root, exist_ok=True)
+            db_config = self._get_mysql_config()
+            cmd = [
+                self._find_mysql_client("mysqldump"),
+                f"--host={db_config['host']}",
+                f"--port={db_config['port']}",
+                f"--user={db_config['user']}",
+                f"--password={db_config['password']}",
+                "--default-character-set=utf8mb4",
+                "--single-transaction",
+                "--quick",
+                "--force",
+                "--ignore-table={}.v_personnel_stats".format(db_config["database"]),
+                db_config["database"],
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            if result.returncode != 0:
+                error_text = (result.stderr or result.stdout or "").strip()
+                raise Exception(error_text[:500] or f"mysqldump exited with code {result.returncode}")
+
+            with gzip.open(backup_path, "wt", encoding="utf-8") as f:
+                f.write(result.stdout)
+
+            final_size = os.path.getsize(backup_path)
+            self._replicate_to_targets(backup_path)
+            self._cleanup_old_backups()
+            logger.info(f"MySQL 备份完成: {filename}")
+            return {
+                "success": True,
+                "filename": filename,
+                "message": f"MySQL 备份完成: {filename} ({final_size / 1024 / 1024:.1f} MB)",
+            }
+        except Exception as e:
+            logger.error(f"MySQL 备份失败: {e}")
+            try:
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "message": (
+                    "MySQL 备份失败: "
+                    f"{str(e)}。请确认 mysqldump 在 PATH 中，或设置 MYSQL_HOME；"
+                    "同时确认 MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE 与当前数据库一致。"
+                ),
+            }
+
+    def create_config_backup(self) -> Optional[str]:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"config_backup_{timestamp}.tar.gz"
+        backup_path = os.path.join(self.backup_root, filename)
+        extract_dir = os.path.join(self.backup_root, f"_config_backup_{timestamp}")
+
+        try:
+            os.makedirs(extract_dir, exist_ok=True)
+
+            for settings_path in self._get_settings_paths():
+                if os.path.exists(settings_path):
+                    shutil.copy2(settings_path, os.path.join(extract_dir, os.path.basename(settings_path)))
+
+            targets_path = self.targets_file
+            if os.path.exists(targets_path):
+                shutil.copy2(targets_path, os.path.join(extract_dir, "backup_targets.json"))
+
+            try:
+                from app.services.video_service import VideoService
+
+                with open(os.path.join(extract_dir, "storage_paths.json"), "w", encoding="utf-8") as f:
+                    json.dump(VideoService().get_storage_paths(), f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning(f"导出视频存储路径失败: {e}")
+
+            import tarfile
+            with tarfile.open(backup_path, "w:gz") as tar:
+                tar.add(extract_dir, arcname=".")
+
+            self._replicate_to_targets(backup_path)
+            self._cleanup_old_backups()
+            logger.info(f"配置备份完成: {filename}")
+            return filename
+        except Exception as e:
+            logger.error(f"配置备份失败: {e}")
+            return None
+        finally:
+            shutil.rmtree(extract_dir, ignore_errors=True)
 
     def create_full_backup(self) -> Dict:
         if self._running_backup:
@@ -211,25 +359,19 @@ class BackupService:
             
             logger.info("开始完整备份...")
 
-            db_host = "127.0.0.1"
-            db_port = "3306"
-            db_user = "root"
-            db_pass = "1234"
-            db_name = "company-management"
-            
-            mysqldump_cmd = shutil.which("mysqldump") or "mysqldump"
+            db_config = self._get_mysql_config()
             cmd = [
-                mysqldump_cmd,
-                f"--host={db_host}",
-                f"--port={db_port}",
-                f"--user={db_user}",
-                f"--password={db_pass}",
+                self._find_mysql_client("mysqldump"),
+                f"--host={db_config['host']}",
+                f"--port={db_config['port']}",
+                f"--user={db_config['user']}",
+                f"--password={db_config['password']}",
                 "--default-character-set=utf8mb4",
                 "--single-transaction",
                 "--quick",
                 "--force",
-                "--ignore-table={}.v_personnel_stats".format(db_name),
-                db_name
+                "--ignore-table={}.v_personnel_stats".format(db_config["database"]),
+                db_config["database"]
             ]
             
             result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
@@ -242,9 +384,9 @@ class BackupService:
             logger.info("MySQL 数据库已导出")
             
             import json
-            from app.services.video_service import video_service
+            from app.services.video_service import VideoService
             
-            storage_config = video_service.get_storage_paths()
+            storage_config = VideoService().get_storage_paths()
             with open(os.path.join(extract_dir, "storage_paths.json"), 'w', encoding='utf-8') as f:
                 json.dump(storage_config, f, indent=2, ensure_ascii=False)
             
@@ -410,21 +552,15 @@ class BackupService:
             
             db_sql = os.path.join(extract_dir, "database.sql")
             if os.path.exists(db_sql):
-                db_host = "127.0.0.1"
-                db_port = "3306"
-                db_user = "root"
-                db_pass = "1234"
-                db_name = "company-management"
-                
-                mysql_cmd = shutil.which("mysql") or "mysql"
+                db_config = self._get_mysql_config()
                 cmd = [
-                    mysql_cmd,
-                    f"--host={db_host}",
-                    f"--port={db_port}",
-                    f"--user={db_user}",
-                    f"--password={db_pass}",
+                    self._find_mysql_client("mysql"),
+                    f"--host={db_config['host']}",
+                    f"--port={db_config['port']}",
+                    f"--user={db_config['user']}",
+                    f"--password={db_config['password']}",
                     "--default-character-set=utf8mb4",
-                    db_name
+                    db_config["database"]
                 ]
                 
                 with open(db_sql, 'r', encoding='utf-8') as f:
@@ -436,7 +572,7 @@ class BackupService:
                 logger.info("MySQL 数据库已恢复")
             
             import json
-            from app.services.video_service import video_service
+            from app.services.video_service import VideoService
             
             storage_cfg = os.path.join(extract_dir, "storage_paths.json")
             if os.path.exists(storage_cfg):
@@ -451,7 +587,7 @@ class BackupService:
                     paths = []
 
                 for sp in paths:
-                    video_service.add_storage_path(sp)
+                    VideoService().add_storage_path(sp)
                 logger.info("存储路径配置已恢复")
             
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -490,22 +626,15 @@ class BackupService:
                 with open(sql_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
             
-            db_host = "127.0.0.1"
-            db_port = "3306"
-            db_user = "root"
-            db_pass = "1234"
-            db_name = "company-management"
-            
-            mysql_cmd = shutil.which("mysql") or "mysql"
-            
+            db_config = self._get_mysql_config()
             cmd = [
-                mysql_cmd,
-                f"--host={db_host}",
-                f"--port={db_port}",
-                f"--user={db_user}",
-                f"--password={db_pass}",
+                self._find_mysql_client("mysql"),
+                f"--host={db_config['host']}",
+                f"--port={db_config['port']}",
+                f"--user={db_config['user']}",
+                f"--password={db_config['password']}",
                 "--default-character-set=utf8mb4",
-                db_name
+                db_config["database"]
             ]
             
             with open(sql_path, 'r', encoding='utf-8') as f:

@@ -38,6 +38,43 @@ export interface Video {
   longitude?: number;
 }
 
+export interface KeyboardSwitchRequest {
+  status: string;
+  pending: boolean;
+  request_id: number;
+  video_id: number | null;
+  created_at: number;
+  consumed: boolean;
+}
+
+export async function getKeyboardSwitchRequest(): Promise<KeyboardSwitchRequest | null> {
+  try {
+    const response = await fetch('http://127.0.0.1:52382/keyboard/switch-request', {
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function acknowledgeKeyboardSwitchRequest(requestId: number): Promise<void> {
+  try {
+    await fetch('http://127.0.0.1:52382/keyboard/switch-request/ack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId }),
+    });
+  } catch {
+    // Keyboard bridge may be closed; this should not block the video page.
+  }
+}
+
 // 对应后端的 VideoCreate schema (创建时提交的数据)
 export interface VideoCreate {
   name: string;

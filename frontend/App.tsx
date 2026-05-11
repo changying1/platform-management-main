@@ -38,6 +38,20 @@ import VideoPlayback from './views/VideoPlayback';
 import ManagementPanel from './views/ManagementPanel';
 import SystemLog from './views/SystemLog';
 import AIChatAssistant from './components/AIChatAssistant';
+import { API_BASE_URL } from './src/api/config';
+
+declare global {
+  interface Window {
+    showFenceAlarm?: (
+      deviceName: string,
+      violationType: string,
+      fenceName: string,
+      level?: 'low' | 'medium' | 'high',
+      alarmTitle?: string
+    ) => void;
+    playAlarmSound?: (level?: 'low' | 'medium' | 'high', loop?: boolean) => void;
+  }
+}
 
 // --------------------
 // ✅ 登录接口地址（你后端真实路径）
@@ -545,6 +559,48 @@ const Header = ({ onLogout }: { onLogout: () => void }) => {
 );
 };
 
+const getGlobalAlarmWebSocketUrl = () => {
+  try {
+    const apiUrl = new URL(API_BASE_URL);
+    const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${apiUrl.host}/ws/alarm`;
+  } catch {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${window.location.hostname}:9000/ws/alarm`;
+  }
+};
+
+const getAlarmLevel = (severity?: unknown): 'low' | 'medium' | 'high' => {
+  const normalized = String(severity || '').toLowerCase();
+  if (normalized === 'high' || normalized === 'severe' || normalized === 'critical') return 'high';
+  if (normalized === 'low') return 'low';
+  return 'medium';
+};
+
+const normalizeRealtimeAlarm = (raw: any) => {
+  const payload = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) || {};
+  const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+  const firstBox = boxes[0] || {};
+
+  const type = String(firstBox.type || payload.type || payload.alarm_type || '').trim();
+  const message = String(firstBox.msg || payload.msg || payload.description || type || '').trim();
+  const deviceName = String(payload.device_name || payload.device_id || '报警设备').trim();
+  const location = String(payload.fence_name || payload.location || '系统报警').trim();
+  const level = getAlarmLevel(payload.severity || payload.level || firstBox.severity);
+
+  if (!type && !message && !payload.alarm && !payload.id && boxes.length === 0) {
+    return null;
+  }
+
+  return {
+    type: type || '报警',
+    message: message || '检测到报警事件',
+    deviceName,
+    location,
+    level,
+  };
+};
+
 // --- Main App Component ---
 export default function App() {
   const [activeMenu, setActiveMenu] = useState<MenuKey>(MenuKey.DASHBOARD);
@@ -568,6 +624,67 @@ export default function App() {
     localStorage.removeItem('username');
     setIsLoggedIn(false);
   };
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let ws: WebSocket | null = null;
+
+    const connect = () => {
+      if (disposed) return;
+
+      try {
+        ws = new WebSocket(getGlobalAlarmWebSocketUrl());
+
+        ws.onmessage = (event) => {
+          let data: any = null;
+          try {
+            data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          } catch {
+            return;
+          }
+
+          const alarm = normalizeRealtimeAlarm(data);
+          if (!alarm) return;
+
+          if (window.showFenceAlarm) {
+            window.showFenceAlarm(
+              alarm.deviceName,
+              alarm.message,
+              alarm.location,
+              alarm.level,
+              alarm.type
+            );
+          } else if (window.playAlarmSound) {
+            window.playAlarmSound(alarm.level, true);
+          }
+        };
+
+        ws.onclose = () => {
+          if (disposed) return;
+          reconnectTimer = setTimeout(connect, 2000);
+        };
+
+        ws.onerror = () => {
+          ws?.close();
+        };
+      } catch {
+        reconnectTimer = setTimeout(connect, 2000);
+      }
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      ws?.close();
+    };
+  }, [isLoggedIn]);
 
   if (!isLoggedIn) {
     return <LoginView onLogin={() => setIsLoggedIn(true)} />;

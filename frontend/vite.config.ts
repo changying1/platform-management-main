@@ -16,6 +16,14 @@ export default defineConfig(({ mode }) => {
           target: "http://127.0.0.1:9000",
           changeOrigin: true,
         },
+        "/admin": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
+        "/alarms": {
+          target: "http://127.0.0.1:9000",
+          changeOrigin: true,
+        },
       },
     },
 

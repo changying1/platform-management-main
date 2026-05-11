@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+﻿from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, List
@@ -42,10 +42,10 @@ async def list_backups():
 
 @router.post("/create/mysql")
 async def create_mysql_backup():
-    filename = backup_service.create_mysql_backup()
-    if filename:
-        return {"success": True, "filename": filename}
-    raise HTTPException(status_code=500, detail="MySQL 备份失败")
+    result = backup_service.create_mysql_backup()
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=500, detail=result.get("message", "MySQL backup failed"))
 
 
 @router.post("/create/config")
@@ -53,7 +53,7 @@ async def create_config_backup():
     filename = backup_service.create_config_backup()
     if filename:
         return {"success": True, "filename": filename}
-    raise HTTPException(status_code=500, detail="配置备份失败")
+    raise HTTPException(status_code=500, detail="閰嶇疆澶囦唤澶辫触")
 
 
 @router.post("/create/full")
@@ -95,8 +95,8 @@ async def download_backup(filename: str):
 @router.post("/restore/{filename}")
 async def restore_backup(filename: str):
     if backup_service.restore_mysql_backup(filename):
-        return {"success": True, "message": "恢复成功"}
-    raise HTTPException(status_code=500, detail="恢复失败")
+        return {"success": True, "message": "鎭㈠鎴愬姛"}
+    raise HTTPException(status_code=500, detail="鎭㈠澶辫触")
 
 
 @router.get("/targets")
@@ -107,21 +107,21 @@ async def get_backup_targets():
 @router.post("/targets")
 async def add_backup_target(target: BackupTargetCreate):
     if backup_service.add_target(target.type, target.path, target.name, target.config):
-        return {"success": True, "message": "添加成功"}
-    raise HTTPException(status_code=500, detail="添加失败，路径不可访问或权限不足")
+        return {"success": True, "message": "娣诲姞鎴愬姛"}
+    raise HTTPException(status_code=500, detail="娣诲姞澶辫触锛岃矾寰勪笉鍙闂垨鏉冮檺涓嶈冻")
 
 
 @router.delete("/targets/{index}")
 async def delete_backup_target(index: int):
     if backup_service.delete_target(index):
-        return {"success": True, "message": "删除成功"}
+        return {"success": True, "message": "鍒犻櫎鎴愬姛"}
     raise HTTPException(status_code=404, detail="目标不存在")
 
 
 @router.put("/targets/{index}/toggle")
 async def toggle_backup_target(index: int, enabled: bool):
     if backup_service.toggle_target(index, enabled):
-        return {"success": True, "message": "状态已更新"}
+        return {"success": True, "message": "鐘舵€佸凡鏇存柊"}
     raise HTTPException(status_code=404, detail="目标不存在")
 
 
@@ -134,21 +134,21 @@ async def get_storage_paths():
 async def add_storage_path(storage_path: StoragePathCreate):
     config = storage_path.dict()
     if video_service.add_storage_path(config):
-        return {"success": True, "message": f"实时镜像路径添加成功 ({storage_path.type})"}
-    raise HTTPException(status_code=500, detail="添加失败，路径不可访问或权限不足")
+        return {"success": True, "message": f"瀹炴椂闀滃儚璺緞娣诲姞鎴愬姛 ({storage_path.type})"}
+    raise HTTPException(status_code=500, detail="娣诲姞澶辫触锛岃矾寰勪笉鍙闂垨鏉冮檺涓嶈冻")
 
 
 @router.delete("/storage/paths/{index}")
 async def delete_storage_path(index: int):
     if video_service.delete_storage_path(index):
-        return {"success": True, "message": "删除成功"}
+        return {"success": True, "message": "鍒犻櫎鎴愬姛"}
     raise HTTPException(status_code=404, detail="存储路径不存在")
 
 
 @router.post("/storage/paths/{index}/primary")
 async def set_primary_storage(index: int):
     if video_service.set_primary_storage(index):
-        return {"success": True, "message": "主存储已切换，新录像将写入此路径"}
+        return {"success": True, "message": "涓诲瓨鍌ㄥ凡鍒囨崲锛屾柊褰曞儚灏嗗啓鍏ユ璺緞"}
     raise HTTPException(status_code=404, detail="存储路径不存在")
 
 
@@ -163,8 +163,8 @@ async def open_storage_folder(request: Request):
     path = os.path.abspath(os.path.normpath(path))
     if os.path.exists(path):
         subprocess.Popen(f'explorer "{path}"', shell=True)
-        return {"success": True, "message": f"已打开: {path}"}
-    return {"success": False, "message": f"路径不存在: {path}"}
+        return {"success": True, "message": f"宸叉墦寮€: {path}"}
+    return {"success": False, "message": f"璺緞涓嶅瓨鍦? {path}"}
 
 
 @router.get("/browse/folder")
@@ -193,7 +193,7 @@ async def restore_location_from_csv():
 
     backup_dir = "./storage/location_backup"
     if not os.path.exists(backup_dir):
-        return {"success": False, "message": "没有找到轨迹备份文件"}
+        return {"success": False, "message": "娌℃湁鎵惧埌杞ㄨ抗澶囦唤鏂囦欢"}
 
     count = 0
     db = SessionLocal()
@@ -229,9 +229,10 @@ async def restore_location_from_csv():
                         pass
         
         db.commit()
-        return {"success": True, "message": f"已从 CSV 恢复 {count} 条定位轨迹数据！"}
+        return {"success": True, "message": f"宸蹭粠 CSV 鎭㈠ {count} 鏉″畾浣嶈建杩规暟鎹紒"}
     except Exception as e:
         db.rollback()
-        return {"success": False, "message": f"恢复失败: {str(e)}"}
+        return {"success": False, "message": f"鎭㈠澶辫触: {str(e)}"}
     finally:
         db.close()
+

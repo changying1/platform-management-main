@@ -57,6 +57,7 @@ interface SystemSettings {
   alarmRetentionDays: number;
   alarmSevereFlash: boolean;
   alarmSevereUpgrade: 'sound' | 'voice' | 'call' | 'sms';
+  alarmVolume: number;
   
   // 告警分级开关
   alarmSosEnabled: boolean;
@@ -269,28 +270,11 @@ export default function SettingsView() {
     region: ''
   });
   const [storagePaths, setStoragePaths] = useState<any[]>([]);
-  const [backupFiles, setBackupFiles] = useState<any[]>([
-    { filename: 'full_backup_20250421_143022.tar.gz', date: '2025-04-21 14:30', size: '15.2 MB', type: '完整备份' },
-    { filename: 'full_backup_20250420_220000.tar.gz', date: '2025-04-20 22:00', size: '14.8 MB', type: '定时备份' },
-    { filename: 'full_backup_20250419_181533.tar.gz', date: '2025-04-19 18:15', size: '13.5 MB', type: '手动备份' },
-  ]);
+  const [backupFiles, setBackupFiles] = useState<any[]>([]);
   
   useEffect(() => {
-    fetch('/api/backup/storage/paths')
-      .then(res => res.json())
-      .then(paths => {
-        console.log('加载存储路径:', paths);
-        setStoragePaths(paths);
-      });
-    
-    fetch('/api/backup/list')
-      .then(res => res.json())
-      .then(files => {
-        console.log('加载备份文件:', files);
-        if (files && files.length > 0) {
-          setBackupFiles(files);
-        }
-      });
+    refreshStoragePaths();
+    refreshBackupFiles();
   }, []);
 
   const refreshStoragePaths = () => {
@@ -298,7 +282,20 @@ export default function SettingsView() {
       .then(res => res.json())
       .then(paths => {
         console.log('刷新存储路径:', paths);
-        setStoragePaths(paths);
+        setStoragePaths(Array.isArray(paths) ? paths : []);
+      });
+  };
+
+  const refreshBackupFiles = () => {
+    fetch('/api/backup/list')
+      .then(res => res.json())
+      .then(files => {
+        console.log('加载备份文件:', files);
+        setBackupFiles(Array.isArray(files) ? files : []);
+      })
+      .catch(e => {
+        console.log('加载备份文件失败:', e);
+        setBackupFiles([]);
       });
   };
 
@@ -326,19 +323,6 @@ export default function SettingsView() {
       });
   };
   
-  useEffect(() => {
-    setTimeout(() => {
-      const slider = document.getElementById('alarmVolumeSlider') as HTMLInputElement;
-      const valueText = document.getElementById('alarmVolumeValue');
-      if (slider && valueText) {
-        slider.addEventListener('input', () => {
-          (window as any).alarmVolume = Number(slider.value) / 100;
-          valueText.textContent = slider.value + '%';
-        });
-      }
-    }, 100);
-  }, [activeTab]);
-
   const [settings, setSettings] = useState<SystemSettings>({
     systemName: '中铁一局智能安全管理系统',
     theme: 'dark',
@@ -356,6 +340,7 @@ export default function SettingsView() {
     alarmRetentionDays: 30,
     alarmSevereFlash: true,
     alarmSevereUpgrade: 'sound',
+    alarmVolume: 30,
     alarmSosEnabled: true,
     alarmFenceEnabled: true,
     alarmLowBatteryEnabled: true,
@@ -446,6 +431,7 @@ export default function SettingsView() {
   });
   
   const [saved, setSaved] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordData, setPasswordData] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
   const [showOldPassword, setShowOldPassword] = useState(false);
@@ -473,6 +459,9 @@ export default function SettingsView() {
             ...config,
             aiAlarmLevelConfigs: config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs,
           }));
+          if (typeof config.alarmVolume === 'number') {
+            (window as any).alarmVolume = config.alarmVolume / 100;
+          }
         }
       })
       .catch(() => {
@@ -552,23 +541,35 @@ export default function SettingsView() {
     }
   };
 
+  const showSettingsMessage = (message: string) => {
+    setSettingsMessage(message);
+    setTimeout(() => setSettingsMessage(''), 3000);
+  };
+
   const handleSave = async () => {
     // 同时保存到 localStorage 和后端
     localStorage.setItem('systemSettings', JSON.stringify(settings));
+    (window as any).alarmVolume = (settings.alarmVolume || 0) / 100;
     
     try {
-      await fetch('/admin/settings', {
+      const res = await fetch('/admin/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
     } catch (e) {
+      showSettingsMessage('后端保存失败，已暂存到浏览器本地');
+      return;
       console.log('后端设置保存失败，已保存到本地');
     }
     
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+    showSettingsMessage('设置已保存，并已同步到后端服务');
     console.log('设置已保存:', settings);
   };
 
@@ -588,6 +589,7 @@ export default function SettingsView() {
         alarmRetentionDays: 30,
         alarmSevereFlash: false,
         alarmSevereUpgrade: 'sound',
+        alarmVolume: 30,
         aiAlarmLevelConfigs: [
           { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
           { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
@@ -655,6 +657,15 @@ export default function SettingsView() {
         aiVectorDbPath: './vector_db',
       };
       setSettings(defaultSettings);
+      localStorage.setItem('systemSettings', JSON.stringify(defaultSettings));
+      (window as any).alarmVolume = defaultSettings.alarmVolume / 100;
+      fetch('/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(defaultSettings),
+      })
+        .then(() => showSettingsMessage('已恢复默认设置，并同步到后端'))
+        .catch(() => showSettingsMessage('已恢复默认设置，后端同步失败'));
     }
   };
 
@@ -754,6 +765,11 @@ export default function SettingsView() {
 
         {/* 右侧内容 */}
         <div className="flex-1 bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-6">
+          {(saved || settingsMessage) && (
+            <div className="mb-4 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
+              {settingsMessage || '设置已保存'}
+            </div>
+          )}
           {/* AI 助手设置 */}
           {activeTab === 'ai' && (
             <div className="space-y-4">
@@ -1526,11 +1542,16 @@ export default function SettingsView() {
                         type="range" 
                         min="0" 
                         max="100" 
-                        defaultValue={Math.round((window as any).alarmVolume * 100)}
+                        value={settings.alarmVolume}
+                        onChange={(e) => {
+                          const nextVolume = Number(e.target.value);
+                          setSettings({ ...settings, alarmVolume: nextVolume });
+                          (window as any).alarmVolume = nextVolume / 100;
+                        }}
                         className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                       />
                       <span className="text-slate-500 text-sm">🔊</span>
-                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{Math.round((window as any).alarmVolume * 100)}%</span>
+                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{settings.alarmVolume}%</span>
                     </div>
                   </div>
 
@@ -1540,19 +1561,42 @@ export default function SettingsView() {
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <button
-                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('low'); }}
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'low', description: '系统设置页面低等级告警测试' }),
+                        }).then(() => showSettingsMessage('低等级测试告警已写入后台'));
+                        window.stopAlarmSound && window.stopAlarmSound();
+                        window.playAlarmSound && window.playAlarmSound('low');
+                      }}
                       className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 px-4 rounded-lg transition-all text-sm"
                     >
                       🔵 低等级
                     </button>
                     <button
-                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('medium', true); }}
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'medium', description: '系统设置页面中等级告警测试' }),
+                        }).then(() => showSettingsMessage('中等级测试告警已写入后台'));
+                        window.stopAlarmSound && window.stopAlarmSound();
+                        window.playAlarmSound && window.playAlarmSound('medium', true);
+                      }}
                       className="bg-amber-600 hover:bg-amber-500 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-amber-500/20"
                     >
                       🟡 中等级
                     </button>
                     <button
-                      onClick={() => window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high')}
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'high', description: '系统设置页面高等级告警测试' }),
+                        }).then(() => showSettingsMessage('高等级测试告警已写入后台'));
+                        window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high');
+                      }}
                       className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-red-500/30"
                     >
                       🔴 高等级
@@ -2433,7 +2477,11 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/mysql', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => console.log('MySQL备份结果:', r));
+                          .then(r => {
+                            console.log('MySQL备份结果:', r);
+                            showSettingsMessage(r.success ? '数据库备份已生成' : (r.detail || '数据库备份失败'));
+                            refreshBackupFiles();
+                          });
                       }}
                       className="text-sm bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
                     >
@@ -2443,7 +2491,11 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/config', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => console.log('配置备份结果:', r));
+                          .then(r => {
+                            console.log('配置备份结果:', r);
+                            showSettingsMessage(r.success ? '配置备份已生成' : (r.detail || '配置备份失败'));
+                            refreshBackupFiles();
+                          });
                       }}
                       className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
                     >
@@ -2453,7 +2505,11 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/full', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => console.log('完整备份结果:', r));
+                          .then(r => {
+                            console.log('完整备份结果:', r);
+                            showSettingsMessage(r.success ? '完整备份已生成' : (r.message || '完整备份失败'));
+                            refreshBackupFiles();
+                          });
                       }}
                       className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-amber-500/30 transition-all cursor-pointer"
                     >
@@ -2668,7 +2724,9 @@ export default function SettingsView() {
                           </div>
                           <div>
                             <div className="text-sm text-white font-medium">{bf.filename}</div>
-                            <div className="text-xs text-slate-400">{bf.date} · {bf.size} · {bf.type}</div>
+                            <div className="text-xs text-slate-400">
+                              {(bf.date || bf.created_at || '').toString().replace('T', ' ').slice(0, 19)} · {typeof bf.size === 'number' ? `${(bf.size / 1024 / 1024).toFixed(1)} MB` : bf.size} · {bf.type}
+                            </div>
                           </div>
                         </div>
                         <button 
@@ -2680,6 +2738,9 @@ export default function SettingsView() {
                                 body: JSON.stringify({filename: bf.filename})
                               }).then(r => r.json()).then(r => {
                               console.log('恢复结果:', r);
+                              showSettingsMessage(r.success ? '已从备份恢复，请刷新页面确认配置' : (r.message || '恢复失败'));
+                              refreshStoragePaths();
+                              refreshBackupFiles();
                             });
                             }
                           }}

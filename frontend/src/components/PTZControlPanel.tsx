@@ -13,6 +13,8 @@ import {
   Trash2,
   Play,
   Square,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import {
   ptzControl,
@@ -40,12 +42,16 @@ interface PTZControlPanelProps {
   video: Video;
   onError?: (msg: string) => void;
   onSuccess?: (msg: string) => void;
+  isMonitorOnlyMode?: boolean;
+  onToggleMonitorOnlyMode?: () => void;
 }
 
 const PTZControlPanel: React.FC<PTZControlPanelProps> = ({
   video,
   onError,
-  onSuccess
+  onSuccess,
+  isMonitorOnlyMode = false,
+  onToggleMonitorOnlyMode,
 }) => {
   const [isControlling, setIsControlling] = useState(false);
   // 临时停用“变速控制”功能：保留原代码，后续需要时可恢复。
@@ -430,7 +436,21 @@ const handleCreatePreset = async () => {
 };
 
   return (
-    <div className="bg-slate-950/70 rounded-lg shadow-md p-4 select-none text-slate-100 border border-blue-300/25">
+    <div className="bg-slate-950/70 rounded-lg shadow-md p-4 select-none text-slate-100 border border-blue-300/25 [&>h3]:hidden">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold text-cyan-200">PTZ</h3>
+        {onToggleMonitorOnlyMode && (
+          <button
+            type="button"
+            onClick={onToggleMonitorOnlyMode}
+            className="rounded-md border border-cyan-300/25 bg-slate-900/80 p-1.5 text-cyan-200 transition hover:border-cyan-200/60 hover:bg-cyan-400/15 hover:text-white"
+            title={isMonitorOnlyMode ? 'Restore control panel' : 'Collapse control panel'}
+            aria-label={isMonitorOnlyMode ? 'Restore control panel' : 'Collapse control panel'}
+          >
+            {isMonitorOnlyMode ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
+          </button>
+        )}
+      </div>
       <h3 className="text-lg font-semibold mb-4 text-cyan-200">云台控制</h3>
 
       {/* 方向控制键盘 */}

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -36,6 +37,7 @@ PTZ_SPEED = 0.5
 
 # 超时判定：连续多久没再收到方向包，就认为该停止
 ACTION_TIMEOUT_SECONDS = 0.6
+DEVICE_ID_INPUT_TIMEOUT_SECONDS = 10.0
 
 # 请求超时
 HTTP_TIMEOUT_SECONDS = 3
@@ -59,6 +61,8 @@ RIGHT = "right"
 ZOOM_IN = "zoom_in"
 ZOOM_OUT = "zoom_out"
 CRUISE_TOGGLE = "cruise_toggle"
+DEVICE_ID_INPUT_BEGIN = "device_id_input_begin"
+DEVICE_ID_INPUT_CONFIRM = "device_id_input_confirm"
 
 VALID_ACTIONS = {IDLE, UP, DOWN, LEFT, RIGHT, ZOOM_IN, ZOOM_OUT, CRUISE_TOGGLE}
 
@@ -71,8 +75,23 @@ class PTZState:
     last_raw_hex: str = ""
 
 
+@dataclass
+class DeviceIdInputState:
+    active: bool = False
+    buffer: str = ""
+    updated_at: float = 0.0
+
+
 state = PTZState()
 state_lock = threading.Lock()
+device_id_input_state = DeviceIdInputState()
+device_id_input_lock = threading.Lock()
+
+switch_request_lock = threading.Lock()
+switch_request_id = 0
+switch_request_video_id: Optional[int] = None
+switch_request_created_at = 0.0
+switch_request_consumed = True
 
 # 复用连接
 http = requests.Session()
@@ -86,6 +105,114 @@ def set_current_video_id(video_id: int):
     global current_video_id
     with current_video_id_lock:
         current_video_id = video_id
+
+
+def begin_device_id_input():
+    with device_id_input_lock:
+        device_id_input_state.active = True
+        device_id_input_state.buffer = ""
+        device_id_input_state.updated_at = time.time()
+    log("DEVICE_SWITCH input begin")
+
+
+def append_device_id_digit(digit: int):
+    if digit < 0 or digit > 9:
+        return
+
+    with device_id_input_lock:
+        if not device_id_input_state.active:
+            return
+        if len(device_id_input_state.buffer) >= 8:
+            log("DEVICE_SWITCH digit ignored: buffer too long")
+            return
+        device_id_input_state.buffer += str(digit)
+        device_id_input_state.updated_at = time.time()
+        buffered = device_id_input_state.buffer
+
+    log(f"DEVICE_SWITCH digit={digit}, buffer={buffered}")
+
+
+def is_device_id_input_active() -> bool:
+    with device_id_input_lock:
+        if (
+            device_id_input_state.active and
+            time.time() - device_id_input_state.updated_at > DEVICE_ID_INPUT_TIMEOUT_SECONDS
+        ):
+            log(f"DEVICE_SWITCH input timeout, buffer={device_id_input_state.buffer!r}")
+            device_id_input_state.active = False
+            device_id_input_state.buffer = ""
+            device_id_input_state.updated_at = time.time()
+        return device_id_input_state.active
+
+
+def publish_device_switch_request(video_id: int):
+    global switch_request_id, switch_request_video_id, switch_request_created_at, switch_request_consumed
+
+    set_current_video_id(video_id)
+    with switch_request_lock:
+        switch_request_id += 1
+        switch_request_video_id = video_id
+        switch_request_created_at = time.time()
+        switch_request_consumed = False
+
+    log(f"DEVICE_SWITCH request published request_id={switch_request_id}, video_id={video_id}")
+
+
+def confirm_device_id_input():
+    with device_id_input_lock:
+        if (
+            device_id_input_state.active and
+            time.time() - device_id_input_state.updated_at > DEVICE_ID_INPUT_TIMEOUT_SECONDS
+        ):
+            log(f"DEVICE_SWITCH confirm ignored: input timeout, buffer={device_id_input_state.buffer!r}")
+            device_id_input_state.active = False
+            device_id_input_state.buffer = ""
+            device_id_input_state.updated_at = time.time()
+            return
+        if not device_id_input_state.active:
+            log("DEVICE_SWITCH confirm ignored: not in input mode")
+            return
+        raw = device_id_input_state.buffer.strip()
+        device_id_input_state.active = False
+        device_id_input_state.buffer = ""
+        device_id_input_state.updated_at = time.time()
+
+    if not raw:
+        log("DEVICE_SWITCH confirm ignored: empty video_id")
+        return
+
+    try:
+        video_id = int(raw)
+    except ValueError:
+        log(f"DEVICE_SWITCH confirm failed: invalid video_id={raw!r}")
+        return
+
+    if video_id <= 0:
+        log(f"DEVICE_SWITCH confirm failed: video_id must be positive, got={video_id}")
+        return
+
+    publish_device_switch_request(video_id)
+
+
+def get_device_switch_request_payload() -> dict:
+    with switch_request_lock:
+        return {
+            "status": "ok",
+            "pending": bool(switch_request_video_id and not switch_request_consumed),
+            "request_id": switch_request_id,
+            "video_id": switch_request_video_id,
+            "created_at": switch_request_created_at,
+            "consumed": switch_request_consumed,
+        }
+
+
+def acknowledge_device_switch_request(request_id: int):
+    global switch_request_consumed
+    with switch_request_lock:
+        if request_id == switch_request_id:
+            switch_request_consumed = True
+            return True
+    return False
 
 
 def build_ptz_start_url(video_id: int) -> str:
@@ -542,6 +669,64 @@ def classify_cruise_packet(data: bytes) -> Optional[str]:
 
     return None
 
+
+def classify_device_id_control_packet(data: bytes) -> Optional[str]:
+    """
+    Match keyboard device-switch buttons from the UDP captures.
+
+    Observed 14-byte payload tails:
+      81 01 04 35 01/03/04 ff -> begin camera number input
+      81 01 04 10 05 ff -> finish input and switch to buffered camera id
+    """
+    if len(data) < 6:
+        return None
+
+    tail = data[-6:]
+
+    if (
+        tail[0] == 0x81 and
+        tail[1] == 0x01 and
+        tail[2] == 0x04 and
+        tail[3] == 0x35 and
+        tail[4] in {0x01, 0x03, 0x04} and
+        tail[5] == 0xFF
+    ):
+        return DEVICE_ID_INPUT_BEGIN
+
+    if tail == bytes.fromhex("81 01 04 10 05 ff"):
+        return DEVICE_ID_INPUT_CONFIRM
+
+    return None
+
+
+def classify_device_id_digit_packet(data: bytes) -> Optional[int]:
+    """
+    Match numeric keys while device-id input mode is active.
+
+    The keyboard sends the same packet shape as preset-call keys:
+      ... 81 01 04 3f 02 nn ff
+
+    Outside device-id input mode this packet is still handled as preset_call.
+    """
+    if len(data) < 7:
+        return None
+
+    tail = data[-7:]
+
+    if (
+        tail[0] == 0x81 and
+        tail[1] == 0x01 and
+        tail[2] == 0x04 and
+        tail[3] == 0x3F and
+        tail[4] == 0x02 and
+        tail[6] == 0xFF
+    ):
+        digit = int(tail[5])
+        if 0 <= digit <= 9:
+            return digit
+
+    return None
+
 # =========================
 # 状态机（仅 PTZ / Zoom 用）
 # =========================
@@ -655,17 +840,24 @@ class KeyboardHttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/keyboard/target":
+        path = urlparse(self.path).path
+
+        if path == "/keyboard/target":
             self._send_json(200, {
                 "video_id": get_current_video_id(),
                 "status": "ok",
             })
             return
 
+        if path == "/keyboard/switch-request":
+            self._send_json(200, get_device_switch_request_payload())
+            return
+
         self._send_json(404, {"detail": "Not Found"})
 
     def do_POST(self):
-        if self.path != "/keyboard/target":
+        path = urlparse(self.path).path
+        if path not in {"/keyboard/target", "/keyboard/switch-request/ack"}:
             self._send_json(404, {"detail": "Not Found"})
             return
 
@@ -675,6 +867,20 @@ class KeyboardHttpHandler(BaseHTTPRequestHandler):
             data = json.loads(raw.decode("utf-8"))
         except Exception:
             self._send_json(400, {"detail": "Invalid JSON"})
+            return
+
+        if path == "/keyboard/switch-request/ack":
+            request_id = data.get("request_id")
+            if not isinstance(request_id, int) or request_id <= 0:
+                self._send_json(400, {"detail": "request_id must be a positive integer"})
+                return
+
+            acknowledged = acknowledge_device_switch_request(request_id)
+            self._send_json(200, {
+                "status": "ok",
+                "acknowledged": acknowledged,
+                "request_id": request_id,
+            })
             return
 
         video_id = data.get("video_id")
@@ -717,6 +923,35 @@ def udp_server():
         if src_ip != KEYBOARD_IP:
             continue
 
+        raw_hex = bytes_to_hex(data)
+
+        # Camera switch by keyboard number input is disabled for now.
+        # The keyboard keeps preset modes latched, so numeric keys should continue
+        # to fall through to preset handling until we choose a different approach.
+        #
+        # device_control_action = classify_device_id_control_packet(data)
+        # if device_control_action == DEVICE_ID_INPUT_BEGIN:
+        #     if DEBUG:
+        #         log(f"matched device id input begin len={len(data)} hex={raw_hex}")
+        #     begin_device_id_input()
+        #     continue
+        #
+        # if device_control_action == DEVICE_ID_INPUT_CONFIRM:
+        #     if DEBUG:
+        #         log(f"matched device id input confirm len={len(data)} hex={raw_hex}")
+        #     confirm_device_id_input()
+        #     continue
+        #
+        # if is_device_id_input_active():
+        #     digit = classify_device_id_digit_packet(data)
+        #     if digit is not None:
+        #         if DEBUG:
+        #             log(f"matched device id digit={digit} len={len(data)} hex={raw_hex}")
+        #         append_device_id_digit(digit)
+        #         continue
+        #     if DEBUG:
+        #         log(f"device id input active, digit packet not matched len={len(data)} hex={raw_hex}")
+
         action = classify_packet(data)
         if action is None:
             action = classify_zoom_packet(data)
@@ -724,8 +959,6 @@ def udp_server():
             action = classify_preset_packet(data)
         if action is None:
             action = classify_cruise_packet(data)
-
-        raw_hex = bytes_to_hex(data)
 
         if action is None:
             if DEBUG:

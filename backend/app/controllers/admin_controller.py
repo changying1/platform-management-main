@@ -9,7 +9,13 @@ import json
 router = APIRouter(prefix="/admin", tags=["Admin"])
 service = AdminService()
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(BACKEND_ROOT)
+CONFIG_FILE = os.path.join(BACKEND_ROOT, "system_config.json")
+STORAGE_SETTINGS_FILES = [
+    os.path.join(PROJECT_ROOT, "storage", "system_settings.json"),
+    os.path.join(BACKEND_ROOT, "storage", "system_settings.json"),
+]
 
 from app.core.security import get_current_user
 from app.models.admin_user import User
@@ -86,6 +92,11 @@ def save_system_settings(settings: dict = Body(...), db: Session = Depends(get_d
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
+
+        for settings_file in STORAGE_SETTINGS_FILES:
+            os.makedirs(os.path.dirname(settings_file), exist_ok=True)
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
         
         # 如果存储路径改变，自动重启所有录像进程
         from app.services.video_service import VideoService

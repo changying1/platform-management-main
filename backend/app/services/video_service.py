@@ -2917,20 +2917,51 @@ class VideoService:
         return dt
 
     def _to_static_web_path(self, abs_file_path: str) -> str:
-        storage_root = self._get_storage_root()
+        abs_path = os.path.abspath(abs_file_path)
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        default_static = os.path.join(base_dir, "static")
+        default_static = os.path.abspath(os.path.join(base_dir, "static"))
+        roots = []
+        for storage_path in self._storage_paths:
+            if not storage_path.get("enabled", True):
+                continue
+            path = storage_path.get("path")
+            if path and storage_path.get("type", "mirror") in {"mirror", "primary"}:
+                roots.append(os.path.abspath(path))
+
+        if default_static not in roots:
+            roots.append(default_static)
+
+        route_map = {
+            "recordings": "/api/videos",
+            "alarm_videos": "/api/alarm_videos",
+            "playback_videos": "/api/playback_videos",
+        }
+
+        for root in roots:
+            try:
+                rel_path = os.path.relpath(abs_path, root)
+            except ValueError:
+                continue
+
+            if rel_path == "." or rel_path.startswith(".."):
+                continue
+
+            rel_web_path = rel_path.replace("\\", "/")
+            first_part, _, rest = rel_web_path.partition("/")
+            route_prefix = route_map.get(first_part)
+            if route_prefix:
+                return f"{route_prefix}/{rest}".rstrip("/")
+
+            if root == default_static:
+                return "/static/" + rel_web_path
+
+        return "/static/" + os.path.relpath(abs_path, default_static).replace("\\", "/")
         
         # 如果在默认 static 目录下，用 /static
-        if abs_file_path.startswith(default_static):
-            rel_path = os.path.relpath(abs_file_path, default_static)
-            return "/static/" + rel_path.replace("\\", "/")
         
         # 否则用 /api/videos 动态路由
         # abs_file_path = 存储根目录/recordings/设备ID/视频.mp4
         # 相对路径需要去掉 recordings 这一层
-        rel_path = os.path.relpath(abs_file_path, os.path.join(storage_root, "recordings"))
-        return "/api/videos/" + rel_path.replace("\\", "/")
 
     def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
         tuple[str, datetime, datetime]]:

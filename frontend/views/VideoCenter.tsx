@@ -24,6 +24,7 @@
     Shield,
     ShieldAlert,
     ShieldCheck,
+    PanelRightOpen,
     
   } from "lucide-react";
 
@@ -47,6 +48,9 @@
     savePlaybackClip,
     AIRule,
     StreamUrl,
+    getKeyboardSwitchRequest,
+    acknowledgeKeyboardSwitchRequest,
+    setKeyboardTarget,
   } from "../src/api/videoApi";
   import { API_BASE_URL } from "../src/api/config";
 
@@ -305,6 +309,7 @@
     const [searchTerm, setSearchTerm] = useState("");
     const [maximizedVideo, setMaximizedVideo] = useState<Video | null>(null);
     const [streamUrl, setStreamUrl] = useState<string | null>(null);
+    const [isMonitorOnlyMode, setIsMonitorOnlyMode] = useState(false);
     const [streamInfo, setStreamInfo] = useState<StreamUrl | null>(null);  // ✅ 新增
 
     // --- ✅ 新增 AI 监控状态 ---
@@ -367,6 +372,7 @@
     const alarmCloseTimerRef = useRef<number | null>(null);
     const alarmBoxesClearTimerRef = useRef<number | null>(null);
     const aiCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const lastKeyboardSwitchRequestIdRef = useRef(0);
   // const [companies, setCompanies] = useState<string[]>(['all']);
   // const [projects, setProjects] = useState<string[]>(['all']);
   // ✅ 硬编码公司列表（仅用于下拉菜单筛选）
@@ -1215,6 +1221,7 @@ useEffect(() => {
               device.company?.toLowerCase().includes(term) ||
               device.project?.toLowerCase().includes(term) ||
               device.ip_address?.includes(searchTerm) ||
+              device.device_serial?.toLowerCase().includes(term) ||
               device.remark?.toLowerCase().includes(term) ||
               String(device.id).includes(searchTerm);
       }
@@ -1265,6 +1272,8 @@ useEffect(() => {
   const handleShowStream = async (device: Video) => {
     // 1. 先直接打开全屏
     setMaximizedVideo(device);
+    setIsMonitorOnlyMode(false);
+    void setKeyboardTarget(device.id);
     setStreamUrl(null);
     setStreamInfo(null);
     setFullScreenStreamError(null);
@@ -1297,6 +1306,44 @@ useEffect(() => {
       setFullScreenStreamLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!devices.length) return;
+
+    let cancelled = false;
+
+    const pollKeyboardSwitchRequest = async () => {
+      const request = await getKeyboardSwitchRequest();
+      if (
+        cancelled ||
+        !request?.pending ||
+        !request.video_id ||
+        request.request_id <= lastKeyboardSwitchRequestIdRef.current
+      ) {
+        return;
+      }
+
+      lastKeyboardSwitchRequestIdRef.current = request.request_id;
+      const target = devices.find((device) => Number(device.id) === Number(request.video_id));
+
+      if (!target) {
+        console.warn(`Keyboard switch target not found: video_id=${request.video_id}`);
+        await acknowledgeKeyboardSwitchRequest(request.request_id);
+        return;
+      }
+
+      await handleShowStream(target);
+      await acknowledgeKeyboardSwitchRequest(request.request_id);
+    };
+
+    pollKeyboardSwitchRequest();
+    const timer = window.setInterval(pollKeyboardSwitchRequest, 700);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [devices]);
 
 
   const previewStreamsRef = useRef<Record<number, StreamUrl>>({});
@@ -2060,25 +2107,40 @@ useEffect(() => {
 
         {/* 原有的全屏播放弹窗 - 完整保留 */}
         {maximizedVideo && (
-          <div className="fixed inset-0 z-[200] bg-[radial-gradient(circle_at_15%_8%,rgba(34,211,238,.15),transparent_35%),linear-gradient(140deg,#020617,#0b1f3f_50%,#102a5e)] flex flex-col p-4 gap-4">
+          <div className={`fixed inset-0 ${isMonitorOnlyMode ? 'z-[9000] bg-black p-0 gap-0' : 'z-[200] bg-[radial-gradient(circle_at_15%_8%,rgba(34,211,238,.15),transparent_35%),linear-gradient(140deg,#020617,#0b1f3f_50%,#102a5e)] p-4 gap-4'} flex flex-col`}>
+            {!isMonitorOnlyMode && (
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-bold flex items-center gap-3 text-slate-100">
                 {maximizedVideo.name}
                 <span className="text-sm font-mono font-normal text-slate-300 bg-slate-900/75 px-2 rounded border border-blue-300/20">{maximizedVideo.ip_address}</span>
               </h2>
-              <button onClick={() => { setMaximizedVideo(null); setStreamUrl(null); setStreamInfo(null); }} className="p-2 text-slate-400 hover:bg-rose-500/20 hover:text-rose-300 rounded-full transition-colors"><X size={24} /></button>
+              <button onClick={() => { setMaximizedVideo(null); setStreamUrl(null); setStreamInfo(null); setIsMonitorOnlyMode(false); }} className="p-2 text-slate-400 hover:bg-rose-500/20 hover:text-rose-300 rounded-full transition-colors"><X size={24} /></button>
             </div>
-            <div className="flex-1 flex gap-4 min-h-0">
-              <div className="flex-1 flex flex-col bg-slate-900/65 rounded-lg border border-blue-300/25 overflow-hidden">
+            )}
+            <div className={`flex-1 flex min-h-0 ${isMonitorOnlyMode ? 'gap-0' : 'gap-4'}`}>
+              <div className={`flex-1 flex flex-col overflow-hidden ${isMonitorOnlyMode ? 'bg-black rounded-none border-0' : 'bg-slate-900/65 rounded-lg border border-blue-300/25'}`}>
                 {streamUrl ? (
                   <>
+                    {!isMonitorOnlyMode && (
                     <div className="p-3 bg-blue-500/12 border-b border-blue-300/25 text-sm text-cyan-100">
                       <div className="flex items-center gap-2 font-semibold"><MonitorPlay size={18} /> 流信息</div>
                       <code className="mt-2 block text-xs bg-slate-950/70 p-2 rounded border border-blue-300/25 break-all text-slate-200 max-h-20 overflow-auto vc-scrollbar">{streamUrl}</code>
                     </div>
+                    )}
                     <div className="flex-1 flex items-center justify-center bg-black relative min-h-0">
+                      {isMonitorOnlyMode && (
+                        <button
+                          type="button"
+                          onClick={() => setIsMonitorOnlyMode(false)}
+                          className="absolute left-3 top-3 z-30 rounded-md border border-cyan-300/25 bg-slate-950/70 p-2 text-cyan-100 shadow-lg transition hover:border-cyan-200/60 hover:bg-cyan-400/20 hover:text-white"
+                          title="Restore control panel"
+                          aria-label="Restore control panel"
+                        >
+                          <PanelRightOpen size={20} />
+                        </button>
+                      )}
                       <div className="relative w-full h-full bg-slate-900" 
-                      onDoubleClick={() => { setMaximizedVideo(null); setStreamUrl(null);setStreamInfo(null);  }}
+                      onDoubleClick={() => { setMaximizedVideo(null); setStreamUrl(null);setStreamInfo(null); setIsMonitorOnlyMode(false);  }}
                       >
                         
                         <VideoPlayer
@@ -2116,10 +2178,17 @@ useEffect(() => {
                 )}
               </div>
               {/* {streamUrl && ( */}
+                {!isMonitorOnlyMode && (
                 <div className="w-80 flex flex-col gap-3 h-full">
                   {/* AI 智脑控制先注释掉 */}
                   <div className="bg-slate-900/75 rounded-lg border border-blue-300/2 5 overflow-y-auto shadow-lg flex-1 vc-scrollbar">
-                    <PTZControlPanel video={maximizedVideo} onSuccess={handlePTZSuccess} onError={handlePTZError} />
+                    <PTZControlPanel
+                      video={maximizedVideo}
+                      onSuccess={handlePTZSuccess}
+                      onError={handlePTZError}
+                      isMonitorOnlyMode={isMonitorOnlyMode}
+                      onToggleMonitorOnlyMode={() => setIsMonitorOnlyMode((prev) => !prev)}
+                    />
                   </div>
                   {/* <div className="bg-slate-900/75 rounded-lg border border-blue-300/25 p-4 shadow-lg shrink-0"> */}
                     {/* <div className="flex items-center gap-2 mb-3 text-slate-100 font-semibold"><Save size={16} className="text-cyan-300" /> 回放保存</div>
@@ -2131,6 +2200,7 @@ useEffect(() => {
                     </div> */}
                   {/* </div> */}
                 </div>
+                )}
               {/* )} */}
             </div>
           </div>

@@ -159,6 +159,7 @@ const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
 const [previewImage, setPreviewImage] = useState<string | null>(null);
+const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
 const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
@@ -784,6 +785,19 @@ onClick={(e) => {
                         </button>
                       )}
 
+                      {alarm.videoPath && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewVideo(alarm.videoPath!);
+                          }}
+                          className="px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                        >
+                          <Video size={14} />
+                          报警视频
+                        </button>
+                      )}
+
                       {alarm.status === 'pending' && (
                         <button
                           onClick={(e) => {
@@ -877,6 +891,18 @@ onClick={(e) => {
                     >
                       <ImageIcon size={14} />
                       查看报警截图
+                    </button>
+                  </div>
+                )}
+                {selectedAlarm.videoPath && (
+                  <div className="col-span-2">
+                    <span className="text-slate-400">报警视频：</span>
+                    <button
+                      onClick={() => setPreviewVideo(selectedAlarm.videoPath!)}
+                      className="ml-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                    >
+                      <Video size={14} />
+                      查看报警视频
                     </button>
                   </div>
                 )}
@@ -997,6 +1023,34 @@ onClick={(e) => {
         src={previewImage}
         alt="报警截图"
         className="max-w-[85vw] max-h-[82vh] rounded-lg object-contain"
+      />
+    </div>
+  </div>
+)}
+
+{previewVideo && (
+  <div
+    className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+    onClick={() => setPreviewVideo(null)}
+  >
+    <div
+      className="relative bg-slate-900 rounded-2xl border border-cyan-400/30 shadow-2xl p-4 w-[900px] max-w-[92vw]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        onClick={() => setPreviewVideo(null)}
+        className="absolute right-3 top-3 z-10 p-1.5 bg-black/50 hover:bg-black/70 rounded-lg"
+      >
+        <X size={18} className="text-white" />
+      </button>
+
+      <div className="mb-3 pr-10 text-base font-semibold text-white">报警视频</div>
+      <video
+        key={previewVideo}
+        src={previewVideo}
+        controls
+        autoPlay
+        className="w-full max-h-[78vh] rounded-lg bg-black"
       />
     </div>
   </div>
