@@ -1,10 +1,12 @@
 import json
 import math
+import time as time_module
 from datetime import datetime, time, timedelta
 from app.schemas.fence_schema import FenceCreate, FenceUpdate, ProjectRegionCreate, ProjectRegionUpdate
 from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.utils.logger import get_logger
 from app.core.ws_manager import push_alarm_threadsafe
+from app.utils.config_manager import get_fence_detection_interval, get_fence_grace_period
 
 # MongoDB 连接配置：优先使用含 fence 集合的兼容库，告警写入同一个库
 db = get_compatible_mongo_db("fence")
@@ -15,6 +17,13 @@ alarms_collection = db["alarm_record"]
 
 logger = get_logger("FenceService")
 FENCE_TOUCH_TOLERANCE_METERS = 3.0
+
+# 设备上次检测时间缓存（用于控制检测频率）
+_last_detection_time = {}  # device_id -> timestamp
+
+# 越界延迟判定缓存（用于二次确认）
+# 格式: {(device_id, fence_id): {"first_time": timestamp, "is_confirmed": False}}
+_pending_violations = {}  # (device_id, fence_id) -> {"first_time": float, "is_confirmed": bool}
 
 
 class FenceService:
@@ -217,9 +226,24 @@ class FenceService:
         """
         Check if a specific device (with new coordinates) violates any active fence.
         This is typically called by a location update stream.
+        
+        根据系统设置的检测间隔控制检测频率，避免频繁检测。
         """
         if lat is None or lng is None:
             return
+
+        # 获取检测间隔配置（秒）
+        detection_interval = get_fence_detection_interval()
+        
+        # 检查是否需要跳过本次检测（基于检测间隔）
+        current_time = time_module.time()
+        last_time = _last_detection_time.get(str(device_id), 0)
+        if current_time - last_time < detection_interval:
+            logger.debug(f"设备 {device_id} 检测间隔未到，跳过本次检测")
+            return
+        
+        # 更新上次检测时间
+        _last_detection_time[str(device_id)] = current_time
 
         device = (
             devices_collection.find_one({"device_id": str(device_id)})
@@ -518,36 +542,90 @@ class FenceService:
         """
         Core logic to check one device against one fence.
         Returns True if an alarm was triggered, False otherwise.
+        
+        支持越界判定延迟：首次检测到越界时不立即报警，等待配置的延迟时间后再次检测确认。
         """
         violation = self.check_device_violation(fence, device)
         gcj_lat, gcj_lng = self._get_device_lat_lng(device)
-
+        
+        device_id = str(device.get("device_id") or device.get("id") or "")
+        fence_id = str(fence.get("fence_id") or fence.get("id") or "")
+        cache_key = (device_id, fence_id)
+        current_time = time_module.time()
+        
+        # 获取越界判定延迟配置（秒）
+        grace_period = get_fence_grace_period()
+        
         if violation:
-            description = ""
-            behavior = fence.get("behavior")
-            device_name = device.get("device_name") or device.get("name") or device.get("device_id") or device.get("id")
-            if behavior == "No Entry":
-                description = f"Device {device_name} entered restricted area: {fence.get('name')}"
+            # 检测到越界
+            if cache_key in _pending_violations:
+                # 已有待确认的越界记录
+                pending = _pending_violations[cache_key]
+                elapsed = current_time - pending["first_time"]
+                
+                if elapsed >= grace_period:
+                    # 延迟时间已到，确认越界，触发警报
+                    logger.debug(f"设备 {device_id} 越界确认：延迟{grace_period}秒后仍越界，触发警报")
+                    del _pending_violations[cache_key]
+                    
+                    description = ""
+                    behavior = fence.get("behavior")
+                    device_name = device.get("device_name") or device.get("name") or device.get("device_id") or device.get("id")
+                    if behavior == "No Entry":
+                        description = f"Device {device_name} entered restricted area: {fence.get('name')}"
+                    else:
+                        description = f"Device {device_name} left designated area: {fence.get('name')}"
+
+                    loc_str = f"{gcj_lat:.6f}, {gcj_lng:.6f}"
+                    current_alarm_type = "电子围栏越界"
+                    if behavior == "No Entry":
+                        current_alarm_type = "电子围栏闯入"
+
+                    try:
+                        alarm_created = self._create_fence_alarm(fence, device, current_alarm_type, description, loc_str)
+                        if alarm_created:
+                            logger.warning(f"Fence alarm created: {description}")
+                        return alarm_created
+                    except Exception as e:
+                        logger.error(f"Failed to create alarm: {e}")
+                else:
+                    # 延迟时间未到，继续等待
+                    logger.debug(f"设备 {device_id} 越界待确认：已等待{elapsed:.1f}秒，还需{grace_period - elapsed:.1f}秒")
+                    return False
             else:
-                description = f"Device {device_name} left designated area: {fence.get('name')}"
+                # 首次检测到越界，记录时间，等待延迟
+                if grace_period > 0:
+                    _pending_violations[cache_key] = {"first_time": current_time, "is_confirmed": False}
+                    logger.debug(f"设备 {device_id} 首次检测到越界，进入{grace_period}秒延迟确认期")
+                    return False
+                else:
+                    # 延迟为0，立即报警
+                    description = ""
+                    behavior = fence.get("behavior")
+                    device_name = device.get("device_name") or device.get("name") or device.get("device_id") or device.get("id")
+                    if behavior == "No Entry":
+                        description = f"Device {device_name} entered restricted area: {fence.get('name')}"
+                    else:
+                        description = f"Device {device_name} left designated area: {fence.get('name')}"
 
-            # Check for duplicate ACTIVE alarms for this device and fence
-            loc_str = f"{gcj_lat:.6f}, {gcj_lng:.6f}"
+                    loc_str = f"{gcj_lat:.6f}, {gcj_lng:.6f}"
+                    current_alarm_type = "电子围栏越界"
+                    if behavior == "No Entry":
+                        current_alarm_type = "电子围栏闯入"
 
-            # Determine distinct alarm type based on behavior
-            current_alarm_type = "电子围栏越界"  # Default / No Exit
-            if behavior == "No Entry":
-                current_alarm_type = "电子围栏闯入"
-
-            try:
-                # 只有在真正创建报警时才记录详细信息
-                alarm_created = self._create_fence_alarm(fence, device, current_alarm_type, description, loc_str)
-                if alarm_created:
-                    logger.warning(f"Fence alarm created: {description}")
-                return alarm_created
-            except Exception as e:
-                logger.error(f"Failed to create alarm: {e}")
-
+                    try:
+                        alarm_created = self._create_fence_alarm(fence, device, current_alarm_type, description, loc_str)
+                        if alarm_created:
+                            logger.warning(f"Fence alarm created: {description}")
+                        return alarm_created
+                    except Exception as e:
+                        logger.error(f"Failed to create alarm: {e}")
+        else:
+            # 设备在围栏内（或不越界），清除待确认状态
+            if cache_key in _pending_violations:
+                del _pending_violations[cache_key]
+                logger.debug(f"设备 {device_id} 已回到围栏内，取消待确认越界")
+        
         return False
 
     def _get_distance(self, lat1, lon1, lat2, lon2):

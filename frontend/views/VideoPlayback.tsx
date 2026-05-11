@@ -46,6 +46,40 @@ import {
 } from "../src/api/videoApi";
 import { API_BASE_URL } from "../src/api/config";
 
+// ✅ 轨迹API配置（从TrackPlayback.tsx迁移）
+const TRACK_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
+
+// ✅ 轨迹设备类型（适配MongoDB数据结构）
+interface TrackDevice {
+  _id?: { $oid?: string };
+  device_id: string;
+  name: string;
+  holder?: string;           // 人员姓名（适配数据库字段）
+  person_name?: string;      // 兼容旧字段
+  lat?: number;
+  lng?: number;
+  company?: string;
+  project?: string;
+  team?: string;
+  status?: string;
+  holderPhone?: string;
+  lastUpdate?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  trajectory?: TrajectoryPoint[];  // 轨迹直接在设备文档中
+  remark?: string;
+  type?: string;
+}
+
+// ✅ 轨迹点类型（从TrackPlayback.tsx迁移）
+interface TrajectoryPoint {
+  lat: number;
+  lng: number;
+  timestamp: string;
+  speed?: number;
+  direction?: number;
+}
+
  // 新增：主Tab类型
 type MainTabType = 'video' | 'track' | 'voice';
 type TabType = 'all' | 'manual' | 'alarm';
@@ -1372,9 +1406,7 @@ const TrackPlaybackContent = ({
     selectedCompany !== 'all',
     selectedProject !== 'all',
     selectedTeam !== 'all',
-    searchKeyword !== '',
-    dateRange.start !== '',
-    dateRange.end !== ''
+    searchKeyword !== ''
   ].filter(Boolean).length;
 
   return (
@@ -1483,7 +1515,10 @@ const TrackPlaybackContent = ({
                 <div>
                   <div className="font-semibold text-white">{track.holder}</div>
                   <div className="text-xs text-slate-400">{track.deviceName} · {track.company} / {track.project} / {track.team}</div>
-                  <div className="text-xs text-slate-500 mt-1">{new Date(track.startTime).toLocaleString()} → {new Date(track.endTime).toLocaleTimeString()} · {track.points.length}个轨迹点</div>
+                  <div className="text-xs text-slate-500 mt-1">
+  {new Date(track.startTime).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} → 
+  {new Date(track.endTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · {track.points.length}个轨迹点
+</div>
                 </div>
               </div>
               <button className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg text-xs"><Play size={12} className="inline mr-1" />回放</button>
@@ -1505,11 +1540,11 @@ const TrackPlaybackContent = ({
       {/* 轨迹地图弹窗 */}
 {selectedTrack && (
 <TrackMap
+  points={selectedTrack.points}
   deviceName={selectedTrack.deviceName}
   holder={selectedTrack.holder}
   onClose={() => setSelectedTrack(null)}
 />
-// 不传 points，让 TrackMap 自己生成连续轨迹
 )}
     </div>
   );
@@ -1722,15 +1757,28 @@ export default function VideoPlayback() {
     // 新增：主Tab状态
   const [mainTab, setMainTab] = useState<MainTabType>('video');
   
-  // 新增：轨迹数据
-  const [trackRecords] = useState<TrackRecord[]>(mockTrackRecords);
+  // 新增：轨迹数据（从TrackPlayback.tsx迁移API逻辑）
+  const [trackDevices, setTrackDevices] = useState<TrackDevice[]>([]);
+  const [trackRecords, setTrackRecords] = useState<TrackRecord[]>([]);
+  const [loadingTracks, setLoadingTracks] = useState(false);
+  const [selectedTrackDevice, setSelectedTrackDevice] = useState<TrackDevice | null>(null);
   const [selectedTrack, setSelectedTrack] = useState<TrackRecord | null>(null);
   const [selectedTrackCompany, setSelectedTrackCompany] = useState<string>('all');
   const [selectedTrackProject, setSelectedTrackProject] = useState<string>('all');
   const [selectedTrackTeam, setSelectedTrackTeam] = useState<string>('all');
   const [trackSearchKeyword, setTrackSearchKeyword] = useState('');
   const [showTrackFilter, setShowTrackFilter] = useState(false);
-  const [trackDateRange, setTrackDateRange] = useState({ start: '', end: '' });
+  // 默认日期范围：近一年
+const getDefaultTrackDateRange = () => {
+  const end = new Date();
+  const start = new Date();
+  start.setFullYear(start.getFullYear() - 1);
+  return {
+    start: start.toISOString().split('T')[0],
+    end: end.toISOString().split('T')[0],
+  };
+};
+const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange());
   const [trackCurrentPage, setTrackCurrentPage] = useState(1);
   
   // 新增：语音数据
@@ -1825,6 +1873,110 @@ useEffect(() => {
   };
   loadVideos();
 }, [selectedDevice?.id, devices.length]);
+
+// ✅ 轨迹API调用（从TrackPlayback.tsx迁移）
+// 获取轨迹设备列表
+useEffect(() => {
+  const fetchTrackDevices = async () => {
+    try {
+      const res = await fetch(`${TRACK_API_BASE_URL}/device/devices`);
+      const data = await res.json();
+      const deviceList: TrackDevice[] = Array.isArray(data) ? data : (data.devices || []);
+      setTrackDevices(deviceList);
+      // 默认选择第一个设备
+      if (deviceList.length > 0 && !selectedTrackDevice) {
+        setSelectedTrackDevice(deviceList[0]);
+      }
+    } catch (err) {
+      console.error('获取轨迹设备失败:', err);
+      setTrackDevices([]);
+    }
+  };
+  fetchTrackDevices();
+}, []);
+
+// ✅ 获取所有设备的轨迹数据（真正向后端API请求数据）
+const fetchAllTrajectories = async (hours: number = 24) => {
+  setLoadingTracks(true);
+  try {
+    // 获取所有设备的轨迹
+    const trackRecords: TrackRecord[] = [];
+    
+    for (const device of trackDevices) {
+      // 向后端发起API请求获取单个设备的轨迹数据
+      const res = await fetch(`${TRACK_API_BASE_URL}/device/${device.device_id}?hours=${hours}`);
+      const deviceData: TrackDevice = await res.json();
+      
+      if (deviceData && deviceData.trajectory && deviceData.trajectory.length > 0) {
+        // 根据时间范围筛选轨迹点
+        let trajectory: TrajectoryPoint[] = deviceData.trajectory;
+        
+        if (hours > 0) {
+          const cutoffTime = new Date();
+          cutoffTime.setHours(cutoffTime.getHours() - hours);
+          trajectory = deviceData.trajectory.filter(p => {
+            const pointTime = new Date(p.timestamp);
+            return pointTime >= cutoffTime;
+          });
+        }
+        
+        if (trajectory.length > 0) {
+          // 转换为 TrackRecord 格式（使用holder字段，适配数据库）
+          const trackRecord: TrackRecord = {
+            id: `track_${device.device_id}_${Date.now()}`,
+            deviceId: device.device_id,
+            deviceName: deviceData.name || device.name || '未知设备',
+            holder: deviceData.holder || deviceData.person_name || device.holder || '未知人员',
+            company: deviceData.company || device.company || '',
+            project: deviceData.project || device.project || '',
+            team: deviceData.team || device.team || '',
+            startTime: trajectory[0]?.timestamp || new Date().toISOString(),
+            endTime: trajectory[trajectory.length - 1]?.timestamp || new Date().toISOString(),
+            points: trajectory.map(p => ({
+              lat: p.lat,
+              lng: p.lng,
+              time: p.timestamp,
+              speed: p.speed,
+            })),
+          };
+          trackRecords.push(trackRecord);
+        }
+      }
+    }
+    
+    if (trackRecords.length > 0) {
+      setTrackRecords(trackRecords);
+    } else {
+      // 如果没有真实数据，使用mock数据兜底
+      setTrackRecords(mockTrackRecords);
+    }
+  } catch (err) {
+    console.error('获取轨迹失败:', err);
+    // 失败时使用mock数据兜底
+    setTrackRecords(mockTrackRecords);
+  } finally {
+    setLoadingTracks(false);
+  }
+};
+
+// ✅ 设备列表变化或日期范围变化时获取所有设备的轨迹
+useEffect(() => {
+  if (trackDevices.length > 0) {
+    let hours = 24;
+    if (trackDateRange.start && trackDateRange.end) {
+      const start = new Date(trackDateRange.start);
+      const end = new Date(trackDateRange.end);
+      const diff = Math.abs(end.getTime() - start.getTime());
+      hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
+    } else if (trackDateRange.start) {
+      const start = new Date(trackDateRange.start);
+      const end = new Date();
+      const diff = Math.abs(end.getTime() - start.getTime());
+      hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
+    }
+    fetchAllTrajectories(hours);
+  }
+}, [trackDevices, trackDateRange]);
   // ✅ 真实API + 兜底，全部设备也有数据！
   useEffect(() => {
     const convertToSavedPlayback = (): ExtendedSavedPlayback[] => {
