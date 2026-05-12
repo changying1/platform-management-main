@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">安全监控平台</string>
+    <!-- 报警状态数组 -->
+    <string-array name="alarm_status">
+        <item>所有状态</item>
+        <item>待处理</item>
+        <item>已处置</item>
+    </string-array>
+
+    <!-- 报警级别数组 -->
+    <string-array name="alarm_level">
+        <item>所有级别</item>
+        <item>高危</item>
+        <item>警告</item>
+        <item>提示</item>
+    </string-array>
+
+
+<!--    wodeye mian-->
+    <string name="avatar">用户头像</string>
+    <string name="settings">设置</string>
+    <string name="logout">退出登录</string>
+    <string name="privacy">隐私设置</string>
+    <string name="terms">使用条款</string>
+</resources>

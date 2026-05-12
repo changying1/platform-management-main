@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 圆角（和卡片圆角一致更柔和） -->
+    <corners android:radius="18dp" />
+
+    <!-- 渐变背景，调整为红色渐变 -->
+    <gradient
+        android:startColor="#FF0000"
+        android:endColor="#FF4D4D"
+        android:angle="45" />
+</shape>

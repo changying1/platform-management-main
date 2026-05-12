@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--    给入口卡片一个柔和的紫色渐变背景，提升质感。-->
+
+    <!-- 圆角（和卡片圆角一致更柔和） -->
+    <corners android:radius="18dp" />
+
+    <!-- 渐变必须写在 shape 里面 -->
+    <gradient
+        android:startColor="#6F5BFF"
+        android:endColor="#B19CFF"
+        android:angle="45" />
+</shape>
+

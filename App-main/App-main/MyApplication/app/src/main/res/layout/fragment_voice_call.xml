@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/black">
+
+    <!-- 通话状态区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- 通话头像/状态 -->
+        <RelativeLayout
+            android:layout_width="180dp"
+            android:layout_height="180dp">
+
+            <ImageView
+                android:id="@+id/iv_avatar"
+                android:layout_width="180dp"
+                android:layout_height="180dp"
+                android:src="@drawable/ic_person"
+                android:background="@drawable/circle_white_background"
+                android:scaleType="centerCrop"/>
+
+            <View
+                android:id="@+id/v_online_status"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_alignParentBottom="true"
+                android:layout_alignParentEnd="true"
+                android:background="@drawable/circle_green"/>
+        </RelativeLayout>
+
+        <!-- 通话对象名称 -->
+        <TextView
+            android:id="@+id/tv_contact_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="选择联系人开始通话"
+            android:textColor="@color/white"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"/>
+
+        <!-- 通话状态/时长 -->
+        <TextView
+            android:id="@+id/tv_call_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="离线"
+            android:textColor="@color/gray_400"
+            android:textSize="16sp"
+            android:layout_marginTop="8dp"/>
+
+        <!-- 通话时长 -->
+        <TextView
+            android:id="@+id/tv_call_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="00:00"
+            android:textColor="@color/gray_300"
+            android:textSize="24sp"
+            android:visibility="gone"
+            android:layout_marginTop="16dp"/>
+    </LinearLayout>
+
+    <!-- 联系人列表 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/gray_900"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="在线联系人"
+            android:textColor="@color/white"
+            android:textSize="14sp"
+            android:padding="16dp"/>
+
+        <RecyclerView
+            android:id="@+id/rv_contacts"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="8dp"/>
+    </LinearLayout>
+
+    <!-- 通话控制按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:background="@color/gray_800"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="16dp">
+
+        <!-- 扬声器 -->
+        <LinearLayout
+            android:id="@+id/btn_speaker"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/circle_gray_background"
+            android:gravity="center"
+            android:layout_margin="12dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_speaker"/>
+        </LinearLayout>
+
+        <!-- 麦克风 -->
+        <LinearLayout
+            android:id="@+id/btn_mute"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/circle_gray_background"
+            android:gravity="center"
+            android:layout_margin="12dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_mic"/>
+        </LinearLayout>
+
+        <!-- 挂断/拨号按钮 -->
+        <LinearLayout
+            android:id="@+id/btn_call"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:background="@drawable/circle_red_background"
+            android:gravity="center"
+            android:layout_margin="12dp">
+
+            <ImageView
+                android:id="@+id/iv_call_icon"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_phone"/>
+        </LinearLayout>
+
+        <!-- 录音 -->
+        <LinearLayout
+            android:id="@+id/btn_record"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/circle_gray_background"
+            android:gravity="center"
+            android:layout_margin="12dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_mic"/>
+        </LinearLayout>
+
+        <!-- 更多 -->
+        <LinearLayout
+            android:id="@+id/btn_more"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/circle_gray_background"
+            android:gravity="center"
+            android:layout_margin="12dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_more"/>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

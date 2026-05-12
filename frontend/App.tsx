@@ -24,6 +24,7 @@ import {
   FileText, 
   Phone, 
   X,
+  Grid3X3,
 } from 'lucide-react';
 import { MenuKey } from './types';
 import Dashboard from './views/Dashboard';
@@ -37,6 +38,7 @@ import AlarmRecord from './views/AlarmRecord';
 import VideoPlayback from './views/VideoPlayback';
 import ManagementPanel from './views/ManagementPanel';
 import SystemLog from './views/SystemLog';
+import GridManagement from './views/GridManagement';
 import AIChatAssistant from './components/AIChatAssistant';
 import { API_BASE_URL } from './src/api/config';
 
@@ -714,6 +716,8 @@ export default function App() {
         return <ManagementPanel defaultTab={managementTab} />;
       case MenuKey.SYSTEM_LOG:
         return <SystemLog onNavigate={setActiveMenu} />;
+      case MenuKey.GRID:
+        return <GridManagement />;
       default:
         return <Dashboard />;
     }
@@ -787,6 +791,11 @@ export default function App() {
   <button onClick={() => setActiveMenu(MenuKey.SYSTEM_LOG)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SYSTEM_LOG ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
     <FileText size={24} />
     <span className="text-xs">系统日志</span>
+  </button>
+  
+  <button onClick={() => setActiveMenu(MenuKey.GRID)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.GRID ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
+    <Grid3X3 size={24} />
+    <span className="text-xs">网格化管理</span>
   </button>
   
   <button onClick={() => setActiveMenu(MenuKey.SETTINGS)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SETTINGS ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>

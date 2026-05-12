@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 网络访问权限 -->
+    <!--    <uses-permission android:name="android.permission.INTERNET" />-->
+    <!--    &lt;!&ndash; 允许访问网络状态（可选，用于判断网络是否可用） &ndash;&gt;-->
+    <!--    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />-->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <application
+        android:name=".MyApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.MyApplication"
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:targetApi="24">
+
+        <meta-data
+            android:name="com.amap.api.v2.apikey"
+            android:value="b9839562d62c089adb32adc4a81c5902" />
+
+        <service
+            android:name="com.amap.api.location.APSService"
+            android:exported="false" />
+
+
+
+        <!-- 登录页：作为启动入口 -->
+        <activity
+            android:name=".ui.login.LoginActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 首页：登录成功后跳转 -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true" />
+
+        <activity
+            android:name=".ui.video.VideoCenterActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.fence.FenceCenterActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.fence.FenceEditActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.video.VideoPlayActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.video.VideoFilePlayActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
+
+        <activity
+            android:name=".ui.track.TrackPlaybackActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.call.GroupCallActivity"
+            android:exported="false"
+            android:label="语音播报" />
+        <activity android:name=".ui.alarm.AlarmRecordsActivity" />
+
+        <activity android:name=".ui.user.UserManagementActivity" />
+        <activity android:name=".ui.user.AddUserActivity" />
+        <activity
+            android:name=".ui.playback.PlaybackCenterActivity"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

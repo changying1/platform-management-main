@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- 16:9 视频块 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/player_block"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#000000"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintDimensionRatio="16:9">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/player_view"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:use_controller="false"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"/>
+
+        <!-- 底部控制条：播放/全屏/AI监控 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/bottom_controls"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:background="#33000000"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent">
+
+            <ImageButton
+                android:id="@+id/btn_play_pause"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                android:src="@android:drawable/ic_media_play"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:tint="#FFFFFF" />
+
+            <Switch
+                android:id="@+id/sw_ai_monitor"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AI监控"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                app:layout_constraintStart_toEndOf="@id/btn_play_pause"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                android:layout_marginStart="16dp"/>
+
+            <ImageButton
+                android:id="@+id/btn_fullscreen"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_fullscreen_enter"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:tint="#FFFFFF" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- 遥控圆盘区域（剩余空间居中） -->
+    <FrameLayout
+        android:id="@+id/ptz_container"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:foregroundGravity="center"
+        app:layout_constraintTop_toBottomOf="@id/player_block"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <FrameLayout
+            android:id="@+id/ptz_pad"
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:layout_gravity="center">
+
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_ptz_circle"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <View
+                android:id="@+id/ptz_center"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_ptz_center"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <!-- 上 -->
+            <ImageButton
+                android:id="@+id/ptz_up"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginTop="14dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_ptz_up"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="ptz_up"
+                app:tint="#9AA0AE" />
+
+            <!-- 下 -->
+            <ImageButton
+                android:id="@+id/ptz_down"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="14dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_ptz_down"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="ptz_down"
+                app:tint="#9AA0AE" />
+
+            <!-- 左 -->
+            <ImageButton
+                android:id="@+id/ptz_left"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="center_vertical|start"
+                android:layout_marginStart="14dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_ptz_left"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="ptz_left"
+                app:tint="#9AA0AE" />
+
+            <!-- 右 -->
+            <ImageButton
+                android:id="@+id/ptz_right"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="center_vertical|end"
+                android:layout_marginEnd="14dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_ptz_right"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="ptz_right"
+                app:tint="#9AA0AE" />
+
+        </FrameLayout>
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

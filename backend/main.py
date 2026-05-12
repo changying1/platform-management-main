@@ -47,6 +47,9 @@ from app.controllers import (
     backup_controller,
     personnel_controller,
     llm_controller,
+    grid_controller,
+    grid_personnel_controller,
+    responsibility_unit_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -308,6 +311,9 @@ app.include_router(auth_controller.router)
 app.include_router(project_controller.router)
 app.include_router(backup_controller.router)
 app.include_router(llm_controller.router)
+app.include_router(grid_controller.router)
+app.include_router(grid_personnel_controller.router)
+app.include_router(responsibility_unit_controller.router)
 
 print("=" * 60)
 print("✅ AI 助手服务已集成到主后端!")

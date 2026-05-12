@@ -1,22 +1,432 @@
 {
-    "electronic_fence": [
+    "grid": [
         {
             "_id": {
-                "$oid": "69ea170be6fa33a5d5c82146"
+                "$oid": "6a0a9b9ee11d130f170d98e8"
             },
-            "id": 101,
-            "name": "测试围栏A",
-            "behavior": "No Entry",
-            "project_id": 88
+            "grid_id": "GRID-001",
+            "name": "盾构作业区A",
+            "level": "workface",
+            "status": "normal",
+            "area": 2500,
+            "description": "盾构机作业区域，主要负责隧道开挖",
+            "bounds_json": "[[31.2304, 121.4737], [31.2306, 121.4739], [31.2308, 121.4735], [31.2306, 121.4733]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-15T09:00:00",
+            "updated_at": "2024-01-20T14:30:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9b9ee11d130f170d98e9"
+            },
+            "grid_id": "GRID-002",
+            "name": "桥梁施工区",
+            "level": "workshop",
+            "status": "warning",
+            "area": 5000,
+            "description": "桥梁主体施工区域",
+            "bounds_json": "[[31.2310, 121.4740], [31.2315, 121.4745], [31.2312, 121.4750], [31.2308, 121.4745]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-10T08:00:00",
+            "updated_at": "2024-01-19T16:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9b9ee11d130f170d98ea"
+            },
+            "grid_id": "GRID-003",
+            "name": "隧道进口区",
+            "level": "workface",
+            "status": "alarm",
+            "area": 1500,
+            "description": "隧道进口施工区域",
+            "bounds_json": "[[31.2295, 121.4720], [31.2298, 121.4725], [31.2302, 121.4722], [31.2299, 121.4718]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-08T07:30:00",
+            "updated_at": "2024-01-20T10:15:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9b9ee11d130f170d98eb"
+            },
+            "grid_id": "GRID-004",
+            "name": "材料堆放区",
+            "level": "workface",
+            "status": "normal",
+            "area": 3000,
+            "description": "钢筋、水泥等建筑材料堆放区域",
+            "bounds_json": "[[31.2320, 121.4750], [31.2325, 121.4755], [31.2322, 121.4760], [31.2318, 121.4755]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-12T10:00:00",
+            "updated_at": "2024-01-18T09:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9b9ee11d130f170d98ec"
+            },
+            "grid_id": "GRID-005",
+            "name": "箱梁预制区",
+            "level": "workshop",
+            "status": "normal",
+            "area": 8000,
+            "description": "箱梁预制生产区域",
+            "bounds_json": "[[31.2330, 121.4760], [31.2338, 121.4770], [31.2335, 121.4775], [31.2328, 121.4765]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-05T06:00:00",
+            "updated_at": "2024-01-17T11:30:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9b9ee11d130f170d98ed"
+            },
+            "grid_id": "GRID-006",
+            "name": "桩基施工区",
+            "level": "workface",
+            "status": "normal",
+            "area": 2000,
+            "description": "桥梁桩基施工区域",
+            "bounds_json": "[[31.2300, 121.4745], [31.2303, 121.4750], [31.2306, 121.4748], [31.2304, 121.4743]]",
+            "parent_id": null,
+            "project_id": null,
+            "created_at": "2024-01-11T08:30:00",
+            "updated_at": "2024-01-19T14:00:00"
         }
     ],
-    "worker": [
+    "team": [
         {
             "_id": {
-                "$oid": "69dcb407243c9ff866bb2ca3"
+                "$oid": "69e32e47dd52fc7bc5b99d1e"
             },
-            "id": "1001",
-            "性别": "男"
+            "team_id": "team1",
+            "name": "施工一队",
+            "color": "text-blue-400",
+            "fence_ids": [
+                "1"
+            ],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32e5fdd52fc7bc5b99d20"
+            },
+            "team_id": "team2",
+            "name": "施工二队",
+            "color": "text-purple-400",
+            "fence_ids": [],
+            "company": "中铁一局",
+            "project": "西安地铁8号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e32eabdd52fc7bc5b99d23"
+            },
+            "team_id": "team3",
+            "name": "特种作业队",
+            "color": "text-amber-400",
+            "fence_ids": [
+                "2",
+                "3"
+            ],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
+        },
+        {
+            "_id": {
+                "$oid": "69e33440dd52fc7bc5b99d2b"
+            },
+            "team_id": "team4",
+            "name": "四号作业队",
+            "color": "text-amber-400",
+            "fence_ids": [],
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线"
+        }
+    ],
+    "fence": [
+        {
+            "_id": {
+                "$oid": "69df549fe3fa803b8a13d2cb"
+            },
+            "fence_id": "1",
+            "name": "基坑禁入区",
+            "company": "中铁一局",
+            "project": "西安地铁8号线",
+            "shape": "circle",
+            "behavior": "No Entry",
+            "severity": "severe",
+            "geometry": {
+                "center": [
+                    34.28,
+                    109.13
+                ],
+                "radius": 50
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 0,
+            "remark": "基坑施工区域，禁止无关人员进入",
+            "alarm_type": "high",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        },
+        {
+            "_id": {
+                "$oid": "69df54c2e3fa803b8a13d2cd"
+            },
+            "fence_id": "2",
+            "name": "办公区禁出区",
+            "company": "中铁一局",
+            "project": "西安地铁6号线",
+            "shape": "polygon",
+            "behavior": "No Exit",
+            "severity": "normal",
+            "geometry": {
+                "points": [
+                    [
+                        34.282,
+                        109.132
+                    ],
+                    [
+                        34.283,
+                        109.135
+                    ],
+                    [
+                        34.281,
+                        109.136
+                    ],
+                    [
+                        34.28,
+                        109.133
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 1,
+            "remark": "办公区域，工作时间禁止外出",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        },
+        {
+            "_id": {
+                "$oid": "69df5564e3fa803b8a13d2cf"
+            },
+            "fence_id": "3",
+            "name": "隧道施工区",
+            "company": "中铁隧道局",
+            "project": "西安地铁10号线",
+            "shape": "polygon",
+            "behavior": "No Entry",
+            "severity": "risk",
+            "geometry": {
+                "points": [
+                    [
+                        34.29,
+                        109.14
+                    ],
+                    [
+                        34.295,
+                        109.145
+                    ],
+                    [
+                        34.292,
+                        109.148
+                    ],
+                    [
+                        34.287,
+                        109.143
+                    ]
+                ]
+            },
+            "schedule": {
+                "start": "2024-01-01T00:00:00",
+                "end": "2024-12-31T23:59:59"
+            },
+            "effective_time": "00:00-23:59",
+            "worker_count": 3,
+            "remark": "隧道施工区域，禁止无关人员进入",
+            "alarm_type": "medium",
+            "is_active": true,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        }
+    ],
+    "personnel": [
+        {
+            "_id": {
+                "$oid": "69ec85375d43b82ee78286e5"
+            },
+            "username": "张三",
+            "dept": "总部",
+            "phone": "13800000000",
+            "password": "123456",
+            "role": "HQ Manager",
+            "parentId": null,
+            "addedDate": "2026-04-25",
+            "created_at": {
+                "$date": "2026-04-25T17:11:19.292Z"
+            },
+            "updated_at": {
+                "$date": "2026-04-25T19:17:42.138Z"
+            },
+            "faceImage": "/static/faces/69ec85375d43b82ee78286e5_f87514f1599d4f2983028aa54948eb53.png"
+        }
+    ],
+    "responsibility_unit": [
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98f9"
+            },
+            "unit_id": "1",
+            "name": "一分部",
+            "type": "division",
+            "parent_id": null,
+            "level": 1,
+            "is_under_construction": false,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98fa"
+            },
+            "unit_id": "1.1",
+            "name": "一工区",
+            "type": "workshop",
+            "parent_id": "1",
+            "level": 2,
+            "is_under_construction": false,
+            "sort_order": 2,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2026-05-18T13:24:30.184858"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98fb"
+            },
+            "unit_id": "1.1.1",
+            "name": "1号桥梁",
+            "type": "site",
+            "parent_id": "1.1",
+            "level": 3,
+            "is_under_construction": true,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98fc"
+            },
+            "unit_id": "1.1.1.1",
+            "name": "基础及下部构造",
+            "type": "subproject",
+            "parent_id": "1.1.1",
+            "level": 4,
+            "is_under_construction": false,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98fd"
+            },
+            "unit_id": "1.1.1.2",
+            "name": "上部结构",
+            "type": "subproject",
+            "parent_id": "1.1.1",
+            "level": 4,
+            "is_under_construction": false,
+            "sort_order": 2,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98fe"
+            },
+            "unit_id": "1.2",
+            "name": "二工区",
+            "type": "workshop",
+            "parent_id": "1",
+            "level": 2,
+            "is_under_construction": false,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2026-05-18T13:24:30.183278"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d98ff"
+            },
+            "unit_id": "1.2.1",
+            "name": "2号桥梁",
+            "type": "site",
+            "parent_id": "1.2",
+            "level": 3,
+            "is_under_construction": true,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d9900"
+            },
+            "unit_id": "1.2.1.1",
+            "name": "基础及下部构造",
+            "type": "subproject",
+            "parent_id": "1.2.1",
+            "level": 4,
+            "is_under_construction": false,
+            "sort_order": 1,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2026-05-18T13:24:40.864066"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d9901"
+            },
+            "unit_id": "1.2.1.2",
+            "name": "上部结构",
+            "type": "subproject",
+            "parent_id": "1.2.1",
+            "level": 4,
+            "is_under_construction": false,
+            "sort_order": 2,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2026-05-18T13:24:40.864633"
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa26ae11d130f170d9902"
+            },
+            "unit_id": "2",
+            "name": "二分部",
+            "type": "division",
+            "parent_id": null,
+            "level": 1,
+            "is_under_construction": false,
+            "sort_order": 2,
+            "created_at": "2024-01-01T08:00:00",
+            "updated_at": "2024-01-01T08:00:00"
         }
     ],
     "video_device": [
@@ -69,58 +479,119 @@
         },
         {
             "_id": "alarm_record_id",
-            "seq": 21
+            "seq": 41
         }
     ],
-    "team": [
+    "grid_personnel": [
         {
             "_id": {
-                "$oid": "69e32e47dd52fc7bc5b99d1e"
+                "$oid": "6a0a9bbae11d130f170d98f0"
             },
-            "team_id": "team1",
-            "name": "施工一队",
-            "color": "text-blue-400",
-            "fence_ids": [
-                "1"
+            "name": "张三",
+            "role": "grid_manager",
+            "phone": "13800138001",
+            "department": "工程一部",
+            "grid_ids": [
+                "GRID-001",
+                "GRID-002"
             ],
-            "company": "中铁一局",
-            "project": "西安地铁8号线"
+            "created_at": "2024-01-15T09:00:00",
+            "updated_at": "2024-01-20T14:30:00"
         },
         {
             "_id": {
-                "$oid": "69e32e5fdd52fc7bc5b99d20"
+                "$oid": "6a0a9bbae11d130f170d98f1"
             },
-            "team_id": "team2",
-            "name": "施工二队",
-            "color": "text-purple-400",
-            "fence_ids": [],
-            "company": "中铁一局",
-            "project": "西安地铁8号线"
-        },
-        {
-            "_id": {
-                "$oid": "69e32eabdd52fc7bc5b99d23"
-            },
-            "team_id": "team3",
-            "name": "特种作业队",
-            "color": "text-amber-400",
-            "fence_ids": [
-                "2",
-                "3"
+            "name": "李四",
+            "role": "safety_manager",
+            "phone": "13800138002",
+            "department": "安全部",
+            "grid_ids": [
+                "GRID-001",
+                "GRID-002"
             ],
-            "company": "中铁隧道局",
-            "project": "西安地铁10号线"
+            "created_at": "2024-01-10T08:00:00",
+            "updated_at": "2024-01-19T16:00:00"
         },
         {
             "_id": {
-                "$oid": "69e33440dd52fc7bc5b99d2b"
+                "$oid": "6a0a9bbae11d130f170d98f2"
             },
-            "team_id": "team4",
-            "name": "四号作业队",
-            "color": "text-amber-400",
-            "fence_ids": [],
-            "company": "中铁隧道局",
-            "project": "西安地铁10号线"
+            "name": "王五",
+            "role": "technician",
+            "phone": "13800138003",
+            "department": "技术部",
+            "grid_ids": [
+                "GRID-001",
+                "GRID-002"
+            ],
+            "created_at": "2024-01-08T07:30:00",
+            "updated_at": "2024-01-20T10:15:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bbae11d130f170d98f3"
+            },
+            "name": "赵六",
+            "role": "inspector",
+            "phone": "13800138004",
+            "department": "巡检组",
+            "grid_ids": [
+                "GRID-003",
+                "GRID-004"
+            ],
+            "created_at": "2024-01-12T10:00:00",
+            "updated_at": "2024-01-18T09:00:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bbae11d130f170d98f4"
+            },
+            "name": "钱七",
+            "role": "safety_manager",
+            "phone": "13800138005",
+            "department": "安全部",
+            "grid_ids": [
+                "GRID-005",
+                "GRID-006"
+            ],
+            "created_at": "2024-01-05T06:00:00",
+            "updated_at": "2024-01-17T11:30:00"
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bbae11d130f170d98f5"
+            },
+            "name": "孙八",
+            "role": "technician",
+            "phone": "13800138006",
+            "department": "技术部",
+            "grid_ids": [
+                "GRID-005",
+                "GRID-006"
+            ],
+            "created_at": "2024-01-11T08:30:00",
+            "updated_at": "2024-01-19T14:00:00"
+        }
+    ],
+    "electronic_fence": [
+        {
+            "_id": {
+                "$oid": "69ea170be6fa33a5d5c82146"
+            },
+            "id": 101,
+            "name": "测试围栏A",
+            "behavior": "No Entry",
+            "project_id": 88
+        }
+    ],
+    "worker": [
+        {
+            "_id": {
+                "$oid": "69dcb407243c9ff866bb2ca3"
+            },
+            "id": "1001",
+            "性别": "男"
         }
     ],
     "device": [
@@ -4009,124 +4480,6 @@
             "trajectory": []
         }
     ],
-    "fence": [
-        {
-            "_id": {
-                "$oid": "69df549fe3fa803b8a13d2cb"
-            },
-            "fence_id": "1",
-            "name": "基坑禁入区",
-            "company": "中铁一局",
-            "project": "西安地铁8号线",
-            "shape": "circle",
-            "behavior": "No Entry",
-            "severity": "severe",
-            "geometry": {
-                "center": [
-                    34.28,
-                    109.13
-                ],
-                "radius": 50
-            },
-            "schedule": {
-                "start": "2024-01-01T00:00:00",
-                "end": "2024-12-31T23:59:59"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 0,
-            "remark": "基坑施工区域，禁止无关人员进入",
-            "alarm_type": "high",
-            "is_active": true,
-            "createdAt": "2024-01-01T00:00:00Z",
-            "updatedAt": "2024-01-01T00:00:00Z"
-        },
-        {
-            "_id": {
-                "$oid": "69df54c2e3fa803b8a13d2cd"
-            },
-            "fence_id": "2",
-            "name": "办公区禁出区",
-            "company": "中铁一局",
-            "project": "西安地铁6号线",
-            "shape": "polygon",
-            "behavior": "No Exit",
-            "severity": "normal",
-            "geometry": {
-                "points": [
-                    [
-                        34.282,
-                        109.132
-                    ],
-                    [
-                        34.283,
-                        109.135
-                    ],
-                    [
-                        34.281,
-                        109.136
-                    ],
-                    [
-                        34.28,
-                        109.133
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2024-01-01T00:00:00",
-                "end": "2024-12-31T23:59:59"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 1,
-            "remark": "办公区域，工作时间禁止外出",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2024-01-01T00:00:00Z",
-            "updatedAt": "2024-01-01T00:00:00Z"
-        },
-        {
-            "_id": {
-                "$oid": "69df5564e3fa803b8a13d2cf"
-            },
-            "fence_id": "3",
-            "name": "隧道施工区",
-            "company": "中铁隧道局",
-            "project": "西安地铁10号线",
-            "shape": "polygon",
-            "behavior": "No Entry",
-            "severity": "risk",
-            "geometry": {
-                "points": [
-                    [
-                        34.29,
-                        109.14
-                    ],
-                    [
-                        34.295,
-                        109.145
-                    ],
-                    [
-                        34.292,
-                        109.148
-                    ],
-                    [
-                        34.287,
-                        109.143
-                    ]
-                ]
-            },
-            "schedule": {
-                "start": "2024-01-01T00:00:00",
-                "end": "2024-12-31T23:59:59"
-            },
-            "effective_time": "00:00-23:59",
-            "worker_count": 3,
-            "remark": "隧道施工区域，禁止无关人员进入",
-            "alarm_type": "medium",
-            "is_active": true,
-            "createdAt": "2024-01-01T00:00:00Z",
-            "updatedAt": "2024-01-01T00:00:00Z"
-        }
-    ],
     "alarm_record": [
         {
             "_id": {
@@ -4343,27 +4696,586 @@
                 "faceImage": "",
                 "isMock": true
             }
-        }
-    ],
-    "personnel": [
+        },
         {
             "_id": {
-                "$oid": "69ec85375d43b82ee78286e5"
+                "$oid": "6a0a9197c3d80d428d14653d"
             },
-            "username": "张三",
-            "dept": "总部",
-            "phone": "13800000000",
-            "password": "123456",
-            "role": "HQ Manager",
-            "parentId": null,
-            "addedDate": "2026-04-25",
-            "created_at": {
-                "$date": "2026-04-25T17:11:19.292Z"
+            "id": 22,
+            "device_id": "1002",
+            "fence_id": "2",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏越界",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:12:07.101Z"
             },
-            "updated_at": {
-                "$date": "2026-04-25T19:17:42.138Z"
+            "description": "Device 李工的安全帽 left designated area: 办公区禁出区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.284000, 109.134000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9197c3d80d428d14653e"
             },
-            "faceImage": "/static/faces/69ec85375d43b82ee78286e5_f87514f1599d4f2983028aa54948eb53.png"
+            "id": 23,
+            "device_id": "2001",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:12:07.209Z"
+            },
+            "description": "Device 王工的安全帽 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.293000, 109.146000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "136****9012",
+            "person_name": "王五",
+            "person": {
+                "username": "王五"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9197c3d80d428d14653f"
+            },
+            "id": 24,
+            "device_id": "2002",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:12:07.217Z"
+            },
+            "description": "Device 李工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.291000, 109.144000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9197c3d80d428d146540"
+            },
+            "id": 25,
+            "device_id": "2004",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:12:07.232Z"
+            },
+            "description": "Device 赵工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.289000, 109.142000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "137****3456",
+            "person_name": "赵六",
+            "person": {
+                "username": "赵六"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a98ff78baa91d0511bc5f"
+            },
+            "id": 26,
+            "device_id": "1002",
+            "fence_id": "2",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏越界",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:43:43.945Z"
+            },
+            "description": "Device 李工的安全帽 left designated area: 办公区禁出区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.284000, 109.134000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a990078baa91d0511bc60"
+            },
+            "id": 27,
+            "device_id": "2001",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:43:44.042Z"
+            },
+            "description": "Device 王工的安全帽 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.293000, 109.146000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "136****9012",
+            "person_name": "王五",
+            "person": {
+                "username": "王五"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a990078baa91d0511bc61"
+            },
+            "id": 28,
+            "device_id": "2002",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:43:44.051Z"
+            },
+            "description": "Device 李工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.291000, 109.144000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a990078baa91d0511bc62"
+            },
+            "id": 29,
+            "device_id": "2004",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:43:44.067Z"
+            },
+            "description": "Device 赵工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.289000, 109.142000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "137****3456",
+            "person_name": "赵六",
+            "person": {
+                "username": "赵六"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bcaa0e3b93597a06c26"
+            },
+            "id": 30,
+            "device_id": "1002",
+            "fence_id": "2",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏越界",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:55:38.641Z"
+            },
+            "description": "Device 李工的安全帽 left designated area: 办公区禁出区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.284000, 109.134000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bcaa0e3b93597a06c27"
+            },
+            "id": 31,
+            "device_id": "2001",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:55:38.739Z"
+            },
+            "description": "Device 王工的安全帽 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.293000, 109.146000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "136****9012",
+            "person_name": "王五",
+            "person": {
+                "username": "王五"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bcaa0e3b93597a06c28"
+            },
+            "id": 32,
+            "device_id": "2002",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:55:38.748Z"
+            },
+            "description": "Device 李工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.291000, 109.144000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0a9bcaa0e3b93597a06c29"
+            },
+            "id": 33,
+            "device_id": "2004",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T04:55:38.766Z"
+            },
+            "description": "Device 赵工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.289000, 109.142000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "137****3456",
+            "person_name": "赵六",
+            "person": {
+                "username": "赵六"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa20c91b49a54d725325f"
+            },
+            "id": 34,
+            "device_id": "1002",
+            "fence_id": "2",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏越界",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:22:20.958Z"
+            },
+            "description": "Device 李工的安全帽 left designated area: 办公区禁出区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.284000, 109.134000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa20d91b49a54d7253260"
+            },
+            "id": 35,
+            "device_id": "2001",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:22:21.052Z"
+            },
+            "description": "Device 王工的安全帽 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.293000, 109.146000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "136****9012",
+            "person_name": "王五",
+            "person": {
+                "username": "王五"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa20d91b49a54d7253261"
+            },
+            "id": 36,
+            "device_id": "2002",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:22:21.060Z"
+            },
+            "description": "Device 李工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.291000, 109.144000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa20d91b49a54d7253262"
+            },
+            "id": 37,
+            "device_id": "2004",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:22:21.077Z"
+            },
+            "description": "Device 赵工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.289000, 109.142000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "137****3456",
+            "person_name": "赵六",
+            "person": {
+                "username": "赵六"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa279ac8f9f4c9ef7091d"
+            },
+            "id": 38,
+            "device_id": "1002",
+            "fence_id": "2",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏越界",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:24:09.638Z"
+            },
+            "description": "Device 李工的安全帽 left designated area: 办公区禁出区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.284000, 109.134000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa279ac8f9f4c9ef7091e"
+            },
+            "id": 39,
+            "device_id": "2001",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:24:09.749Z"
+            },
+            "description": "Device 王工的安全帽 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.293000, 109.146000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "136****9012",
+            "person_name": "王五",
+            "person": {
+                "username": "王五"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa279ac8f9f4c9ef7091f"
+            },
+            "id": 40,
+            "device_id": "2002",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:24:09.758Z"
+            },
+            "description": "Device 李工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.291000, 109.144000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "139****5678",
+            "person_name": "李四",
+            "person": {
+                "username": "李四"
+            }
+        },
+        {
+            "_id": {
+                "$oid": "6a0aa279ac8f9f4c9ef70920"
+            },
+            "id": 41,
+            "device_id": "2004",
+            "fence_id": "3",
+            "project_id": null,
+            "alarm_source": "fence",
+            "source_type": "fence",
+            "alarm_type": "电子围栏闯入",
+            "severity": "medium",
+            "timestamp": {
+                "$date": "2026-05-18T05:24:09.776Z"
+            },
+            "description": "Device 赵工的定位器 entered restricted area: 隧道施工区",
+            "status": "pending",
+            "handled_at": null,
+            "location": "34.289000, 109.142000",
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": "137****3456",
+            "person_name": "赵六",
+            "person": {
+                "username": "赵六"
+            }
         }
     ]
 }
