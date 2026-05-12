@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="72dp"
+    android:padding="12dp"
+    android:background="?attr/selectableItemBackground">
+
+    <CheckBox
+        android:id="@+id/cb_select"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"/>
+
+    <TextView
+        android:id="@+id/tv_device_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="设备名称"
+        android:textSize="14sp"
+        android:textColor="#1F2937"
+        android:textStyle="bold"
+        app:layout_constraintStart_toEndOf="@id/cb_select"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/tv_status"
+        android:layout_marginStart="12dp"/>
+
+    <TextView
+        android:id="@+id/tv_phone"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="手机号"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        app:layout_constraintStart_toEndOf="@id/cb_select"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginStart="12dp"/>
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="在线"
+        android:textSize="12sp"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="2dp"
+        android:background="@drawable/bg_pill_soft"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"/>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="alarm_level_options">
+        <item>高危</item>
+        <item>警告</item>
+        <item>提示</item>
+    </string-array>
+</resources>

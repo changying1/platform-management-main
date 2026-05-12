@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/card_root"
+    android:layout_width="match_parent"
+    android:layout_height="140dp"
+    android:layout_margin="8dp"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="8dp"
+    app:strokeWidth="0dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?attr/selectableItemBackground">
+
+    <!--    定义每个功能入口的“圆角卡片样式”，提升整体质感。-->
+
+    <!-- 用一个背景 View 来做渐变（更稳定、可控） -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- 渐变背景 -->
+        <View
+            android:id="@+id/v_bg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_app_card_gradient" />
+
+        <!-- 内容区域：整体居中 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="16dp">
+
+            <!-- 图标圆形底：放大、更突出 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                app:cardCornerRadius="32dp"
+                app:cardElevation="0dp"
+                android:backgroundTint="#22FFFFFF">
+
+                <ImageView
+                    android:id="@+id/iv_icon"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="14dp"
+                    app:tint="@android:color/white"
+                    android:src="@android:drawable/ic_menu_slideshow" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 标题：加大字号 + 行高，避免“被遮挡/挤压” -->
+            <TextView
+                android:id="@+id/tv_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="视频中心"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:lineHeight="22sp"
+                android:textStyle="bold"
+                android:layout_marginTop="12dp" />
+
+            <!-- 副标题：弱化一点 -->
+            <TextView
+                android:id="@+id/tv_subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="查看设备实时画面"
+                android:textColor="#DDFFFFFF"
+                android:textSize="12sp"
+                android:lineHeight="16sp"
+                android:layout_marginTop="6dp" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+</com.google.android.material.card.MaterialCardView>

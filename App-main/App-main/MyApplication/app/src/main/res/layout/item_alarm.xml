@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="8dp"
+    android:padding="16dp"
+    android:elevation="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!-- 报警编号 -->
+        <TextView
+            android:id="@+id/tvAlarmId"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="报警编号: ALM-20240807-001"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <!-- 报警类型 -->
+        <TextView
+            android:id="@+id/tvAlarmType"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="报警类型: 电子围栏入侵"
+            android:textSize="14sp" />
+
+        <!-- 人员/设备 -->
+        <TextView
+            android:id="@+id/tvDevice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="设备: 设备1"
+            android:textSize="14sp" />
+
+        <!-- 报警时间 -->
+        <TextView
+            android:id="@+id/tvTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="时间: 2024-08-07 16:11:56"
+            android:textSize="14sp" />
+
+        <!-- 位置 -->
+        <TextView
+            android:id="@+id/tvLocation"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="位置: 未命名"
+            android:textSize="14sp" />
+
+        <!-- 报警级别 -->
+        <!-- 报警级别（可下拉选择） -->
+        <Spinner
+            android:id="@+id/spinnerLevel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+
+
+        <!-- 报警状态 -->
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="状态: 待处理"
+            android:textSize="14sp" />
+        <Button
+            android:id="@+id/btnResolve"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="处置"
+            android:textColor="#FFFFFF"
+            android:background="#4CAF50"
+            android:layout_marginTop="8dp" />
+
+        <!-- 删除按钮 -->
+        <Button
+            android:id="@+id/btnDelete"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="删除"
+            android:textColor="#FFFFFF"
+            android:background="#F44336"
+            android:layout_marginTop="8dp" />
+    </LinearLayout>
+</androidx.cardview.widget.CardView>

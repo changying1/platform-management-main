@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#EEF2FF"
+    android:paddingTop="12dp"
+    android:paddingLeft="12dp"
+    android:paddingRight="12dp">
+
+    <!-- 顶部浮层卡片（新增 wrapper，不改变 topBar 的 id） -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/topBarCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        app:cardBackgroundColor="#FFFFFF"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="4dp"
+        app:cardUseCompatPadding="true"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- 你的 topBar 保持原 id，不删不改 -->
+        <LinearLayout
+            android:id="@+id/topBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/transparent"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- 第 1 行：关键词 + 搜索（胶囊） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etKeyword"
+                    android:layout_width="0dp"
+                    android:layout_height="42dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_pill_input"
+                    android:hint="设备号/人员"
+                    android:paddingLeft="14dp"
+                    android:paddingRight="14dp"
+                    android:singleLine="true"
+                    android:textColor="#1F2A44"
+                    android:textColorHint="#8B94A7" />
+
+                <Button
+                    android:id="@+id/btnSearch"
+                    android:layout_width="88dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/bg_pill_primary"
+                    android:stateListAnimator="@null"
+                    android:text="搜索"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- 第 2 行：日期范围（胶囊） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="日期："
+                    android:textColor="#6D768A"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tvStartDate"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_pill_soft"
+                    android:gravity="center"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp"
+                    android:text="2026-01-04"
+                    android:textColor="#1F2A44"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginLeft="10dp"
+                    android:layout_marginRight="10dp"
+                    android:text="—"
+                    android:textColor="#A0A9BC"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/tvEndDate"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_pill_soft"
+                    android:gravity="center"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp"
+                    android:text="2026-01-04"
+                    android:textColor="#1F2A44"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 地图区域：给一点圆角边框+留白（不改 mapView id） -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/mapCard"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="2dp"
+        app:cardUseCompatPadding="true"
+        app:cardBackgroundColor="#FFFFFF"
+        app:layout_constraintTop_toBottomOf="@id/topBarCard"
+        app:layout_constraintBottom_toTopOf="@id/playbackCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <org.osmdroid.views.MapView
+            android:id="@+id/mapView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#FFFFFF" />
+
+    </androidx.cardview.widget.CardView>
+
+    <!-- 底部浮层卡片（新增 wrapper，不改变 playbackPanel 的 id） -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/playbackCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        app:cardBackgroundColor="#FFFFFF"
+        app:cardCornerRadius="22dp"
+        app:cardElevation="2dp"
+        app:cardUseCompatPadding="true"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.0"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <!-- 你的 playbackPanel 保持原 id，不删不改 -->
+        <LinearLayout
+            android:id="@+id/playbackPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/transparent"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- 时间行：弱化灰字（更像参考图） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvTimeStart"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="开始"
+                    android:textColor="#7A8499"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tvTimeEnd"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="end"
+                    android:text="结束"
+                    android:textColor="#7A8499"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/seekProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:max="1000" />
+
+            <!-- 控制行：统一圆形/胶囊，间距更自然 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <ImageButton
+                    android:id="@+id/btnRestart"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/bg_circle_soft"
+                    android:contentDescription="重新开始"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_restart"
+                    app:tint="#475066" />
+
+                <ImageButton
+                    android:id="@+id/btnPlayPause"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:layout_marginLeft="18dp"
+                    android:layout_marginRight="18dp"
+                    android:background="@drawable/bg_circle_primary"
+                    android:contentDescription="播放暂停"
+                    android:scaleType="centerInside"
+                    android:src="@android:drawable/ic_media_play"
+                    app:tint="#FFFFFF" />
+
+                <Spinner
+                    android:id="@+id/spSpeed"
+                    android:layout_width="46dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_pill_soft"
+                    android:popupBackground="#FFFFFF" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

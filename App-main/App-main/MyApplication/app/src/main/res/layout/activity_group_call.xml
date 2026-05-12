@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F7FA"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="JT808 语音播报"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#1F2937"
+        android:layout_marginBottom="16dp"/>
+
+    <RadioGroup
+        android:id="@+id/rg_mode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="16dp">
+
+        <RadioButton
+            android:id="@+id/rb_broadcast"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="全体广播"
+            android:checked="true"/>
+
+        <RadioButton
+            android:id="@+id/rb_target"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="定向播报"/>
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="播报内容"
+        android:textSize="14sp"
+        android:textColor="#4B5563"
+        android:layout_marginBottom="8dp"/>
+
+    <EditText
+        android:id="@+id/et_tts_text"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:hint="请输入要播报的文本内容..."
+        android:background="@drawable/bg_input"
+        android:padding="12dp"
+        android:gravity="top"
+        android:maxLines="6"
+        android:layout_marginBottom="12dp"/>
+
+    <TextView
+        android:id="@+id/tv_stats"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="在线设备: 0 | 目标设备: 0 | 字数: 0"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:layout_marginBottom="12dp"/>
+
+    <Button
+        android:id="@+id/btn_send"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="发送语音播报"
+        android:backgroundTint="#2563EB"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="16dp"/>
+
+    <ProgressBar
+        android:id="@+id/progress_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="JT808 设备列表"
+        android:textSize="14sp"
+        android:textColor="#4B5563"
+        android:layout_marginBottom="8dp"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rv_devices"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FFFFFF"
+        android:clipToPadding="false"/>
+
+</LinearLayout>

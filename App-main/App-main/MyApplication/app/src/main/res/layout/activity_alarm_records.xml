@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <!-- 总结信息框 -->
+    <LinearLayout
+        android:id="@+id/summaryBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:background="@drawable/rounded_corner_background"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- 总报警数 -->
+        <TextView
+            android:id="@+id/tvTotalAlarms"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="日报警: 6"
+            android:textSize="16sp"
+            android:textColor="#333333"
+            android:layout_weight="1"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp"/>
+
+        <!-- 待处理数量 -->
+        <TextView
+            android:id="@+id/tvPendingAlarms"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="待处理: 2"
+            android:textSize="16sp"
+            android:textColor="#FF9800"
+            android:layout_weight="1"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp"/>
+
+        <!-- 已处理数量 -->
+        <TextView
+            android:id="@+id/tvProcessedAlarms"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="已处理: 4"
+            android:textSize="16sp"
+            android:textColor="#4CAF50"
+            android:layout_weight="1"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp"/>
+
+        <!-- 高风险数量 -->
+        <TextView
+            android:id="@+id/tvCriticalAlarms"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="高风险: 3"
+            android:textSize="16sp"
+            android:textColor="#F44336"
+            android:layout_weight="1"
+            android:textStyle="bold"/>
+    </LinearLayout>
+
+    <!-- 搜索框 -->
+    <androidx.appcompat.widget.AppCompatEditText
+        android:id="@+id/etSearch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="搜索报警编号或设备"
+        android:padding="10dp"
+        android:background="@drawable/search_background"
+        android:textColor="#333333"
+        android:textSize="14sp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@id/summaryBox"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:drawableLeft="@drawable/ic_search"
+        android:drawablePadding="8dp"/>
+
+    <!-- 筛选器 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@id/etSearch">
+
+        <!-- 报警状态筛选 -->
+        <Spinner
+            android:id="@+id/spinnerStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+
+        <!-- 报警级别筛选 -->
+        <Spinner
+            android:id="@+id/spinnerLevel"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+    </LinearLayout>
+
+    <!-- RecyclerView 用来显示报警记录 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/etSearch"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:layout_marginTop="25dp"  />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
