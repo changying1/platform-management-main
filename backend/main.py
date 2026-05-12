@@ -53,6 +53,8 @@ from app.core.ws_manager import alarm_clients, set_main_event_loop
 from app.services.video_service import VideoService
 from app.services.jt808_service import jt808_manager
 from app.services.tts_queue_service import tts_queue_service
+from app.services.Fence.fence_polling_service import fence_polling_service
+from app.services.track_cleanup_service import track_cleanup_service
 
 # --- 日志配置 ---
 logging.basicConfig(
@@ -76,6 +78,15 @@ async def lifespan(app: FastAPI):
     # 2. 启动 TTS 语音播报队列 worker
     logger.info("Starting TTS queue worker...")
     tts_queue_service.start()
+    
+    # 3. 启动围栏检测轮询服务
+    logger.info("Starting fence polling service...")
+    fence_polling_service.start()
+    
+    # 4. 启动轨迹数据清理服务
+    logger.info("Starting track cleanup service...")
+    track_cleanup_service.start()
+    
     """
     # 2. 视频录像状态自检 (增加异常保护)
     db = SessionLocal()
@@ -95,6 +106,8 @@ async def lifespan(app: FastAPI):
     # 【关闭阶段】
     set_main_event_loop(None)
     logger.info("Shutting down services...")
+    fence_polling_service.stop()
+    track_cleanup_service.stop()
     jt808_manager.running = False
     tts_queue_service.stop()
 
