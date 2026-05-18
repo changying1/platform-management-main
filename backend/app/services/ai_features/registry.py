@@ -38,7 +38,7 @@ def ai_rule(key: str, desc: str = ""):
             desc=desc,
         )
 
-        print(f"🧠 注册AI规则: {key}")
+        print(f"[AI] Registered rule: {key}")
 
         return fn
 

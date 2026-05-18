@@ -22,15 +22,19 @@ export const FenceRulePanel: React.FC<FenceRulePanelProps> = ({
   onCancel,
   onBackToDraw,
 }) => {
+  const getLocalDateTime = (date: Date) => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
   const getTodayDateTime = () => {
-    const today = new Date();
-    const start = new Date(today);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(today);
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + 7);
     end.setHours(23, 59, 59, 999);
     return {
-      start: start.toISOString().slice(0, 16),
-      end: end.toISOString().slice(0, 16),
+      start: getLocalDateTime(now),
+      end: getLocalDateTime(end),
     };
   };
 

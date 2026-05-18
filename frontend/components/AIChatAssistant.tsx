@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, X, Trash2, Loader2, Settings, MessageSquare, AlertCircle } from 'lucide-react';
+import { systemDataService, SystemData } from '../src/api/systemDataApi';
 
 interface Message {
   id: number;
@@ -147,6 +148,9 @@ const AIChatAssistant: React.FC = () => {
     try {
       console.log('正在连接到:', settings.serviceUrl);
       
+      const systemData = await systemDataService.getSystemData();
+      console.log('获取到系统数据:', systemData);
+
       const response = await fetch(`${settings.serviceUrl}/chat`, {
         method: 'POST',
         headers: {
@@ -157,6 +161,10 @@ const AIChatAssistant: React.FC = () => {
           chat_data: {
             prompt: userMessage.content,
             history: [],
+            system_context: {
+              system_data: systemData,
+              data_timestamp: systemData.timestamp,
+            },
           },
           kb_config: {
             kb_name: settings.kbName,

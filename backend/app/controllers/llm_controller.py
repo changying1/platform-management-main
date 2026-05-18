@@ -29,6 +29,7 @@ class ChatTurn(BaseModel):
 class ChatHistory(BaseModel):
     prompt: str
     history: List[ChatTurn] = Field(default_factory=list)
+    system_context: Optional[dict] = None
 
 
 class KBConfig(BaseModel):
@@ -43,9 +44,21 @@ class ChatRequest(BaseModel):
 
 @router.get("/health")
 def health_check():
+    import requests
+    try:
+        test_response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        test_ok = test_response.status_code == 200
+        test_models = test_response.json().get("models", []) if test_ok else []
+    except Exception as e:
+        test_ok = False
+        test_models = []
+        print(f"Direct test failed: {e}")
+    
     ollama_ok = check_ollama_connection()
     models = get_available_models() if ollama_ok else []
     selected_model = select_best_model()
+    
+    print(f"DEBUG - Direct test: {test_ok}, LLM check: {ollama_ok}")
     
     return {
         "status": "ok",
@@ -54,6 +67,10 @@ def health_check():
             "connected": ollama_ok,
             "models": models,
             "selected_model": selected_model,
+        },
+        "direct_test": {
+            "connected": test_ok,
+            "models_count": len(test_models)
         },
         "backend": "running",
         "message": "✅ AI 助手服务已集成到主后端，无需单独启动!"
@@ -97,13 +114,15 @@ def chat_handler(request: ChatRequest):
             for turn in request.chat_data.history
         ]
 
+        system_context = request.chat_data.system_context
         chain = create_llm_chain(
             history_dicts,
             kb_name=request.kb_config.kb_name,
-            enable_rag=request.kb_config.enable_rag
+            enable_rag=request.kb_config.enable_rag,
+            system_context=system_context
         )
 
-        response = chain.invoke(request.chat_data.prompt)
+        response = chain(request.chat_data.prompt)
 
         return {
             "status": "success",

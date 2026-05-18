@@ -415,25 +415,25 @@ const handleConfirmProcess = async () => {
 
         {/* 统计卡片 - 右上角紧凑布局 */}
         <div className="flex gap-3">
-          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-cyan-400/30 px-4 py-2.5 flex items-center gap-2">
-            <Bell size={16} className="text-cyan-400" />
-            <span className="text-slate-400 text-sm">总数</span>
-            <span className="text-cyan-400 font-bold text-base">{stats.total}</span>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-cyan-400/30 px-4 py-1.5 flex items-center gap-2">
+            <Bell size={24} className="text-cyan-400" />
+            <span className="text-slate-400 text-lg">总数</span>
+            <span className="text-cyan-400 font-bold text-2xl">{stats.total}</span>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-yellow-400/30 px-4 py-2.5 flex items-center gap-2">
-            <AlertTriangle size={16} className="text-yellow-400" />
-            <span className="text-slate-400 text-sm">待处理</span>
-            <span className="text-yellow-400 font-bold text-base">{stats.pending}</span>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-yellow-400/30 px-4 py-1.5 flex items-center gap-2">
+            <AlertTriangle size={24} className="text-yellow-400" />
+            <span className="text-slate-400 text-lg">待处理</span>
+            <span className="text-yellow-400 font-bold text-2xl">{stats.pending}</span>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-blue-400/30 px-4 py-2.5 flex items-center gap-2">
-            <ShieldAlert size={16} className="text-blue-400" />
-            <span className="text-slate-400 text-sm">围栏</span>
-            <span className="text-blue-400 font-bold text-base">{stats.fence}</span>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-blue-400/30 px-4 py-1.5 flex items-center gap-2">
+            <ShieldAlert size={24} className="text-blue-400" />
+            <span className="text-slate-400 text-lg">围栏</span>
+            <span className="text-blue-400 font-bold text-2xl">{stats.fence}</span>
           </div>
-          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-purple-400/30 px-4 py-2.5 flex items-center gap-2">
-            <Video size={16} className="text-purple-400" />
-            <span className="text-slate-400 text-sm">视频</span>
-            <span className="text-purple-400 font-bold text-base">{stats.video}</span>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-purple-400/30 px-4 py-1.5 flex items-center gap-2">
+            <Video size={24} className="text-purple-400" />
+            <span className="text-slate-400 text-lg">视频</span>
+            <span className="text-purple-400 font-bold text-2xl">{stats.video}</span>
           </div>
         </div>
       </div>

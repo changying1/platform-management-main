@@ -18,7 +18,7 @@ import app.models.alarm_records
 import app.models.location_history
 
 
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@127.0.0.1:3306/company-management?charset=utf8mb4"
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@127.0.0.1:3306/company-management?charset=utf8mb4&connect_timeout=3"
 
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
@@ -88,19 +88,22 @@ def ensure_schema_compatibility():
         },
     }
 
-    with engine.begin() as conn:
-        inspector = inspect(conn)
-        existing_tables = set(inspector.get_table_names())
+    try:
+        with engine.begin() as conn:
+            inspector = inspect(conn)
+            existing_tables = set(inspector.get_table_names())
 
-        for table_name, columns in required_columns.items():
-            if table_name not in existing_tables:
-                continue
-
-            existing_columns = {c["name"] for c in inspector.get_columns(table_name)}
-            for column_name, ddl in columns.items():
-                if column_name in existing_columns:
+            for table_name, columns in required_columns.items():
+                if table_name not in existing_tables:
                     continue
-                conn.execute(text(ddl))
+
+                existing_columns = {c["name"] for c in inspector.get_columns(table_name)}
+                for column_name, ddl in columns.items():
+                    if column_name in existing_columns:
+                        continue
+                    conn.execute(text(ddl))
+    except Exception as exc:
+        print(f"Warning: skipped MySQL schema compatibility check: {exc}")
 
 def get_db():
     db = SessionLocal()

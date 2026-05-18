@@ -386,6 +386,7 @@ export default function Dashboard({ setActiveMenu, setManagementTab }: Dashboard
     const [branches, setBranches] = useState<Branch[]>([]);
     const [alarms, setAlarms] = useState<any[]>([]);
     const [dbDevices, setDbDevices] = useState<any[]>([]);
+    const [dashboardOverview, setDashboardOverview] = useState<any>(null);
 
   // const alertItems = useMemo(() => {
   //   if (alarms.length === 0) return [];
@@ -643,6 +644,30 @@ const [avgDuration, setAvgDuration] = useState(0);
 
   // ✅ 初始化分公司和项目（地图12个定位点！）
   useEffect(() => {
+    if (dashboardOverview) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/dashboard/overview");
+        if (!res.ok) return;
+        const data = await res.json();
+        setDashboardOverview(data);
+        if (Array.isArray(data.branches)) {
+          setBranches(data.branches);
+        }
+        if (Array.isArray(data.projects)) {
+          setProjects(data.projects);
+        }
+        if (Array.isArray(data.todayAlarms)) {
+          setTodayAlarms(data.todayAlarms);
+        }
+      } catch (e) {
+        console.error("fetch dashboard overview failed:", e);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (dashboardOverview) return;
     setBranches([
       { id: 0, name: "总公司", province: "陕西省", coord: [108.9398, 34.3416] },
       { id: 1, name: "北京分公司", province: "北京市", coord: [116.4074, 39.9042] },
@@ -651,11 +676,27 @@ const [avgDuration, setAvgDuration] = useState(0);
       { id: 4, name: "成都分公司", province: "四川省", coord: [104.0668, 30.5728] }
     ]);
     setProjects(nationalData.projectsList);
-  }, []);
+  }, [dashboardOverview]);
 
   // ✅ 与 yaokong-main 完全一致的视图切换！12个定位点全显示！
   // ✅ 只有告警列表用真实API数据！
   const currentData = useMemo(() => {
+    if (dashboardOverview) {
+      let baseData = dashboardOverview.national;
+      if (selectedProjectId) {
+        baseData = dashboardOverview.projectsById?.[String(selectedProjectId)] || baseData;
+      } else if (selectedFilterBranchId !== "" && selectedFilterBranchId !== 0) {
+        baseData = dashboardOverview.branchesById?.[String(selectedFilterBranchId)] || baseData;
+      }
+      return {
+        ...baseData,
+        alarms: {
+          ...(baseData?.alarms || {}),
+          list: todayAlarms.length ? todayAlarms : (baseData?.alarms?.list || [])
+        }
+      };
+    }
+
     let baseData;
     
     // ✅ 项目模式 - 任何选中的项目都进入项目级视图（跳转到高德地图）
@@ -746,7 +787,7 @@ const [avgDuration, setAvgDuration] = useState(0);
         list: todayAlarms
       }
     };
-  }, [selectedProjectId, selectedFilterBranchId, todayAlarms]);
+  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId, todayAlarms]);
     
 
     // ==================================================================
@@ -805,6 +846,7 @@ const [avgDuration, setAvgDuration] = useState(0);
 
   // ✅ 只获取实时告警列表！其他全部硬编码！
   useEffect(() => {
+    if (dashboardOverview) return;
     (async () => {
       try {
         const baseUrl = '';
@@ -825,7 +867,7 @@ const [avgDuration, setAvgDuration] = useState(0);
         console.error("fetch alarms failed:", e);
       }
     })();
-  }, [selectedProjectId, selectedFilterBranchId]);
+  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId]);
 
       useEffect(() => {
       const updateViewportUnits = () => {

@@ -252,6 +252,18 @@ def find_video_file_with_fallback(subdir: str, file_path: str):
             return full_path
     return None
 
+def find_static_file_with_fallback(subdirs: list[str], file_path: str, allowed_exts: tuple[str, ...]):
+    lower_name = file_path.lower()
+    if not lower_name.endswith(allowed_exts):
+        return None
+
+    for storage_root in get_configured_storage_roots():
+        for subdir in subdirs:
+            full_path = _safe_join(storage_root, os.path.join(subdir, file_path))
+            if full_path and os.path.isfile(full_path):
+                return full_path
+    return None
+
 @app.get("/api/videos/{file_path:path}")
 def serve_video(file_path: str):
     full_path = find_video_file_with_fallback("recordings", file_path)
@@ -269,6 +281,17 @@ def serve_alarm_video(file_path: str):
 @app.get("/api/playback_videos/{file_path:path}")
 def serve_playback_video(file_path: str):
     full_path = find_video_file_with_fallback("playback_videos", file_path)
+    if full_path:
+        return FileResponse(full_path)
+    raise HTTPException(status_code=404, detail="File not found")
+
+@app.get("/api/alarm_screenshots/{file_path:path}")
+def serve_alarm_screenshot(file_path: str):
+    full_path = find_static_file_with_fallback(
+        ["alarms", "alarm_screenshots"],
+        file_path,
+        (".jpg", ".jpeg", ".png", ".webp"),
+    )
     if full_path:
         return FileResponse(full_path)
     raise HTTPException(status_code=404, detail="File not found")

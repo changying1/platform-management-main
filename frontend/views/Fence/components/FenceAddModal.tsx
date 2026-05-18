@@ -155,7 +155,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   const [formData, setFormData] = useState({
     name: "",
     behavior: "No Entry" as "No Entry" | "No Exit",
-    shape: "polygon" as "circle" | "polygon",
+    shape: "polygon" as "brush" | "circle" | "polygon",
     radius: 50,
     startTime: "",
     endTime: "",
@@ -169,15 +169,25 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
     if (isOpen) {
       setBuildMode("select");
       setStep("form");
+      const now = new Date();
+      const endDate = new Date(now);
+      endDate.setDate(endDate.getDate() + 7);
+      endDate.setHours(23, 59, 59, 999);
+      
+      const getLocalDateTime = (date: Date) => {
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      };
+      
       setFormData({
         name: "",
         company: "",
         project: "",
         behavior: "No Entry",
-        shape: "polygon",
+        shape: "brush",
         radius: 50,
-        startTime: new Date().toISOString().slice(0, 16),
-        endTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+        startTime: getLocalDateTime(now),
+        endTime: getLocalDateTime(endDate),
         severity: "general",
         description: "",
       });

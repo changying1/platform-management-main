@@ -110,7 +110,7 @@ export default function FenceManagement() {
   };
 
   const [showDrawToolbar, setShowDrawToolbar] = useState(false);
-  const [activeDrawTool, setActiveDrawTool] = useState<DrawTool>('rectangle');
+  const [activeDrawTool, setActiveDrawTool] = useState<DrawTool>('brush');
   const [showRulePanel, setShowRulePanel] = useState(false);
   const [tempShape, setTempShape] = useState<any>({});
   const [isDrawing, setIsDrawing] = useState(false);
@@ -658,9 +658,10 @@ renderDraft(
   tempCenter,
   pendingFenceData?.radius || 50,
   // 🔒 画笔工具绝对不传鼠标！只有多边形才需要跟随线！
-  activeDrawTool === 'polygon' ? mouseLngLat : null
+  activeDrawTool === 'polygon' ? mouseLngLat : null,
+  activeDrawTool === 'brush' && isDrawing
 );
-}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData]);
+}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, isDrawing]);
 
 // 监听debugMode变化，退出调试模式时保存设备位置
 const [prevDebugMode, setPrevDebugMode] = useState(false);
@@ -874,23 +875,18 @@ if (activeDrawTool === 'rectangle') {
     map.setStatus({ dragEnable: true });
     map.setDefaultCursor('');
   };
-// ✏️ 画笔：标准画图软件模式！点击 = 落笔/抬笔
+// ✏️ 画笔：标准画图软件模式，按住拖动绘制，松开自动闭合
 } else if (activeDrawTool === 'brush') {
   
-  const onClick = (e: any) => {
-    // ✨ 第一次点击：落笔
-    if (!isBrushDrawingRef.current) {
-      isBrushDrawingRef.current = true;
-      brushFinishedRef.current = false;
-      setTempPoints([[e.lnglat.getLat(), e.lnglat.getLng()]]);
-      map.setDefaultCursor('cell');  // 光标变画笔状
-    } 
-    // ✨ 第二次点击：抬笔，结束！
-    else {
-      isBrushDrawingRef.current = false;
-      brushFinishedRef.current = true;
-      map.setDefaultCursor('crosshair');
+  const onMouseDown = (e: any) => {
+    if (isBrushDrawingRef.current) {
+      return;
     }
+    isBrushDrawingRef.current = true;
+    brushFinishedRef.current = false;
+    setIsDrawing(true);
+    setTempPoints([[e.lnglat.getLat(), e.lnglat.getLng()]]);
+    map.setDefaultCursor('cell');
   };
   
   const onMouseMove = (e: any) => {
@@ -903,17 +899,43 @@ if (activeDrawTool === 'rectangle') {
         return prev;
       }
       const newPoints = [...prev, [lat, lng]];
-      renderDraft(activeDrawTool, newPoints, null, 0, null);
+      renderDraft(activeDrawTool, newPoints, null, 0, null, true);
       return newPoints;
     });
   };
+
+  const onMouseUp = (e?: any) => {
+    if (!isBrushDrawingRef.current) return;
+    if (e?.lnglat) {
+      const lat = e.lnglat.getLat();
+      const lng = e.lnglat.getLng();
+      setTempPoints(prev => {
+        const last = prev[prev.length - 1];
+        if (last && Math.hypot(last[0] - lat, last[1] - lng) < 0.00001) {
+          return prev;
+        }
+        const newPoints = [...prev, [lat, lng]];
+        renderDraft(activeDrawTool, newPoints, null, 0, null, false);
+        return newPoints;
+      });
+    }
+    isBrushDrawingRef.current = false;
+    brushFinishedRef.current = true;
+    setIsDrawing(false);
+    map.setDefaultCursor('crosshair');
+  };
   
-  map.on('click', onClick);
+  map.on('mousedown', onMouseDown);
   map.on('mousemove', onMouseMove);
+  map.on('mouseup', onMouseUp);
+  window.addEventListener('mouseup', onMouseUp);
   
   return () => {
-    map.off('click', onClick);
+    map.off('mousedown', onMouseDown);
     map.off('mousemove', onMouseMove);
+    map.off('mouseup', onMouseUp);
+    window.removeEventListener('mouseup', onMouseUp);
+    setIsDrawing(false);
     map.setStatus({ dragEnable: true });
     map.setDefaultCursor('');
   };
