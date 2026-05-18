@@ -1,0 +1,247 @@
+{
+  "systemName": "中铁一局智能安全管理系统",
+  "theme": "dark",
+  "language": "zh",
+  "timezone": "Asia/Shanghai",
+  "tablePageSize": 20,
+  "autoLogoutMinutes": 30,
+  "confirmBeforeDelete": true,
+  "coordinatePrecision": 6,
+  "alarmPopup": true,
+  "alarmSound": true,
+  "alarmSoundType": "standard",
+  "alarmRepeatInterval": 5,
+  "alarmAutoResolve": false,
+  "alarmRetentionDays": 30,
+  "alarmSevereFlash": true,
+  "alarmSevereUpgrade": "sound",
+  "alarmVolume": 30,
+  "alarmSosEnabled": true,
+  "alarmFenceEnabled": true,
+  "alarmLowBatteryEnabled": true,
+  "alarmOfflineEnabled": true,
+  "alarmEscalationEnabled": true,
+  "alarmEscalationMinutes": 5,
+  "videoRetentionDays": 16,
+  "videoQuality": "high",
+  "videoSegmentMinutes": 30,
+  "videoStorageType": "local",
+  "videoStoragePath": "./backend/static",
+  "alarmVideoRetentionDays": 90,
+  "alarmVideoSurroundMinutes": 1,
+  "alarmScreenshotRetentionDays": 90,
+  "fenceDetectionInterval": 3,
+  "fenceDefaultRadius": 50,
+  "fenceRetentionDays": 365,
+  "fenceGracePeriod": 0,
+  "fenceAlarmSilenceMinutes": 1,
+  "fenceDefaultBehavior": "No Entry",
+  "fenceDefaultSeverity": "normal",
+  "trackRetentionDays": 30,
+  "passwordExpireDays": 90,
+  "logRetentionDays": 90,
+  "logAutoClean": true,
+  "logLevel": "all",
+  "smsNotification": false,
+  "callNotification": false,
+  "smsApiUrl": "https://sms.example.com/api",
+  "smsApiKey": "",
+  "smsSign": "【安全管理系统】",
+  "smsTemplateId": "SMS_123456",
+  "callApiUrl": "https://call.example.com/api",
+  "callApiKey": "",
+  "notifySevereBySms": true,
+  "notifySevereByCall": true,
+  "notifyMediumBySms": false,
+  "notifyMediumByCall": false,
+  "notifyLowBySms": false,
+  "notifyLowByCall": false,
+  "notificationRecipients": [
+    {
+      "name": "张安全",
+      "phone": "13800138001",
+      "level": "severe",
+      "enabled": true
+    },
+    {
+      "name": "李主管",
+      "phone": "13800138002",
+      "level": "all",
+      "enabled": true
+    },
+    {
+      "name": "王经理",
+      "phone": "13800138003",
+      "level": "medium",
+      "enabled": false
+    }
+  ],
+  "autoBackup": true,
+  "backupFrequency": "daily",
+  "backupTime": "02:00",
+  "backupRetention": 7,
+  "forceInitialPasswordChange": true,
+  "passwordMinLength": 8,
+  "passwordRequireComplexity": true,
+  "loginAttempts": 5,
+  "lockoutDuration": 30,
+  "maxConcurrentSessions": 3,
+  "hqAdminPermissions": [
+    "dashboard",
+    "monitor",
+    "fence",
+    "device",
+    "personnel",
+    "alarm",
+    "system"
+  ],
+  "branchAdminPermissions": [
+    "dashboard",
+    "monitor",
+    "fence",
+    "device",
+    "personnel",
+    "alarm"
+  ],
+  "projectAdminPermissions": [
+    "dashboard",
+    "monitor",
+    "fence",
+    "device.view",
+    "personnel.view",
+    "alarm"
+  ],
+  "teamAdminPermissions": [
+    "dashboard",
+    "monitor.view",
+    "personnel.view",
+    "alarm.view"
+  ],
+  "aiServiceUrl": "/api/ai",
+  "aiEnableRAG": true,
+  "aiKbName": "default",
+  "aiModelName": "DeepSeek-R1-Distill-Qwen-7B-F16",
+  "aiVectorDbPath": "./vector_db",
+  "aiAlarmLevelConfigs": [
+    {
+      "id": "1",
+      "name": "未佩戴安全帽",
+      "category": "安全防护",
+      "code": "helmet_missing",
+      "level": "high",
+      "description": "检测人员是否正确佩戴安全帽"
+    },
+    {
+      "id": "2",
+      "name": "未系安全带",
+      "category": "安全防护",
+      "code": "safety_harness_missing",
+      "level": "high",
+      "description": "高空作业人员安全带佩戴检测"
+    },
+    {
+      "id": "3",
+      "name": "吸烟检测",
+      "category": "作业行为",
+      "code": "smoking",
+      "level": "high",
+      "description": "禁烟区域吸烟行为检测"
+    },
+    {
+      "id": "4",
+      "name": "人员倒地",
+      "category": "人员安全",
+      "code": "person_fall",
+      "level": "high",
+      "description": "人员摔倒、倒地异常检测"
+    },
+    {
+      "id": "5",
+      "name": "陌生人员闯入",
+      "category": "人员管理",
+      "code": "unauthorized_person",
+      "level": "high",
+      "description": "未授权人员进入管控区域"
+    },
+    {
+      "id": "6",
+      "name": "明火检测",
+      "category": "消防安全",
+      "code": "fire_detected",
+      "level": "high",
+      "description": "明火、烟雾、火焰检测"
+    },
+    {
+      "id": "7",
+      "name": "禁入区无安全帽",
+      "category": "区域管理",
+      "code": "no_helmet_area",
+      "level": "medium",
+      "description": "危险区域未佩戴安全帽"
+    },
+    {
+      "id": "8",
+      "name": "人员聚集",
+      "category": "人员管理",
+      "code": "crowd_detection",
+      "level": "medium",
+      "description": "人员过度聚集检测"
+    },
+    {
+      "id": "9",
+      "name": "反光衣缺失",
+      "category": "安全防护",
+      "code": "reflective_vest_missing",
+      "level": "high",
+      "description": "施工现场反光衣佩戴检测"
+    },
+    {
+      "id": "10",
+      "name": "电气焊作业",
+      "category": "动火作业",
+      "code": "welding_detection",
+      "level": "high",
+      "description": "违规电气焊作业检测"
+    },
+    {
+      "id": "11",
+      "name": "洞口防护缺失",
+      "category": "临边防护",
+      "code": "hole_protection",
+      "level": "high",
+      "description": "洞口、临边防护设施缺失"
+    },
+    {
+      "id": "12",
+      "name": "起重半径违规",
+      "category": "起重作业",
+      "code": "lifting_radius",
+      "level": "high",
+      "description": "人员进入起重作业危险半径"
+    },
+    {
+      "id": "13",
+      "name": "动火监护缺失",
+      "category": "动火作业",
+      "code": "hotwork_supervisor",
+      "level": "high",
+      "description": "动火作业无现场监护"
+    },
+    {
+      "id": "14",
+      "name": "特种设备操作",
+      "category": "设备安全",
+      "code": "special_equipment",
+      "level": "high",
+      "description": "无证操作特种设备"
+    },
+    {
+      "id": "15",
+      "name": "安全帽颜色合规",
+      "category": "安全防护",
+      "code": "helmet_color",
+      "level": "low",
+      "description": "不同岗位安全帽颜色规范检查"
+    }
+  ]
+}

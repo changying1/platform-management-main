@@ -38,7 +38,6 @@ PTZ_SPEED = 0.5
 # 超时判定：连续多久没再收到方向包，就认为该停止
 ACTION_TIMEOUT_SECONDS = 0.6
 DEVICE_ID_INPUT_TIMEOUT_SECONDS = 10.0
-DEVICE_ID_AUTO_CONFIRM_SECONDS = 2.5
 
 # 请求超时
 HTTP_TIMEOUT_SECONDS = 3
@@ -81,7 +80,6 @@ class DeviceIdInputState:
     active: bool = False
     buffer: str = ""
     pending_video_id: Optional[int] = None
-    auto_confirmed: bool = False
     updated_at: float = 0.0
 
 
@@ -115,7 +113,6 @@ def begin_device_id_input():
         device_id_input_state.active = True
         device_id_input_state.buffer = ""
         device_id_input_state.pending_video_id = None
-        device_id_input_state.auto_confirmed = False
         device_id_input_state.updated_at = time.time()
     log("DEVICE_SWITCH input begin")
 
@@ -131,7 +128,6 @@ def append_device_id_digit(digit: int):
             log("DEVICE_SWITCH digit ignored: buffer too long")
             return
         device_id_input_state.buffer += str(digit)
-        device_id_input_state.auto_confirmed = False
         device_id_input_state.updated_at = time.time()
         buffered = device_id_input_state.buffer
 
@@ -148,20 +144,8 @@ def is_device_id_input_active() -> bool:
             device_id_input_state.active = False
             device_id_input_state.buffer = ""
             device_id_input_state.pending_video_id = None
-            device_id_input_state.auto_confirmed = False
             device_id_input_state.updated_at = time.time()
         return device_id_input_state.active
-
-
-def get_device_id_input_debug_state() -> dict:
-    with device_id_input_lock:
-        return {
-            "active": device_id_input_state.active,
-            "buffer": device_id_input_state.buffer,
-            "pending_video_id": device_id_input_state.pending_video_id,
-            "auto_confirmed": device_id_input_state.auto_confirmed,
-            "updated_at": device_id_input_state.updated_at,
-        }
 
 
 def publish_device_switch_request(video_id: int):
@@ -177,10 +161,9 @@ def publish_device_switch_request(video_id: int):
     log(f"DEVICE_SWITCH request published request_id={switch_request_id}, video_id={video_id}")
 
 
-def finish_device_id_input(enforce_timeout: bool = True):
+def finish_device_id_input():
     with device_id_input_lock:
         if (
-            enforce_timeout and
             device_id_input_state.active and
             time.time() - device_id_input_state.updated_at > DEVICE_ID_INPUT_TIMEOUT_SECONDS
         ):
@@ -188,7 +171,6 @@ def finish_device_id_input(enforce_timeout: bool = True):
             device_id_input_state.active = False
             device_id_input_state.buffer = ""
             device_id_input_state.pending_video_id = None
-            device_id_input_state.auto_confirmed = False
             device_id_input_state.updated_at = time.time()
             return
         if not device_id_input_state.active:
@@ -197,7 +179,6 @@ def finish_device_id_input(enforce_timeout: bool = True):
         raw = device_id_input_state.buffer.strip()
         device_id_input_state.active = False
         device_id_input_state.buffer = ""
-        device_id_input_state.auto_confirmed = False
         device_id_input_state.updated_at = time.time()
 
     if not raw:
@@ -227,7 +208,6 @@ def confirm_device_switch():
         device_id_input_state.pending_video_id = None
         device_id_input_state.active = False
         device_id_input_state.buffer = ""
-        device_id_input_state.auto_confirmed = False
         device_id_input_state.updated_at = time.time()
 
     if not video_id:
@@ -237,55 +217,10 @@ def confirm_device_switch():
     publish_device_switch_request(video_id)
 
 
-def auto_confirm_device_id_input_if_ready():
-    video_id: Optional[int] = None
-
-    with device_id_input_lock:
-        if not device_id_input_state.active:
-            return
-        raw = device_id_input_state.buffer.strip()
-        if not raw:
-            return
-        if device_id_input_state.auto_confirmed:
-            return
-        if time.time() - device_id_input_state.updated_at < DEVICE_ID_AUTO_CONFIRM_SECONDS:
-            return
-
-        try:
-            parsed_video_id = int(raw)
-        except ValueError:
-            log(f"DEVICE_SWITCH auto-confirm failed: invalid video_id={raw!r}")
-            device_id_input_state.active = False
-            device_id_input_state.buffer = ""
-            device_id_input_state.pending_video_id = None
-            device_id_input_state.auto_confirmed = False
-            device_id_input_state.updated_at = time.time()
-            return
-
-        if parsed_video_id <= 0:
-            log(f"DEVICE_SWITCH auto-confirm failed: video_id must be positive, got={parsed_video_id}")
-            device_id_input_state.active = False
-            device_id_input_state.buffer = ""
-            device_id_input_state.pending_video_id = None
-            device_id_input_state.auto_confirmed = False
-            device_id_input_state.updated_at = time.time()
-            return
-
-        video_id = parsed_video_id
-        device_id_input_state.active = False
-        device_id_input_state.buffer = ""
-        device_id_input_state.pending_video_id = None
-        device_id_input_state.auto_confirmed = True
-        device_id_input_state.updated_at = time.time()
-
-    log(f"DEVICE_SWITCH auto-confirm video_id={video_id}")
-    publish_device_switch_request(video_id)
-
-
 def handle_device_switch_preset_action(action: str, preset_no: int):
     """
     Reuse the keyboard's preset workflow for camera switching:
-      preset_set   -> begin/continue entering a camera id
+      preset_set   -> begin entering a camera id
       preset_call  -> finish entering the camera id
       preset_clear -> confirm and publish the camera switch request
 
@@ -293,9 +228,10 @@ def handle_device_switch_preset_action(action: str, preset_no: int):
     active, because some keyboards send number keys as preset-call packets.
     """
     if action == "preset_set":
-        if not is_device_id_input_active():
-            begin_device_id_input()
-        append_device_id_digit(preset_no)
+        if is_device_id_input_active():
+            append_device_id_digit(preset_no)
+            return
+        begin_device_id_input()
         return
 
     if action == "preset_call":
@@ -911,7 +847,6 @@ def handle_action(new_action: str, raw_hex: str):
 def watchdog_loop():
     while True:
         time.sleep(0.1)
-        auto_confirm_device_id_input_if_ready()
 
         should_stop = False
         old_action = IDLE
@@ -1062,13 +997,7 @@ def udp_server():
                 append_device_id_digit(digit)
                 continue
             if DEBUG:
-                input_debug = get_device_id_input_debug_state()
-                log(
-                    "device id input active, control/digit packet not matched "
-                    f"buffer={input_debug['buffer']!r} "
-                    f"pending={input_debug['pending_video_id']!r} "
-                    f"len={len(data)} hex={raw_hex}"
-                )
+                log(f"device id input active, digit packet not matched len={len(data)} hex={raw_hex}")
 
         action = classify_packet(data)
         if action is None:

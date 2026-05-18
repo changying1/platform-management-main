@@ -1,0 +1,13 @@
+[
+  {
+    "path": "D:\\Vue\\platform-yaokong-main-260413\\platform-management-main\\storage\\static_test_backup",
+    "name": "静态测试备份目录",
+    "enabled": true,
+    "type": "mirror",
+    "endpoint": null,
+    "bucket": null,
+    "access_key": null,
+    "secret_key": null,
+    "region": null
+  }
+]
