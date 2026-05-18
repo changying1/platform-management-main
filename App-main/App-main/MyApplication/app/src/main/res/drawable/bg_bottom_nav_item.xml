@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+<!--    让“选中”和“未选中”状态切换背景-->
+    <!-- 选中状态 -->
+    <item android:state_checked="true"
+        android:drawable="@drawable/bg_bottom_nav_item_selected" />
+
+    <!-- 未选中状态：透明 -->
+    <item android:drawable="@android:color/transparent" />
+</selector>

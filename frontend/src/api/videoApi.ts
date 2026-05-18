@@ -1,5 +1,30 @@
 import { API_BASE_URL } from './config';
 
+// ✅ 🔥 内网穿透终极解决方案！每次调用都实时检测！
+// 不管本地开发还是远程内网穿透，100% 正确！
+const getApiBase = (): string => {
+  if (window.location.port === '3000') return '';
+  return `${window.location.protocol}//${window.location.host}`;
+};
+
+// ✅ 内网穿透适配：视频流/视频文件只用相对路径！
+const fixStreamUrl = (url: string): string => {
+  if (!url) return url;
+  
+  let path = url;
+  
+  // 🔥 本地文件只留相对路径！外部公网URL（萤石云等）保持不变！
+  const needProcess = path.includes('/static/') || path.includes('/video/stream') || path.includes(':9000');
+  
+  if (needProcess) {
+    // 去掉所有域名，只留相对路径！浏览器自己会拼！
+    path = path.replace(/https?:\/\/[^\/]+/g, '');
+    console.log('📹 视频流URL适配:', { original: url, final: path });
+  }
+  
+  return path;
+};
+
 // --- 类型定义 ---
 
 // 对应后端的 VideoOut schema (API 返回的数据)
@@ -234,9 +259,22 @@ export interface VideoMonitoringSummary {
 
 /** 获取所有视频设备列表 */
 export async function getAllVideos(): Promise<Video[]> {
-  const response = await fetch(`${API_BASE_URL}/video/`);
-  if (!response.ok) throw new Error('Failed to fetch videos');
-  return response.json();
+  const base = getApiBase();
+  const url = `${base}/video/`;
+  console.log('📡 请求视频设备列表:', url, '当前域名:', window.location.host, 'port:', window.location.port);
+  
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch videos: ${response.status}`);
+  
+  const videos = await response.json();
+  console.log('✅ 视频设备列表:', videos.length, '条', videos);
+  
+  // ✅ 修复视频流URL，支持内网穿透
+  return videos.map((v: Video) => {
+    if (v.stream_url) v.stream_url = fixStreamUrl(v.stream_url);
+    if (v.rtsp_url) v.rtsp_url = fixStreamUrl(v.rtsp_url);
+    return v;
+  });
 }
 
 /** 创建新的视频设备 */
@@ -986,8 +1024,9 @@ export async function getAlarmVideosList(
   limit: number = 120,
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
+  const base = getApiBase();
   const response = await fetch(
-    `${API_BASE_URL}/video/${videoId}/alarms/videos?limit=${limit}&sort=${sort}`
+    `${base}/video/${videoId}/alarms/videos?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {
     let msg = 'Failed to get alarm videos';
@@ -998,14 +1037,17 @@ export async function getAlarmVideosList(
     throw new Error(msg);
   }
   const result = await response.json();
+  
+  let list: SavedPlaybackVideo[] = [];
   // ✅ 处理 {code: 0, data: [...]} 格式
   if (result.code === 0 && Array.isArray(result.data)) {
-    return result.data;
+    list = result.data;
+  } else if (Array.isArray(result)) {
+    list = result;
   }
-  if (Array.isArray(result)) {
-    return result;
-  }
-  return [];
+  
+  // ✅ 内网穿透：替换所有文件路径里的 localhost
+  return list.map(v => fixPlaybackUrl(v));
 }
 /**
  * 获取设备的常规录制视频列表（用于"常规监控回放"）
@@ -1016,8 +1058,9 @@ export async function getRecordingVideos(
   limit: number = 120,
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
+  const base = getApiBase();
   const response = await fetch(
-    `${API_BASE_URL}/video/${videoId}/recordings/direct?limit=${limit}&sort=${sort}`
+    `${base}/video/${videoId}/recordings/direct?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {
     let msg = 'Failed to get recording videos';
@@ -1028,15 +1071,17 @@ export async function getRecordingVideos(
     throw new Error(msg);
   }
   const result = await response.json();
+  
+  let list: SavedPlaybackVideo[] = [];
   // ✅ 处理 {code: 0, data: [...]} 格式
   if (result.code === 0 && Array.isArray(result.data)) {
-    return result.data;
+    list = result.data;
+  } else if (Array.isArray(result)) {
+    list = result;
   }
-  // 兼容直接返回数组的情况
-  if (Array.isArray(result)) {
-    return result;
-  }
-  return [];
+  
+  // ✅ 内网穿透：替换所有文件路径里的 localhost
+  return list.map(v => fixPlaybackUrl(v));
 }
 /**
  * 获取设备的报警截图列表
@@ -1047,8 +1092,9 @@ export async function getAlarmScreenshots(
   limit: number = 120,
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
+  const base = getApiBase();
   const response = await fetch(
-    `${API_BASE_URL}/video/${videoId}/alarms/screenshots?limit=${limit}&sort=${sort}`
+    `${base}/video/${videoId}/alarms/screenshots?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {
     let msg = 'Failed to get alarm screenshots';
@@ -1059,16 +1105,51 @@ export async function getAlarmScreenshots(
     throw new Error(msg);
   }
   const result = await response.json();
+  
+  let list: SavedPlaybackVideo[] = [];
   // ✅ 处理 {code: 0, data: [...]} 格式
   if (result.code === 0 && Array.isArray(result.data)) {
-    return result.data;
+    list = result.data;
+  } else if (Array.isArray(result)) {
+    list = result;
   }
-  // 兼容直接返回数组的情况
-  if (Array.isArray(result)) {
-    return result;
-  }
-  return [];
+  
+  // ✅ 内网穿透：替换所有文件路径里的 localhost
+  return list.map(v => fixPlaybackUrl(v));
 }
+
+// ✅ 内网穿透终极解决方案！只用相对路径！
+// ✅ HTTPS/HTTP 都兼容！浏览器自动适配！
+const fixPlaybackUrl = (v: any): any => {
+  if (!v) return v;
+  
+  console.log('🎬 后端原始数据:', v);
+  
+  // 🔥 只要相对路径 /static/... 就行！
+  // 浏览器自己会用当前页面的协议 + 域名 + 端口
+  const processValue = (value: any): any => {
+    if (typeof value === 'string') {
+      if (value.includes('/static/')) {
+        let path = value;
+        // 去掉所有域名，只留相对路径！100% 兼容！
+        path = path.replace(/https?:\/\/[^\/]+/g, '');
+        console.log(`🎬 路径适配: ${value} → ${path}`);
+        return path;
+      }
+    } else if (Array.isArray(value)) {
+      return value.map(processValue);
+    } else if (typeof value === 'object' && value !== null) {
+      const result: any = {};
+      for (const key of Object.keys(value)) {
+        result[key] = processValue(value[key]);
+      }
+      return result;
+    }
+    return value;
+  };
+  
+  return processValue(v);
+};
 
 /**
  * 同步当前控制目标摄像头给 keyboard 程序

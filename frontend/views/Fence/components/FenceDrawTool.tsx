@@ -62,7 +62,7 @@ export const FenceDrawTool: React.FC<FenceDrawToolProps> = ({
         return '';
       
       case 'brush':
-        if (!isDragging) return '💡 按一下鼠标左键，在地图上拖动指针自由绘制围栏边界';
+        if (!isDragging) return '💡 按住鼠标左键，在地图上拖动指针自由绘制围栏边界';
         return '🖌️  绘制中... 松开鼠标自动闭合';
       
       default:
@@ -70,7 +70,10 @@ export const FenceDrawTool: React.FC<FenceDrawToolProps> = ({
     }
   };
 
-  const canComplete = () => tempPoints.length >= 2 || tempShape?.center;
+  const canComplete = () => {
+    if (activeTool === 'circle') return Boolean(tempShape?.center);
+    return tempPoints.length >= 3;
+  };
 
   return (
     <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-3 items-center">

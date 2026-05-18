@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#EDE7FF" />
+    <corners android:radius="18dp" />
+
+<!--    给底部导航“当前选中项”一个圆角紫色背景-->
+</shape>

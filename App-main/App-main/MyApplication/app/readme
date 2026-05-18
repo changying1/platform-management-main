@@ -1,0 +1,122 @@
+Java 放逻辑，res 放资源，Manifest 放全局配置，Gradle 管构建
+
+Activity 是什么？ 一个“完整屏幕”的页面
+Fragment 是什么？Activity 里面的一块可复用 UI 模块（不能直接作为启动入口，必须依附 Activity）
+item 是什么？ 列表/网格里的“单个单元格布局”
+
+
+实现与视频中心同款功能的流程：（MVVM框架）
+    第一步 AppsFragment
+        仿照这个加，
+        entries.add(new AppEntry(
+                "视频中心",
+                "视频中心",
+                android.R.drawable.ic_menu_slideshow,
+                R.drawable.bg_app_card_gradient
+                // ...你的 target/action
+        ));
+        AppsEntryAdapter adapter = new AppsEntryAdapter(entries, entry -> {
+            if ("视频中心".equals(entry.title)) {
+                startActivity(new Intent(requireContext(), VideoCenterActivity.class));
+            }
+        });
+    第二步 新建实现功能的文件夹
+        主要文件包括
+            ui/video/VideoCenterActivity.java（逻辑实现） -- controller
+            ui/video/VideoCenterViewModel.java （给 UI 提供状态，业务层）--service
+            data/model/VideoDevice.java.java（实体类，对应后端给的） --entry
+            data/repo/VideoRepository.java (api方法调用） --dao
+            data/api/VideoApi.java （对应后端api实现） -api
+        xml
+            res/layout/activity_video_center.xml(UI整体界面布局实现）
+        其他文件,ai说加啥就加啥
+        build.gradle.kts(app)不要重复引入
+    第三步 在AndroidManifest.xml中进行注册
+        <activity android:name=".ui.video.VideoPlayActivity"
+                  android:exported="false" />
+
+
+
+app/
+├── manifests/
+│   └── AndroidManifest.xml
+│       ← 应用总入口：声明 Activity、权限、启动页
+│
+├── java/
+│   └── com.app.myapplication/
+│
+│       ├── data/                         ← 数据层（不关心 UI）
+│       │
+│       │   ├── api/                      ← 后端接口相关
+│       │   │   ├── ApiClient.java
+│       │   │   │   ← Retrofit/OkHttp 统一配置入口
+│       │   │   └── VideoApi.java
+│       │   │       ← 视频相关的后端接口定义
+│       │   │
+│       │   ├── local/                    ← 本地数据/配置
+│       │   │   ├── AppConfig.java
+│       │   │   │   ← 全局配置（环境、BaseUrl 等）
+│       │   │   └── SessionManager.java
+│       │   │       ← 登录态、Token、本地会话管理
+│       │   │
+│       │   ├── model/                    ← 数据模型（Bean / Entity）
+│       │   │   └── VideoDevice.java
+│       │   │       ← 设备/摄像头数据结构
+│       │   │
+│       │   └── repo/                     ← 数据仓库层
+│       │       └── VideoRepository.java
+│       │           ← 对上给 ViewModel，用来统一获取视频数据
+│
+│       ├── ui/                           ← 界面层（只负责展示和交互）
+│       │
+│       │   ├── login/                    ← 登录模块 UI
+│       │   │   └── LoginActivity.java
+│       │   │       ← 登录页面
+│       │   │
+│       │   ├── video/                    ← 视频中心模块 UI
+│       │   │   └── VideoCenterActivity.java
+│       │   │       ← 视频中心页面
+│       │   │
+│       │   ├── Path/                     ← 轨迹/路径模块 UI
+│       │   │   └── PathReplayActivity.java
+│       │   │       ← 轨迹回放页面
+│       │   │
+│       │   ├── AppsFragment.java
+│       │   │   ← 应用中心（功能入口网格）
+│       │   │
+│       │   ├── AppsEntryAdapter.java
+│       │   │   ← 应用中心 RecyclerView 适配器
+│       │   │
+│       │   ├── GridSpacingItemDecoration.java
+│       │   │   ← RecyclerView 网格间距工具类
+│       │   │
+│       │   ├── MainActivity.java
+│       │   │   ← 主容器 Activity（底部导航 + Fragment 切换）
+│       │   │
+│       │   └── MeFragment.java
+│       │       ← “我的”页面
+│
+│       └── viewmodel/                    ← 业务逻辑/状态管理
+│           │
+│           ├── login/
+│           │   └── LoginViewModel.java
+│           │       ← 登录逻辑与状态
+│           │
+│           └── MeViewModel.java
+│               ← 我的页面数据逻辑
+│
+├── res/                                 ← 所有 UI 资源
+│   │
+│   ├── color/                           ← 颜色状态定义
+│   ├── drawable/                        ← 图片 / shape / 渐变 / 图标
+│   ├── layout/                          ← 页面和列表 XML
+│   ├── menu/                            ← 菜单（底部导航等）
+│   ├── mipmap/                          ← App 启动图标
+│   ├── values/                          ← 公共常量（颜色/文字/主题）
+│   └── xml/                             ← 系统级配置
+│
+└── test/ / androidTest/
+    ← 单元测试 / 仪器测试
+
+
+keystore_file.jks : xander

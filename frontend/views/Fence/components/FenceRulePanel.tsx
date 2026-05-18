@@ -22,15 +22,19 @@ export const FenceRulePanel: React.FC<FenceRulePanelProps> = ({
   onCancel,
   onBackToDraw,
 }) => {
+  const getLocalDateTime = (date: Date) => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
   const getTodayDateTime = () => {
-    const today = new Date();
-    const start = new Date(today);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(today);
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + 7);
     end.setHours(23, 59, 59, 999);
     return {
-      start: start.toISOString().slice(0, 16),
-      end: end.toISOString().slice(0, 16),
+      start: getLocalDateTime(now),
+      end: getLocalDateTime(end),
     };
   };
 
@@ -285,14 +289,13 @@ export const FenceRulePanel: React.FC<FenceRulePanelProps> = ({
         <div className="space-y-3">
           <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
             <AlertTriangle size={14} className="text-cyan-400" />
-            严重程度
+            告警等级（仅三级）
           </label>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {[
-              { value: 'low', label: '低', color: 'green' },
-              { value: 'medium', label: '中', color: 'yellow' },
-              { value: 'high', label: '高', color: 'orange' },
-              { value: 'severe', label: '严重', color: 'red' },
+              { value: 'general', label: '低', color: 'blue' },
+              { value: 'risk', label: '中', color: 'orange' },
+              { value: 'severe', label: '高', color: 'red' },
             ].map((level) => (
               <button
                 key={level.value}

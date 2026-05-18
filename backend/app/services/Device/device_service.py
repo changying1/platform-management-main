@@ -3,6 +3,7 @@ from app.core.database import get_mongo_collection
 from app.utils.logger import get_logger
 from datetime import datetime
 from typing import List, Optional
+from app.services.track_simplify_service import track_simplify_service
 
 devices_collection = get_mongo_collection("device")
 
@@ -119,7 +120,39 @@ class DeviceService:
         return result.deleted_count > 0
 
     def add_trajectory_point(self, device_id: str, point: TrajectoryPoint) -> Optional[dict]:
-        """添加轨迹点"""
+        """添加轨迹点（带抽稀）"""
+        # 将 timestamp 字符串转换为时间戳
+        import time
+        from datetime import datetime
+        timestamp = None
+        if point.timestamp:
+            try:
+                if isinstance(point.timestamp, str):
+                    dt = datetime.fromisoformat(point.timestamp.replace('Z', '+00:00'))
+                    timestamp = dt.timestamp()
+                else:
+                    timestamp = point.timestamp
+            except:
+                pass
+        
+        # 检查是否应该保留该点（根据抽稀精度和时间间隔配置）
+        if not track_simplify_service.should_keep_point(device_id, point.lat, point.lng, timestamp):
+            logger.debug(f"Skipped trajectory point for device {device_id} (within simplify precision)")
+            # 仍然更新设备当前位置，但不添加到轨迹
+            devices_collection.update_one(
+                {"device_id": device_id},
+                {
+                    "$set": {
+                        "lat": point.lat,
+                        "lng": point.lng,
+                        "lastUpdate": point.timestamp,
+                        "updatedAt": datetime.now().isoformat()
+                    }
+                }
+            )
+            self._check_fence_status(device_id, point.lat, point.lng)
+            return None
+        
         point_data = point.model_dump()
         devices_collection.update_one(
             {"device_id": device_id},

@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:9000';
+// ✅ 内网穿透智能适配！
+const detectBackendUrl = (): string => {
+  if ((import.meta as any).env?.VITE_API_BASE_URL) return (import.meta as any).env?.VITE_API_BASE_URL;
+  if (window.location.port === '3000') return '';
+  return `${window.location.protocol}//${window.location.host}`;
+};
+const API_BASE_URL = detectBackendUrl();
 
 interface VideoPlayerProps {
   src: string;
@@ -15,12 +21,36 @@ interface MonitoringSummary {
   weekly_quota_text?: string;
   weekly_used_text?: string;
   weekly_remaining_text?: string;
+  main_status?: string;
+  status_tags?: string[];
 }
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
 const MAX_RETRIES = 8;
 const RETRY_DELAY_MS = 1200;
+const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
+
+const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry }) => (
+  <div className="absolute inset-0 z-20 grid h-full w-full place-items-center bg-white">
+    <div className="absolute inset-0 bg-white p-8">
+      <img
+        src={CHINA_RAILWAY_LOGO}
+        alt="China Railway logo"
+        className="absolute block h-auto max-h-[70%] w-auto max-w-[70%] object-contain"
+        style={{ left: '50%', top: '38%', transform: 'translate(-50%, -50%)' }}
+      />
+    </div>
+    {onRetry && (
+      <button
+        onClick={onRetry}
+        className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+      >
+        Retry
+      </button>
+    )}
+  </div>
+);
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, onError }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -54,6 +84,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         weekly_used_text: data?.weekly_used_text,
         weekly_quota_text: data?.weekly_quota_text,
         weekly_remaining_text: data?.weekly_remaining_text,
+        main_status: data?.main_status,
+        status_tags: Array.isArray(data?.status_tags) ? data.status_tags : [],
       });
     } catch {
       // ignore
@@ -276,6 +308,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   }, [src, playType, accessToken, initPlayer, cleanupPlayer]);
 
   const showNativeVideo = !(src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen');
+  const shouldShowLogoFallback =
+    connectionStatus === 'error' ||
+    monitoringSummary?.main_status === 'offline' ||
+    monitoringSummary?.status_tags?.includes('VIDEO_DEVICE_OFFLINE');
 
   useEffect(() => {
     if (!videoId) return;
@@ -349,6 +385,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
             </button>
           </div>
         </div>
+      )}
+      {shouldShowLogoFallback && (
+        <ChinaRailwayLogoFallback
+          onRetry={
+            connectionStatus === 'error'
+              ? () => {
+                  retryCountRef.current = 0;
+                  setConnectionStatus('connecting');
+                  initPlayer();
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   );

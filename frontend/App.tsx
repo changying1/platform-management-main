@@ -24,6 +24,8 @@ import {
   FileText, 
   Phone, 
   X,
+  Grid3X3,
+  Radio,
 } from 'lucide-react';
 import { MenuKey } from './types';
 import Dashboard from './views/Dashboard';
@@ -37,6 +39,7 @@ import AlarmRecord from './views/AlarmRecord';
 import VideoPlayback from './views/VideoPlayback';
 import ManagementPanel from './views/ManagementPanel';
 import SystemLog from './views/SystemLog';
+import GridManagement from './views/GridManagement';
 import AIChatAssistant from './components/AIChatAssistant';
 import { API_BASE_URL } from './src/api/config';
 
@@ -275,7 +278,9 @@ const Sidebar = ({
   const menuItems = [
     { key: MenuKey.DASHBOARD, label: '现场管理', icon: LayoutDashboard },
     { key: MenuKey.VIDEO, label: '视频中心', icon: Video },
-    // { key: MenuKey.TRACK, label: '轨迹回放', icon: MapPin },
+    { key: MenuKey.VIDEO_PLAYBACK, label: '视频回放', icon: Video },
+    { key: MenuKey.TRACK_PLAYBACK, label: '轨迹回放', icon: MapPin },
+    { key: MenuKey.VOICE_PLAYBACK, label: '通信回放', icon: Radio },
     { key: MenuKey.FENCE, label: '电子围栏', icon: ShieldAlert },
     { key: MenuKey.PROJECT, label: '项目管理', icon: Briefcase },
     { key: MenuKey.GROUP_CALL, label: '群组通话', icon: Users },
@@ -696,8 +701,12 @@ export default function App() {
         return <Dashboard setActiveMenu={setActiveMenu} setManagementTab={setManagementTab} />;
       case MenuKey.VIDEO:
         return <VideoCenter />;
-      case MenuKey.VIDEOPLAYBACK:      
-      return <VideoPlayback />;  
+      case MenuKey.VIDEO_PLAYBACK:
+        return <VideoPlayback key="video_playback" initialTab="video" />;
+      case MenuKey.TRACK_PLAYBACK:
+        return <VideoPlayback key="track_playback" initialTab="track" />;
+      case MenuKey.VOICE_PLAYBACK:
+        return <VideoPlayback key="voice_playback" initialTab="voice" />;
       case MenuKey.FENCE:
         return <FenceManagement />;
       case MenuKey.PROJECT:
@@ -714,6 +723,8 @@ export default function App() {
         return <ManagementPanel defaultTab={managementTab} />;
       case MenuKey.SYSTEM_LOG:
         return <SystemLog onNavigate={setActiveMenu} />;
+      case MenuKey.GRID:
+        return <GridManagement />;
       default:
         return <Dashboard />;
     }
@@ -769,9 +780,17 @@ export default function App() {
     <Phone size={24} />
     <span className="text-xs">群组通话</span>
   </button>
-      <button onClick={() => setActiveMenu(MenuKey.VIDEOPLAYBACK)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.VIDEOPLAYBACK ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
-    <RotateCcw  size={24} />
-    <span className="text-xs">信息回放</span>
+      <button onClick={() => setActiveMenu(MenuKey.VIDEO_PLAYBACK)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.VIDEO_PLAYBACK ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
+    <RotateCcw size={24} />
+    <span className="text-xs">视频回放</span>
+  </button>
+  <button onClick={() => setActiveMenu(MenuKey.TRACK_PLAYBACK)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.TRACK_PLAYBACK ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
+    <MapPin size={24} />
+    <span className="text-xs">轨迹回放</span>
+  </button>
+  <button onClick={() => setActiveMenu(MenuKey.VOICE_PLAYBACK)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.VOICE_PLAYBACK ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
+    <Radio size={24} />
+    <span className="text-xs">通信回放</span>
   </button>
 
   <button onClick={() => setActiveMenu(MenuKey.ALARM)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.ALARM ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
@@ -787,6 +806,11 @@ export default function App() {
   <button onClick={() => setActiveMenu(MenuKey.SYSTEM_LOG)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SYSTEM_LOG ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
     <FileText size={24} />
     <span className="text-xs">系统日志</span>
+  </button>
+  
+  <button onClick={() => setActiveMenu(MenuKey.GRID)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.GRID ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
+    <Grid3X3 size={24} />
+    <span className="text-xs">网格化管理</span>
   </button>
   
   <button onClick={() => setActiveMenu(MenuKey.SETTINGS)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SETTINGS ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>

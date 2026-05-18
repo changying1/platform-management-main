@@ -52,6 +52,8 @@ ffmpeg-8.0.1-essentials_build/*
 ffmpeg-8.0.1-essentials_build/bin/*
 !ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe
 backend/static/*
+backend/storage/backups/*.tar.gz
+backend/storage/backups/*.sql.gz
 *.bin
 
 *.pth

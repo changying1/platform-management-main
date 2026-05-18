@@ -11,7 +11,7 @@
  Target Server Version : 80045 (8.0.45)
  File Encoding         : 65001
 
- Date: 07/04/2026 23:17:36
+ Date: 14/05/2026 16:40:29
 */
 
 SET NAMES utf8mb4;
@@ -6084,6 +6084,10 @@ CREATE TABLE `branches`  (
   `device_count` int NULL DEFAULT 0 COMMENT '设备总数',
   `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `lng` double NULL DEFAULT NULL,
+  `lat` double NULL DEFAULT NULL,
+  `project` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL,
+  `remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `idx_province`(`province` ASC) USING BTREE,
   INDEX `idx_status`(`status` ASC) USING BTREE
@@ -6092,16 +6096,16 @@ CREATE TABLE `branches`  (
 -- ----------------------------
 -- Records of branches
 -- ----------------------------
-INSERT INTO `branches` VALUES (1, '集团有限公司', '陕西省', '西安市', '陕西省西安市雁塔区太白南路', 108.956748, 34.218128, '李建国', '029-88888888', '正常', 486, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (2, '北京分公司', '北京市', '北京市', '北京市海淀区复兴路', 116.318421, 39.894632, '王振国', '010-66668888', '正常', 156, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (3, '上海分公司', '上海市', '上海市', '上海市浦东新区世纪大道', 121.512345, 31.234567, '张海峰', '021-88886666', '正常', 142, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (4, '广州分公司', '广东省', '广州市', '广州市天河区珠江新城', 113.324567, 23.128901, '陈志强', '020-77776666', '正常', 128, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (5, '成都分公司', '四川省', '成都市', '成都市高新区天府大道', 104.067890, 30.578901, '刘永强', '028-66665555', '告警', 98, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (6, '武汉分公司', '湖北省', '武汉市', '武汉市洪山区珞喻路', 114.356789, 30.518901, '赵志远', '027-55554444', '正常', 112, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (7, '沈阳分公司', '辽宁省', '沈阳市', '沈阳市浑南区智慧大街', 123.456789, 41.728901, '孙志国', '024-44443333', '正常', 87, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (8, '南京分公司', '江苏省', '南京市', '南京市建邺区江东中路', 118.745678, 31.998901, '周志强', '025-33332222', '正常', 105, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (9, '深圳分公司', '广东省', '深圳市', '深圳市南山区科技园', 113.945678, 22.548901, '吴志远', '0755-22221111', '告警', 93, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
-INSERT INTO `branches` VALUES (10, '重庆分公司', '重庆市', '重庆市', '重庆市渝北区星光大道', 106.567890, 29.618901, '郑志明', '023-11110000', '正常', 76, '2026-04-04 02:13:12', '2026-04-04 02:13:12');
+INSERT INTO `branches` VALUES (1, '集团有限公司', '陕西省', '西安市', '陕西省西安市雁塔区太白南路', 108.956748, 34.218128, '李建国', '029-88888888', '正常', 486, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 108.9398, 34.3416, NULL, NULL);
+INSERT INTO `branches` VALUES (2, '北京分公司', '北京市', '北京市', '北京市海淀区复兴路', 116.318421, 39.894632, '王振国', '010-66668888', '正常', 156, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 116.4074, 39.9042, NULL, NULL);
+INSERT INTO `branches` VALUES (3, '上海分公司', '上海市', '上海市', '上海市浦东新区世纪大道', 121.512345, 31.234567, '张海峰', '021-88886666', '正常', 142, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 121.4737, 31.2304, NULL, NULL);
+INSERT INTO `branches` VALUES (4, '广州分公司', '广东省', '广州市', '广州市天河区珠江新城', 113.324567, 23.128901, '陈志强', '020-77776666', '正常', 128, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 113.2644, 23.1291, NULL, NULL);
+INSERT INTO `branches` VALUES (5, '成都分公司', '四川省', '成都市', '成都市高新区天府大道', 104.067890, 30.578901, '刘永强', '028-66665555', '告警', 98, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 104.0668, 30.5728, NULL, NULL);
+INSERT INTO `branches` VALUES (6, '武汉分公司', '湖北省', '武汉市', '武汉市洪山区珞喻路', 114.356789, 30.518901, '赵志远', '027-55554444', '正常', 112, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 114.3054, 30.5931, NULL, NULL);
+INSERT INTO `branches` VALUES (7, '沈阳分公司', '辽宁省', '沈阳市', '沈阳市浑南区智慧大街', 123.456789, 41.728901, '孙志国', '024-44443333', '正常', 87, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 123.4328, 41.8045, NULL, NULL);
+INSERT INTO `branches` VALUES (8, '南京分公司', '江苏省', '南京市', '南京市建邺区江东中路', 118.745678, 31.998901, '周志强', '025-33332222', '正常', 105, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 118.7969, 32.0603, NULL, NULL);
+INSERT INTO `branches` VALUES (9, '深圳分公司', '广东省', '深圳市', '深圳市南山区科技园', 113.945678, 22.548901, '吴志远', '0755-22221111', '告警', 93, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 114.0579, 22.5431, NULL, NULL);
+INSERT INTO `branches` VALUES (10, '重庆分公司', '重庆市', '重庆市', '重庆市渝北区星光大道', 106.567890, 29.618901, '郑志明', '023-11110000', '正常', 76, '2026-04-04 02:13:12', '2026-04-29 21:49:19', 106.5516, 29.563, NULL, NULL);
 
 -- ----------------------------
 -- Table structure for call_records
@@ -6158,6 +6162,29 @@ CREATE TABLE `device_cruise_config`  (
 
 -- ----------------------------
 -- Records of device_cruise_config
+-- ----------------------------
+
+-- ----------------------------
+-- Table structure for device_location_history
+-- ----------------------------
+DROP TABLE IF EXISTS `device_location_history`;
+CREATE TABLE `device_location_history`  (
+  `id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `device_id` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `latitude` double NOT NULL,
+  `longitude` double NOT NULL,
+  `speed` double NULL DEFAULT NULL,
+  `direction` double NULL DEFAULT NULL,
+  `timestamp` datetime NOT NULL,
+  `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_device_id`(`device_id` ASC) USING BTREE,
+  INDEX `idx_timestamp`(`timestamp` ASC) USING BTREE,
+  INDEX `idx_device_timestamp`(`device_id` ASC, `timestamp` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Records of device_location_history
 -- ----------------------------
 
 -- ----------------------------
@@ -7353,6 +7380,7 @@ CREATE TABLE `group_calls`  (
   `start_time` datetime NULL DEFAULT NULL,
   `end_time` datetime NULL DEFAULT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL,
+  `member_ids` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `ix_group_calls_room_id`(`room_id` ASC) USING BTREE,
   INDEX `ix_group_calls_id`(`id` ASC) USING BTREE
@@ -9191,6 +9219,9 @@ CREATE TABLE `projects`  (
   `area_boundary` json NULL COMMENT '项目区域边界点 [[lng,lat],...]',
   `zoom_level` int NULL DEFAULT 16 COMMENT '地图缩放级别',
   `center` json NULL COMMENT '项目中心点 [lng, lat]',
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
+  `manager` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL,
+  `remark` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `idx_branch_id`(`branch_id` ASC) USING BTREE,
   INDEX `idx_status`(`status` ASC) USING BTREE,
@@ -9203,27 +9234,27 @@ CREATE TABLE `projects`  (
 -- ----------------------------
 -- Records of projects
 -- ----------------------------
-INSERT INTO `projects` VALUES (1, 1, '西安东站项目', NULL, NULL, 109.023456, 34.318901, 'PJ-ADMIN-001', '李明', NULL, 'active', 75, 328, NULL, NULL, NULL, 88, 105, 12, '2026-04-05 00:56:29', '2026-04-05 13:49:04', 365, '[[109.061255, 34.215927], [109.063708, 34.215936], [109.064253, 34.212231], [109.061474, 34.212287]]', 17, '[109.062556, 34.214042]');
-INSERT INTO `projects` VALUES (2, 1, '西安地铁8号线', NULL, NULL, 108.978901, 34.228901, 'PJ-ADMIN-002', '王磊', NULL, 'active', 45, 415, NULL, NULL, NULL, 42, 65, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (3, 1, '咸阳机场T5航站楼', NULL, NULL, 108.756789, 34.428901, 'PJ-ADMIN-003', '张强', NULL, 'active', 30, 267, NULL, NULL, NULL, 26, 50, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (4, 2, '北京地铁17号线', NULL, NULL, 116.456789, 39.948901, 'PJ-ADMIN-004', '刘洋', NULL, 'active', 45, 389, NULL, NULL, NULL, 45, 107, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (5, 2, '北京丰台站改造', NULL, NULL, 116.298901, 39.858901, 'PJ-ADMIN-005', '陈浩', NULL, 'active', 60, 302, NULL, NULL, NULL, 38, 58, 7, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 270, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (6, 3, '上海浦东机场联络线', NULL, NULL, 121.756789, 31.158901, 'PJ-ADMIN-006', '赵鹏', NULL, 'active', 60, 456, NULL, NULL, NULL, 38, 91, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (7, 3, '上海轨道交通市域线', NULL, NULL, 121.378901, 31.128901, 'PJ-ADMIN-007', '周涛', NULL, 'warning', 35, 234, NULL, NULL, NULL, 35, 74, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (8, 4, '广州白云站', NULL, NULL, 113.256789, 23.198901, 'PJ-ADMIN-008', '吴刚', NULL, 'active', 30, 278, NULL, NULL, NULL, 52, 99, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (9, 4, '广湛高铁广州段', NULL, NULL, 113.356789, 22.968901, 'PJ-ADMIN-009', '郑伟', NULL, 'active', 25, 345, NULL, NULL, NULL, 30, 66, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (10, 5, '成都地铁18号线', NULL, NULL, 104.056789, 30.618901, 'PJ-ADMIN-010', '孙鹏', NULL, 'active', 20, 412, NULL, NULL, NULL, 27, 90, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (11, 5, '天府站综合交通枢纽', NULL, NULL, 103.956789, 30.528901, 'PJ-ADMIN-011', '黄鑫', NULL, 'warning', 15, 198, NULL, NULL, NULL, 22, 75, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (12, 6, '武汉光谷综合体', NULL, NULL, 114.398901, 30.508901, 'PJ-ADMIN-012', '林峰', NULL, 'active', 40, 367, NULL, NULL, NULL, 35, 91, 7, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (13, 6, '武汉地铁12号线', NULL, NULL, 114.308901, 30.558901, 'PJ-ADMIN-013', '郭强', NULL, 'active', 28, 289, NULL, NULL, NULL, 28, 74, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (14, 7, '沈阳地铁4号线', NULL, NULL, 123.456789, 41.798901, 'PJ-ADMIN-014', '唐勇', NULL, 'active', 55, 423, NULL, NULL, NULL, 32, 65, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (15, 7, '沈阳北站改造', NULL, NULL, 123.398901, 41.918901, 'PJ-ADMIN-015', '冯磊', NULL, 'active', 40, 256, NULL, NULL, NULL, 25, 75, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 270, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (16, 8, '南京北站', NULL, NULL, 118.656789, 32.118901, 'PJ-ADMIN-016', '韩涛', NULL, 'active', 35, 334, NULL, NULL, NULL, 28, 93, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (17, 8, '南京地铁11号线', NULL, NULL, 118.718901, 31.988901, 'PJ-ADMIN-017', '曹阳', NULL, 'active', 50, 378, NULL, NULL, NULL, 30, 72, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (18, 9, '深圳前海枢纽', NULL, NULL, 113.898901, 22.538901, 'PJ-ADMIN-018', '彭博', NULL, 'active', 55, 445, NULL, NULL, NULL, 41, 95, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (19, 9, '深圳地铁13号线', NULL, NULL, 113.898901, 22.568901, 'PJ-ADMIN-019', '曾伟', NULL, 'active', 30, 312, NULL, NULL, NULL, 29, 70, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (20, 10, '重庆东站', NULL, NULL, 106.598901, 29.498901, 'PJ-ADMIN-020', '肖勇', NULL, 'active', 25, 287, NULL, NULL, NULL, 32, 94, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
-INSERT INTO `projects` VALUES (21, 10, '重庆轨道交通27号线', NULL, NULL, 106.567890, 29.618901, 'PJ-ADMIN-021', '董强', NULL, 'active', 20, 356, NULL, NULL, NULL, 24, 71, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL);
+INSERT INTO `projects` VALUES (1, 1, '西安东站项目', NULL, NULL, 109.023456, 34.318901, 'PJ-ADMIN-001', '李明', NULL, 'active', 75, 328, NULL, NULL, NULL, 88, 105, 12, '2026-04-05 00:56:29', '2026-04-05 13:49:04', 365, '[[109.061255, 34.215927], [109.063708, 34.215936], [109.064253, 34.212231], [109.061474, 34.212287]]', 17, '[109.062556, 34.214042]', NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (2, 1, '西安地铁8号线', NULL, NULL, 108.978901, 34.228901, 'PJ-ADMIN-002', '王磊', NULL, 'active', 45, 415, NULL, NULL, NULL, 42, 65, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (3, 1, '咸阳机场T5航站楼', NULL, NULL, 108.756789, 34.428901, 'PJ-ADMIN-003', '张强', NULL, 'active', 30, 267, NULL, NULL, NULL, 26, 50, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (4, 2, '北京地铁17号线', NULL, NULL, 116.456789, 39.948901, 'PJ-ADMIN-004', '刘洋', NULL, 'active', 45, 389, NULL, NULL, NULL, 45, 107, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (5, 2, '北京丰台站改造', NULL, NULL, 116.298901, 39.858901, 'PJ-ADMIN-005', '陈浩', NULL, 'active', 60, 302, NULL, NULL, NULL, 38, 58, 7, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 270, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (6, 3, '上海浦东机场联络线', NULL, NULL, 121.756789, 31.158901, 'PJ-ADMIN-006', '赵鹏', NULL, 'active', 60, 456, NULL, NULL, NULL, 38, 91, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (7, 3, '上海轨道交通市域线', NULL, NULL, 121.378901, 31.128901, 'PJ-ADMIN-007', '周涛', NULL, 'warning', 35, 234, NULL, NULL, NULL, 35, 74, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (8, 4, '广州白云站', NULL, NULL, 113.256789, 23.198901, 'PJ-ADMIN-008', '吴刚', NULL, 'active', 30, 278, NULL, NULL, NULL, 52, 99, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (9, 4, '广湛高铁广州段', NULL, NULL, 113.356789, 22.968901, 'PJ-ADMIN-009', '郑伟', NULL, 'active', 25, 345, NULL, NULL, NULL, 30, 66, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (10, 5, '成都地铁18号线', NULL, NULL, 104.056789, 30.618901, 'PJ-ADMIN-010', '孙鹏', NULL, 'active', 20, 412, NULL, NULL, NULL, 27, 90, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (11, 5, '天府站综合交通枢纽', NULL, NULL, 103.956789, 30.528901, 'PJ-ADMIN-011', '黄鑫', NULL, 'warning', 15, 198, NULL, NULL, NULL, 22, 75, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (12, 6, '武汉光谷综合体', NULL, NULL, 114.398901, 30.508901, 'PJ-ADMIN-012', '林峰', NULL, 'active', 40, 367, NULL, NULL, NULL, 35, 91, 7, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (13, 6, '武汉地铁12号线', NULL, NULL, 114.308901, 30.558901, 'PJ-ADMIN-013', '郭强', NULL, 'active', 28, 289, NULL, NULL, NULL, 28, 74, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (14, 7, '沈阳地铁4号线', NULL, NULL, 123.456789, 41.798901, 'PJ-ADMIN-014', '唐勇', NULL, 'active', 55, 423, NULL, NULL, NULL, 32, 65, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (15, 7, '沈阳北站改造', NULL, NULL, 123.398901, 41.918901, 'PJ-ADMIN-015', '冯磊', NULL, 'active', 40, 256, NULL, NULL, NULL, 25, 75, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 270, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (16, 8, '南京北站', NULL, NULL, 118.656789, 32.118901, 'PJ-ADMIN-016', '韩涛', NULL, 'active', 35, 334, NULL, NULL, NULL, 28, 93, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (17, 8, '南京地铁11号线', NULL, NULL, 118.718901, 31.988901, 'PJ-ADMIN-017', '曹阳', NULL, 'active', 50, 378, NULL, NULL, NULL, 30, 72, 6, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 300, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (18, 9, '深圳前海枢纽', NULL, NULL, 113.898901, 22.538901, 'PJ-ADMIN-018', '彭博', NULL, 'active', 55, 445, NULL, NULL, NULL, 41, 95, 8, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (19, 9, '深圳地铁13号线', NULL, NULL, 113.898901, 22.568901, 'PJ-ADMIN-019', '曾伟', NULL, 'active', 30, 312, NULL, NULL, NULL, 29, 70, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (20, 10, '重庆东站', NULL, NULL, 106.598901, 29.498901, 'PJ-ADMIN-020', '肖勇', NULL, 'active', 25, 287, NULL, NULL, NULL, 32, 94, 5, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
+INSERT INTO `projects` VALUES (21, 10, '重庆轨道交通27号线', NULL, NULL, 106.567890, 29.618901, 'PJ-ADMIN-021', '董强', NULL, 'active', 20, 356, NULL, NULL, NULL, 24, 71, 4, '2026-04-05 00:56:29', '2026-04-05 02:20:08', 365, NULL, 16, NULL, NULL, NULL, NULL);
 
 -- ----------------------------
 -- Table structure for system_logs

@@ -406,7 +406,8 @@ const commonOptions = {
     points: [number, number][],
     center: [number, number] | null,
     radius: number,
-    mouseLngLat?: [number, number] | null
+    mouseLngLat?: [number, number] | null,
+    isBrushDrawing?: boolean
   ) => {
     if (!mapRef.current || !amapRef.current) return;
     const AMap = amapRef.current;
@@ -441,8 +442,8 @@ const commonOptions = {
       });
       map.add(centerDot);
       overlayRefs.current.draft.push(centerDot);
-      
-      // 🎯 R=XXm 标签移到圆的右边（半径米数转经纬度偏移）
+
+      // R=XXm 标签移到圆的右边（半径米数转经纬度偏移）
       const labelOffsetLng = radius / 111000;
       const labelPos: [number, number] = [centerPos[0], centerPos[1] + labelOffsetLng];
       const radiusLabel = new AMap.Marker({
@@ -453,6 +454,7 @@ const commonOptions = {
       });
       map.add(radiusLabel);
       overlayRefs.current.draft.push(radiusLabel);
+      
     }
 
     // =============================================
@@ -493,14 +495,12 @@ const commonOptions = {
         overlayRefs.current.draft.push(rectangle);
       }
       
-      // ✏️ 画笔 - 自动闭合！尾端点与首端点连接
+      // ✏️ 画笔 - 绘制中保持开放曲线，结束后才首尾闭合
       else if (activeTool === 'brush' && path.length >= 2) {
-        
-        // 🔗 自动闭合：最后一个点连回第一个点！
-        const closedPath = [...path, path[0]];
+        const brushPath = isBrushDrawing ? path : [...path, path[0]];
         
         const polyline = new AMap.Polyline({
-          path: closedPath,
+          path: brushPath,
           strokeColor: "#f59e0b",
           strokeWeight: 4,
           strokeOpacity: 1,
@@ -512,8 +512,8 @@ const commonOptions = {
         map.add(polyline);
         overlayRefs.current.draft.push(polyline);
         
-        // 半透明填充
-        if (path.length >= 3) {
+        // 半透明填充只在松开鼠标完成绘制后显示
+        if (!isBrushDrawing && path.length >= 3) {
           const polygon = new AMap.Polygon({
             path: path,
             strokeColor: "transparent",

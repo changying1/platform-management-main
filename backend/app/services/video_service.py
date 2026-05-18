@@ -376,15 +376,14 @@ class VideoService:
             logger.error(f"S3 上传失败: {e}")
 
     def _load_storage_paths(self) -> List[Dict]:
-        storage_root = self._get_storage_root()
-        config_file = os.path.join(storage_root, "storage_paths.json")
-
-        if not os.path.exists(config_file):
-            with open(config_file, "w", encoding="utf-8") as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
-            return []
+        config_file = os.path.join(self._get_default_static_root(), "storage_paths.json")
 
         try:
+            if not os.path.exists(config_file):
+                with open(config_file, "w", encoding="utf-8") as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
+                return []
+
             with open(config_file, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
 
@@ -403,18 +402,24 @@ class VideoService:
             return []
 
     def _save_storage_paths(self, paths: List[Dict]):
-        storage_root = self._get_storage_root()
-        config_file = os.path.join(storage_root, "storage_paths.json")
+        config_files = [os.path.join(self._get_default_static_root(), "storage_paths.json")]
+        for sp in paths:
+            if sp.get("enabled", True) and sp.get("type", "mirror") in {"mirror", "primary"}:
+                config_files.append(os.path.join(self._resolve_storage_path(sp["path"]), "storage_paths.json"))
 
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(paths, f, ensure_ascii=False, indent=2)
+        for config_file in dict.fromkeys(config_files):
+            os.makedirs(os.path.dirname(config_file), exist_ok=True)
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(paths, f, ensure_ascii=False, indent=2)
 
         self._storage_paths = paths
 
     def get_storage_paths(self) -> List[Dict]:
+        self._storage_paths = self._load_storage_paths()
         return self._storage_paths
 
     def add_storage_path(self, config: Dict) -> bool:
+        self._refresh_storage_paths()
         path = config.get("path", "")
         name = config.get("name", "")
         mirror_type = config.get("type", "mirror")
@@ -454,6 +459,7 @@ class VideoService:
         return True
 
     def delete_storage_path(self, index: int) -> bool:
+        self._refresh_storage_paths()
         paths = self._storage_paths
 
         if 0 <= index < len(paths):
@@ -465,6 +471,7 @@ class VideoService:
         return False
 
     def set_primary_storage(self, index: int) -> bool:
+        self._refresh_storage_paths()
         paths = self._storage_paths
 
         if 0 < index < len(paths):
@@ -2516,43 +2523,86 @@ class VideoService:
                 pass
         return config
 
+    def _resolve_storage_path(self, path: str) -> str:
+        if os.path.isabs(path):
+            return os.path.abspath(path)
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        project_root = os.path.dirname(backend_dir)
+        return os.path.abspath(os.path.join(project_root, path))
+
     def _get_storage_root(self) -> str:
         if len(self._storage_paths) > 0:
-            storage_root = self._storage_paths[0]["path"]
+            storage_root = self._resolve_storage_path(self._storage_paths[0]["path"])
         else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            storage_root = os.path.join(base_dir, "static")
+            config = self._get_system_config()
+            configured_path = config.get("videoStoragePath")
+            if configured_path:
+                storage_root = self._resolve_storage_path(configured_path)
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                storage_root = os.path.join(base_dir, "static")
         
         os.makedirs(storage_root, exist_ok=True)
         return storage_root
+
+    def _get_default_static_root(self) -> str:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        static_root = os.path.join(base_dir, "static")
+        os.makedirs(static_root, exist_ok=True)
+        return static_root
+
+    def _get_default_static_subdir(self, subdir: str) -> str:
+        root = os.path.join(self._get_default_static_root(), subdir)
+        os.makedirs(root, exist_ok=True)
+        return root
+
+    def _refresh_storage_paths(self) -> None:
+        self._storage_paths = self._load_storage_paths()
+
+    def _get_enabled_local_storage_roots(self, include_default: bool = True) -> list[str]:
+        roots = []
+        for sp in self._storage_paths:
+            if sp.get("enabled", True) and sp.get("type", "mirror") in {"mirror", "primary"}:
+                path = sp.get("path")
+                if path:
+                    roots.append(self._resolve_storage_path(path))
+
+        configured_path = self._get_system_config().get("videoStoragePath")
+        if configured_path:
+            roots.append(self._resolve_storage_path(configured_path))
+
+        if include_default:
+            roots.append(os.path.abspath(self._get_default_static_root()))
+
+        return list(dict.fromkeys(roots))
     
     def _get_all_record_roots(self) -> list[str]:
         roots = []
-        for sp in self._storage_paths:
-            if sp.get("enabled", True):
-                record_root = os.path.join(sp["path"], "recordings")
-                os.makedirs(record_root, exist_ok=True)
-                roots.append(record_root)
-
-        if not roots:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            default_record_root = os.path.join(base_dir, "static", "recordings")
-            os.makedirs(default_record_root, exist_ok=True)
-            roots.append(default_record_root)
+        for storage_root in self._get_enabled_local_storage_roots():
+            record_root = os.path.join(storage_root, "recordings")
+            os.makedirs(record_root, exist_ok=True)
+            roots.append(record_root)
 
         return roots
 
     def _get_record_root(self) -> str:
         return self._get_all_record_roots()[0]
 
+    def _get_local_record_root(self) -> str:
+        return self._get_default_static_subdir("recordings")
+
     def _get_alarm_video_root(self) -> str:
-        storage_root = self._get_storage_root()
-        alarm_root = os.path.join(storage_root, "alarm_videos")
-        # 旧版逻辑保留:
-        # base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        # alarm_root = os.path.join(base_dir, "static", "alarms")
+        alarm_root = os.path.join(self._get_storage_root(), "alarm_videos")
         os.makedirs(alarm_root, exist_ok=True)
         return alarm_root
+
+    def _get_all_alarm_video_roots(self) -> list[str]:
+        roots = []
+        for storage_root in self._get_enabled_local_storage_roots():
+            alarm_root = os.path.join(storage_root, "alarm_videos")
+            os.makedirs(alarm_root, exist_ok=True)
+            roots.append(alarm_root)
+        return roots
 
     def _get_playback_video_root(self) -> str:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2935,6 +2985,8 @@ class VideoService:
             "recordings": "/api/videos",
             "alarm_videos": "/api/alarm_videos",
             "playback_videos": "/api/playback_videos",
+            "alarms": "/api/alarm_screenshots",
+            "alarm_screenshots": "/api/alarm_screenshots",
         }
 
         for root in roots:
@@ -2962,6 +3014,17 @@ class VideoService:
         # 否则用 /api/videos 动态路由
         # abs_file_path = 存储根目录/recordings/设备ID/视频.mp4
         # 相对路径需要去掉 recordings 这一层
+
+    def _to_backend_static_web_path(self, abs_file_path: str) -> str:
+        abs_path = os.path.abspath(abs_file_path)
+        default_static = os.path.abspath(self._get_default_static_root())
+        try:
+            rel_path = os.path.relpath(abs_path, default_static)
+        except ValueError:
+            return self._to_static_web_path(abs_file_path)
+        if rel_path == "." or rel_path.startswith(".."):
+            return self._to_static_web_path(abs_file_path)
+        return "/static/" + rel_path.replace("\\", "/")
 
     def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
         tuple[str, datetime, datetime]]:
@@ -3266,7 +3329,7 @@ class VideoService:
         pattern = os.path.join(temp_root, "*.mp4")
         for file_path in glob.glob(pattern):
             file_name = os.path.basename(file_path)
-            if f"_{video_id}_" not in file_name:
+            if f"_{video_id}_" not in file_name and not file_name.startswith(f"{video_id}_"):
                 continue
             try:
                 mtime = os.path.getmtime(file_path)
@@ -3294,7 +3357,7 @@ class VideoService:
         clips: list[dict] = []
         for file_path in sorted(glob.glob(os.path.join(root_dir, "*.mp4")), reverse=True):
             file_name = os.path.basename(file_path)
-            if f"_{video_id}_" not in file_name:
+            if f"_{video_id}_" not in file_name and not file_name.startswith(f"{video_id}_"):
                 continue
 
             try:
@@ -3304,7 +3367,7 @@ class VideoService:
                         "name": file_name,
                         "size_bytes": int(stat.st_size),
                         "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                        "web_path": self._to_static_web_path(file_path),
+                        "web_path": self._to_backend_static_web_path(file_path),
                     }
                 )
             except Exception:
@@ -3326,26 +3389,34 @@ class VideoService:
 
     def _get_alarm_screenshot_root(self) -> str:
         """获取告警截图根目录"""
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        alarm_screenshot_root = os.path.join(base_dir, "static", "alarms")
-        os.makedirs(alarm_screenshot_root, exist_ok=True)
-        return alarm_screenshot_root
+        return self._get_default_static_subdir("alarms")
+
+    def _get_alarm_screenshot_roots(self) -> list[str]:
+        roots = []
+        for storage_root in self._get_enabled_local_storage_roots():
+            for subdir in ("alarms", "alarm_screenshots"):
+                root = os.path.join(storage_root, subdir)
+                os.makedirs(root, exist_ok=True)
+                roots.append(root)
+        return list(dict.fromkeys(roots))
 
     def list_recording_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
         """
         获取指定视频设备的录制视频列表（直接从录制目录）
         用于"常规监控回放"
         """
-        record_root = self._get_record_root()
-        device_root = os.path.join(record_root, str(video_id))
-        
-        if not os.path.isdir(device_root):
-            return []
+        self._refresh_storage_paths()
 
         clips: list[dict] = []
         sort_reverse = sort_order.lower() == "desc"
-        
-        for file_path in sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=sort_reverse):
+
+        file_paths = []
+        for record_root in self._get_all_record_roots():
+            device_root = os.path.join(record_root, str(video_id))
+            if os.path.isdir(device_root):
+                file_paths.extend(glob.glob(os.path.join(device_root, "*.mp4")))
+
+        for file_path in sorted(set(file_paths), reverse=sort_reverse):
             file_name = os.path.basename(file_path)
             
             try:
@@ -3362,7 +3433,7 @@ class VideoService:
                     "name": file_name,
                     "size_bytes": int(stat.st_size),
                     "updated_at": updated_at.strftime("%Y-%m-%d %H:%M:%S"),
-                    "web_path": self._to_static_web_path(file_path),
+                    "web_path": self._to_backend_static_web_path(file_path),
                     "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
                 })
             except Exception:
@@ -3382,99 +3453,34 @@ class VideoService:
         static/recordings 的常规录像反推报警视频。
         用于"报警监控回放"
         """
-        alarm_root = self._get_alarm_video_root()
-        clips = self._list_saved_videos(alarm_root, video_id, limit)
+        self._refresh_storage_paths()
+        clips = []
+        for alarm_root in self._get_all_alarm_video_roots():
+            clips.extend(self._list_saved_videos(alarm_root, video_id, limit))
+        clips.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        clips = clips[:max(1, min(limit, 500))]
 
-        if clips:
-            if sort_order.lower() == "asc":
-                clips.reverse()
-            return clips
-
-        alarm_screenshot_root = self._get_alarm_screenshot_root()
-        record_dir = os.path.join(self._get_record_root(), str(video_id))
-
-        if not os.path.isdir(alarm_screenshot_root):
-            return []
-
-        sort_reverse = sort_order.lower() == "desc"
-        video_id_str = str(video_id)
-
-        # 预加载常态录像的文件信息（加速匹配）
-        record_files = []
-        if os.path.isdir(record_dir):
-            for rp in glob.glob(os.path.join(record_dir, "*.mp4")):
-                try:
-                    name = os.path.basename(rp)
-                    time_str = name.split(".")[0]
-                    dt = datetime.strptime(time_str, "%Y%m%d_%H%M%S")
-                    record_files.append((dt.timestamp(), rp))
-                except Exception:
-                    pass
-            record_files.sort(key=lambda x: x[0])
-
-        fallback_clips: list[dict] = []
-        for file_path in sorted(glob.glob(os.path.join(alarm_screenshot_root, "*.jpg")), reverse=sort_reverse):
-            file_name = os.path.basename(file_path)
-            if f"_{video_id_str}_" not in file_name and not file_name.startswith(f"{video_id_str}_"):
-                continue
-
-            try:
-                parts = file_name.split("_")
-                if len(parts) >= 2 and parts[1].isdigit():
-                    ts = float(parts[1])
-                else:
-                    ts = os.stat(file_path).st_mtime
-
-                alarm_dt = datetime.fromtimestamp(ts)
-
-                best_video_path = None
-                best_diff = float("inf")
-
-                for r_ts, rp in record_files:
-                    if r_ts <= ts < r_ts + 60:
-                        best_video_path = rp
-                        break
-                    if 0 <= ts - r_ts < best_diff:
-                        best_diff = ts - r_ts
-                        best_video_path = rp
-
-                if best_video_path:
-                    v_stat = os.stat(best_video_path)
-                    v_name = os.path.basename(best_video_path)
-                    fallback_clips.append({
-                        "name": f"alarm_{v_name}",
-                        "size_bytes": int(v_stat.st_size),
-                        "updated_at": alarm_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                        "web_path": self._to_static_web_path(best_video_path),
-                        "duration_text": self._format_bytes(v_stat.st_size) if v_stat.st_size < 1024 * 1024 else f"{v_stat.st_size / (1024 * 1024):.2f}MB",
-                        "thumbnail": self._to_static_web_path(file_path),
-                    })
-            except Exception:
-                continue
-
-            if len(fallback_clips) >= max(1, min(limit, 500)):
-                break
-
-        return fallback_clips
+        if sort_order.lower() == "asc":
+            clips.reverse()
+        return clips
 
     def list_alarm_screenshots(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
         """
         获取指定视频设备的告警截图列表
         用于"告警截图"
         """
-        alarm_root = self._get_alarm_screenshot_root()
-        
-        if not os.path.isdir(alarm_root):
-            return []
-
+        self._refresh_storage_paths()
         screenshots: list[dict] = []
         sort_reverse = sort_order.lower() == "desc"
         video_id_str = str(video_id)
+        screenshot_files = []
+        for alarm_root in self._get_alarm_screenshot_roots():
+            screenshot_files.extend(glob.glob(os.path.join(alarm_root, "*.jpg")))
         
-        for file_path in sorted(glob.glob(os.path.join(alarm_root, "*.jpg")), reverse=sort_reverse):
+        for file_path in sorted(screenshot_files, reverse=sort_reverse):
             file_name = os.path.basename(file_path)
             # 筛选匹配该设备的告警截图 (文件名格式: 358_*.jpg)
-            if not file_name.startswith(f"{video_id_str}_"):
+            if not file_name.startswith(f"{video_id_str}_") and f"_{video_id_str}_" not in file_name:
                 continue
             
             try:
@@ -3483,8 +3489,8 @@ class VideoService:
                     "name": file_name,
                     "size_bytes": int(stat.st_size),
                     "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                    "web_path": self._to_static_web_path(file_path),
-                    "thumbnail_path": self._to_static_web_path(file_path),  # JPG可直接用作缩略图
+                    "web_path": self._to_backend_static_web_path(file_path),
+                    "thumbnail_path": self._to_backend_static_web_path(file_path),  # JPG可直接用作缩略图
                 })
             except Exception:
                 continue

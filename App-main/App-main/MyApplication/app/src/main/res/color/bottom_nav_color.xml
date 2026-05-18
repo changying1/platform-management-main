@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+<!--    统一控制底部导航图标和文字的颜色变化-->
+
+    <!-- 选中 -->
+    <item android:state_checked="true" android:color="#6F5BFF" />
+    <!-- 未选中 -->
+    <item android:color="#9E9E9E" />
+</selector>

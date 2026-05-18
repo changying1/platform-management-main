@@ -6,7 +6,7 @@ from app.schemas.fence_schema import FenceCreate, FenceUpdate, ProjectRegionCrea
 from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.utils.logger import get_logger
 from app.core.ws_manager import push_alarm_threadsafe
-from app.utils.config_manager import get_fence_detection_interval, get_fence_grace_period
+from app.utils.config_manager import get_fence_detection_interval, get_fence_grace_period, get_fence_alarm_silence_minutes, get_fence_setting
 
 # MongoDB 连接配置：优先使用含 fence 集合的兼容库，告警写入同一个库
 db = get_compatible_mongo_db("fence")
@@ -24,6 +24,10 @@ _last_detection_time = {}  # device_id -> timestamp
 # 越界延迟判定缓存（用于二次确认）
 # 格式: {(device_id, fence_id): {"first_time": timestamp, "is_confirmed": False}}
 _pending_violations = {}  # (device_id, fence_id) -> {"first_time": float, "is_confirmed": bool}
+
+# 告警静默缓存（用于控制重复告警频率）
+# 格式: {(device_id, fence_id): last_alarm_timestamp}
+_alarm_silence_cache = {}  # (device_id, fence_id) -> float
 
 
 class FenceService:
@@ -108,6 +112,11 @@ class FenceService:
             except:
                 pass
 
+        # 获取系统配置的默认值
+        default_behavior = get_fence_setting('fenceDefaultBehavior', 'No Entry')
+        default_severity = get_fence_setting('fenceDefaultSeverity', 'medium')
+        retention_days = get_fence_setting('fenceRetentionDays', 365)
+        
         new_fence = {
             "fence_id": str(int(datetime.now().timestamp() * 1000)),
             "name": fence_data.name,
@@ -115,17 +124,17 @@ class FenceService:
             "project": project,  # 从前端传入
             "project_region_id": fence_data.project_region_id,
             "shape": fence_data.shape,
-            "behavior": fence_data.behavior,
-            "severity": fence_data.alarm_type.value if hasattr(fence_data.alarm_type, "value") else "medium",
+            "behavior": fence_data.behavior or default_behavior,
+            "severity": fence_data.alarm_type.value if hasattr(fence_data.alarm_type, "value") else default_severity,
             "geometry": geometry,
             "schedule": {
                 "start": datetime.now().isoformat(),
-                "end": (datetime.now() + timedelta(days=365)).isoformat()
+                "end": (datetime.now() + timedelta(days=retention_days)).isoformat()
             },
             "effective_time": fence_data.effective_time or "00:00-23:59",
             "worker_count": 0,
             "remark": fence_data.remark or "",
-            "alarm_type": fence_data.alarm_type.value if hasattr(fence_data.alarm_type, "value") else "medium",
+            "alarm_type": fence_data.alarm_type.value if hasattr(fence_data.alarm_type, "value") else default_severity,
             "is_active": True,
             "createdAt": datetime.now().isoformat(),
             "updatedAt": datetime.now().isoformat()
@@ -474,18 +483,30 @@ class FenceService:
         }
         return severity_map.get(raw, raw if raw in {"high", "medium", "low"} else "medium")
 
+    def _is_in_silence_period(self, device_id: str, fence_id: str) -> bool:
+        """检查设备-围栏对是否在告警静默期内"""
+        silence_minutes = get_fence_alarm_silence_minutes()
+        
+        if silence_minutes <= 0:
+            return False  # 静默时间为0或负数，不启用静默
+        
+        cache_key = (device_id, fence_id)
+        last_alarm_time = _alarm_silence_cache.get(cache_key, 0)
+        current_time = time_module.time()
+        
+        # 计算距离上次告警的分钟数（支持小数）
+        elapsed_minutes = (current_time - last_alarm_time) / 60
+        
+        return elapsed_minutes < silence_minutes
+
     def _create_fence_alarm(self, fence: dict, device: dict, alarm_type: str, description: str, location: str) -> bool:
         device_id = str(device.get("device_id") or device.get("id") or "")
         fence_id = str(fence.get("fence_id") or fence.get("id") or "")
         if not device_id or not fence_id:
             return False
 
-        existing_alarm = alarms_collection.find_one({
-            "device_id": device_id,
-            "fence_id": fence_id,
-            "status": "pending",
-        })
-        if existing_alarm:
+        # 检查告警静默期
+        if self._is_in_silence_period(device_id, fence_id):
             return False
 
         next_id = int(get_next_sequence("alarm_record_id", db=db))
@@ -516,6 +537,9 @@ class FenceService:
         }
         alarms_collection.insert_one(payload)
         logger.warning(f"Fence alarm saved to alarm_record: alarm_id={next_id}, device={device_id}, fence={fence_id}")
+        
+        # 更新告警静默缓存
+        _alarm_silence_cache[(device_id, fence_id)] = time_module.time()
         
         # Push alarm to frontend via WebSocket
         alarm_data = {

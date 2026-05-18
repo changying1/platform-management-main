@@ -54,14 +54,43 @@
   } from "../src/api/videoApi";
   import { API_BASE_URL } from "../src/api/config";
 
+  const CHINA_RAILWAY_LOGO = "/images/%E5%85%AC%E5%8F%B8logo.jpeg";
+  const isOfflineVideoError = (message?: string | null) => {
+    const text = String(message || "").toUpperCase();
+    return (
+      text.includes("DEVICE_OFFLINE") ||
+      text.includes("VIDEO_DEVICE_OFFLINE") ||
+      text.includes("DEVICE OFFLINE") ||
+      text.includes("设备离线") ||
+      text.includes("不可达")
+    );
+  };
+
+  const ChinaRailwayLogoFallback = ({ compact = false }: { compact?: boolean }) => (
+    <div className="absolute inset-0 h-full w-full bg-white p-4">
+      <img
+        src={CHINA_RAILWAY_LOGO}
+        alt="China Railway logo"
+        className={
+          compact
+            ? "absolute block h-auto max-h-[76%] w-auto max-w-[76%] object-contain"
+            : "absolute block h-auto max-h-[70%] w-auto max-w-[70%] object-contain"
+        }
+        style={{ left: '50%', top: '38%', transform: 'translate(-50%, -50%)' }}
+      />
+    </div>
+  );
+
   const getAlarmWebSocketUrl = () => {
     try {
       const apiUrl = new URL(API_BASE_URL);
       const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
       return `${wsProtocol}//${apiUrl.host}/ws/alarm`;
     } catch {
+      // ✅ 用当前访问的 host！包含端口号！
+      // ✅ 支持 localhost:3000 和 内网穿透域名:43862！
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return `${wsProtocol}//${window.location.hostname}:9000/ws/alarm`;
+      return `${wsProtocol}//${window.location.host}/ws/alarm`;
     }
   };
 
@@ -219,7 +248,12 @@
               <Loader className="animate-spin text-cyan-400" size={32} />
             </div>
           ) : error ? (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+            <div className="w-full h-full flex flex-col items-center justify-center gap-2 relative">
+              {isOfflineVideoError(error) && (
+                <div className="absolute inset-0 z-10">
+                  <ChinaRailwayLogoFallback compact />
+                </div>
+              )}
               <span className="text-xs text-rose-300">{error}</span>
               <button onClick={onLoadPreview} className="px-2 py-1 bg-cyan-500 text-white text-xs rounded">重试</button>
             </div>
@@ -985,7 +1019,14 @@ useEffect(() => {
   const fetchDevices = async () => {
       try {
           setLoading(true);
+          
+          // ✅ DEBUG: 打印关键信息到控制台！
+          console.log('🌐 当前访问地址:', window.location.href);
+          console.log('🌐 当前端口:', window.location.port);
+          console.log('🌐 API_BASE_URL:', API_BASE_URL);
+          
           const data = await getAllVideos();
+          console.log('✅ 视频设备返回数据:', data);
           
           // 根据设备名称绑定公司和项目
           const devicesWithMapping = data.map(device => {
@@ -1906,7 +1947,12 @@ useEffect(() => {
                 正在加载视频流...
               </div>
             ) : previewErrors[device.id] ? (
-              <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-xs text-rose-300">
+              <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-xs text-rose-300 relative">
+                {isOfflineVideoError(previewErrors[device.id]) && (
+                  <div className="absolute inset-0 z-10">
+                    <ChinaRailwayLogoFallback compact />
+                  </div>
+                )}
                 <span>{previewErrors[device.id]}</span>
                 <button
                   className="px-3 py-1 bg-rose-500 text-white rounded"
@@ -2178,15 +2224,21 @@ useEffect(() => {
                     <div className="text-sm">正在获取视频流，请稍候...</div>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center flex-1 gap-3 text-slate-300">
-                    <AlertCircle className="text-rose-300" size={28} />
-                    <div className="text-sm">{fullScreenStreamError || '暂无可用视频流'}</div>
-                    <button
-                      onClick={() => maximizedVideo && handleShowStream(maximizedVideo)}
-                      className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 rounded text-slate-900 text-sm font-semibold"
-                    >
-                      重新拉流
-                    </button>
+                  <div className="flex flex-col items-center justify-center flex-1 gap-3 text-slate-300 relative">
+                    {isOfflineVideoError(fullScreenStreamError) ? (
+                      <ChinaRailwayLogoFallback />
+                    ) : (
+                      <>
+                        <AlertCircle className="text-rose-300" size={28} />
+                        <div className="text-sm">{fullScreenStreamError || '暂无可用视频流'}</div>
+                        <button
+                          onClick={() => maximizedVideo && handleShowStream(maximizedVideo)}
+                          className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 rounded text-slate-900 text-sm font-semibold"
+                        >
+                          重新拉流
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

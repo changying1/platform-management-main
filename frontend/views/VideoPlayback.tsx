@@ -138,6 +138,8 @@ interface ExtendedAlarmInfo {
 // 扩展 SavedPlayback 类型（覆盖 alarmInfo）
 interface ExtendedSavedPlayback extends SavedPlayback {
   alarmInfo?: ExtendedAlarmInfo;
+  team?: string;
+  holder?: string;
 }
 
   const selectStyle = `
@@ -345,23 +347,57 @@ const mockVoiceRecords: VoiceRecord[] = [
   }
 ];
 
-// 新增：树形筛选数据
+// 新增：树形筛选数据（公司 -> 项目 -> 作业队，支持网格化属性）
 const companyTree = [
   {
     id: '中铁一局',
     name: '中铁一局',
+    grids: [
+      { id: 'grid_1', name: 'A区出入口', level: '区域', status: 'normal' },
+      { id: 'grid_2', name: 'B区施工区', level: '区域', status: 'warning' },
+      { id: 'grid_3', name: 'C区材料堆放', level: '区域', status: 'normal' },
+    ],
     projects: [
-      { id: '西安地铁8号线', name: '西安地铁8号线', teams: ['施工一组', '施工二组', '施工三组'] }
+      { 
+        id: '西安地铁8号线', 
+        name: '西安地铁8号线', 
+        grids: [
+          { id: 'grid_8_1', name: '8号线-北门', level: '工点', status: 'normal' },
+          { id: 'grid_8_2', name: '8号线-南门', level: '工点', status: 'normal' },
+        ],
+        teams: ['施工一组', '施工二组', '施工三组'] 
+      }
     ]
   },
   {
     id: '中铁隧道局',
     name: '中铁隧道局',
+    grids: [
+      { id: 'grid_s1', name: '隧道进口', level: '工点', status: 'alarm' },
+      { id: 'grid_s2', name: '盾构机区', level: '工点', status: 'normal' },
+    ],
     projects: [
-      { id: '西安地铁10号线', name: '西安地铁10号线', teams: ['掘进班', '支护班', '运输班'] }
+      { 
+        id: '西安地铁10号线', 
+        name: '西安地铁10号线', 
+        grids: [
+          { id: 'grid_10_1', name: '10号线-隧道入口', level: '工点', status: 'normal' },
+        ],
+        teams: ['掘进班', '支护班', '运输班'] 
+      }
     ]
   }
 ];
+
+// 网格状态映射
+const getGridStatusInfo = (status: string) => {
+  switch (status) {
+    case 'normal': return { text: '正常', color: 'text-green-400' };
+    case 'warning': return { text: '预警', color: 'text-yellow-400' };
+    case 'alarm': return { text: '报警', color: 'text-red-400' };
+    default: return { text: '未知', color: 'text-slate-400' };
+  }
+};
 
 export interface VideoPlayerRef {
   captureFrame: () => Promise<string>;
@@ -1271,16 +1307,35 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const [thumbnail, setThumbnail] = useState<string>('');
     const [realDuration, setRealDuration] = useState<number>(playback.duration);
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
 
-    // ✅ 自动加载视频第一帧 + 真实时长
+    // ✅ 优先使用报警截图作为预览图，没有再从视频提取
     React.useEffect(() => {
+      // 1. 优先使用已有的报警截图
+      const existingScreenshot = playback.alarmInfo?.screenshotUrl || 
+                                playback.alarmInfo?.screenshot?.url || 
+                                playback.alarmInfo?.screenshot?.thumbnail;
+      
+      if (existingScreenshot) {
+        setThumbnail(existingScreenshot);
+        setIsLoading(false);
+        setLoadError(false);
+        return;
+      }
+
+      // 2. 没有截图时，尝试从视频加载第一帧
       const video = videoRef.current;
-      if (!video || !playback.filePath) return;
+      if (!video || !playback.filePath) {
+        setIsLoading(false);
+        setLoadError(true);
+        return;
+      }
 
       const handleLoadedMetadata = () => {
-        // ✅ 获取视频真实时长
+        setIsLoading(false);
         setRealDuration(Math.round(video.duration));
-        video.currentTime = 0.5;
+        video.currentTime = 0.1;
       };
 
       const handleSeeked = () => {
@@ -1295,19 +1350,42 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
         }
       };
 
+      const handleError = () => {
+        setIsLoading(false);
+        setLoadError(true);
+        console.error('视频加载失败:', playback.filePath);
+      };
+
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       video.addEventListener('seeked', handleSeeked);
+      video.addEventListener('error', handleError);
+
+      video.load();
 
       return () => {
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
         video.removeEventListener('seeked', handleSeeked);
+        video.removeEventListener('error', handleError);
       };
-    }, [playback.filePath]);
+    }, [playback.filePath, playback.alarmInfo]);
 
     const getThumbColor = (name: string) => {
       const colors = ['bg-red-500/20', 'bg-blue-500/20', 'bg-green-500/20', 'bg-yellow-500/20', 'bg-purple-500/20'];
       const index = name.length % colors.length;
       return colors[index];
+    };
+
+    // 生成备用封面颜色渐变
+    const getGradientBackground = (name: string) => {
+      const gradients = [
+        'linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%)',
+        'linear-gradient(135deg, #3a1c71 0%, #d76d77 100%)',
+        'linear-gradient(135deg, #134e5e 0%, #71b280 100%)',
+        'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+        'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+      ];
+      const index = name.length % gradients.length;
+      return gradients[index];
     };
 
     return (
@@ -1321,13 +1399,33 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
               className={`absolute inset-0 w-full h-full bg-center ${!thumbnail ? getThumbColor(playback.deviceName) : ''}`}
               style={thumbnail ? { 
                 backgroundImage: `url(${thumbnail})`, 
-                backgroundSize: '100% 100%',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
                 backgroundColor: '#000'
-              } : {}}
+              } : {
+                background: getGradientBackground(playback.deviceName || '')
+              }}
             >
-              {!thumbnail && (
-                <div className="w-full h-full flex items-center justify-center">
-                  <VideoIcon size={40} className="text-white/40" />
+              {/* 加载中状态 */}
+              {isLoading && (
+                <div className="w-full h-full flex items-center justify-center bg-black/50">
+                  <Loader2 size={32} className="text-cyan-400 animate-spin" />
+                </div>
+              )}
+              
+              {/* 无缩略图且未加载时显示图标 */}
+              {!thumbnail && !isLoading && (
+                <div className="w-full h-full flex flex-col items-center justify-center">
+                  <VideoIcon size={40} className="text-white/60 mb-2" />
+                  <span className="text-white/40 text-xs">{playback.deviceName || '视频'}</span>
+                </div>
+              )}
+
+              {/* 加载失败提示 */}
+              {loadError && !thumbnail && (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-black/50">
+                  <AlertCircle size={32} className="text-red-400 mb-2" />
+                  <span className="text-white/60 text-xs">视频加载失败</span>
                 </div>
               )}
             </div>
@@ -1721,7 +1819,11 @@ const getScreenshotUrl = (playback?: ExtendedSavedPlayback | null) => {
     ''
   );
 };
-export default function VideoPlayback() {
+interface VideoPlaybackProps {
+  initialTab?: 'video' | 'track' | 'voice';
+}
+
+export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
     // ✅ 从 Store 取出操作函数
     const { removePlayback, clearAll } = usePlaybackStore();
 
@@ -1732,10 +1834,13 @@ export default function VideoPlayback() {
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [selectedProject, setSelectedProject] = useState<string>('all');
     const [selectedTeam, setSelectedTeam] = useState<string>('all');
+    const [selectedGrid, setSelectedGrid] = useState<string>('all');
+    const [selectedGridLevel, setSelectedGridLevel] = useState<string>('all');
     const [activeTab, setActiveTab] = useState<TabType>('all');
     const [searchKeyword, setSearchKeyword] = useState('');
     const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
     const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+    const [showGridDropdown, setShowGridDropdown] = useState(false);
     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
     const [selectedPlayback, setSelectedPlayback] = useState<ExtendedSavedPlayback | null>(null);
     const videoPlayerRef = useRef<VideoPlayerRef>(null);
@@ -1750,12 +1855,11 @@ export default function VideoPlayback() {
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [showFilterPanel, setShowFilterPanel] = useState(false);
   // ✅ 40:9 更窄卡片，10列×4行 = 40个，刚好填满页面
   const itemsPerPage = 40;
 
     // 新增：主Tab状态
-  const [mainTab, setMainTab] = useState<MainTabType>('video');
+  const [mainTab, setMainTab] = useState<MainTabType>(initialTab || 'video');
   
   // 新增：轨迹数据（从TrackPlayback.tsx迁移API逻辑）
   const [trackDevices, setTrackDevices] = useState<TrackDevice[]>([]);
@@ -2107,13 +2211,16 @@ useEffect(() => {
     
     let list = convertToSavedPlayback();
     
-    // 没选设备时，才按公司/项目筛选
+    // 没选设备时，才按公司/项目/作业队筛选
     if (!selectedDevice) {
       if (selectedCompany !== 'all') {
         list = list.filter(p => p.company === selectedCompany);
       }
       if (selectedProject !== 'all') {
         list = list.filter(p => p.project === selectedProject);
+      }
+      if (selectedTeam !== 'all') {
+        list = list.filter(p => p.team === selectedTeam);
       }
     }
     
@@ -2124,14 +2231,18 @@ useEffect(() => {
       list = list.filter(p => p.type === 'manual');
     }
     
-    // 按关键词搜索
+    // 按关键词搜索（支持多条件模糊搜索）
     if (searchKeyword) {
-      list = list.filter(p => 
-        p.deviceName.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        p.alarmInfo?.msg?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        p.alarmInfo?.type?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        p.company?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        p.project?.toLowerCase().includes(searchKeyword.toLowerCase())
+      const keyword = searchKeyword.toLowerCase();
+      list = list.filter(p =>
+        p.deviceName.toLowerCase().includes(keyword) ||
+        p.company?.toLowerCase().includes(keyword) ||
+        p.project?.toLowerCase().includes(keyword) ||
+        p.team?.toLowerCase().includes(keyword) ||
+        p.holder?.toLowerCase().includes(keyword) ||
+        p.alarmInfo?.msg?.toLowerCase().includes(keyword) ||
+        p.alarmInfo?.type?.toLowerCase().includes(keyword) ||
+        p.alarmInfo?.personnel?.toLowerCase().includes(keyword)
       );
     }
     
@@ -2177,15 +2288,6 @@ useEffect(() => {
         clearAll();
         setSelectedPlayback(null);
       }
-    };
-
-    // 重置所有筛选
-    const handleResetFilters = () => {
-      setSelectedCompany('all');
-      setSelectedProject('all');
-      setSelectedDevice(null);
-      setSearchKeyword('');
-      setActiveTab('all');
     };
 
     // 格式化时间显示
@@ -2242,53 +2344,10 @@ const getVoiceTypeInfo = (type: string) => {
   });
   const paginatedVoices = filteredVoices.slice((voiceCurrentPage - 1) * itemsPerPageTrackVoice, voiceCurrentPage * itemsPerPageTrackVoice);
   const voiceTotalPages = Math.ceil(filteredVoices.length / itemsPerPageTrackVoice);
-    // 当前筛选激活数量（不含设备选择和Tab分类）
-    const activeFiltersCount = [
-      selectedCompany !== 'all',
-      selectedProject !== 'all',
-      searchKeyword !== ''
-    ].filter(Boolean).length;
 
 return (
   <div className="h-full flex flex-col gap-4 p-4 text-slate-100 bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)]">
     
-    {/* ========== 新增：顶层Tab切换（监控回放/轨迹回放/语音回放） ========== */}
-    <div className="flex gap-2 mb-2 border-b border-cyan-400/20 pb-2">
-      <button
-        onClick={() => setMainTab('video')}
-        className={`px-6 py-2 rounded-lg text-sm font-medium transition-all ${
-          mainTab === 'video'
-            ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-            : 'text-slate-400 hover:text-slate-200'
-        }`}
-      >
-        <VideoIcon size={16} className="inline mr-2" />
-        监控回放
-      </button>
-      <button
-        onClick={() => setMainTab('track')}
-        className={`px-6 py-2 rounded-lg text-sm font-medium transition-all ${
-          mainTab === 'track'
-            ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-            : 'text-slate-400 hover:text-slate-200'
-        }`}
-      >
-        <MapPin size={16} className="inline mr-2" />
-        轨迹回放
-      </button>
-      <button
-        onClick={() => setMainTab('voice')}
-        className={`px-6 py-2 rounded-lg text-sm font-medium transition-all ${
-          mainTab === 'voice'
-            ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-            : 'text-slate-400 hover:text-slate-200'
-        }`}
-      >
-        <Phone size={16} className="inline mr-2" />
-        语音回放
-      </button>
-    </div>
-
     {/* ========== 监控回放内容（原有全部功能） ========== */}
     {mainTab === 'video' && (
       <>
@@ -2331,108 +2390,161 @@ return (
                 </div>
               </div>
 
-              {/* 筛选按钮 - 居右 */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowFilterPanel(!showFilterPanel)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                    activeFiltersCount > 0
-                      ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                      : 'bg-slate-800 border border-slate-700 text-slate-400 hover:border-slate-600'
-                  }`}
-                >
-                  <Filter size={14} />
-                  <span>按条件筛选视频</span>
-                  {activeFiltersCount > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500 rounded-full text-white">{activeFiltersCount}</span>
-                  )}
-                </button>
-
-                {showFilterPanel && (
-                  <div className="absolute top-full right-0 mt-2 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[720px]">
-                    <div className="space-y-3">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
-                        <input
-                          type="text"
-                          placeholder="搜索设备名称..."
-                          value={searchKeyword}
-                          onChange={(e) => setSearchKeyword(e.target.value)}
-                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-9 pr-8 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                        />
-                        {searchKeyword && (
-                          <button onClick={() => setSearchKeyword('')} className="absolute right-2 top-1/2 transform -translate-y-1/2">
-                            <X size={14} className="text-slate-400 hover:text-white" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-4 gap-3">
-                        <select
-                          value={selectedCompany}
-                          onChange={(e) => { setSelectedCompany(e.target.value); setSelectedProject('all'); setSelectedTeam('all'); }}
-                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
-                        >
-                          {companies.map(company => (
-                            <option key={company} value={company}>
-                              {company === 'all' ? '全部公司' : company}
-                            </option>
-                          ))}
-                        </select>
-
-                        <select
-                          value={selectedProject}
-                          onChange={(e) => { setSelectedProject(e.target.value); setSelectedTeam('all'); }}
-                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
-                        >
-                          {projects.map(project => (
-                            <option key={project} value={project}>
-                              {project === 'all' ? '全部项目' : project}
-                            </option>
-                          ))}
-                        </select>
-
-                        <select
-                          value={selectedTeam}
-                          onChange={(e) => setSelectedTeam(e.target.value)}
-                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
-                        >
-                          <option value="all">全部作业队</option>
-                        </select>
-
-                        <select
-                          value={selectedDevice?.id || ""}
-                          onChange={(e) => {
-                            const dev = devices.find((d) => d.id === Number(e.target.value));
-                            setSelectedDevice(dev || null);
-                          }}
-                          className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-400"
-                        >
-                          <option value="">全部设备</option>
-                          {devices
-                            .filter(device => {
-                              if (selectedCompany !== 'all' && device.company !== selectedCompany) return false;
-                              if (selectedProject !== 'all' && device.project !== selectedProject) return false;
-                              return true;
-                            })
-                            .map((device) => (
-                              <option key={device.id} value={device.id}>{device.name}</option>
-                            ))}
-                        </select>
-                      </div>
-
-                      {activeFiltersCount > 0 && (
-                        <div className="flex justify-end pt-2 border-t border-slate-700">
-                          <button onClick={handleResetFilters} className="text-sm text-cyan-400 hover:text-cyan-300">
-                            重置全部筛选
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                {/* 固定筛选栏：树状结构（公司 -> 项目/网格 -> 作业队/设备） */}
+                <div className="flex items-center gap-2 flex-1 ml-4">
+                  {/* 搜索框 */}
+                  <div className="relative w-[280px]">
+                    <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+                    <input
+                      type="text"
+                      placeholder="搜索设备/人员/事件/公司/项目等"
+                      value={searchKeyword}
+                      onChange={(e) => setSearchKeyword(e.target.value)}
+                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                    />
+                    {searchKeyword && (
+                      <button onClick={() => setSearchKeyword('')} className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                        <X size={14} className="text-slate-400 hover:text-white" />
+                      </button>
+                    )}
                   </div>
-                )}
+
+                  {/* 公司选择 */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                        selectedCompany !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      <Building2 size={14} />
+                      <span>{selectedCompany === 'all' ? '全部公司' : selectedCompany}</span>
+                      <ChevronDown size={12} />
+                    </button>
+                    {showCompanyDropdown && (
+                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
+                        <button
+                          onClick={() => { setSelectedCompany('all'); setSelectedProject('all'); setSelectedTeam('all'); setShowCompanyDropdown(false); }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedCompany === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                        >
+                          全部公司
+                        </button>
+                        {companyTree.map((company: any) => (
+                          <div key={company.id}>
+                            <button
+                              onClick={() => { setSelectedCompany(selectedCompany === company.id ? 'all' : company.id); setSelectedProject('all'); setSelectedTeam('all'); }}
+                              className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
+                                selectedCompany === company.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              <span>📁 {company.name}</span>
+                              {company.grids && company.grids.length > 0 && (
+                                <span className="text-xs text-slate-500">({company.grids.length}个网格)</span>
+                              )}
+                            </button>
+                            {/* 公司下的网格 */}
+                            {selectedCompany === company.id && company.grids?.map((grid: any) => (
+                              <button
+                                key={grid.id}
+                                onClick={() => { setSelectedGrid(grid.id); setShowCompanyDropdown(false); }}
+                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                                  selectedGrid === grid.id ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400 hover:bg-slate-700'
+                                }`}
+                              >
+                                <span>📍 {grid.name}</span>
+                                <span className={`text-[10px] ${getGridStatusInfo(grid.status).color}`}>● {getGridStatusInfo(grid.status).text}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 项目选择 */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                        selectedProject !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      <FolderTree size={14} />
+                      <span>{selectedProject === 'all' ? '全部项目' : selectedProject}</span>
+                      <ChevronDown size={12} />
+                    </button>
+                    {showProjectDropdown && (
+                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
+                        <button
+                          onClick={() => { setSelectedProject('all'); setSelectedTeam('all'); setShowProjectDropdown(false); }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedProject === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                        >
+                          全部项目
+                        </button>
+                        {selectedCompany !== 'all' && companyTree.find((c: any) => c.id === selectedCompany)?.projects.map((project: any) => (
+                          <div key={project.id}>
+                            <button
+                              onClick={() => { setSelectedProject(selectedProject === project.id ? 'all' : project.id); setSelectedTeam('all'); }}
+                              className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
+                                selectedProject === project.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              <span>📁 {project.name}</span>
+                            </button>
+                            {/* 项目下的网格 */}
+                            {selectedProject === project.id && project.grids?.map((grid: any) => (
+                              <button
+                                key={grid.id}
+                                onClick={() => { setSelectedGrid(grid.id); setShowProjectDropdown(false); }}
+                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                                  selectedGrid === grid.id ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400 hover:bg-slate-700'
+                                }`}
+                              >
+                                <span>📍 {grid.name}</span>
+                                <span className={`text-[10px] ${getGridStatusInfo(grid.status).color}`}>● {getGridStatusInfo(grid.status).text}</span>
+                              </button>
+                            ))}
+                            {/* 项目下的作业队 */}
+                            {selectedProject === project.id && project.teams?.map((team: string) => (
+                              <button
+                                key={team}
+                                onClick={() => { setSelectedTeam(team); setShowProjectDropdown(false); }}
+                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs ${
+                                  selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-slate-700'
+                                }`}
+                              >
+                                👥 {team}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 网格筛选 */}
+                  {selectedGrid !== 'all' && (
+                    <div className="flex items-center gap-1 px-2 py-1 bg-blue-500/20 rounded-lg text-blue-300 text-xs">
+                      <MapPin size={12} />
+                      <span>{companyTree.flatMap((c: any) => c.grids || []).find((g: any) => g.id === selectedGrid)?.name || '网格'}</span>
+                      <button onClick={() => setSelectedGrid('all')} className="ml-1 hover:text-white">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 作业队标签 */}
+                  {selectedTeam !== 'all' && (
+                    <div className="flex items-center gap-1 px-2 py-1 bg-cyan-500/20 rounded-lg text-cyan-300 text-xs">
+                      <Users size={12} />
+                      <span>{selectedTeam}</span>
+                      <button onClick={() => setSelectedTeam('all')} className="ml-1 hover:text-white">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
             <div className="flex-1 overflow-hidden py-2 grid grid-cols-10 gap-2">
               {currentPagePlaybacks.map((playback) => (

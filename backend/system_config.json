@@ -38,6 +38,8 @@
   "fenceDefaultBehavior": "No Entry",
   "fenceDefaultSeverity": "normal",
   "trackRetentionDays": 30,
+  "trackSimplifyPrecision": 2,
+  "trackRecordInterval": 0,
   "passwordExpireDays": 90,
   "logRetentionDays": 90,
   "logAutoClean": true,

@@ -1,0 +1,5 @@
+<!-- res/drawable/button_bg_logout.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#FF5733" /> <!-- 按钮背景颜色 -->
+    <corners android:radius="24dp" /> <!-- 圆角效果 -->
+</shape>

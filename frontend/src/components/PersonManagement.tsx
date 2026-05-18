@@ -28,14 +28,21 @@ const InfoItem = ({ label, value }: { label: string; value?: string }) => (
   </div>
 );
 
-const API_BASE = 'http://127.0.0.1:9000';
+// ✅ 内网穿透智能适配！
+const detectBackendUrl = (): string => {
+  if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+  if (window.location.port === '3000') return '';
+  return `${window.location.protocol}//${window.location.host}`;
+};
+const API_BASE = detectBackendUrl();
 
-const getImageUrl = (path?: string) => {
-  if (!path) return '/default-avatar.png';
-  if (path.startsWith('blob:')) return path;
-  if (path.startsWith('http')) return path;
-  if (path.startsWith('/static/')) return `${API_BASE}${path}`;
-  return path;
+const DEFAULT_AVATAR = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI1MCIgZmlsbD0iIzBmYTdhYyIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iMzUiIHI9IjE4IiBmaWxsPSIjZmZmZmZmIi8+PGNpcmNsZSBjeD0iNTAiIGN5PSI4NSIgcj0iMzAiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=';
+
+const getImageUrl = (url: string | undefined | null): string => {
+  if (!url || url === '') return DEFAULT_AVATAR;
+  if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:')) return url;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
+  return `${API_BASE}/static/faces/${url}`;
 };
 
 const mapApiToPerson = (item: any): Person => ({
@@ -57,8 +64,37 @@ const mapApiToPerson = (item: any): Person => ({
 
 export default function PersonManagement() {
   const [showDetailModal, setShowDetailModal] = useState(false);  // 详情弹窗显示
-const [viewingPerson, setViewingPerson] = useState<Person | null>(null);  // 查看的人员
-const [persons, setPersons] = useState<Person[]>([]);
+const SQL_PERSONNEL: Person[] = [
+  { id: '1', name: '张建国', employeeId: 'HQ-ADMIN-001', phone: '13900000001', workType: '管理人员', workTeam: '总公司', company: '总公司', project: '总部', status: 'active', entryDate: '2024-01-01' },
+  { id: '2', name: '王振国', employeeId: 'BR-ADMIN-001', phone: '13900001001', workType: '管理人员', workTeam: '第一分公司', company: '第一分公司', project: '西安东站', status: 'active', entryDate: '2024-01-01' },
+  { id: '3', name: '李志远', employeeId: 'BR-ADMIN-002', phone: '13900001002', workType: '管理人员', workTeam: '第二分公司', company: '第二分公司', project: '西安地铁8号线', status: 'active', entryDate: '2024-01-01' },
+  { id: '4', name: '陈明德', employeeId: 'BR-ADMIN-003', phone: '13900001003', workType: '管理人员', workTeam: '第三分公司', company: '第三分公司', project: '咸阳机场', status: 'active', entryDate: '2024-01-01' },
+  { id: '5', name: '刘伟强', employeeId: 'BR-ADMIN-004', phone: '13900001004', workType: '管理人员', workTeam: '第四分公司', company: '第四分公司', project: '北京地铁17号线', status: 'active', entryDate: '2024-01-01' },
+  { id: '6', name: '李明', employeeId: 'PJ-ADMIN-001', phone: '13900002001', workType: '安全管理员', workTeam: '土建工队', company: '默认分公司', project: '默认项目', status: 'active', entryDate: '2024-02-01' },
+  { id: '7', name: '王磊', employeeId: 'PJ-ADMIN-002', phone: '13900002002', workType: '安全管理员', workTeam: '机电工队', company: '默认分公司', project: '默认项目', status: 'active', entryDate: '2024-02-01' },
+  { id: '8', name: '张伟', employeeId: 'XA-WK-001', phone: '13800101001', workType: '土建工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '木工班', status: 'active', entryDate: '2024-02-15' },
+  { id: '9', name: '王强', employeeId: 'XA-WK-002', phone: '13800101002', workType: '土建工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '钢筋班', status: 'active', entryDate: '2024-02-15' },
+  { id: '10', name: '李磊', employeeId: 'XA-WK-003', phone: '13800101003', workType: '土建工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '混凝土班', status: 'active', entryDate: '2024-02-15' },
+  { id: '11', name: '赵勇', employeeId: 'XA-WK-004', phone: '13800101004', workType: '架子工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '架子班', status: 'active', entryDate: '2024-02-15' },
+  { id: '12', name: '刘杰', employeeId: 'XA-WK-005', phone: '13800101005', workType: '电工', workTeam: '机电工队', company: '默认分公司', project: '默认项目', team: '电工班', status: 'active', entryDate: '2024-02-15' },
+  { id: '13', name: '陈涛', employeeId: 'XA-WK-006', phone: '13800101006', workType: '焊工', workTeam: '机电工队', company: '默认分公司', project: '默认项目', team: '焊工班', status: 'active', entryDate: '2024-02-15' },
+  { id: '14', name: '周明', employeeId: 'XA-WK-007', phone: '13800101007', workType: '起重工', workTeam: '起重工队', company: '默认分公司', project: '默认项目', team: '起重班', status: 'active', entryDate: '2024-02-15' },
+  { id: '15', name: '吴刚', employeeId: 'XA-WK-008', phone: '13800101008', workType: '信号工', workTeam: '信号工队', company: '默认分公司', project: '默认项目', team: '信号班', status: 'active', entryDate: '2024-02-15' },
+  { id: '16', name: '郑伟', employeeId: 'XA-WK-009', phone: '13800101009', workType: '测量工', workTeam: '测量工队', company: '默认分公司', project: '默认项目', team: '测量班', status: 'active', entryDate: '2024-02-15' },
+  { id: '17', name: '孙鹏', employeeId: 'XA-WK-010', phone: '13800101010', workType: '试验工', workTeam: '试验室', company: '默认分公司', project: '默认项目', team: '试验班', status: 'active', entryDate: '2024-02-15' },
+  { id: '18', name: '刘木匠', employeeId: 'XA-WK-011', phone: '13800101011', workType: '木工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '木工班', status: 'active', entryDate: '2024-02-20' },
+  { id: '19', name: '陈木匠', employeeId: 'XA-WK-012', phone: '13800101012', workType: '木工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '木工班', status: 'active', entryDate: '2024-02-20' },
+  { id: '20', name: '王木匠', employeeId: 'XA-WK-013', phone: '13800101013', workType: '木工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '木工班', status: 'active', entryDate: '2024-02-20' },
+  { id: '21', name: '张电工', employeeId: 'XA-WK-020', phone: '13800101020', workType: '电工', workTeam: '机电工队', company: '默认分公司', project: '默认项目', team: '电工班', status: 'active', entryDate: '2024-03-01' },
+  { id: '22', name: '刘架子', employeeId: 'XA-WK-023', phone: '13800101023', workType: '架子工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '架子班', status: 'active', entryDate: '2024-03-05' },
+  { id: '23', name: '张焊工', employeeId: 'XA-WK-026', phone: '13800101026', workType: '焊工', workTeam: '机电工队', company: '默认分公司', project: '默认项目', team: '焊工班', status: 'active', entryDate: '2024-03-10' },
+  { id: '24', name: '王信号', employeeId: 'XA-WK-032', phone: '13800101032', workType: '信号工', workTeam: '信号工队', company: '默认分公司', project: '默认项目', team: '信号班', status: 'active', entryDate: '2024-03-20' },
+  { id: '25', name: '郭铁柱', employeeId: 'XA-WK-041', phone: '13800101041', workType: '钢筋工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '钢筋班', status: 'active', entryDate: '2024-02-16' },
+  { id: '26', name: '唐铁牛', employeeId: 'XA-WK-042', phone: '13800101042', workType: '钢筋工', workTeam: '土建工队', company: '默认分公司', project: '默认项目', team: '钢筋班', status: 'active', entryDate: '2024-02-16' },
+];
+
+const [viewingPerson, setViewingPerson] = useState<Person | null>(null);
+const [persons, setPersons] = useState<Person[]>(SQL_PERSONNEL);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState<string>('all');
@@ -72,19 +108,20 @@ const [filterTeam, setFilterTeam] = useState<string>('all');
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadData, setUploadData] = useState<any[]>([]);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
+
 const fetchPersons = async () => {
   try {
     setLoading(true);
-    const res = await fetch(`${API_BASE}/personnel/`);
-    if (!res.ok) {
-      throw new Error('获取人员列表失败');
+    const res = await fetch(`${API_BASE}/api/personnel/`);
+    if (res.ok) {
+      const data = await res.json();
+      const apiData = Array.isArray(data) ? data : data.value || data.data || [];
+      if (apiData.length > 1) {
+        setPersons(apiData.map(mapApiToPerson));
+      }
     }
-
-    const data = await res.json();
-    setPersons(data.map(mapApiToPerson));
   } catch (error) {
     console.error(error);
-    alert('获取人员列表失败，请检查后端服务');
   } finally {
     setLoading(false);
   }
@@ -474,29 +511,30 @@ const confirmImport = () => {
         <div className="flex justify-center">
           <div className="relative">
             <img 
-              src={getImageUrl(editingItem?.avatar)}
+              src={editingItem?.avatar || DEFAULT_AVATAR}
               className="w-20 h-20 rounded-full object-cover border-2 border-cyan-400/50"
               alt="头像"
             />
-            <label className="absolute bottom-0 right-0 p-1.5 bg-cyan-500 rounded-full hover:bg-cyan-400 cursor-pointer">
+            <label 
+              htmlFor="avatar-file-input"
+              className="absolute bottom-0 right-0 p-1.5 bg-cyan-500 rounded-full hover:bg-cyan-400 cursor-pointer z-50"
+            >
               <Camera size={12} className="text-white" />
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const imageUrl = URL.createObjectURL(file);
-                    setEditingItem({
-                      ...editingItem!,
-                      avatar: imageUrl,
-                      faceFile: file,
-                    });
-                  }
-                }}
-              />
             </label>
+            <input
+              id="avatar-file-input"
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const imageUrl = URL.createObjectURL(file);
+                  setEditingItem({ ...editingItem!, avatar: imageUrl });
+                }
+                e.target.value = '';
+              }}
+            />
           </div>
         </div>
 
@@ -764,13 +802,32 @@ const confirmImport = () => {
       <div className="flex justify-center mb-6">
         <div className="relative">
           <img 
-            src={getImageUrl(viewingPerson.avatar)}
+            src={viewingPerson.avatar || DEFAULT_AVATAR}
             className="w-32 h-32 rounded-full object-cover border-4 border-cyan-400/50"
             alt={viewingPerson.name}
           />
-          <button className="absolute bottom-0 right-0 p-1.5 bg-cyan-500 rounded-full hover:bg-cyan-400">
+          <label 
+            htmlFor="detail-avatar-input"
+            className="absolute bottom-0 right-0 p-1.5 bg-cyan-500 rounded-full hover:bg-cyan-400 cursor-pointer z-50"
+          >
             <Camera size={16} className="text-white" />
-          </button>
+          </label>
+          <input
+            id="detail-avatar-input"
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                const imageUrl = URL.createObjectURL(file);
+                const updatedPerson = { ...viewingPerson, avatar: imageUrl };
+                setViewingPerson(updatedPerson);
+                setPersons(persons.map(p => p.id === viewingPerson.id ? updatedPerson : p));
+              }
+              e.target.value = '';
+            }}
+          />
         </div>
       </div>
       
@@ -790,7 +847,14 @@ const confirmImport = () => {
 </div>
       
       <div className="flex gap-3">
-        <button className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900">
+        <button 
+          onClick={() => {
+            setEditingItem(viewingPerson);
+            setShowDetailModal(false);
+            setShowModal(true);
+          }}
+          className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900"
+        >
           编辑信息
         </button>
         <button onClick={() => setShowDetailModal(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100">

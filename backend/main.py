@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import logging
 import threading
@@ -15,7 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 import httpx
 
-# 修复在 Windows 环境下面，由于前端组件(特别是视频组件)分段请求(断点续传MP4)时取消所引发的底层报错。
+# 淇鍦?Windows 鐜涓嬮潰锛岀敱浜庡墠绔粍浠?鐗瑰埆鏄棰戠粍浠?鍒嗘璇锋眰(鏂偣缁紶MP4)鏃跺彇娑堟墍寮曞彂鐨勫簳灞傛姤閿欍€?
 if sys.platform == 'win32':
     try:
         from asyncio.proactor_events import _ProactorBasePipeTransport
@@ -29,7 +29,7 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
-# 在模块导入阶段加载 .env，避免依赖 __main__ 分支导致配置失效
+# 鍦ㄦā鍧楀鍏ラ樁娈靛姞杞?.env锛岄伩鍏嶄緷璧?__main__ 鍒嗘敮瀵艰嚧閰嶇疆澶辨晥
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 from app.core.database import engine, Base, SessionLocal, ensure_schema_compatibility
@@ -46,6 +46,10 @@ from app.controllers import (
     project_controller,
     backup_controller,
     personnel_controller,
+    llm_controller,
+    grid_controller,
+    grid_personnel_controller,
+    responsibility_unit_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -53,35 +57,46 @@ from app.services.video_service import VideoService
 from app.services.jt808_service import jt808_manager
 from app.services.tts_queue_service import tts_queue_service
 import keyboard_ptz_bridge as keyboard_bridge
+from app.services.Fence.fence_polling_service import fence_polling_service
+from app.services.track_cleanup_service import track_cleanup_service
 
-# --- 日志配置 ---
+# --- 鏃ュ織閰嶇疆 ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(name)s | %(levelname)s | %(message)s'
 )
 logger = get_logger("Main")
 
-# --- 生命周期管理 (Lifespan) ---
+# --- 鐢熷懡鍛ㄦ湡绠＄悊 (Lifespan) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 【启动阶段】
+    # 銆愬惎鍔ㄩ樁娈点€?
     set_main_event_loop(asyncio.get_running_loop())
     logger.info("Initializing system services...")
     
-    # 1. 启动 JT808 TCP 服务线程
+    # 1. 鍚姩 JT808 TCP 鏈嶅姟绾跨▼
     logger.info("Starting JT808 TCP service on port 8989...")
     jt_thread = threading.Thread(target=jt808_manager.start_server, daemon=True)
     jt_thread.start()
     
-    # 2. 启动 TTS 语音播报队列 worker
+    # 2. 鍚姩 TTS 璇煶鎾姤闃熷垪 worker
     logger.info("Starting TTS queue worker...")
     tts_queue_service.start()
+    
+    # 3. 鍚姩鍥存爮妫€娴嬭疆璇㈡湇鍔?
+    logger.info("Starting fence polling service...")
+    fence_polling_service.start()
+    
+    # 4. 鍚姩杞ㄨ抗鏁版嵁娓呯悊鏈嶅姟
+    logger.info("Starting track cleanup service...")
+    track_cleanup_service.start()
+    
     """
-    # 2. 视频录像状态自检 (增加异常保护)
+    # 2. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)
     db = SessionLocal()
     try:
         logger.info("Checking video device recording status...")
-        # 即使这里报错(比如摄像头连不上)，也不会弄挂主程序
+        # 鍗充娇杩欓噷鎶ラ敊(姣斿鎽勫儚澶磋繛涓嶄笂)锛屼篃涓嶄細寮勬寕涓荤▼搴?
         VideoService().ensure_all_recordings(db)
         logger.info("Video recordings initialized.")
     except Exception as e:
@@ -92,13 +107,15 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # 【关闭阶段】
+    # 銆愬叧闂樁娈点€?
     set_main_event_loop(None)
     logger.info("Shutting down services...")
+    fence_polling_service.stop()
+    track_cleanup_service.stop()
     jt808_manager.running = False
     tts_queue_service.stop()
 
-# --- App 初始化 ---
+# --- App 鍒濆鍖?---
 # Base.metadata.create_all(bind=engine)
 ensure_schema_compatibility()
 app = FastAPI(lifespan=lifespan)
@@ -111,11 +128,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 静态资源
+# 闈欐€佽祫婧?
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 
-# 动态视频访问路由（支持自定义存储路径）
+# 鍔ㄦ€佽棰戣闂矾鐢憋紙鏀寔鑷畾涔夊瓨鍌ㄨ矾寰勶級
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "system_config.json")
 DEFAULT_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 STORAGE_PATHS_FILE = os.path.join(DEFAULT_STATIC_DIR, "storage_paths.json")
@@ -236,6 +253,18 @@ def find_video_file_with_fallback(subdir: str, file_path: str):
             return full_path
     return None
 
+def find_static_file_with_fallback(subdirs: list[str], file_path: str, allowed_exts: tuple[str, ...]):
+    lower_name = file_path.lower()
+    if not lower_name.endswith(allowed_exts):
+        return None
+
+    for storage_root in get_configured_storage_roots():
+        for subdir in subdirs:
+            full_path = _safe_join(storage_root, os.path.join(subdir, file_path))
+            if full_path and os.path.isfile(full_path):
+                return full_path
+    return None
+
 @app.get("/api/videos/{file_path:path}")
 def serve_video(file_path: str):
     full_path = find_video_file_with_fallback("recordings", file_path)
@@ -257,7 +286,18 @@ def serve_playback_video(file_path: str):
         return FileResponse(full_path)
     raise HTTPException(status_code=404, detail="File not found")
 
-# 路由挂载
+@app.get("/api/alarm_screenshots/{file_path:path}")
+def serve_alarm_screenshot(file_path: str):
+    full_path = find_static_file_with_fallback(
+        ["alarms", "alarm_screenshots"],
+        file_path,
+        (".jpg", ".jpeg", ".png", ".webp"),
+    )
+    if full_path:
+        return FileResponse(full_path)
+    raise HTTPException(status_code=404, detail="File not found")
+
+# 璺敱鎸傝浇
 @app.get("/static/recordings/{file_path:path}")
 def serve_static_recording_video(file_path: str):
     full_path = find_video_file_with_fallback("recordings", file_path)
@@ -294,8 +334,16 @@ app.include_router(dashboard_controller.router)
 app.include_router(auth_controller.router)
 app.include_router(project_controller.router)
 app.include_router(backup_controller.router)
+app.include_router(llm_controller.router)
+app.include_router(grid_controller.router)
+app.include_router(grid_personnel_controller.router)
+app.include_router(responsibility_unit_controller.router)
 
-LLM_SERVICE_URL = "http://localhost:8888"
+print("=" * 60)
+print("鉁?AI 鍔╂墜鏈嶅姟宸查泦鎴愬埌涓诲悗绔?")
+print("馃摗 鎺ュ彛鍦板潃: http://localhost:9000/api/ai")
+print("馃攳 鍋ュ悍妫€鏌? http://localhost:9000/api/ai/health")
+print("=" * 60)
 
 @app.post("/api/keyboard-test/begin")
 def keyboard_test_begin():
@@ -332,52 +380,10 @@ def keyboard_test_switch_request():
     """Read the simulated keyboard camera switch request."""
     return keyboard_bridge.get_device_switch_request_payload()
 
-@app.api_route("/api/ai/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_llm_service(request: Request, path: str):
-    """将 /api/ai/* 请求转发到 LLM 服务"""
-    timeout = httpx.Timeout(60.0, connect=10.0)
-    
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        url = f"{LLM_SERVICE_URL}/{path}"
-        
-        try:
-            query_params = dict(request.query_params)
-            
-            if request.method == "POST" and request.headers.get("content-type", "").startswith("multipart/form-data"):
-                form = await request.form()
-                files = {}
-                data = {}
-                for key, value in form.items():
-                    if hasattr(value, 'file') and value.file:
-                        files[key] = (value.filename, await value.read(), value.content_type)
-                    else:
-                        data[key] = value
-                
-                response = await client.request(
-                    method=request.method,
-                    url=url,
-                    params=query_params,
-                    files=files if files else None,
-                    data=data if data else None,
-                )
-            else:
-                body = await request.body()
-                response = await client.request(
-                    method=request.method,
-                    url=url,
-                    params=query_params,
-                    content=body,
-                    headers={key: value for key, value in request.headers.items() if key.lower() not in ["host", "content-length"]},
-                )
-            
-            return StreamingResponse(
-                response.aiter_bytes(),
-                status_code=response.status_code,
-                headers=dict(response.headers),
-            )
-            
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="LLM 服务未启动，请先启动 LargeLanguageModel/main.py")
+# LLM_SERVICE_URL = "http://localhost:8888"  # 宸查泦鎴愶紝鏃犻渶杞彂
+
+# LLM 鏈嶅姟宸查泦鎴愬埌涓诲悗绔紝鏃犻渶浠ｇ悊杞彂
+# 鍘熶唬鐞嗕唬鐮佸凡娉ㄩ噴锛岀洿鎺ョ敱 llm_controller 澶勭悊
 
 @app.get("/")
 def root():
@@ -394,13 +400,13 @@ async def alarm_ws(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
-        # 服务停止时 websocket 任务被取消，属于正常退出流程
+        # 鏈嶅姟鍋滄鏃?websocket 浠诲姟琚彇娑堬紝灞炰簬姝ｅ父閫€鍑烘祦绋?
         pass
     finally:
         if websocket in alarm_clients:
             alarm_clients.remove(websocket)
 
-# --- 启动入口 ---
+# --- 鍚姩鍏ュ彛 ---
 if __name__ == "__main__":
     import uvicorn
     

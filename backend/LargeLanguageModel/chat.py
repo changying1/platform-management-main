@@ -103,7 +103,7 @@ def LLM_chain(chat_history, persist_directory, RAG=True):
     )
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """你是一个专业的智能助手。
+        ("system", """你是一个专业的工程项目智能助手。
 请根据用户问题提供专业、准确、有帮助的回答。
 请用中文回答用户问题。
 背景知识参考: {context} """),
