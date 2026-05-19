@@ -164,7 +164,7 @@ public class VoiceCallFragment extends Fragment {
         isCallActive = false;
         
         btnCall.setBackgroundResource(R.drawable.circle_green_background);
-        ivCallIcon.setImageResource(R.drawable.ic_phone);
+        ivCallIcon.setImageResource(R.drawable.ic_phone1);
         tvCallStatus.setText(selectedContact != null ? selectedContact.status : "离线");
         tvCallDuration.setVisibility(View.GONE);
         

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 你原本就有的颜色 -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="bottom_nav_selected">#7C4DFF</color>
@@ -10,4 +11,18 @@
     <color name="medium_level">#FFA500</color>
     <color name="low_level">#00FF00</color>
     <color name="teal_200">#81E9D9</color>
+
+    <!-- ─── ⬇️ 以下是帮你补齐的缺失颜色 ⬇️ ─── -->
+    <!-- 灰色系列 -->
+    <color name="gray_300">#E0E0E0</color>
+    <color name="gray_400">#BDBDBD</color>
+    <color name="gray_500">#9E9E9E</color>
+    <color name="gray_600">#757575</color>
+    <color name="gray_800">#424242</color>
+    <color name="gray_900">#212121</color>
+
+    <!-- 基础红绿黄系列 -->
+    <color name="green">#4CAF50</color>
+    <color name="red">#F44336</color>
+    <color name="yellow">#FFEB3B</color>
 </resources>

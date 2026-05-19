@@ -143,7 +143,7 @@
                 android:id="@+id/iv_call_icon"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:src="@drawable/ic_phone"/>
+                android:src="@drawable/ic_phone1"/>
         </LinearLayout>
 
         <!-- 录音 -->
