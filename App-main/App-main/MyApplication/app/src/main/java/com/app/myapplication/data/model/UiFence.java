@@ -7,98 +7,162 @@ import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * UI围栏模型 - 对齐后端字段
+ */
 public class UiFence {
-    public int id;
+    public String id;
     public String name;
-    public String shapeType; // CIRCLE / POLYGON
-    public Double lat;
-    public Double lng;
-    public Double radiusMeters;
-    public List<double[]> points = new ArrayList<>();
+    public String company;
+    public String project;
+    public String shape;           // "circle" | "polygon" (小写)
+    public String behavior;        // "No Entry" | "No Exit"
+    public String severity;        // "normal" | "risk" | "severe"
+    public List<Double> center;    // [lat, lng] 圆形用
+    public Double radius;          // 圆形半径
+    public List<List<Double>> points; // 多边形点数组 [[lat,lng],...]
+    public Integer is_active;      // 0 | 1
+    public String createdAt;
+    public String updatedAt;
 
-    public String ruleType; // FORBID_IN / FORBID_OUT / BOTH (可空)
-    public String level;    // HIGH/MID/LOW (可空)
-    public Boolean enabled; // 可空
-    public Integer regionId;// 可空
+    // 本地字段（用于编辑）
+    public String effectiveTime;   // 生效时间，如 "00:00-23:59"
+    public String remark;
+    public List<String> deviceIds;
 
-    // 容错：从 JsonObject 解析
+    // 从后端JSON解析
     public static UiFence fromJson(JsonObject o) {
         UiFence f = new UiFence();
-        f.id = optInt(o, "id", 0);
-        f.name = optStr(o, "name", optStr(o, "fence_name", "未命名围栏"));
-        f.shapeType = optStr(o, "shapeType", optStr(o, "shape_type", "CIRCLE"));
+        f.id = optStr(o, "id", "");
+        f.name = optStr(o, "name", "未命名围栏");
+        f.company = optStr(o, "company", "");
+        f.project = optStr(o, "project", "");
+        f.shape = optStr(o, "shape", "circle");
+        f.behavior = optStr(o, "behavior", "No Entry");
+        f.severity = optStr(o, "severity", "normal");
+        f.is_active = optIntNullable(o, "is_active", 1);
+        f.createdAt = optStr(o, "createdAt", "");
+        f.updatedAt = optStr(o, "updatedAt", "");
 
-        // 圆字段（容错）
-        f.lat = optDoubleNullable(o, "lat", optDoubleNullable(o, "center_lat", null));
-        f.lng = optDoubleNullable(o, "lng", optDoubleNullable(o, "center_lng", null));
-        f.radiusMeters = optDoubleNullable(o, "radiusMeters", optDoubleNullable(o, "radius_meters", null));
+        // 解析 schedule
+        if (o.has("schedule") && !o.get("schedule").isJsonNull()) {
+            JsonObject sched = o.getAsJsonObject("schedule");
+            String start = optStr(sched, "start", "00:00");
+            String end = optStr(sched, "end", "23:59");
+            f.effectiveTime = start + "-" + end;
+        } else {
+            f.effectiveTime = "00:00-23:59";
+        }
 
-        // 多边形 points（容错）
+        // 解析 center (圆形)
+        JsonArray centerArr = optArr(o, "center");
+        if (centerArr != null && centerArr.size() >= 2) {
+            f.center = new ArrayList<>();
+            f.center.add(centerArr.get(0).getAsDouble());
+            f.center.add(centerArr.get(1).getAsDouble());
+        }
+
+        // 解析 radius
+        f.radius = optDoubleNullable(o, "radius", null);
+
+        // 解析 points (多边形)
         JsonArray pts = optArr(o, "points");
-        if (pts == null) pts = optArr(o, "polygon");
         if (pts != null) {
+            f.points = new ArrayList<>();
             for (JsonElement e : pts) {
                 if (!e.isJsonArray()) continue;
                 JsonArray p = e.getAsJsonArray();
                 if (p.size() < 2) continue;
-                double a = p.get(0).getAsDouble();
-                double b = p.get(1).getAsDouble();
-                // 默认认为 [lat,lng]
-                f.points.add(new double[]{a, b});
+                List<Double> point = new ArrayList<>();
+                point.add(p.get(0).getAsDouble());
+                point.add(p.get(1).getAsDouble());
+                f.points.add(point);
             }
         }
 
-        f.ruleType = optStr(o, "ruleType", optStr(o, "rule_type", null));
-        f.level = optStr(o, "level", optStr(o, "alarm_level", null));
-        f.enabled = optBoolNullable(o, "enabled", optBoolNullable(o, "is_enabled", null));
-        f.regionId = optIntNullable(o, "regionId", optIntNullable(o, "region_id", null));
         return f;
     }
 
-    // 构造创建围栏的 body（按通用字段名；你后端字段不同再微调）
-    public JsonObject toCreateBody() {
-        JsonObject b = new JsonObject();
-        b.addProperty("name", name);
-        b.addProperty("shapeType", shapeType);
+    // 构造创建请求体
+    public FenceCreateRequest toCreateRequest() {
+        FenceCreateRequest req = new FenceCreateRequest();
+        req.name = this.name;
+        req.company = this.company != null ? this.company : "";
+        req.project = this.project != null ? this.project : "";
+        req.shape = this.shape != null ? this.shape : "circle";
+        req.behavior = this.behavior != null ? this.behavior : "No Entry";
+        req.severity = this.severity != null ? this.severity : "normal";
+        req.center = this.center;
+        req.radius = this.radius;
+        req.points = this.points;
+        req.deviceIds = this.deviceIds;
 
-        if ("CIRCLE".equalsIgnoreCase(shapeType)) {
-            if (lat != null) b.addProperty("lat", lat);
-            if (lng != null) b.addProperty("lng", lng);
-            if (radiusMeters != null) b.addProperty("radiusMeters", radiusMeters);
-        } else {
-            JsonArray arr = new JsonArray();
-            for (double[] p : points) {
-                JsonArray one = new JsonArray();
-                one.add(p[0]);
-                one.add(p[1]);
-                arr.add(one);
+        // 解析 effectiveTime 到 schedule
+        if (this.effectiveTime != null && this.effectiveTime.contains("-")) {
+            String[] parts = this.effectiveTime.split("-");
+            if (parts.length == 2) {
+                req.schedule = new FenceCreateRequest.Schedule(parts[0], parts[1]);
             }
-            b.add("points", arr);
+        }
+        if (req.schedule == null) {
+            req.schedule = new FenceCreateRequest.Schedule("00:00", "23:59");
         }
 
-        if (ruleType != null) b.addProperty("ruleType", ruleType);
-        if (level != null) b.addProperty("level", level);
-        if (enabled != null) b.addProperty("enabled", enabled);
-        if (regionId != null) b.addProperty("regionId", regionId);
+        return req;
+    }
 
-        return b;
+    // 构造更新请求体
+    public FenceUpdateRequest toUpdateRequest() {
+        FenceUpdateRequest req = new FenceUpdateRequest();
+        req.name = this.name;
+        req.company = this.company;
+        req.project = this.project;
+        req.shape = this.shape;
+        req.behavior = this.behavior;
+        req.severity = this.severity;
+        req.center = this.center;
+        req.radius = this.radius;
+        req.points = this.points;
+        req.is_active = this.is_active;
+        req.deviceIds = this.deviceIds;
+
+        if (this.effectiveTime != null && this.effectiveTime.contains("-")) {
+            String[] parts = this.effectiveTime.split("-");
+            if (parts.length == 2) {
+                req.schedule = new FenceCreateRequest.Schedule(parts[0], parts[1]);
+            }
+        }
+
+        return req;
+    }
+
+    // 获取最佳中心点（用于地图聚焦）
+    public com.amap.api.maps.model.LatLng getBestCenterLatLng() {
+        if ("circle".equalsIgnoreCase(shape) && center != null && center.size() >= 2) {
+            return new com.amap.api.maps.model.LatLng(center.get(0), center.get(1));
+        }
+        if (points != null && !points.isEmpty()) {
+            double sumLat = 0, sumLng = 0;
+            for (List<Double> p : points) {
+                if (p.size() >= 2) {
+                    sumLat += p.get(0);
+                    sumLng += p.get(1);
+                }
+            }
+            return new com.amap.api.maps.model.LatLng(sumLat / points.size(), sumLng / points.size());
+        }
+        return null;
     }
 
     // ---- helpers ----
     private static String optStr(JsonObject o, String k, String def) {
         return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsString() : def;
     }
-    private static int optInt(JsonObject o, String k, int def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsInt() : def;
-    }
     private static Integer optIntNullable(JsonObject o, String k, Integer def) {
         return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsInt() : def;
     }
     private static Double optDoubleNullable(JsonObject o, String k, Double def) {
         return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsDouble() : def;
-    }
-    private static Boolean optBoolNullable(JsonObject o, String k, Boolean def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsBoolean() : def;
     }
     private static JsonArray optArr(JsonObject o, String k) {
         return (o != null && o.has(k) && o.get(k).isJsonArray()) ? o.get(k).getAsJsonArray() : null;

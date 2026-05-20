@@ -48,23 +48,23 @@ import retrofit2.http.*;
 public class FenceCenterActivity extends AppCompatActivity {
 
     // -------------------------
-    // Retrofit API（单文件可跑）
+    // Retrofit API - 对齐后端新接口
     // -------------------------
     interface FenceApi {
-        @GET("fence/")
-        Call<JsonArray> getFences(@Query("skip") int skip, @Query("limit") int limit);
+        @GET("fence/list")
+        Call<JsonArray> getFences();
 
         @POST("fence/")
         Call<JsonObject> createFence(@Body JsonObject body);
 
         @PUT("fence/{fence_id}")
-        Call<JsonObject> updateFence(@Path("fence_id") int id, @Body JsonObject body);
+        Call<JsonObject> updateFence(@Path("fence_id") String id, @Body JsonObject body);
 
-        @DELETE("fence/{fence_id}")
-        Call<JsonObject> deleteFence(@Path("fence_id") int id);
+        @DELETE("fence/delete/{fence_id}")
+        Call<JsonObject> deleteFence(@Path("fence_id") String id);
 
         @GET("fence/regions")
-        Call<JsonArray> getRegions(@Query("skip") int skip, @Query("limit") int limit);
+        Call<JsonArray> getRegions();
     }
 
     interface DeviceApi {
@@ -116,7 +116,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
     // ✅ 编辑模式
     private boolean editMode = false;
-    private Integer editingFenceId = null;
+    private String editingFenceId = null;
     private UiFence editingOrigin = null;
 
     // Circle draft
@@ -348,7 +348,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         addMode = true;
         editMode = true;
-        editingFenceId = f.id;
+        editingFenceId = f.id != null ? String.valueOf(f.id) : null;
         editingOrigin = f;
 
         panelAdd.setVisibility(View.VISIBLE);
@@ -573,7 +573,7 @@ public class FenceCenterActivity extends AppCompatActivity {
     // Backend
     // -------------------------
     private void refreshFromServer() {
-        api.getFences(0, 200).enqueue(new Callback<JsonArray>() {
+        api.getFences().enqueue(new Callback<JsonArray>() {
             @Override
             public void onResponse(@NonNull Call<JsonArray> call, @NonNull Response<JsonArray> resp) {
                 if (!resp.isSuccessful() || resp.body() == null) {
@@ -594,7 +594,7 @@ public class FenceCenterActivity extends AppCompatActivity {
             }
         });
 
-        api.getRegions(0, 200).enqueue(new Callback<JsonArray>() {
+        api.getRegions().enqueue(new Callback<JsonArray>() {
             @Override
             public void onResponse(@NonNull Call<JsonArray> call, @NonNull Response<JsonArray> resp) {
                 if (!resp.isSuccessful() || resp.body() == null) return;
@@ -633,7 +633,6 @@ public class FenceCenterActivity extends AppCompatActivity {
         UiFence draft = new UiFence();
         draft.name = name;
         draft.shapeType = isCircleMode() ? "CIRCLE" : "POLYGON";
-
         draft.ruleType = getBehaviorFromSpinner();
         draft.enabled = swEnable != null && swEnable.isChecked();
 
@@ -641,7 +640,6 @@ public class FenceCenterActivity extends AppCompatActivity {
             draft.level = editingOrigin.level;
             draft.effectiveTime = editingOrigin.effectiveTime;
             draft.remark = editingOrigin.remark;
-            draft.regionId = editingOrigin.regionId;
         }
 
         if ("CIRCLE".equalsIgnoreCase(draft.shapeType)) {
@@ -662,7 +660,8 @@ public class FenceCenterActivity extends AppCompatActivity {
             draft.points = new ArrayList<>();
             for (LatLng p : polygonPoints) {
                 if (p == null) continue;
-                draft.points.add(new double[]{p.latitude, p.longitude});
+                double[] point = new double[]{p.latitude, p.longitude};
+                draft.points.add(point);
             }
             if (draft.points.size() < 3) {
                 toast("多边形点无效，请重新绘制");
@@ -671,11 +670,11 @@ public class FenceCenterActivity extends AppCompatActivity {
         }
 
         if (draft.ruleType == null || draft.ruleType.trim().isEmpty()) draft.ruleType = BEHAVIOR_NO_ENTRY;
-        if (draft.level == null || draft.level.trim().isEmpty()) draft.level = "medium";
+        if (draft.level == null || draft.level.trim().isEmpty()) draft.level = "normal";
         if (draft.effectiveTime == null || draft.effectiveTime.trim().isEmpty()) draft.effectiveTime = "00:00-23:59";
         if (draft.remark == null) draft.remark = "";
 
-        JsonObject body = draft.buildFenceCreateBody();
+        JsonObject body = draft.toCreateBody();
 
         if (editMode && editingFenceId != null) {
             api.updateFence(editingFenceId, body).enqueue(new Callback<JsonObject>() {
@@ -734,7 +733,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
     private void deleteFenceFromServer(UiFence fence) {
         if (fence == null || fence.id == null) return;
-        api.deleteFence(fence.id).enqueue(new Callback<JsonObject>() {
+        api.deleteFence(String.valueOf(fence.id)).enqueue(new Callback<JsonObject>() {
             @Override
             public void onResponse(@NonNull Call<JsonObject> call, @NonNull Response<JsonObject> resp) {
                 if (!resp.isSuccessful()) {
@@ -768,7 +767,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         JsonObject body = fence.buildFenceCreateBody();
 
-        api.updateFence(fence.id, body).enqueue(new Callback<JsonObject>() {
+        api.updateFence(String.valueOf(fence.id), body).enqueue(new Callback<JsonObject>() {
             @Override
             public void onResponse(@NonNull Call<JsonObject> call, @NonNull Response<JsonObject> resp) {
                 if (!resp.isSuccessful()) {
@@ -875,7 +874,7 @@ public class FenceCenterActivity extends AppCompatActivity {
         // 2) fences（编辑态跳过正在编辑的围栏）
         for (UiFence f : fences) {
             if (f == null) continue;
-            if (editMode && editingFenceId != null && editingFenceId.equals(f.id)) continue;
+            if (editMode && editingFenceId != null && f.id != null && editingFenceId.equals(String.valueOf(f.id))) continue;
 
             boolean enabled = (f.enabled == null) || f.enabled;
             int strokeColor;
@@ -1370,41 +1369,121 @@ public class FenceCenterActivity extends AppCompatActivity {
             return null;
         }
 
+        // 转换为后端新格式的请求体
+        JsonObject toCreateBody() {
+            JsonObject body = new JsonObject();
+
+            body.addProperty("name", (name == null || name.trim().isEmpty()) ? "未命名围栏" : name.trim());
+
+            String shape = (shapeType == null) ? "circle" : shapeType.toLowerCase();
+            body.addProperty("shape", shape);
+
+            body.addProperty("behavior", (ruleType == null || ruleType.trim().isEmpty()) ? BEHAVIOR_NO_ENTRY : ruleType);
+
+            // schedule 对象
+            JsonObject schedule = new JsonObject();
+            String time = (effectiveTime == null || effectiveTime.trim().isEmpty()) ? "00:00-23:59" : effectiveTime;
+            if (time.contains("-")) {
+                String[] parts = time.split("-");
+                schedule.addProperty("start", parts[0]);
+                schedule.addProperty("end", parts[1]);
+            } else {
+                schedule.addProperty("start", "00:00");
+                schedule.addProperty("end", "23:59");
+            }
+            body.add("schedule", schedule);
+
+            // severity 映射
+            String sev = (level == null || level.trim().isEmpty()) ? "normal" : level;
+            if ("medium".equalsIgnoreCase(sev)) sev = "risk";
+            else if ("high".equalsIgnoreCase(sev)) sev = "severe";
+            else if ("low".equalsIgnoreCase(sev)) sev = "normal";
+            body.addProperty("severity", sev);
+
+            body.addProperty("is_active", (enabled != null && enabled) ? 1 : 0);
+
+            double r = (radiusMeters != null) ? radiusMeters : 50.0;
+            body.addProperty("radius", r);
+
+            // center 数组 [lat, lng]
+            if (lat != null && lng != null) {
+                JsonArray centerArr = new JsonArray();
+                centerArr.add(lat);
+                centerArr.add(lng);
+                body.add("center", centerArr);
+            }
+
+            // points 数组 [[lat,lng],...]
+            if ("polygon".equalsIgnoreCase(shape) && points != null && !points.isEmpty()) {
+                JsonArray pointsArr = new JsonArray();
+                for (double[] p : points) {
+                    if (p == null || p.length < 2) continue;
+                    JsonArray point = new JsonArray();
+                    point.add(p[0]);
+                    point.add(p[1]);
+                    pointsArr.add(point);
+                }
+                body.add("points", pointsArr);
+            }
+
+            return body;
+        }
+
         public JsonObject buildFenceCreateBody() {
             JsonObject body = new JsonObject();
 
             body.addProperty("name", (name == null || name.trim().isEmpty()) ? "未命名围栏" : name.trim());
 
-            String shape = (shapeType == null) ? "circle" : shapeType;
-            if ("POLYGON".equalsIgnoreCase(shape)) shape = "polygon";
-            if ("CIRCLE".equalsIgnoreCase(shape)) shape = "circle";
+            String shape = (shapeType == null) ? "circle" : shapeType.toLowerCase();
             body.addProperty("shape", shape);
 
             body.addProperty("behavior", (ruleType == null || ruleType.trim().isEmpty()) ? BEHAVIOR_NO_ENTRY : ruleType);
 
-            body.addProperty("effective_time",
-                    (effectiveTime == null || effectiveTime.trim().isEmpty()) ? "00:00-23:59" : effectiveTime);
+            // schedule 对象
+            JsonObject schedule = new JsonObject();
+            String time = (effectiveTime == null || effectiveTime.trim().isEmpty()) ? "00:00-23:59" : effectiveTime;
+            if (time.contains("-")) {
+                String[] parts = time.split("-");
+                schedule.addProperty("start", parts[0]);
+                schedule.addProperty("end", parts[1]);
+            } else {
+                schedule.addProperty("start", "00:00");
+                schedule.addProperty("end", "23:59");
+            }
+            body.add("schedule", schedule);
 
-            body.addProperty("alarm_type", (level == null || level.trim().isEmpty()) ? "medium" : level);
-            body.addProperty("remark", remark == null ? "" : remark);
+            // severity 映射
+            String sev = (level == null || level.trim().isEmpty()) ? "normal" : level;
+            if ("medium".equalsIgnoreCase(sev)) sev = "risk";
+            else if ("high".equalsIgnoreCase(sev)) sev = "severe";
+            else if ("low".equalsIgnoreCase(sev)) sev = "normal";
+            body.addProperty("severity", sev);
 
             body.addProperty("is_active", (enabled != null && enabled) ? 1 : 0);
-
-            if (regionId != null) body.addProperty("project_region_id", regionId);
 
             double r = (radiusMeters != null) ? radiusMeters : 50.0;
             body.addProperty("radius", r);
 
-            String coordsJson;
-            if ("polygon".equalsIgnoreCase(shape)) {
-                coordsJson = buildPolygonCoordinatesJsonLngLat(points);
-            } else {
-                coordsJson = buildCircleCoordinatesJsonLngLat(lat, lng, r, 36);
+            // center 数组 [lat, lng]
+            if (lat != null && lng != null) {
+                JsonArray centerArr = new JsonArray();
+                centerArr.add(lat);
+                centerArr.add(lng);
+                body.add("center", centerArr);
             }
-            if (coordsJson != null) body.addProperty("coordinates_json", coordsJson);
 
-            if (lat != null) body.addProperty("lat", lat);
-            if (lng != null) body.addProperty("lng", lng);
+            // points 数组 [[lat,lng],...]
+            if ("polygon".equalsIgnoreCase(shape) && points != null && !points.isEmpty()) {
+                JsonArray pointsArr = new JsonArray();
+                for (double[] p : points) {
+                    if (p == null || p.length < 2) continue;
+                    JsonArray point = new JsonArray();
+                    point.add(p[0]);
+                    point.add(p[1]);
+                    pointsArr.add(point);
+                }
+                body.add("points", pointsArr);
+            }
 
             return body;
         }
