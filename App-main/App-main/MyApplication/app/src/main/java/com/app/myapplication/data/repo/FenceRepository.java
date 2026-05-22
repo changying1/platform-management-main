@@ -80,8 +80,10 @@ public class FenceRepository {
         return new Callback<T>() {
             @Override
             public void onResponse(@NonNull Call<T> call, @NonNull Response<T> response) {
-                if (response.isSuccessful()) {
+                if (response.isSuccessful() && response.body() != null) {
                     cb.onSuccess(response.body());
+                } else if (response.isSuccessful()) {
+                    cb.onError("Empty response body");
                 } else {
                     cb.onError("HTTP " + response.code());
                 }
