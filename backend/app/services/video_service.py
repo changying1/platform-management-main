@@ -1503,8 +1503,11 @@ class VideoService:
             "access_token": None,
         }
 
-    def _get_stream_info_ezviz(self, db_video: VideoDevice) -> dict:
-        protocol_name = self._normalize_stream_protocol(getattr(db_video, "stream_protocol", None))
+    def _get_stream_info_ezviz(self, db_video: VideoDevice, protocol: Optional[str] = None) -> dict:
+        requested_protocol = (protocol or "").strip().lower()
+        if requested_protocol and requested_protocol not in STREAM_PROTOCOL_MAP:
+            raise ValueError(f"UNSUPPORTED_PROTOCOL: {requested_protocol}")
+        protocol_name = self._normalize_stream_protocol(requested_protocol or getattr(db_video, "stream_protocol", None))
         channel_no = int(getattr(db_video, "channel_no", None) or 1)
         device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
         if not device_serial:
@@ -1515,7 +1518,7 @@ class VideoService:
         #     preferred_code = 2  # HLS
         # else:
         preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
-        protocol_candidates = [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
+        protocol_candidates = [preferred_code] if requested_protocol == "hls" else [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
         # protocol_candidates = [preferred_code] + [c for c in [2, 4, 3, 1] if c != preferred_code]
 
         url = ""
@@ -1565,6 +1568,9 @@ class VideoService:
             resolved_play_type = "rtmp"
         elif ".flv" in lower_url:
             resolved_play_type = "flv"
+
+        if requested_protocol == "hls" and (resolved_play_type != "hls" or lower_url.startswith("ezopen://")):
+            raise ValueError("UPSTREAM_ERROR: 萤石未返回可用于模拟器播放的 HLS 地址")
 
         # ✅ 关键：转换 ezopen 为 HLS 地址
         # if url and url.startswith("ezopen://"):
@@ -1752,13 +1758,13 @@ class VideoService:
             logger.warning(f"EZVIZ PTZ stop failed video_id={db_video.id}: {first_error}")
             raise ValueError(f"PTZ_STOP_FAILED: {first_error}")
 
-    def get_stream_info(self, db: Session, video_id: int):
+    def get_stream_info(self, db: Session, video_id: int, protocol: Optional[str] = None):
         db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return None
 
         if self._is_ezviz_access(db_video):
-            return self._get_stream_info_ezviz(db_video)
+            return self._get_stream_info_ezviz(db_video, protocol=protocol)
         return self._get_stream_info_local(db_video)
 
     def _create_ptz_and_media(self, db: Session, video_id: int):

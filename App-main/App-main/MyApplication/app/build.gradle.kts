@@ -1,6 +1,19 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
 }
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+val ezvizAppKey = providers.gradleProperty("EZVIZ_APP_KEY")
+    .orElse(localProperties.getProperty("EZVIZ_APP_KEY") ?: "")
+    .get()
 
 android {
     namespace = "com.app.myapplication"
@@ -13,9 +26,15 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "EZVIZ_APP_KEY", "\"${ezvizAppKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        manifestPlaceholders["EZVIZ_APP_KEY"] = ezvizAppKey
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("armeabi-v7a")
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -63,6 +82,7 @@ dependencies {
 
     // Media3 ExoPlayer
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
 
     // 高德地图
@@ -83,4 +103,10 @@ dependencies {
 
     // osmdroid 地图库
     implementation("org.osmdroid:osmdroid-android:6.1.17")
+
+    // Official EZVIZ Android SDK from EZVIZ Open Platform docs.
+    implementation("com.hikvision.ezviz:ezviz-sdk:4.8.0")
+
+    // Fallback only: put official EZOpenSDK AAR/JAR files under app/libs if Maven is unavailable.
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
 }

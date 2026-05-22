@@ -29,6 +29,10 @@
             android:name="com.amap.api.v2.apikey"
             android:value="b9839562d62c089adb32adc4a81c5902" />
 
+        <meta-data
+            android:name="EZVIZ_APP_KEY"
+            android:value="${EZVIZ_APP_KEY}" />
+
         <service
             android:name="com.amap.api.location.APSService"
             android:exported="false" />

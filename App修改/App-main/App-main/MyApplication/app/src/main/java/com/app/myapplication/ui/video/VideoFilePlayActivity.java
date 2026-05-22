@@ -23,7 +23,6 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
-import com.app.myapplication.data.local.AppConfig;
 
 public class VideoFilePlayActivity extends AppCompatActivity implements Player.Listener {
 
@@ -112,7 +111,7 @@ public class VideoFilePlayActivity extends AppCompatActivity implements Player.L
             playerView.setControllerAutoShow(true);
             playerView.setControllerHideOnTouch(true);
 
-            String fullUrl = AppConfig.toAbsoluteUrl(this, videoPath);
+            String fullUrl = "http://10.0.2.2:9000" + videoPath;
             Log.d(TAG, "Full URL: " + fullUrl);
 
             MediaItem mediaItem = MediaItem.fromUri(Uri.parse(fullUrl));

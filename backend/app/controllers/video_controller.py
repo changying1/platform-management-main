@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.core.database import get_db
 # 统一使用 video_schema 以匹配模块结构
 from app.schemas.video_schema import (
@@ -226,9 +226,9 @@ def get_ezviz_health():
 
 
 @router.get("/stream/{video_id}", response_model=StreamUrlResponse)
-def get_video_stream(video_id: int, db: Session = Depends(get_db)):
+def get_video_stream(video_id: int, protocol: Optional[str] = None, db: Session = Depends(get_db)):
     try:
-        info = service.get_stream_info(db, video_id)  # ← 调用 service 层方法
+        info = service.get_stream_info(db, video_id, protocol=protocol)  # ← 调用 service 层方法
         if not info or not info.get("url"):
             raise HTTPException(status_code=404, detail="Stream URL not found or device offline")
         return info

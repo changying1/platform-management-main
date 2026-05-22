@@ -6,7 +6,7 @@ from app.schemas.fence_schema import FenceCreate, FenceUpdate, ProjectRegionCrea
 from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.utils.logger import get_logger
 from app.core.ws_manager import push_alarm_threadsafe
-from app.utils.config_manager import get_fence_detection_interval, get_fence_grace_period, get_fence_alarm_silence_minutes, get_fence_setting
+from app.utils.config_manager import get_fence_detection_interval, get_fence_grace_period, get_fence_alarm_silence_minutes, get_fence_setting, get_fence_alarms_disabled
 
 # MongoDB 连接配置：优先使用含 fence 集合的兼容库，告警写入同一个库
 db = get_compatible_mongo_db("fence")
@@ -500,6 +500,9 @@ class FenceService:
         return elapsed_minutes < silence_minutes
 
     def _create_fence_alarm(self, fence: dict, device: dict, alarm_type: str, description: str, location: str) -> bool:
+        if get_fence_alarms_disabled():
+            return False
+
         device_id = str(device.get("device_id") or device.get("id") or "")
         fence_id = str(fence.get("fence_id") or fence.get("id") or "")
         if not device_id or not fence_id:

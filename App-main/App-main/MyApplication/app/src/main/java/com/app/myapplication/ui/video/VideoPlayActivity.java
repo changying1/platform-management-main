@@ -38,7 +38,7 @@ public class VideoPlayActivity extends AppCompatActivity {
         tabLayout = findViewById(R.id.tab_layout);
         viewPager = findViewById(R.id.view_pager);
 
-        String deviceId = getIntent().getStringExtra("device_id");
+        String deviceId = readStringExtra("device_id");
         String deviceName = getIntent().getStringExtra("device_name");
         tvDeviceName.setText(deviceName == null ? (deviceId == null ? "设备" : deviceId) : deviceName);
 
@@ -60,5 +60,11 @@ public class VideoPlayActivity extends AppCompatActivity {
         }).attach();
     }
 
+    private String readStringExtra(String key) {
+        Bundle extras = getIntent().getExtras();
+        if (extras == null || !extras.containsKey(key)) return null;
 
+        Object value = extras.get(key);
+        return value == null ? null : String.valueOf(value);
+    }
 }

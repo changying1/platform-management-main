@@ -64,7 +64,7 @@ public class AlarmViewModel extends ViewModel {
                     if (alarmMaps != null) {
                         for (Map<String, Object> map : alarmMaps) {
                             Alarm alarm = new Alarm();
-                            alarm.setId(map.get("id") != null ? Integer.parseInt(map.get("id").toString()) : 0);
+                            alarm.setId(safeParseInt(map.get("id"), 0));
                             alarm.setDeviceId(map.get("device_id") != null ? map.get("device_id").toString() : "");
                             alarm.setDescription(map.get("msg") != null ? map.get("msg").toString() : "");
                             alarm.setAlarmType(map.get("type") != null ? map.get("type").toString() : "");
@@ -126,6 +126,33 @@ public class AlarmViewModel extends ViewModel {
 
         // 返回统计数据
         return new AlarmStats(total, pending, processed, critical);
+    }
+
+    private int safeParseInt(Object value, int defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        String text = value.toString();
+        if (text == null) {
+            return defaultValue;
+        }
+        text = text.trim();
+        if (text.isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException intError) {
+            try {
+                return (int) Double.parseDouble(text);
+            } catch (NumberFormatException doubleError) {
+                Log.w("AlarmViewModel", "Invalid integer value: " + text);
+                return defaultValue;
+            }
+        }
     }
 
     // 格式化报警编号

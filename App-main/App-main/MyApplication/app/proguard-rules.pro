@@ -19,3 +19,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# EZVIZ Android SDK. These rules are intentionally broad because the SDK is supplied as AAR/JAR.
+-keep class com.videogo.** { *; }
+-keep class com.ezviz.** { *; }
+-keep class ezviz.** { *; }
+-dontwarn com.videogo.**
+-dontwarn com.ezviz.**
+-dontwarn ezviz.**

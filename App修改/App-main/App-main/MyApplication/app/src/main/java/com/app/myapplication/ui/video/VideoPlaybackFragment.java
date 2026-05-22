@@ -5,11 +5,13 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -17,7 +19,9 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.VideoApi;
-import com.app.myapplication.data.local.AppConfig;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -45,9 +49,8 @@ public class VideoPlaybackFragment extends Fragment {
     private RecyclerView rvPlayback;
     private ProgressBar progressBar;
     private TextView tvEmpty;
-    private Button btnNormal;
-    private Button btnAlarm;
-    private final List<PlaybackItem> items = new ArrayList<>();
+    private Button btnNormal, btnAlarm;
+    private List<PlaybackItem> items = new ArrayList<>();
     private PlaybackAdapter adapter;
     private String deviceId;
     private boolean isAlarmMode = false;
@@ -66,6 +69,7 @@ public class VideoPlaybackFragment extends Fragment {
         btnAlarm = v.findViewById(R.id.btn_alarm);
 
         deviceId = getArguments() != null ? getArguments().getString(ARG_DEVICE_ID) : "2";
+        
         if (deviceId == null || deviceId.isEmpty()) {
             deviceId = "2";
         }
@@ -96,54 +100,54 @@ public class VideoPlaybackFragment extends Fragment {
         tvEmpty.setVisibility(View.GONE);
 
         VideoApi api = ApiClient.get(requireContext()).create(VideoApi.class);
-        Call<List<Map<String, Object>>> call = isAlarmMode
-                ? api.getAlarmVideos(deviceId, 120)
-                : api.getRecordingVideos(deviceId, 120);
-
+        Call<List<Map<String, Object>>> call;
+        if (isAlarmMode) {
+            call = api.getAlarmVideos(deviceId);
+        } else {
+            call = api.getRecordingVideos(deviceId);
+        }
         call.enqueue(new Callback<List<Map<String, Object>>>() {
             @Override
             public void onResponse(Call<List<Map<String, Object>>> call, Response<List<Map<String, Object>>> response) {
-                if (!isAdded()) return;
                 progressBar.setVisibility(View.GONE);
+                if (response.isSuccessful() && response.body() != null) {
+                    items.clear();
+                    for (Map<String, Object> obj : response.body()) {
+                        try {
+                            PlaybackItem item = new PlaybackItem();
+                        item.id = obj.get("name") != null ? obj.get("name").toString().replace(".mp4", "") : "";
+                        item.deviceId = deviceId;
+                        item.deviceName = "设备 " + deviceId;
+                        item.startTime = obj.get("start_time") != null ? obj.get("start_time").toString() : "";
+                        item.endTime = obj.get("end_time") != null ? obj.get("end_time").toString() : "";
+                        item.duration = obj.get("duration_seconds") != null ? ((Number) obj.get("duration_seconds")).intValue() : 0;
+                        item.type = isAlarmMode ? "alarm" : "manual";
+                        item.filePath = obj.get("web_path") != null ? obj.get("web_path").toString() : "";
+                        item.company = "";
+                        item.project = "";
+                            items.add(item);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    adapter.notifyDataSetChanged();
 
-                if (!response.isSuccessful() || response.body() == null) {
+                    if (items.isEmpty()) {
+                        tvEmpty.setVisibility(View.VISIBLE);
+                    }
+                } else {
                     tvEmpty.setVisibility(View.VISIBLE);
-                    Toast.makeText(requireContext(), "Failed to get playback list", Toast.LENGTH_SHORT).show();
-                    return;
+                    Toast.makeText(requireContext(), "获取录像列表失败", Toast.LENGTH_SHORT).show();
                 }
-
-                items.clear();
-                for (Map<String, Object> row : response.body()) {
-                    PlaybackItem item = toPlaybackItem(row);
-                    items.add(item);
-                }
-                adapter.notifyDataSetChanged();
-                tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
             }
 
             @Override
             public void onFailure(Call<List<Map<String, Object>>> call, Throwable t) {
-                if (!isAdded()) return;
                 progressBar.setVisibility(View.GONE);
                 tvEmpty.setVisibility(View.VISIBLE);
-                Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
+                Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
-    }
-
-    private PlaybackItem toPlaybackItem(Map<String, Object> row) {
-        PlaybackItem item = new PlaybackItem();
-        item.id = firstNonEmpty(row.get("id"), row.get("record_id"), row.get("recordId"), row.get("name")).replace(".mp4", "");
-        item.deviceId = deviceId;
-        item.deviceName = "Device " + deviceId;
-        item.startTime = firstNonEmpty(row.get("start_time"), row.get("startTime"), row.get("created_at"));
-        item.endTime = firstNonEmpty(row.get("end_time"), row.get("endTime"));
-        item.duration = intValue(row.get("duration_seconds"), row.get("duration"));
-        item.type = isAlarmMode ? "alarm" : "manual";
-        item.filePath = firstNonEmpty(row.get("web_path"), row.get("url"), row.get("path"), row.get("recording_path"));
-        item.company = firstNonEmpty(row.get("company"));
-        item.project = firstNonEmpty(row.get("project"));
-        return item;
     }
 
     public static class PlaybackItem {
@@ -160,7 +164,7 @@ public class VideoPlaybackFragment extends Fragment {
     }
 
     private class PlaybackAdapter extends RecyclerView.Adapter<PlaybackAdapter.VH> {
-        private final List<PlaybackItem> list;
+        private List<PlaybackItem> list;
 
         PlaybackAdapter(List<PlaybackItem> list) {
             this.list = list;
@@ -175,7 +179,8 @@ public class VideoPlaybackFragment extends Fragment {
 
         @Override
         public void onBindViewHolder(@NonNull VH holder, int position) {
-            holder.bind(list.get(position));
+            PlaybackItem item = list.get(position);
+            holder.bind(item);
         }
 
         @Override
@@ -185,13 +190,9 @@ public class VideoPlaybackFragment extends Fragment {
 
         class VH extends RecyclerView.ViewHolder {
             View typeIndicator;
-            TextView tvDeviceName;
-            TextView tvRecordType;
-            TextView tvAlarmInfo;
-            TextView tvCompany;
-            TextView tvProject;
-            TextView tvTime;
-            TextView tvDuration;
+            TextView tvDeviceName, tvRecordType, tvAlarmInfo;
+            TextView tvCompany, tvProject;
+            TextView tvTime, tvDuration;
             android.widget.ImageButton btnPlay;
 
             VH(@NonNull View itemView) {
@@ -211,22 +212,33 @@ public class VideoPlaybackFragment extends Fragment {
                 tvDeviceName.setText(item.deviceName);
                 tvCompany.setText(item.company);
                 tvProject.setText(item.project);
-                tvTime.setText(formatTime(item.startTime));
+
+                String timeStr = item.startTime;
+                try {
+                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
+                    Date date = sdf.parse(timeStr);
+                    if (date != null) {
+                        SimpleDateFormat outFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                        timeStr = outFormat.format(date);
+                    }
+                } catch (Exception e) {
+                }
+                tvTime.setText(timeStr);
 
                 int minutes = item.duration / 60;
                 int seconds = item.duration % 60;
-                tvDuration.setText(String.format(Locale.getDefault(), "Duration: %02d:%02d", minutes, seconds));
+                tvDuration.setText(String.format(Locale.getDefault(), "时长: %02d:%02d", minutes, seconds));
 
                 boolean isAlarm = "alarm".equals(item.type);
                 if (isAlarm) {
-                    tvRecordType.setText("Alarm video");
+                    tvRecordType.setText("报警录像");
                     tvRecordType.setTextColor(itemView.getContext().getResources().getColor(android.R.color.holo_red_dark));
                     tvRecordType.setBackgroundColor(itemView.getContext().getResources().getColor(R.color.low_level));
                     typeIndicator.setBackgroundColor(itemView.getContext().getResources().getColor(android.R.color.holo_red_dark));
                     tvAlarmInfo.setVisibility(View.VISIBLE);
-                    tvAlarmInfo.setText("Related alarm event");
+                    tvAlarmInfo.setText("检测到异常事件");
                 } else {
-                    tvRecordType.setText("Normal video");
+                    tvRecordType.setText("常规录像");
                     tvRecordType.setTextColor(itemView.getContext().getResources().getColor(android.R.color.holo_green_dark));
                     tvRecordType.setBackgroundColor(itemView.getContext().getResources().getColor(android.R.color.holo_green_dark));
                     typeIndicator.setBackgroundColor(itemView.getContext().getResources().getColor(android.R.color.holo_green_dark));
@@ -235,62 +247,12 @@ public class VideoPlaybackFragment extends Fragment {
 
                 btnPlay.setOnClickListener(v -> {
                     if (item.filePath != null && !item.filePath.isEmpty()) {
-                        VideoFilePlayActivity.start(requireContext(), AppConfig.toAbsoluteUrl(requireContext(), item.filePath));
+                        VideoFilePlayActivity.start(requireContext(), item.filePath);
                     } else {
-                        Toast.makeText(requireContext(), "暂无播放地址", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(itemView.getContext(), "视频路径无效", Toast.LENGTH_SHORT).show();
                     }
                 });
             }
         }
-    }
-
-    private static String formatTime(String raw) {
-        if (raw == null || raw.isEmpty()) return "";
-        String normalized = raw.replace("Z", "").replace("+00:00", "");
-        String[] patterns = {
-                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
-                "yyyy-MM-dd'T'HH:mm:ss",
-                "yyyy-MM-dd HH:mm:ss"
-        };
-        for (String pattern : patterns) {
-            try {
-                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
-                if (date != null) {
-                    return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(date);
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        return raw;
-    }
-
-    private static String firstNonEmpty(Object... values) {
-        for (Object value : values) {
-            if (value == null) continue;
-            String text = value.toString().trim();
-            if (!text.isEmpty() && !"null".equalsIgnoreCase(text)) return text;
-        }
-        return "";
-    }
-
-    private static int intValue(Object... values) {
-        for (Object value : values) {
-            if (value instanceof Number) return ((Number) value).intValue();
-            if (value != null) {
-                try {
-                    return Integer.parseInt(value.toString());
-                } catch (Exception ignored) {
-                    try {
-                        return (int) Double.parseDouble(value.toString());
-                    } catch (Exception ignoredAgain) {
-                    }
-                }
-            }
-        }
-        return 0;
-    }
-
-    private static String safeMessage(Throwable t) {
-        return t == null || t.getMessage() == null ? "unknown" : t.getMessage();
     }
 }

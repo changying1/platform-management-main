@@ -203,7 +203,7 @@ public class VideoCenterActivity extends AppCompatActivity {
 
     private void openPlay(VideoDevice item) {
         Intent i = new Intent(this, VideoPlayActivity.class);
-        i.putExtra("device_id", item.getId());
+        i.putExtra("device_id", String.valueOf(item.getId()));
 
         String title = (item.getName() == null || item.getName().isEmpty())
                 ? "设备 " + item.getId()
