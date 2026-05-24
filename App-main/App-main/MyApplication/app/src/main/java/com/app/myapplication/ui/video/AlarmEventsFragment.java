@@ -18,16 +18,13 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.AlarmApi;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
+import com.app.myapplication.data.model.Alarm;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -77,23 +74,23 @@ public class AlarmEventsFragment extends Fragment {
         tvEmpty.setVisibility(View.GONE);
 
         AlarmApi api = ApiClient.get(requireContext()).create(AlarmApi.class);
-        api.getAlarms().enqueue(new Callback<List<Map<String, Object>>>() {
+        api.getAlarms().enqueue(new Callback<List<Alarm>>() {
             @Override
-            public void onResponse(Call<List<Map<String, Object>>> call, Response<List<Map<String, Object>>> response) {
+            public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
                 progressBar.setVisibility(View.GONE);
                 if (response.isSuccessful() && response.body() != null) {
                     items.clear();
-                    for (Map<String, Object> obj : response.body()) {
+                    for (Alarm alarm : response.body()) {
                         try {
                             AlarmEventItem item = new AlarmEventItem();
-                            item.id = obj.get("id") != null ? obj.get("id").toString() : "";
-                            item.type = obj.get("type") != null ? obj.get("type").toString() : "未知告警";
-                            item.msg = obj.get("msg") != null ? obj.get("msg").toString() : "";
-                            item.score = obj.get("score") != null ? ((Number) obj.get("score")).doubleValue() : 0;
-                            item.timestamp = obj.get("timestamp") != null ? obj.get("timestamp").toString() : "";
-                            item.personnel = obj.get("personnel") != null ? obj.get("personnel").toString() : null;
-                            item.deviceName = obj.get("device_name") != null ? obj.get("device_name").toString() : "未知设备";
-                            item.screenshotUrl = obj.get("screenshot_url") != null ? obj.get("screenshot_url").toString() : "";
+                            item.id = String.valueOf(alarm.getId());
+                            item.type = alarm.getDisplayAlarmType();
+                            item.msg = alarm.getDescription() != null ? alarm.getDescription() : "";
+                            item.score = 0; // 后端没有score字段
+                            item.timestamp = alarm.getTimestamp() != null ? alarm.getTimestamp() : "";
+                            item.personnel = alarm.getPersonnelId();
+                            item.deviceName = alarm.getDeviceId() != null ? alarm.getDeviceId() : "未知设备";
+                            item.screenshotUrl = alarm.getAlarmImagePath() != null ? alarm.getAlarmImagePath() : "";
                             items.add(item);
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -111,7 +108,7 @@ public class AlarmEventsFragment extends Fragment {
             }
 
             @Override
-            public void onFailure(Call<List<Map<String, Object>>> call, Throwable t) {
+            public void onFailure(Call<List<Alarm>> call, Throwable t) {
                 progressBar.setVisibility(View.GONE);
                 tvEmpty.setVisibility(View.VISIBLE);
                 Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();

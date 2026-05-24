@@ -31,14 +31,84 @@ public class DeviceMapRenderer {
     private static final int COLOR_OFFLINE = 0xFF64748B;     // 灰色 - 离线
     private static final int COLOR_VIOLATION = 0xFFEF4444;   // 红色 - 违规
     private static final int COLOR_CONTROLLED = 0xFF3B82F6;  // 蓝色 - 受控
+    private static final int COLOR_DEBUG = 0xFFFF9800;       // 橙色 - 调试模式
 
     private final AMap aMap;
     private final Context context;
     private final Map<String, Marker> deviceMarkers = new HashMap<>();
 
+    // 调试模式相关
+    private boolean debugMode = false;
+    private OnDevicePositionChangeListener positionChangeListener;
+
     public DeviceMapRenderer(Context context, AMap aMap) {
         this.context = context;
         this.aMap = aMap;
+        // 初始化拖动监听器
+        initDragListener();
+    }
+
+    /**
+     * 初始化拖动监听器（需要在aMap.clear()后重新设置）
+     */
+    private void initDragListener() {
+        if (aMap == null) return;
+        android.util.Log.d("DeviceMapRenderer", "初始化拖动监听器");
+        aMap.setOnMarkerDragListener(new AMap.OnMarkerDragListener() {
+            @Override
+            public void onMarkerDragStart(Marker marker) {
+                android.util.Log.d("DeviceMapRenderer", "开始拖动标记");
+            }
+
+            @Override
+            public void onMarkerDrag(Marker marker) {
+                // 拖动中
+            }
+
+            @Override
+            public void onMarkerDragEnd(Marker marker) {
+                android.util.Log.d("DeviceMapRenderer", "拖动结束标记, debugMode=" + debugMode);
+                // 拖动结束
+                if (!debugMode) {
+                    android.util.Log.d("DeviceMapRenderer", "非调试模式，不处理拖动");
+                    return;  // 只在调试模式下处理
+                }
+                String deviceId = (String) marker.getObject();
+                android.util.Log.d("DeviceMapRenderer", "拖动结束, deviceId=" + deviceId + ", listener=" + (positionChangeListener != null));
+                if (deviceId != null && positionChangeListener != null) {
+                    LatLng pos = marker.getPosition();
+                    android.util.Log.d("DeviceMapRenderer", "调用位置变化监听器: " + deviceId + " -> (" + pos.latitude + ", " + pos.longitude + ")");
+                    positionChangeListener.onDevicePositionChanged(deviceId, pos.latitude, pos.longitude);
+                }
+            }
+        });
+    }
+
+    /**
+     * 设置调试模式
+     */
+    public void setDebugMode(boolean debugMode) {
+        android.util.Log.d("DeviceMapRenderer", "设置调试模式: " + debugMode);
+        this.debugMode = debugMode;
+        // 更新所有现有标记的可拖动状态
+        for (Marker marker : deviceMarkers.values()) {
+            marker.setDraggable(debugMode);
+            android.util.Log.d("DeviceMapRenderer", "更新标记可拖动状态: " + marker.getObject() + " -> " + debugMode);
+        }
+    }
+
+    /**
+     * 设置设备位置变化监听器
+     */
+    public void setOnDevicePositionChangeListener(OnDevicePositionChangeListener listener) {
+        this.positionChangeListener = listener;
+    }
+
+    /**
+     * 设备位置变化监听器接口
+     */
+    public interface OnDevicePositionChangeListener {
+        void onDevicePositionChanged(String deviceId, double lat, double lng);
     }
 
     /**
@@ -47,6 +117,8 @@ public class DeviceMapRenderer {
      */
     public void renderDevices(List<DeviceItem> devices, Map<String, String> violationTypes) {
         if (aMap == null || devices == null) return;
+
+        android.util.Log.d("DeviceMapRenderer", "renderDevices 被调用, debugMode=" + debugMode + ", 设备数量=" + devices.size());
 
         // 由于 aMap.clear() 会清除所有标记，我们需要清空本地引用
         deviceMarkers.clear();
@@ -58,6 +130,9 @@ public class DeviceMapRenderer {
             String violationType = violationTypes != null ? violationTypes.get(device.deviceId) : null;
             createMarker(device, violationType);
         }
+
+        // aMap.clear() 会清除监听器，需要重新设置
+        initDragListener();
     }
 
     /**
@@ -68,6 +143,10 @@ public class DeviceMapRenderer {
 
         // 确定标记颜色
         int color = getDeviceColor(device, violationType);
+        // 调试模式下使用橙色
+        if (debugMode) {
+            color = COLOR_DEBUG;
+        }
 
         // 创建新标记
         MarkerOptions options = new MarkerOptions()
@@ -78,6 +157,9 @@ public class DeviceMapRenderer {
                 .snippet(createSnippet(device, violationType));
 
         Marker marker = aMap.addMarker(options);
+        marker.setObject(device.deviceId);  // 存储设备ID用于拖动识别
+        marker.setDraggable(debugMode);  // 调试模式下可拖动（必须在addMarker后设置）
+        android.util.Log.d("DeviceMapRenderer", "创建标记: " + device.deviceId + ", draggable=" + debugMode);
         deviceMarkers.put(device.deviceId, marker);
     }
 

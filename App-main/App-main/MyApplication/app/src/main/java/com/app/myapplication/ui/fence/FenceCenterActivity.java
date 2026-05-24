@@ -32,12 +32,18 @@ import com.amap.api.maps.model.MyLocationStyle;
 import org.json.JSONArray;
 
 import com.app.myapplication.R;
+import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.DeviceApi;
+import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.data.model.DeviceItem;
 import com.app.myapplication.data.repo.DeviceRepository;
 import com.app.myapplication.ui.device.DeviceMapRenderer;
 import com.google.gson.*;
+
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -152,6 +158,33 @@ public class FenceCenterActivity extends AppCompatActivity {
     // spinner adapter
     private ArrayAdapter<String> behaviorAdapter;
 
+    // 调试模式
+    private boolean debugMode = false;
+    private com.google.android.material.floatingactionbutton.FloatingActionButton btnDebugMode;
+    private com.google.android.material.card.MaterialCardView cardDebugIndicator;
+    private final Map<String, DevicePosition> manualPositions = new HashMap<>();  // 手动调整的位置
+    private DeviceApi deviceApi;
+
+    // 报警相关
+    private AlarmApi alarmApi;
+    private final Map<String, String> deviceViolations = new HashMap<>();  // 设备违规状态：deviceId -> violationType
+    private ScheduledExecutorService alarmPollingExecutor;
+
+    // 记录原始位置
+    private static class DevicePosition {
+        double lat;
+        double lng;
+        double originalLat;
+        double originalLng;
+
+        DevicePosition(double lat, double lng, double originalLat, double originalLng) {
+            this.lat = lat;
+            this.lng = lng;
+            this.originalLat = originalLat;
+            this.originalLng = originalLng;
+        }
+    }
+
     // -------------------------
     // Lifecycle
     // -------------------------
@@ -162,11 +195,14 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         Retrofit rf = ApiClient.get(getApplicationContext());
         api = rf.create(FenceApi.class);
+        deviceApi = rf.create(DeviceApi.class);
+        alarmApi = rf.create(AlarmApi.class);
         deviceRepo = new DeviceRepository(this);
 
         bindViews();
         initRecycler();
         initMap(savedInstanceState);
+        initDebugMode();  // 移到initMap之后，因为deviceRenderer在这里初始化
         initUiLogic();
 
         refreshFromServer();
@@ -216,6 +252,10 @@ public class FenceCenterActivity extends AppCompatActivity {
         behaviorAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, items);
         behaviorAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spTriggerType.setAdapter(behaviorAdapter);
+
+        // 调试模式按钮
+        btnDebugMode = findViewById(R.id.btn_debug_mode);
+        cardDebugIndicator = findViewById(R.id.card_debug_indicator);
     }
 
     private void initRecycler() {
@@ -351,6 +391,170 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> exitAddOrEditMode());
         btnSave.setOnClickListener(v -> saveFenceToServer());
+    }
+
+    // -------------------------
+    // Debug Mode
+    // -------------------------
+    private void initDebugMode() {
+        btnDebugMode.setOnClickListener(v -> toggleDebugMode());
+
+        // 设置设备位置变化监听器
+        deviceRenderer.setOnDevicePositionChangeListener((deviceId, lat, lng) -> {
+            android.util.Log.d("DebugMode", "位置变化回调: deviceId=" + deviceId + ", lat=" + lat + ", lng=" + lng + ", debugMode=" + debugMode);
+
+            if (!debugMode) {
+                android.util.Log.d("DebugMode", "非调试模式，忽略位置变化");
+                return;
+            }
+
+            // 记录手动调整的位置
+            DeviceItem device = findDeviceById(deviceId);
+            if (device != null) {
+                double originalLat = device.lat;
+                double originalLng = device.lng;
+                manualPositions.put(deviceId, new DevicePosition(lat, lng, originalLat, originalLng));
+
+                android.util.Log.d("DebugMode", "记录手动位置: " + deviceId + " -> (" + lat + ", " + lng + "), 原始位置: (" + originalLat + ", " + originalLng + ")");
+                android.util.Log.d("DebugMode", "当前manualPositions大小: " + manualPositions.size());
+
+                // 更新设备对象的位置（用于本地显示）
+                device.lat = lat;
+                device.lng = lng;
+
+                toast("设备位置已调整: " + device.name);
+            } else {
+                android.util.Log.e("DebugMode", "找不到设备: " + deviceId);
+            }
+        });
+    }
+
+    private void toggleDebugMode() {
+        if (debugMode) {
+            // 退出调试模式
+            exitDebugMode();
+        } else {
+            // 进入调试模式
+            enterDebugMode();
+        }
+    }
+
+    private void enterDebugMode() {
+        android.util.Log.d("DebugMode", "enterDebugMode 被调用");
+        debugMode = true;
+        btnDebugMode.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        btnDebugMode.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFFF9800)); // 橙色
+        cardDebugIndicator.setVisibility(View.VISIBLE);
+
+        // 设置渲染器为调试模式
+        if (deviceRenderer != null) {
+            android.util.Log.d("DebugMode", "设置 deviceRenderer 为调试模式");
+            deviceRenderer.setDebugMode(true);
+        } else {
+            android.util.Log.e("DebugMode", "deviceRenderer 为 null!");
+        }
+
+        // 重新渲染设备（使标记可拖动）
+        redrawAll();
+
+        toast("调试模式已开启，可以拖动设备标记调整位置");
+    }
+
+    private void exitDebugMode() {
+        debugMode = false;
+        btnDebugMode.setImageResource(android.R.drawable.ic_menu_compass);
+        btnDebugMode.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF3F51B5)); // 蓝色
+        cardDebugIndicator.setVisibility(View.GONE);
+
+        // 设置渲染器为非调试模式
+        deviceRenderer.setDebugMode(false);
+
+        // 保存所有手动调整的位置到后端，并在保存完成后刷新设备列表
+        saveManualPositionsAndRefresh();
+
+        toast("调试模式已退出，设备位置已保存");
+    }
+
+    private void saveManualPositionsAndRefresh() {
+        if (manualPositions.isEmpty()) {
+            // 没有手动调整的位置，直接刷新
+            refreshDevicesFromServer();
+            return;
+        }
+
+        final int[] completedCount = {0};
+        final int totalCount = manualPositions.size();
+
+        android.util.Log.d("DebugMode", "开始保存 " + totalCount + " 个设备位置到后端");
+
+        for (Map.Entry<String, DevicePosition> entry : manualPositions.entrySet()) {
+            String deviceId = entry.getKey();
+            DevicePosition pos = entry.getValue();
+
+            android.util.Log.d("DebugMode", "保存设备位置: " + deviceId + " -> (" + pos.lat + ", " + pos.lng + ")");
+
+            DeviceApi.DevicePositionUpdateRequest request =
+                    new DeviceApi.DevicePositionUpdateRequest(deviceId, pos.lat, pos.lng);
+
+            deviceApi.updateDevicePosition(request).enqueue(new Callback<JsonObject>() {
+                @Override
+                public void onResponse(Call<JsonObject> call, Response<JsonObject> response) {
+                    if (response.isSuccessful()) {
+                        android.util.Log.d("DebugMode", "设备位置保存成功: " + deviceId + ", 响应: " + response.body());
+                    } else {
+                        android.util.Log.e("DebugMode", "设备位置保存失败: " + deviceId + ", 状态码: " + response.code() + ", 错误: " + response.errorBody());
+                    }
+                    checkAllCompleted();
+                }
+
+                @Override
+                public void onFailure(Call<JsonObject> call, Throwable t) {
+                    android.util.Log.e("DebugMode", "设备位置保存异常: " + deviceId, t);
+                    checkAllCompleted();
+                }
+
+                private void checkAllCompleted() {
+                    completedCount[0]++;
+                    android.util.Log.d("DebugMode", "保存进度: " + completedCount[0] + "/" + totalCount);
+                    if (completedCount[0] >= totalCount) {
+                        // 所有保存请求完成，清空记录并刷新设备列表
+                        android.util.Log.d("DebugMode", "所有设备位置保存完成，准备刷新设备列表");
+                        manualPositions.clear();
+                        refreshDevicesFromServer();
+                    }
+                }
+            });
+        }
+    }
+
+    private void refreshDevicesFromServer() {
+        deviceRepo.loadDevices(new DeviceRepository.DataCallback<List<DeviceItem>>() {
+            @Override
+            public void onSuccess(List<DeviceItem> deviceList) {
+                runOnUiThread(() -> {
+                    devices.clear();
+                    devices.addAll(deviceList);
+                    redrawAll();
+                    android.util.Log.d("DebugMode", "设备列表已刷新，共 " + deviceList.size() + " 个设备");
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                android.util.Log.e("DebugMode", "刷新设备列表失败: " + error);
+                // 即使刷新失败，也重新渲染当前设备列表
+                runOnUiThread(() -> redrawAll());
+            }
+        });
+    }
+
+    private DeviceItem findDeviceById(String deviceId) {
+        for (DeviceItem device : devices) {
+            if (deviceId.equals(device.deviceId)) {
+                return device;
+            }
+        }
+        return null;
     }
 
     // -------------------------
@@ -666,6 +870,93 @@ public class FenceCenterActivity extends AppCompatActivity {
                 // 静默失败，不影响围栏显示
             }
         });
+
+        // 获取待处理的围栏报警
+        fetchPendingFenceAlarms();
+    }
+
+    /**
+     * 获取待处理的围栏报警，更新设备违规状态
+     */
+    private void fetchPendingFenceAlarms() {
+        if (alarmApi == null) return;
+
+        alarmApi.getAlarms().enqueue(new Callback<List<Alarm>>() {
+            @Override
+            public void onResponse(@NonNull Call<List<Alarm>> call, @NonNull Response<List<Alarm>> resp) {
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    android.util.Log.w("FenceCenter", "获取报警失败: HTTP " + resp.code());
+                    return;
+                }
+
+                List<Alarm> alarms = resp.body();
+                Map<String, String> newViolations = new HashMap<>();
+
+                for (Alarm alarm : alarms) {
+                    if (alarm == null) continue;
+
+                    String status = alarm.getStatus() != null ? alarm.getStatus().toLowerCase() : "";
+                    String alarmType = alarm.getAlarmType() != null ? alarm.getAlarmType() : "";
+                    String deviceId = alarm.getDeviceId();
+                    Long fenceId = alarm.getFenceId();
+
+                    // 只处理待处理的围栏报警
+                    boolean isPending = !"resolved".equals(status) && !"ignored".equals(status);
+                    boolean isFenceAlarm = fenceId != null || alarmType.contains("电子围栏");
+
+                    if (isPending && isFenceAlarm && deviceId != null && !deviceId.isEmpty()) {
+                        String violationType = alarmType.contains("闯入") ? "No Entry" : "No Exit";
+                        newViolations.put(deviceId, violationType);
+                    }
+                }
+
+                // 检查违规状态是否发生变化
+                boolean hasChanged;
+                synchronized (deviceViolations) {
+                    hasChanged = !deviceViolations.equals(newViolations);
+                    if (hasChanged) {
+                        deviceViolations.clear();
+                        deviceViolations.putAll(newViolations);
+                    }
+                }
+
+                // 只有在违规状态发生变化时才重绘
+                if (hasChanged) {
+                    runOnUiThread(() -> {
+                        android.util.Log.d("FenceCenter", "违规状态变化，重绘地图。违规设备数量: " + deviceViolations.size());
+                        redrawAll();
+                    });
+                }
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<List<Alarm>> call, @NonNull Throwable t) {
+                android.util.Log.w("FenceCenter", "获取报警失败: " + t.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 启动报警轮询
+     */
+    private void startAlarmPolling() {
+        if (alarmPollingExecutor != null && !alarmPollingExecutor.isShutdown()) {
+            return;
+        }
+        alarmPollingExecutor = Executors.newSingleThreadScheduledExecutor();
+        alarmPollingExecutor.scheduleAtFixedRate(this::fetchPendingFenceAlarms, 1, 1, TimeUnit.SECONDS);
+        android.util.Log.d("FenceCenter", "启动报警轮询");
+    }
+
+    /**
+     * 停止报警轮询
+     */
+    private void stopAlarmPolling() {
+        if (alarmPollingExecutor != null) {
+            alarmPollingExecutor.shutdown();
+            alarmPollingExecutor = null;
+            android.util.Log.d("FenceCenter", "停止报警轮询");
+        }
     }
 
     private void saveFenceToServer() {
@@ -969,7 +1260,7 @@ public class FenceCenterActivity extends AppCompatActivity {
             }
         }
 
-        // 5) 渲染设备（违规状态由后端提供，App端不自行判断）
+        // 5) 渲染设备（违规状态由后端提供）
         drawDevices();
 
         zoomToOverlaysIfFirstLoad();
@@ -978,8 +1269,10 @@ public class FenceCenterActivity extends AppCompatActivity {
     private void drawDevices() {
         if (aMap == null || deviceRenderer == null) return;
 
-        // 使用 DeviceMapRenderer 渲染设备，不传违规状态（由后端提供）
-        deviceRenderer.renderDevices(devices, null);
+        // 使用 DeviceMapRenderer 渲染设备，传入违规状态
+        synchronized (deviceViolations) {
+            deviceRenderer.renderDevices(devices, deviceViolations);
+        }
     }
 
     private void zoomToOverlaysIfFirstLoad() {
@@ -1228,15 +1521,18 @@ public class FenceCenterActivity extends AppCompatActivity {
         super.onResume();
         mapView.onResume();
         refreshFromServer();
+        startAlarmPolling();
     }
 
     @Override protected void onPause() {
         super.onPause();
         mapView.onPause();
+        stopAlarmPolling();
     }
 
     @Override protected void onDestroy() {
         super.onDestroy();
+        stopAlarmPolling();
         mapView.onDestroy();
     }
 
@@ -1620,7 +1916,22 @@ public class FenceCenterActivity extends AppCompatActivity {
 
     private static Integer optIntNullable(JsonObject o, String key) {
         if (o == null || !o.has(key) || o.get(key).isJsonNull()) return null;
-        try { return o.get(key).getAsInt(); } catch (Exception e) { return null; }
+        try {
+            JsonElement el = o.get(key);
+            if (el.isJsonPrimitive()) {
+                JsonPrimitive prim = el.getAsJsonPrimitive();
+                if (prim.isNumber()) {
+                    return prim.getAsInt();
+                } else if (prim.isString()) {
+                    try {
+                        return Integer.parseInt(prim.getAsString());
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        } catch (Exception e) { return null; }
     }
 
     private static Double optDoubleNullable(JsonObject o, String key) {
@@ -1645,7 +1956,23 @@ public class FenceCenterActivity extends AppCompatActivity {
     }
 
     private static int optInt(JsonObject o, String k, int def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsInt() : def;
+        if (o == null || !o.has(k) || o.get(k).isJsonNull()) return def;
+        try {
+            JsonElement el = o.get(k);
+            if (el.isJsonPrimitive()) {
+                JsonPrimitive prim = el.getAsJsonPrimitive();
+                if (prim.isNumber()) {
+                    return prim.getAsInt();
+                } else if (prim.isString()) {
+                    try {
+                        return Integer.parseInt(prim.getAsString());
+                    } catch (NumberFormatException e) {
+                        return def;
+                    }
+                }
+            }
+            return def;
+        } catch (Exception e) { return def; }
     }
 
     private static JsonArray optJsonArray(JsonObject o, String k) {

@@ -27,7 +27,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
 
     // ✅ 本地临时保存用户在 Spinner 里选的级别（不提交后端）
     // key = alarmId, value = "high"/"medium"/"low"
-    private final Map<Integer, String> localSeverity = new HashMap<>();
+    private final Map<Long, String> localSeverity = new HashMap<>();
 
     // Spinner 显示的中文选项
     private static final String[] LEVEL_CN = new String[]{"高危", "警告", "提示"};
@@ -60,7 +60,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         return "00000000";
     }
 
-    private String buildDisplayId(int rawId, String timestamp) {
+    private String buildDisplayId(long rawId, String timestamp) {
         String ymd = extractYMD(timestamp);
         return "ALM-" + ymd + "-" + String.format(Locale.US, "%03d", rawId);
     }
@@ -215,8 +215,8 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
     }
 
     public interface OnAlarmActionListener {
-        void onResolve(int alarmId, String severity); // severity: high/medium/low
-        void onDelete(int alarmId);
+        void onResolve(long alarmId, String severity); // severity: high/medium/low
+        void onDelete(long alarmId);
 
         // ✅ 新增：Spinner 改了级别（只改前端）后，通知外部可重新触发 filterData
         // 不想用也可以空实现

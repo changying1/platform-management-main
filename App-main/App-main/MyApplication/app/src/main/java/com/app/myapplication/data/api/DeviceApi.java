@@ -97,4 +97,26 @@ public interface DeviceApi {
         public String holderPhone;
         public String remark;
     }
+
+    /**
+     * 更新设备位置（调试用）
+     * POST /device/update-position
+     */
+    @POST("device/update-position")
+    Call<JsonObject> updateDevicePosition(@Body DevicePositionUpdateRequest request);
+
+    /**
+     * 更新设备位置请求体
+     */
+    class DevicePositionUpdateRequest {
+        public String device_id;
+        public double lat;
+        public double lng;
+
+        public DevicePositionUpdateRequest(String deviceId, double lat, double lng) {
+            this.device_id = deviceId;
+            this.lat = lat;
+            this.lng = lng;
+        }
+    }
 }
