@@ -2,10 +2,8 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
 
-from app.core.database import ensure_schema_compatibility
-from app.models.group_call import GroupCallSession
+from app.core.database import get_mongo_collection, get_next_sequence
 from app.services.tts_queue_service import tts_queue_service
 from app.utils.logger import get_logger
 
@@ -16,112 +14,71 @@ STATUS_ENDED = "ENDED"
 
 
 class GroupCallService:
-    def _ensure_table(self, db: Session):
-        GroupCallSession.__table__.create(bind=db.get_bind(), checkfirst=True)
-        ensure_schema_compatibility()
+    def __init__(self):
+        self.collection = get_mongo_collection("group_call_session")
 
     def _normalize_member_ids(self, initiator_id: int, member_ids: list[int]) -> list[int]:
         normalized: list[int] = []
         seen = {initiator_id}
-
         for member_id in member_ids:
             if member_id is None:
                 continue
-
             normalized_id = int(member_id)
             if normalized_id in seen:
                 continue
-
             normalized.append(normalized_id)
             seen.add(normalized_id)
-
         return normalized
 
-    def _serialize_session(self, session: GroupCallSession) -> dict:
-        raw_member_ids = (session.member_ids or "").split(",")
-        member_ids = [int(item) for item in raw_member_ids if item.strip()]
-
+    def _serialize_session(self, session: dict) -> dict:
         return {
-            "id": session.id,
-            "room_id": session.room_id,
-            "initiator_id": session.initiator_id,
-            "member_ids": member_ids,
-            "start_time": session.start_time,
-            "end_time": session.end_time,
-            "status": session.status,
+            "id": int(session.get("id")),
+            "room_id": session.get("room_id"),
+            "initiator_id": int(session.get("initiator_id")),
+            "member_ids": [int(item) for item in session.get("member_ids", [])],
+            "start_time": session.get("start_time"),
+            "end_time": session.get("end_time"),
+            "status": session.get("status"),
         }
 
-    def initiate_call(self, db: Session, initiator_id: int, member_ids: list[int]) -> dict:
-        self._ensure_table(db)
-
+    def initiate_call(self, mongo_db, initiator_id: int, member_ids: list[int]) -> dict:
         normalized_members = self._normalize_member_ids(initiator_id, member_ids)
         if not normalized_members:
             raise HTTPException(status_code=400, detail="At least one valid group member is required")
 
-        room_id = f"gc-{uuid.uuid4().hex[:12]}"
-        session = GroupCallSession(
-            room_id=room_id,
-            initiator_id=int(initiator_id),
-            member_ids=",".join(str(item) for item in normalized_members),
-            status=STATUS_ACTIVE,
-            start_time=datetime.utcnow(),
-        )
-
-        db.add(session)
-        db.commit()
-        db.refresh(session)
-
-        logger.info(
-            f"User {initiator_id} started group call {session.room_id} "
-            f"with members {normalized_members}"
-        )
+        session = {
+            "id": get_next_sequence("group_call_session_id"),
+            "room_id": f"gc-{uuid.uuid4().hex[:12]}",
+            "initiator_id": int(initiator_id),
+            "member_ids": normalized_members,
+            "status": STATUS_ACTIVE,
+            "start_time": datetime.utcnow(),
+            "end_time": None,
+        }
+        self.collection.insert_one(session)
+        logger.info(f"User {initiator_id} started group call {session['room_id']} with members {normalized_members}")
         return self._serialize_session(session)
 
-    def get_call(self, db: Session, call_id: int) -> dict:
-        self._ensure_table(db)
-
-        session = (
-            db.query(GroupCallSession)
-            .filter(GroupCallSession.id == call_id)
-            .first()
-        )
+    def get_call(self, mongo_db, call_id: int) -> dict:
+        session = self.collection.find_one({"$or": [{"id": int(call_id)}, {"id": str(call_id)}]})
         if not session:
             raise HTTPException(status_code=404, detail="Group call session not found")
         return self._serialize_session(session)
 
-    def list_calls(self, db: Session, limit: int = 20, active_only: bool = False) -> list[dict]:
-        self._ensure_table(db)
-
-        query = db.query(GroupCallSession)
-        if active_only:
-            query = query.filter(GroupCallSession.status == STATUS_ACTIVE)
-
-        sessions = (
-            query
-            .order_by(GroupCallSession.start_time.desc(), GroupCallSession.id.desc())
-            .limit(limit)
-            .all()
-        )
+    def list_calls(self, mongo_db, limit: int = 20, active_only: bool = False) -> list[dict]:
+        query = {"status": STATUS_ACTIVE} if active_only else {}
+        sessions = self.collection.find(query).sort([("start_time", -1), ("id", -1)]).limit(limit)
         return [self._serialize_session(item) for item in sessions]
 
-    def end_call(self, db: Session, call_id: int) -> dict:
-        self._ensure_table(db)
-
-        session = (
-            db.query(GroupCallSession)
-            .filter(GroupCallSession.id == call_id)
-            .first()
-        )
+    def end_call(self, mongo_db, call_id: int) -> dict:
+        query = {"$or": [{"id": int(call_id)}, {"id": str(call_id)}]}
+        session = self.collection.find_one(query)
         if not session:
             raise HTTPException(status_code=404, detail="Group call session not found")
-
-        if session.status != STATUS_ENDED:
-            session.status = STATUS_ENDED
-            session.end_time = datetime.utcnow()
-            db.commit()
-            db.refresh(session)
-
-        logger.info(f"Group call {session.room_id} ended")
+        if session.get("status") != STATUS_ENDED:
+            self.collection.update_one(query, {"$set": {"status": STATUS_ENDED, "end_time": datetime.utcnow()}})
+            session = self.collection.find_one(query)
+        logger.info(f"Group call {session.get('room_id')} ended")
         return self._serialize_session(session)
 
     def enqueue_tts(

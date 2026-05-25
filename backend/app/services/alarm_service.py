@@ -2,10 +2,12 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from app.schemas.alarm_schema import AlarmCreate, AlarmUpdate
+from app.schemas.log_schema import LogCreate
 from app.utils.logger import get_logger
 from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 from app.services.video_service import VideoService
 from app.services.notification_service import notification_service
+from app.services.log_service import LogService
 
 from datetime import datetime, timedelta
 import asyncio
@@ -117,27 +119,51 @@ class AlarmService:
         doc = dict(doc)
         doc.pop("_id", None)
 
+        alarm_type = doc.get("alarm_type") or doc.get("behavior_code") or doc.get("event_type") or "Alarm"
+        device_id = doc.get("device_id") or doc.get("trigger_device_id")
+        device_name = doc.get("device_name") or doc.get("trigger_device_name") or doc.get("video_name") or ""
+        timestamp = doc.get("timestamp") or doc.get("alarm_time") or doc.get("created_at")
+        location = doc.get("location") or doc.get("location_desc")
+        person_name = doc.get("person_name") or doc.get("captured_person_name") or doc.get("bound_person_name") or doc.get("person", {}).get("username") or ""
+        person_label = doc.get("person_label") or doc.get("captured_person_label") or ""
+        description = doc.get("description") or doc.get("behavior")
+        if not description:
+            description = " - ".join([part for part in [person_name, person_label, alarm_type] if part])
+
         return {
             "id": self._safe_int(doc.get("id")) or doc.get("id"),
-            "device_id": str(doc.get("device_id")) if doc.get("device_id") is not None else "",
+            "device_id": str(device_id) if device_id is not None else "",
             "fence_id": self._safe_int(doc.get("fence_id")),
             "project_id": self._safe_int(doc.get("project_id")),
-            "alarm_type": doc.get("alarm_type"),
-            "severity": doc.get("severity"),
-            "timestamp": doc.get("timestamp"),
-            "description": doc.get("description"),
-            "status": doc.get("status"),
-            "handled_at": doc.get("handled_at"),
-            "location": doc.get("location"),
-            "recording_path": doc.get("recording_path") or "",
+            "alarm_type": alarm_type,
+            "severity": doc.get("severity") or "low",
+            "timestamp": timestamp,
+            "description": description,
+            "status": doc.get("status") or "pending",
+            "handled_at": doc.get("handled_at") or doc.get("resolved_at"),
+            "location": location,
+            "recording_path": doc.get("recording_path") or doc.get("video_clip_url") or "",
             "recording_status": doc.get("recording_status") or "pending",
             "recording_error": doc.get("recording_error") or "",
-            "alarm_image_path": doc.get("alarm_image_path") or "",
-            "personnel_id": doc.get("personnel_id") or "",
-            "person_name": doc.get("person_name") or doc.get("person", {}).get("username") or "未知",
+            "alarm_image_path": doc.get("alarm_image_path") or doc.get("snapshot_url") or "",
+            "personnel_id": doc.get("personnel_id") or doc.get("bound_person_phone") or "",
+            "person_name": person_name,
+            "person_label": person_label,
             "person": doc.get("person") or {},
+            "device_name": device_name,
+            "source_type": doc.get("source_type"),
         }
 
+    def _alarm_sort_time(self, doc: dict):
+        value = doc.get("timestamp") or doc.get("alarm_time") or doc.get("created_at")
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return datetime.min
+        return datetime.min
     def _find_alarm_doc_by_id(self, alarm_id: int | str):
         return self._alarm_collection().find_one({"id": int(alarm_id)})
 
@@ -293,18 +319,16 @@ class AlarmService:
             logger.error(f"DATABASE SAVE ERROR: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Database save error: {str(e)}")
         
-    def get_alarms(self, db: Session, skip: int = 0, limit: int = 100, project_id: int | None = None):
+    def get_alarms(self, db: Session, skip: int = 0, limit: int = 100, project_id: int | None = None, source_type: str | None = None):
         query = {}
         if project_id is not None:
             query["project_id"] = project_id
+        if source_type in {"video", "fence"}:
+            query["source_type"] = source_type
 
-        docs = list(
-            self._alarm_collection()
-            .find(query)
-            .sort("timestamp", -1)
-            .skip(max(0, int(skip)))
-            .limit(max(1, int(limit)))
-        )
+        docs = list(self._alarm_collection().find(query))
+        docs.sort(key=self._alarm_sort_time, reverse=True)
+        docs = docs[max(0, int(skip)): max(0, int(skip)) + max(1, int(limit))]
         return [self._mongo_alarm_to_out(doc) for doc in docs]
 
     def update_alarm(self, db: Session, alarm_id: int, update_data: AlarmUpdate):
@@ -325,8 +349,33 @@ class AlarmService:
         if update_data.severity:
             updates["severity"] = update_data.severity
 
+        if update_data.handler:
+            updates["handler"] = update_data.handler
+
+        if update_data.remark:
+            updates["remark"] = update_data.remark
+
         self._update_alarm_fields(alarm_id, updates)
         updated = self._find_alarm_doc_by_id(alarm_id)
+        
+        # 写日志
+        try:
+            log_service = LogService()
+            log_create = LogCreate(
+                operator=update_data.handler or "unknown",
+                action="处理告警",
+                target_type="alarm",
+                target_name=updated.get("description", "未知告警"),
+                details=update_data.remark,
+                extra={
+                    "alarm_id": alarm_id,
+                    "status": update_data.status
+                }
+            )
+            log_service.create_log(db, log_create)
+        except Exception as e:
+            logger.error(f"Failed to create log for alarm update: {str(e)}")
+        
         return self._mongo_alarm_to_out(updated)
 
     def delete_alarm(self, db: Session, alarm_id: int):

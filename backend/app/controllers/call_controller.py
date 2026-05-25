@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.schemas.call_schema import CallCreate, GroupCallSessionOut, TtsBatchOut, TtsSendRequest
@@ -10,12 +9,12 @@ service = GroupCallService()
 
 
 @router.post("/initiate", response_model=GroupCallSessionOut)
-def start_group_call(call_data: CallCreate, db: Session = Depends(get_db)):
+def start_group_call(call_data: CallCreate, db=Depends(get_db)):
     return service.initiate_call(db, call_data.initiator_id, call_data.member_ids)
 
 
 @router.get("/{call_id}", response_model=GroupCallSessionOut)
-def get_group_call(call_id: int, db: Session = Depends(get_db)):
+def get_group_call(call_id: int, db=Depends(get_db)):
     return service.get_call(db, call_id)
 
 
@@ -23,13 +22,13 @@ def get_group_call(call_id: int, db: Session = Depends(get_db)):
 def list_group_calls(
     limit: int = Query(default=20, ge=1, le=100),
     active_only: bool = Query(default=False),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     return service.list_calls(db, limit=limit, active_only=active_only)
 
 
 @router.post("/{call_id}/end", response_model=GroupCallSessionOut)
-def end_group_call(call_id: int, db: Session = Depends(get_db)):
+def end_group_call(call_id: int, db=Depends(get_db)):
     return service.end_call(db, call_id)
 
 

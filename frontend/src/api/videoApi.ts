@@ -260,7 +260,7 @@ export interface VideoMonitoringSummary {
 /** 获取所有视频设备列表 */
 export async function getAllVideos(): Promise<Video[]> {
   const base = getApiBase();
-  const url = `${base}/video/`;
+  const url = `${base}/video/?limit=5000`;
   console.log('📡 请求视频设备列表:', url, '当前域名:', window.location.host, 'port:', window.location.port);
   
   const response = await fetch(url);

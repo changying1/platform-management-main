@@ -29,11 +29,22 @@ export const GridMap: React.FC<GridMapProps> = ({ grids, onGridClick }) => {
     }
   };
 
-  const parseBounds = (boundsJson: string): L.LatLngExpression[] => {
+  const parseBounds = (boundsJson?: string | null): L.LatLngExpression[] => {
+    if (!boundsJson || typeof boundsJson !== 'string') {
+      return [];
+    }
+
     try {
       const coords = JSON.parse(boundsJson);
       if (Array.isArray(coords)) {
-        return coords.map((coord: number[]) => [coord[0], coord[1]]);
+        return coords
+          .filter((coord: unknown): coord is number[] => (
+            Array.isArray(coord) &&
+            coord.length >= 2 &&
+            Number.isFinite(Number(coord[0])) &&
+            Number.isFinite(Number(coord[1]))
+          ))
+          .map((coord: number[]) => [Number(coord[0]), Number(coord[1])]);
       }
     } catch {
       console.error('Failed to parse bounds JSON');
@@ -87,7 +98,7 @@ export const GridMap: React.FC<GridMapProps> = ({ grids, onGridClick }) => {
             
             return (
               <Polygon
-                key={grid.id}
+                key={grid.id || grid.grid_id}
                 positions={bounds}
                 {...getGridColor(grid.status)}
                 weight={2}

@@ -693,7 +693,8 @@ const [avgDuration, setAvgDuration] = useState(0);
         alarms: {
           ...(baseData?.alarms || {}),
           list: todayAlarms.length ? todayAlarms : (baseData?.alarms?.list || [])
-        }
+        },
+        personnelStats: baseData?.personnelStats || { total: 0, todayIn: 0, todayOut: 0 }
       };
     }
 
@@ -1529,7 +1530,7 @@ const projectPoints = projects
                   <div style={S.personItem}>
                     <div style={S.personLabel}>总在场</div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-                      <div style={S.personValue}>{currentData.personnelStats.total.toLocaleString()}</div>
+                      <div style={S.personValue}>{(currentData.personnelStats.onSite || currentData.personnelStats.total || 0).toLocaleString()}</div>
                       <div style={S.personTrend}>人</div>
                     </div>
                   </div>
@@ -1905,7 +1906,21 @@ devices: currentProject.devices || [],
         [{a.alarm_type}]
       </span>
       <span style={{ color: "#d83d3d", fontSize: 14 }}>
-        {a.timestamp?.split(" ")[1] || ""}
+        {(() => {
+            const ts = String(a.timestamp || "").trim();
+            let result = ts.replace("T", " ");
+            if (ts.includes("T")) {
+                const datePart = ts.split("T")[0];
+                const timePart = ts.split("T")[1].split(".")[0];
+                result = `${datePart} ${timePart}`;
+            } else if (ts.includes(" ")) {
+                const parts = ts.split(" ");
+                result = `${parts[0]} ${parts[1].split(".")[0]}`;
+            } else {
+                result = ts.split(".")[0];
+            }
+            return result;
+        })()}
       </span>
     </div>
     
@@ -1926,7 +1941,13 @@ devices: currentProject.devices || [],
           flex: 1,
         }}
       >
-        {a.description} · {a.branch_name}
+        {String(a.description || "")
+          .replace(/^Device\s+/, "")
+          .replace(/entered restricted area/g, "闯入禁入区域")
+          .replace(/left designated area/g, "离开指定区域")
+          .replace(/restricted area/g, "禁入区域")
+          .replace(/designated area/g, "指定区域")
+          .replace(/: /g, "：")}{a.branch_name && a.branch_name !== "未知" ? ` · ${a.branch_name}` : ""}
       </div>
       <span
         style={{
@@ -2747,4 +2768,3 @@ rightCol: {
       color: "#cbd5e1",
     },
   };
-

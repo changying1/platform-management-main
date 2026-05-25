@@ -1,0 +1,9 @@
+[
+  {
+    "type": "local",
+    "path": "./storage\\backups",
+    "name": "默认本地备份",
+    "enabled": true,
+    "config": {}
+  }
+]

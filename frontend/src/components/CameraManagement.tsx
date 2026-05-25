@@ -3,7 +3,7 @@ import { Search, Plus, Edit2, Trash2, X, Save, Camera, Wrench, AlertCircle, More
 import { Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactDOM from 'react-dom';
-import { addCameraViaRTSP } from '../api/videoApi';
+import { createVideo, deleteVideo, getAllVideos, updateVideo, type Video } from '../api/videoApi';
 import { API_BASE_URL } from '../api/config';
 
 interface Camera {
@@ -44,16 +44,47 @@ const SQL_CAMERAS: Camera[] = [
 ];
 
 export default function CameraManagement() {
-const [cameras, setCameras] = useState<Camera[]>(SQL_CAMERAS);
+const [cameras, setCameras] = useState<Camera[]>([]);
+
+const mapVideoToCamera = (video: Video): Camera => {
+  const name = video.name || '';
+  const platform = String(video.platform_type || video.stream_protocol || '').toLowerCase();
+  const type: Camera['type'] =
+    platform.includes('ezviz') || name.includes('球机') ? 'dome'
+    : name.includes('无人机') ? 'drone'
+    : name.includes('记录仪') ? 'bodycam'
+    : 'bullet';
+
+  return {
+    id: Number(video.id),
+    name,
+    deviceCode: video.device_serial || String(video.id),
+    channelNo: video.channel_no || 1,
+    location: video.remark || '',
+    company: video.company || '',
+    projectId: 1,
+    projectName: video.project || '',
+    team: '',
+    admin: video.username || '',
+    adminPhone: '',
+    status: video.status === 'online' ? 'online' : 'offline',
+    type,
+    rtspUrl: video.rtsp_url || video.stream_url || '',
+    remark: video.remark || '',
+  };
+};
 
 const fetchCameras = async () => {
     try {
+      const videos = await getAllVideos();
+      setCameras(videos.map(mapVideoToCamera).filter(camera => Number.isFinite(camera.id)));
+      return;
+
       const response = await fetch(`${API_BASE_URL}/api/devices`);
       if (response.ok) {
         const data = await response.json();
         const apiData = Array.isArray(data) ? data : data.value || data.data || [];
-        if (apiData.length > 3) {
-          const realCameras = apiData.map((device: any) => ({
+        const realCameras = apiData.map((device: any) => ({
             id: device.id,
             name: device.name,
             deviceCode: device.device_code,
@@ -70,6 +101,7 @@ const fetchCameras = async () => {
             rtspUrl: device.rtsp_url
           }));
           
+        if (realCameras.length > 0) {
           const ezvizCamera = {
             id: 999,
             name: '海康球机摄像头1号',
@@ -89,6 +121,8 @@ const fetchCameras = async () => {
           };
           
           setCameras([ezvizCamera, ...realCameras]);
+        } else {
+          setCameras([]);
         }
       }
     } catch (error) {
@@ -421,9 +455,7 @@ const confirmImport = () => {
 <button 
   onClick={async () => {
     if (confirm('确定删除该摄像头吗？')) {
-      await fetch(`${API_BASE_URL}/api/devices/camera/${camera.id}`, {
-        method: 'DELETE',
-      });
+      await deleteVideo(camera.id);
       await fetchCameras();
     }
   }}
@@ -626,33 +658,26 @@ const confirmImport = () => {
       try {
         const payload = {
           name: editingItem.name,
-          deviceCode: editingItem.deviceCode,
-          channelNo: editingItem.channelNo || 1,
-          type: editingItem.type,
-          location: editingItem.location,
+          device_serial: editingItem.deviceCode,
+          channel_no: editingItem.channelNo || 1,
           company: editingItem.company,
-          projectName: editingItem.projectName,
-          admin: editingItem.admin,
-          adminPhone: editingItem.adminPhone,
-          rtspUrl: `rtsp://ezopen://open.ys7.com/${editingItem.deviceCode}/${editingItem.channelNo || 1}`,
-          status: editingItem.status,
-          remark: editingItem.remark
+          project: editingItem.projectName,
+          username: editingItem.admin,
+          rtsp_url: editingItem.rtspUrl || `rtsp://ezopen://open.ys7.com/${editingItem.deviceCode}/${editingItem.channelNo || 1}`,
+          stream_url: editingItem.rtspUrl || undefined,
+          status: editingItem.status === 'online' ? 'online' : 'offline',
+          remark: editingItem.remark || editingItem.location,
+          platform_type: editingItem.type === 'dome' ? 'ezviz' : 'onvif',
+          access_source: editingItem.type === 'dome' ? 'cloud' : 'local',
+          ptz_source: editingItem.type === 'dome' ? 'ezviz' : 'onvif',
         };
         
         if (editingItem.id) {
           // 更新
-          await fetch(`${API_BASE_URL}/api/devices/camera/${editingItem.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
+          await updateVideo(editingItem.id, payload);
         } else {
           // 新增
-          await fetch(`${API_BASE_URL}/api/devices/camera`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
+          await createVideo({ ...payload, port: 80 });
         }
         
         alert('保存成功');

@@ -18,9 +18,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
     parent_id: '',
     project_id: '',
     bounds_json: '',
-    area: '',
     description: '',
-    status: 'normal',
   });
 
   useEffect(() => {
@@ -32,9 +30,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
         parent_id: editGrid.parent_id?.toString() || '',
         project_id: editGrid.project_id?.toString() || '',
         bounds_json: editGrid.bounds_json,
-        area: editGrid.area?.toString() || '',
         description: editGrid.description || '',
-        status: editGrid.status,
       });
     } else {
       setFormData({
@@ -44,9 +40,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
         parent_id: '',
         project_id: '',
         bounds_json: '',
-        area: '',
         description: '',
-        status: 'normal',
       });
     }
   }, [editGrid, isOpen]);
@@ -62,7 +56,6 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
       ...formData,
       parent_id: formData.parent_id ? formData.parent_id : null,
       project_id: formData.project_id ? formData.project_id : null,
-      area: formData.area ? parseFloat(formData.area) : undefined,
     };
     onSubmit(submitData);
   };
@@ -130,10 +123,10 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               name="level"
               value={formData.level}
               onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white focus:outline-none focus:border-cyan-400"
+              className="w-full px-4 py-2 rounded-lg bg-slate-700 border border-white/20 text-white focus:outline-none focus:border-cyan-400"
             >
               {levels.map((level) => (
-                <option key={level} value={level}>
+                <option key={level} value={level} className="bg-slate-700 text-white">
                   {levelNames[level] || level}
                 </option>
               ))}
@@ -168,38 +161,6 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
               placeholder="可选，项目编号"
             />
-          </div>
-
-          {/* 面积 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              面积 (m²)
-            </label>
-            <input
-              type="number"
-              name="area"
-              value={formData.area}
-              onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="请输入面积"
-            />
-          </div>
-
-          {/* 状态 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              状态
-            </label>
-            <select
-              name="status"
-              value={formData.status}
-              onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white focus:outline-none focus:border-cyan-400"
-            >
-              <option value="normal">正常</option>
-              <option value="warning">预警</option>
-              <option value="alarm">报警</option>
-            </select>
           </div>
 
           {/* 地理边界 */}
