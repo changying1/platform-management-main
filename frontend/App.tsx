@@ -32,7 +32,7 @@ import Dashboard from './views/Dashboard';
 import FenceManagement from './views/Fence';
 import ProjectManagement from './views/Project/index';
 import VideoCenter from './views/VideoCenter';
-import TrackPlayback from './views/TrackPlayback';
+
 import SettingsView from './views/SettingsView';
 import GroupCall from './views/GroupCall';
 import AlarmRecord from './views/AlarmRecord';

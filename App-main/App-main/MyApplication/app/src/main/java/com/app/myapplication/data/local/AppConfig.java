@@ -16,5 +16,3 @@ public class AppConfig {
         // 不提供设置能力，留空或删除
     }
 }
-
-
