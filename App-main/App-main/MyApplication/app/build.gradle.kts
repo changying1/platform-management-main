@@ -83,4 +83,7 @@ dependencies {
 
     // osmdroid 地图库
     implementation("org.osmdroid:osmdroid-android:6.1.17")
+
+    // Agora voice RTC for app group voice calls
+    implementation("io.agora.rtc:voice-sdk:4.6.3")
 }

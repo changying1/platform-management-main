@@ -4,7 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 public class AppConfig {
-    private static final String DEFAULT_BASE_URL = "http://0.0.0.0:9000/";
+    private static final String DEFAULT_BASE_URL = "http://10.0.2.2:9000/";
 
     public static String getBaseUrl(Context ctx) {
         String url = DEFAULT_BASE_URL.trim();
