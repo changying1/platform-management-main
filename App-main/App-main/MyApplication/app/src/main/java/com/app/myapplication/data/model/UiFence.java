@@ -1,5 +1,6 @@
 package com.app.myapplication.data.model;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -29,6 +30,8 @@ public class UiFence {
     public String effectiveTime;   // 生效时间，如 "00:00-23:59"
     public String remark;
     public List<String> deviceIds;
+
+    private static final Gson gson = new Gson();
 
     // 从后端JSON解析
     public static UiFence fromJson(JsonObject o) {
@@ -83,55 +86,87 @@ public class UiFence {
         return f;
     }
 
-    // 构造创建请求体
+    // 构造创建请求体 - 对齐后端 POST /fence/ 格式
     public FenceCreateRequest toCreateRequest() {
         FenceCreateRequest req = new FenceCreateRequest();
-        req.name = this.name;
-        req.company = this.company != null ? this.company : "";
-        req.project = this.project != null ? this.project : "";
+        req.name = this.name != null ? this.name : "未命名围栏";
+        req.project_region_id = null;
         req.shape = this.shape != null ? this.shape : "circle";
         req.behavior = this.behavior != null ? this.behavior : "No Entry";
-        req.severity = this.severity != null ? this.severity : "normal";
-        req.center = this.center;
-        req.radius = this.radius;
-        req.points = this.points;
-        req.deviceIds = this.deviceIds;
+        req.effective_time = this.effectiveTime != null ? this.effectiveTime : "00:00-23:59";
+        req.remark = this.remark != null ? this.remark : "";
 
-        // 解析 effectiveTime 到 schedule
-        if (this.effectiveTime != null && this.effectiveTime.contains("-")) {
-            String[] parts = this.effectiveTime.split("-");
-            if (parts.length == 2) {
-                req.schedule = new FenceCreateRequest.Schedule(parts[0], parts[1]);
+        // severity 映射到 alarm_type
+        String sev = this.severity != null ? this.severity : "normal";
+        if ("risk".equalsIgnoreCase(sev)) req.alarm_type = "medium";
+        else if ("severe".equalsIgnoreCase(sev)) req.alarm_type = "high";
+        else req.alarm_type = "low";
+
+        // 构建 coordinates_json
+        if ("circle".equalsIgnoreCase(req.shape) && this.center != null && this.center.size() >= 2) {
+            double[][] coords = new double[][]{{this.center.get(0), this.center.get(1)}};
+            req.coordinates_json = gson.toJson(coords);
+            req.radius = this.radius != null ? this.radius : 50.0;
+        } else if ("polygon".equalsIgnoreCase(req.shape) && this.points != null && !this.points.isEmpty()) {
+            double[][] coords = new double[this.points.size()][2];
+            for (int i = 0; i < this.points.size(); i++) {
+                List<Double> p = this.points.get(i);
+                if (p != null && p.size() >= 2) {
+                    coords[i][0] = p.get(0);
+                    coords[i][1] = p.get(1);
+                }
             }
+            req.coordinates_json = gson.toJson(coords);
+            req.radius = null;
+        } else {
+            req.coordinates_json = "[]";
+            req.radius = this.radius != null ? this.radius : 50.0;
         }
-        if (req.schedule == null) {
-            req.schedule = new FenceCreateRequest.Schedule("00:00", "23:59");
-        }
+
+        req.deviceIds = this.deviceIds;
 
         return req;
     }
 
-    // 构造更新请求体
+    // 构造更新请求体 - 对齐后端格式
     public FenceUpdateRequest toUpdateRequest() {
         FenceUpdateRequest req = new FenceUpdateRequest();
-        req.name = this.name;
-        req.company = this.company;
-        req.project = this.project;
-        req.shape = this.shape;
-        req.behavior = this.behavior;
-        req.severity = this.severity;
-        req.center = this.center;
-        req.radius = this.radius;
-        req.points = this.points;
+        req.name = this.name != null ? this.name : "未命名围栏";
+        req.project_region_id = null;
+        req.shape = this.shape != null ? this.shape : "circle";
+        req.behavior = this.behavior != null ? this.behavior : "No Entry";
+        req.effective_time = this.effectiveTime != null ? this.effectiveTime : "00:00-23:59";
+        req.remark = this.remark != null ? this.remark : "";
         req.is_active = this.is_active;
-        req.deviceIds = this.deviceIds;
 
-        if (this.effectiveTime != null && this.effectiveTime.contains("-")) {
-            String[] parts = this.effectiveTime.split("-");
-            if (parts.length == 2) {
-                req.schedule = new FenceCreateRequest.Schedule(parts[0], parts[1]);
+        // severity 映射到 alarm_type
+        String sev = this.severity != null ? this.severity : "normal";
+        if ("risk".equalsIgnoreCase(sev)) req.alarm_type = "medium";
+        else if ("severe".equalsIgnoreCase(sev)) req.alarm_type = "high";
+        else req.alarm_type = "low";
+
+        // 构建 coordinates_json
+        if ("circle".equalsIgnoreCase(req.shape) && this.center != null && this.center.size() >= 2) {
+            double[][] coords = new double[][]{{this.center.get(0), this.center.get(1)}};
+            req.coordinates_json = gson.toJson(coords);
+            req.radius = this.radius != null ? this.radius : 50.0;
+        } else if ("polygon".equalsIgnoreCase(req.shape) && this.points != null && !this.points.isEmpty()) {
+            double[][] coords = new double[this.points.size()][2];
+            for (int i = 0; i < this.points.size(); i++) {
+                List<Double> p = this.points.get(i);
+                if (p != null && p.size() >= 2) {
+                    coords[i][0] = p.get(0);
+                    coords[i][1] = p.get(1);
+                }
             }
+            req.coordinates_json = gson.toJson(coords);
+            req.radius = null;
+        } else {
+            req.coordinates_json = "[]";
+            req.radius = this.radius != null ? this.radius : 50.0;
         }
+
+        req.deviceIds = this.deviceIds;
 
         return req;
     }

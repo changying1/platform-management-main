@@ -318,6 +318,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
+                <!-- 标题栏 -->
                 <TextView
                     android:id="@+id/tv_list_title"
                     android:layout_width="0dp"
@@ -343,19 +344,118 @@
                     app:layout_constraintBottom_toBottomOf="@id/tv_list_title"
                     app:layout_constraintEnd_toEndOf="parent"/>
 
+                <!-- 切换按钮栏 -->
+                <LinearLayout
+                    android:id="@+id/layout_list_tabs"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="14dp"
+                    android:paddingBottom="8dp"
+                    app:layout_constraintTop_toBottomOf="@id/tv_list_title"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_tab_fence"
+                        style="@style/Widget.MaterialComponents.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:text="围栏"
+                        android:textSize="13sp"
+                        android:textAllCaps="false"/>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_tab_device"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="设备"
+                        android:textSize="13sp"
+                        android:textAllCaps="false"/>
+                </LinearLayout>
+
+                <!-- 围栏列表 -->
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rv_fence"
                     android:layout_width="0dp"
                     android:layout_height="0dp"
                     android:padding="10dp"
-                    app:layout_constraintTop_toBottomOf="@id/tv_list_title"
+                    android:visibility="visible"
+                    app:layout_constraintTop_toBottomOf="@id/layout_list_tabs"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"/>
+
+                <!-- 设备列表 -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_device"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:padding="10dp"
+                    android:visibility="gone"
+                    app:layout_constraintTop_toBottomOf="@id/layout_list_tabs"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"/>
+
             </androidx.constraintlayout.widget.ConstraintLayout>
 
         </com.google.android.material.card.MaterialCardView>
 
     </FrameLayout>
+
+    <!-- 调试模式按钮 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btn_debug_mode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:src="@android:drawable/ic_menu_compass"
+        android:contentDescription="设备调试"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:backgroundTint="#3F51B5"/>
+
+    <!-- 调试模式指示器 -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_debug_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:visibility="gone"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        app:cardBackgroundColor="#FF9800"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp">
+
+            <View
+                android:layout_width="12dp"
+                android:layout_height="12dp"
+                android:background="@drawable/circle_pulse"
+                android:layout_marginEnd="8dp"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="调试模式"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="14sp"/>
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
