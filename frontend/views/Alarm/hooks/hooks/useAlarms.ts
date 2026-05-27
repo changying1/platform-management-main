@@ -56,9 +56,9 @@ export const useAlarms = () => {
     status: a.status as 'pending' | 'resolved',
     level: (a.severity?.toLowerCase() || 'medium') as 'high' | 'medium' | 'low',
     description: a.description,
-    recordingPath: a.recording_path,
+    recordingPath: a.recording_path || a.video_url || a.clip_url,
     recordingStatus: a.recording_status,
-    recordingError: a.recording_error,
+    recordingError: a.recording_error || a.error_message,
   });
 
   const fetchAlarms = useCallback(async () => {

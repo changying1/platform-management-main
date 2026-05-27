@@ -1,6 +1,7 @@
 package com.app.myapplication.ui.video;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,12 +19,15 @@ import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.local.AppConfig;
 import com.app.myapplication.data.model.Alarm;
+import com.app.myapplication.data.model.AlarmFields;
+import com.app.myapplication.ui.alarm.ImagePreviewActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -32,6 +36,7 @@ import retrofit2.Response;
 public class AlarmEventsFragment extends Fragment {
 
     private static final String ARG_DEVICE_ID = "device_id";
+    private static final String TAG_IMAGE = "AlarmImage";
 
     public static AlarmEventsFragment newInstance(String deviceId) {
         Bundle b = new Bundle();
@@ -72,55 +77,64 @@ public class AlarmEventsFragment extends Fragment {
         progressBar.setVisibility(View.VISIBLE);
         tvEmpty.setVisibility(View.GONE);
 
-        AlarmApi api = ApiClient.get(requireContext()).create(AlarmApi.class);
-        api.getAlarms().enqueue(new Callback<List<Alarm>>() {
-            @Override
-            public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
-                if (!isAdded()) return;
-                progressBar.setVisibility(View.GONE);
-                if (response.isSuccessful() && response.body() != null) {
-                    items.clear();
-                    for (Alarm alarm : response.body()) {
-                        try {
-                            AlarmEventItem item = toAlarmEvent(alarm);
+        ApiClient.get(requireContext())
+                .create(AlarmApi.class)
+                .getAlarms(0, 100, null)
+                .enqueue(new Callback<List<Map<String, Object>>>() {
+                    @Override
+                    public void onResponse(Call<List<Map<String, Object>>> call, Response<List<Map<String, Object>>> response) {
+                        if (!isAdded()) return;
+                        progressBar.setVisibility(View.GONE);
+
+                        if (!response.isSuccessful() || response.body() == null) {
+                            tvEmpty.setVisibility(View.VISIBLE);
+                            Toast.makeText(requireContext(), "Failed to get alarm records", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+
+                        items.clear();
+                        for (Map<String, Object> row : response.body()) {
+                            AlarmEventItem item = toAlarmEvent(row);
                             if (deviceId == null || deviceId.isEmpty() || deviceId.equals(item.deviceId)) {
                                 items.add(item);
                             }
-                        } catch (Exception e) {
-                            e.printStackTrace();
                         }
+                        adapter.notifyDataSetChanged();
+                        tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
                     }
-                    adapter.notifyDataSetChanged();
-                    tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
-                } else {
-                    tvEmpty.setVisibility(View.VISIBLE);
-                    Toast.makeText(requireContext(), "Failed to get alarm records", Toast.LENGTH_SHORT).show();
-                }
-            }
 
-            @Override
-            public void onFailure(Call<List<Alarm>> call, Throwable t) {
-                if (!isAdded()) return;
-                progressBar.setVisibility(View.GONE);
-                tvEmpty.setVisibility(View.VISIBLE);
-                Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
-            }
-        });
+                    @Override
+                    public void onFailure(Call<List<Map<String, Object>>> call, Throwable t) {
+                        if (!isAdded()) return;
+                        progressBar.setVisibility(View.GONE);
+                        tvEmpty.setVisibility(View.VISIBLE);
+                        Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
+                    }
+                });
     }
 
-    private AlarmEventItem toAlarmEvent(Alarm alarm) {
+    private AlarmEventItem toAlarmEvent(Map<String, Object> row) {
+        Alarm alarm = AlarmFields.fromMap(row);
         AlarmEventItem item = new AlarmEventItem();
         item.id = String.valueOf(alarm.getId());
-        item.deviceId = firstNonEmpty(alarm.getDeviceId());
-        item.type = firstNonEmpty(alarm.getDisplayAlarmType(), alarm.getAlarmType(), "unknown");
-        item.level = firstNonEmpty(alarm.getDisplaySeverity(), alarm.getSeverity(), "medium");
-        item.msg = firstNonEmpty(alarm.getDescription(), "");
-        item.timestamp = firstNonEmpty(alarm.getTimestamp(), "");
-        item.personnel = firstNonEmpty(alarm.getPersonnelId(), "");
-        item.deviceName = firstNonEmpty(item.deviceId, "unknown");
-        item.screenshotUrl = firstNonEmpty(alarm.getAlarmImagePath(), "");
-        item.videoUrl = firstNonEmpty(alarm.getRecordingPath(), "");
-        item.status = firstNonEmpty(alarm.getDisplayStatus(), alarm.getStatus(), "pending");
+        item.deviceId = alarm.getDeviceId();
+        item.type = alarm.getAlarmType();
+        item.level = alarm.getSeverity();
+        item.msg = alarm.getDescription();
+        item.timestamp = alarm.getTimestamp();
+        item.personnel = alarm.getPersonName();
+        item.deviceName = firstNonEmpty(alarm.getDeviceName(), item.deviceId, "unknown");
+        item.screenshotUrl = alarm.getImageUrl();
+        item.imageUrl = alarm.getImageUrlField();
+        item.snapshotUrl = alarm.getSnapshotUrl();
+        item.alarmImagePath = alarm.getAlarmImagePath();
+        item.imagePath = alarm.getImagePath();
+        item.snapshotPath = alarm.getSnapshotPath();
+        item.videoUrl = alarm.getVideoUrl();
+        item.status = alarm.getStatus();
+        item.durationSeconds = alarm.getDurationSeconds();
+        item.videoError = alarm.getRecordingError();
+        item.recordingStatus = alarm.getRecordingStatus();
         return item;
     }
 
@@ -134,8 +148,16 @@ public class AlarmEventsFragment extends Fragment {
         public String personnel;
         public String deviceName;
         public String screenshotUrl;
+        public String imageUrl;
+        public String snapshotUrl;
+        public String alarmImagePath;
+        public String imagePath;
+        public String snapshotPath;
         public String videoUrl;
         public String status;
+        public int durationSeconds;
+        public String videoError;
+        public String recordingStatus;
     }
 
     private class AlarmEventAdapter extends RecyclerView.Adapter<AlarmEventAdapter.VH> {
@@ -206,14 +228,35 @@ public class AlarmEventsFragment extends Fragment {
                 }
 
                 btnScreenshot.setOnClickListener(v -> {
-                    String url = AppConfig.toAbsoluteUrl(requireContext(), item.screenshotUrl);
-                    Toast.makeText(itemView.getContext(), url.isEmpty() ? "No screenshot" : url, Toast.LENGTH_SHORT).show();
+                    String rawImagePath = firstNonEmpty(
+                            item.imageUrl,
+                            item.snapshotUrl,
+                            item.alarmImagePath,
+                            item.imagePath,
+                            item.snapshotPath
+                    );
+                    String finalImageUrl = AppConfig.toAbsoluteUrl(requireContext(), rawImagePath);
+                    Log.d(TAG_IMAGE, "alarm_id=" + item.id
+                            + ", alarm_image_path=" + firstNonEmpty(item.alarmImagePath)
+                            + ", image_url=" + firstNonEmpty(item.imageUrl)
+                            + ", snapshot_url=" + firstNonEmpty(item.snapshotUrl)
+                            + ", finalImageUrl=" + finalImageUrl);
+                    if (finalImageUrl.isEmpty()) {
+                        Toast.makeText(itemView.getContext(), "暂无报警截图", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    ImagePreviewActivity.start(requireContext(), finalImageUrl);
                 });
 
                 btnVideo.setOnClickListener(v -> {
                     String url = AppConfig.toAbsoluteUrl(requireContext(), item.videoUrl);
-                    if (url.isEmpty()) {
-                        Toast.makeText(itemView.getContext(), "No related video", Toast.LENGTH_SHORT).show();
+                    boolean unavailable = url.isEmpty()
+                            || item.durationSeconds <= 0
+                            || "failed".equalsIgnoreCase(item.recordingStatus)
+                            || "video_failed".equalsIgnoreCase(item.recordingStatus)
+                            || "no_video_segment".equalsIgnoreCase(item.recordingStatus);
+                    if (unavailable) {
+                        Toast.makeText(itemView.getContext(), videoFailureMessage(item), Toast.LENGTH_SHORT).show();
                     } else {
                         VideoFilePlayActivity.start(requireContext(), url);
                     }
@@ -248,6 +291,21 @@ public class AlarmEventsFragment extends Fragment {
             if (!text.isEmpty() && !"null".equalsIgnoreCase(text)) return text;
         }
         return "";
+    }
+
+    private static String videoFailureMessage(AlarmEventItem item) {
+        String error = firstNonEmpty(item.videoError);
+        if (!error.isEmpty()) {
+            return "报警视频生成失败：" + error;
+        }
+        String status = item.recordingStatus;
+        if ("no_video_segment".equalsIgnoreCase(status)) {
+            return "报警视频生成失败：所选时间段没有可用录像分段";
+        }
+        if ("failed".equalsIgnoreCase(status) || "video_failed".equalsIgnoreCase(status)) {
+            return "报警视频生成失败：录像分段合并失败";
+        }
+        return "暂无报警视频";
     }
 
     private static String stringValue(Object value) {

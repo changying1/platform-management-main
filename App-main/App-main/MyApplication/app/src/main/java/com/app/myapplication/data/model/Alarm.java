@@ -58,6 +58,32 @@ public class Alarm {
     @SerializedName("personnel_id")
     private String personnelId;
 
+    @SerializedName("device_name")
+    private String deviceName;
+
+    @SerializedName("person_name")
+    private String personName;
+
+    @SerializedName("image_url")
+    private String imageUrlField;
+
+    @SerializedName("snapshot_url")
+    private String snapshotUrl;
+
+    @SerializedName("image_path")
+    private String imagePath;
+
+    @SerializedName("snapshot_path")
+    private String snapshotPath;
+
+    private String imageUrl;
+
+    @SerializedName("video_url")
+    private String videoUrl;
+
+    @SerializedName("duration_seconds")
+    private int durationSeconds;
+
     public Alarm() {
     }
 
@@ -203,6 +229,78 @@ public class Alarm {
 
     public void setPersonnelId(String personnelId) {
         this.personnelId = personnelId;
+    }
+
+    public String getDeviceName() {
+        return deviceName;
+    }
+
+    public void setDeviceName(String deviceName) {
+        this.deviceName = deviceName;
+    }
+
+    public String getPersonName() {
+        return personName;
+    }
+
+    public void setPersonName(String personName) {
+        this.personName = personName;
+    }
+
+    public String getImageUrlField() {
+        return imageUrlField;
+    }
+
+    public void setImageUrlField(String imageUrlField) {
+        this.imageUrlField = imageUrlField;
+    }
+
+    public String getSnapshotUrl() {
+        return snapshotUrl;
+    }
+
+    public void setSnapshotUrl(String snapshotUrl) {
+        this.snapshotUrl = snapshotUrl;
+    }
+
+    public String getImagePath() {
+        return imagePath;
+    }
+
+    public void setImagePath(String imagePath) {
+        this.imagePath = imagePath;
+    }
+
+    public String getSnapshotPath() {
+        return snapshotPath;
+    }
+
+    public void setSnapshotPath(String snapshotPath) {
+        this.snapshotPath = snapshotPath;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
+
+    public String getVideoUrl() {
+        return videoUrl;
+    }
+
+    public void setVideoUrl(String videoUrl) {
+        this.videoUrl = videoUrl;
+    }
+
+    public int getDurationSeconds() {
+        return durationSeconds;
+    }
+
+    public void setDurationSeconds(int durationSeconds) {
+        this.durationSeconds = durationSeconds;
     }
 
     public String getDisplayAlarmType() {

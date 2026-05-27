@@ -74,15 +74,6 @@ public interface VideoApi {
     @GET("video/ptz/{video_id}/cruise/status")
     Call<Map<String, Object>> cruiseStatus(@Path("video_id") int videoId);
 
-    @POST("video/ptz/{video_id}/cruise/start-current")
-    Call<Map<String, Object>> cruiseStartCurrent(@Path("video_id") int videoId);
-
-    @PUT("video/ptz/{video_id}/cruise/current")
-    Call<Map<String, Object>> cruiseSaveCurrent(@Path("video_id") int videoId, @Body Map<String, Object> body);
-
-    @GET("video/ptz/{video_id}/cruise/current")
-    Call<Map<String, Object>> cruiseGetCurrent(@Path("video_id") int videoId);
-
     @POST("video/ai/start")
     Call<Map<String, Object>> startAIMonitor(@Body Map<String, Object> body);
 
@@ -91,6 +82,15 @@ public interface VideoApi {
 
     @GET("video/ai/status")
     Call<Map<String, Object>> getAIStatus();
+
+    @GET("video/ai/rules")
+    Call<Map<String, Object>> getAIRules();
+
+    @GET("video/{video_id}/rules")
+    Call<Map<String, Object>> getDeviceAIRules(@Path("video_id") int videoId);
+
+    @PUT("video/{video_id}/rules")
+    Call<Map<String, Object>> updateDeviceAIRules(@Path("video_id") int videoId, @Body Map<String, Object> body);
 
     @GET("video/{video_id}/recordings")
     Call<List<Map<String, Object>>> getRecordingVideos(@Path("video_id") String videoId, @Query("limit") int limit);

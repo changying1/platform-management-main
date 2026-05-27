@@ -16,7 +16,9 @@ public class MyApp extends Application {
         MapsInitializer.updatePrivacyShow(this, true, true);
         MapsInitializer.updatePrivacyAgree(this, true);
         Log.d("ABI", Arrays.toString(Build.SUPPORTED_ABIS));
-        EzvizSdkBridge.init(this);
+        if (!BuildConfig.USE_HLS_DEBUG_STREAM) {
+            EzvizSdkBridge.init(this);
+        }
 
     }
 }
