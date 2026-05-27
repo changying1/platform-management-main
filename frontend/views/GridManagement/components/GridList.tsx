@@ -52,7 +52,7 @@ const getStatusBgClass = (status: Grid['status']) => {
 export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onView }) => {
   return (
     <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
-      <div className="bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4 border-b border-white/10">
+      <div className="bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-3 border-b border-white/10 flex items-center justify-between">
         <h3 className="text-lg font-bold text-white">网格列表</h3>
         <p className="text-sm text-white/60">共 {grids.length} 个网格</p>
       </div>
@@ -73,14 +73,14 @@ export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onV
           <tbody>
             {grids.map((grid) => (
               <tr 
-                key={grid.id} 
+                key={grid.id || grid.grid_id} 
                 className="border-t border-white/5 hover:bg-white/5 transition-colors"
               >
                 <td className="px-4 py-3">
-                  <span className="text-blue-400 font-bold text-sm">{grid.grid_id}</span>
+                  <span className="text-blue-400 font-bold text-sm">{grid.grid_id || grid.id}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className="text-white font-medium">{grid.name}</span>
+                  <span className="text-white font-medium">{grid.name || '-'}</span>
                 </td>
                 <td className="px-4 py-3">
                   <span className="px-2 py-1 rounded text-xs bg-cyan-500/10 text-cyan-300">
@@ -118,7 +118,7 @@ export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onV
                       <Edit2 size={16} />
                     </button>
                     <button
-                      onClick={() => onDelete(grid.grid_id)}
+                      onClick={() => onDelete(grid.id || grid.grid_id)}
                       className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
                       title="删除"
                     >

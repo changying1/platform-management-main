@@ -126,9 +126,11 @@ export const AlarmTable: React.FC<TableProps> = ({
                     </a>
                   ) : (
                     <span style={{ color: "#64748b" }}>
-                      {alarm.recordingStatus === "failed"
+                      {alarm.recordingStatus === "failed" || alarm.recordingStatus === "no_video_segment"
                         ? `失败: ${alarm.recordingError || "生成失败"}`
-                        : "生成中"}
+                        : alarm.recordingStatus === "pending"
+                          ? "生成中"
+                          : "暂无报警视频"}
                     </span>
                   )}
                 </td>

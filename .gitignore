@@ -29,6 +29,12 @@ lerna-debug.log*
 # Logs
 *.log
 
+# Local environment files
+.env
+backend/.env
+frontend/.env
+*.env.local
+
 # Build artifacts
 build/
 

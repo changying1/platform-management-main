@@ -6,10 +6,13 @@ import androidx.annotation.NonNull;
 
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.FenceApi;
-import com.app.myapplication.data.model.CheckStatusRequest;
+import com.app.myapplication.data.model.FenceCreateRequest;
 import com.app.myapplication.data.model.FenceItem;
+import com.app.myapplication.data.model.FenceStats;
+import com.app.myapplication.data.model.FenceUpdateRequest;
 import com.app.myapplication.data.model.ProjectRegion;
 import com.app.myapplication.data.model.SimpleStatusResponse;
+import com.app.myapplication.data.model.WorkTeam;
 
 import java.util.List;
 
@@ -31,52 +34,43 @@ public class FenceRepository {
     }
 
     // -------------------------
-    // Regions
+    // Regions - 只保留获取列表
     // -------------------------
     public void loadRegions(DataCallback<List<ProjectRegion>> cb) {
-        api.getRegions(0, 200).enqueue(wrap(cb));
-    }
-
-    public void getRegions(int skip, int limit, DataCallback<List<ProjectRegion>> cb) {
-        api.getRegions(skip, limit).enqueue(wrap(cb));
-    }
-
-    public void createRegion(ProjectRegion region, DataCallback<ProjectRegion> cb) {
-        api.createRegion(region).enqueue(wrap(cb));
-    }
-
-    public void deleteRegion(int id, DataCallback<SimpleStatusResponse> cb) {
-        api.deleteRegion(id).enqueue(wrap(cb));
+        api.getRegions().enqueue(wrap(cb));
     }
 
     // -------------------------
     // Fences
     // -------------------------
     public void loadFences(DataCallback<List<FenceItem>> cb) {
-        api.getFences(0, 200).enqueue(wrap(cb));
+        api.getFences().enqueue(wrap(cb));
     }
 
-    public void getFences(int skip, int limit, DataCallback<List<FenceItem>> cb) {
-        api.getFences(skip, limit).enqueue(wrap(cb));
+    public void createFence(FenceCreateRequest request, DataCallback<FenceItem> cb) {
+        api.createFence(request).enqueue(wrap(cb));
     }
 
-    public void createFence(FenceItem fence, DataCallback<FenceItem> cb) {
-        api.createFence(fence).enqueue(wrap(cb));
+    public void updateFence(String id, FenceUpdateRequest request, DataCallback<FenceItem> cb) {
+        api.updateFence(id, request).enqueue(wrap(cb));
     }
 
-    public void updateFence(int id, FenceItem fence, DataCallback<FenceItem> cb) {
-        api.updateFence(id, fence).enqueue(wrap(cb));
-    }
-
-    public void deleteFence(int id, DataCallback<SimpleStatusResponse> cb) {
+    public void deleteFence(String id, DataCallback<SimpleStatusResponse> cb) {
         api.deleteFence(id).enqueue(wrap(cb));
     }
 
     // -------------------------
-    // Status check
+    // Stats
     // -------------------------
-    public void checkStatus(String deviceId, double lat, double lng, DataCallback<SimpleStatusResponse> cb) {
-        api.checkStatus(new CheckStatusRequest(deviceId, lat, lng)).enqueue(wrap(cb));
+    public void getStats(DataCallback<FenceStats> cb) {
+        api.getStats().enqueue(wrap(cb));
+    }
+
+    // -------------------------
+    // Teams
+    // -------------------------
+    public void getTeams(DataCallback<List<WorkTeam>> cb) {
+        api.getTeams().enqueue(wrap(cb));
     }
 
     // -------------------------
@@ -86,8 +80,10 @@ public class FenceRepository {
         return new Callback<T>() {
             @Override
             public void onResponse(@NonNull Call<T> call, @NonNull Response<T> response) {
-                if (response.isSuccessful()) {
+                if (response.isSuccessful() && response.body() != null) {
                     cb.onSuccess(response.body());
+                } else if (response.isSuccessful()) {
+                    cb.onError("Empty response body");
                 } else {
                     cb.onError("HTTP " + response.code());
                 }

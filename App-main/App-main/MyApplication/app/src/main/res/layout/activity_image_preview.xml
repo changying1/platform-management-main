@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#111111">
+
+    <ImageView
+        android:id="@+id/iv_alarm_preview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:adjustViewBounds="true"
+        android:contentDescription="报警截图"
+        android:scaleType="fitCenter" />
+
+    <ProgressBar
+        android:id="@+id/pb_alarm_preview"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="center" />
+
+    <ImageButton
+        android:id="@+id/btn_close_preview"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:background="#66000000"
+        android:contentDescription="关闭"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:tint="#FFFFFF" />
+</FrameLayout>

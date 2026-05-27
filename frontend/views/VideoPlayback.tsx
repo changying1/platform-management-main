@@ -44,7 +44,7 @@ import {
   getAlarmScreenshots,
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
-import { API_BASE_URL } from "../src/api/config";
+import { API_BASE_URL, getApiUrl } from "../src/api/config";
 
 // ✅ 轨迹API配置（从TrackPlayback.tsx迁移）
 const TRACK_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
@@ -118,6 +118,101 @@ interface VoiceRecord {
   startTime: string;
   duration: number;
   audioUrl?: string;
+  transcript?: string;
+  batchId?: string | null;
+}
+
+interface TtsQueueJob {
+  id: string;
+  device_phone: string;
+  device_name?: string | null;
+  status: string;
+}
+
+interface TtsBatchResponse {
+  batch_id: string;
+  text: string;
+  request_source?: string | null;
+  operator?: string | null;
+  created_at: string;
+  requested_count: number;
+  jobs: TtsQueueJob[];
+}
+
+interface VoiceRecordResponse {
+  id: number;
+  type: 'broadcast' | 'group' | 'private';
+  from: string;
+  from_role: string;
+  to_names: string[];
+  transcript: string;
+  audio_url: string;
+  duration: number;
+  created_at: string;
+  batch_id?: string | null;
+}
+
+function isTtsBatchResponse(payload: unknown): payload is TtsBatchResponse {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const candidate = payload as Partial<TtsBatchResponse>;
+  return typeof candidate.batch_id === 'string' && Array.isArray(candidate.jobs);
+}
+
+function isTtsBatchResponseList(payload: unknown): payload is TtsBatchResponse[] {
+  return Array.isArray(payload) && payload.every(isTtsBatchResponse);
+}
+
+function getVoiceRecordType(source?: string | null): VoiceRecord['type'] {
+  return source === 'broadcast' ? 'broadcast' : 'group';
+}
+
+function createVoiceRecordFromBatch(batch: TtsBatchResponse): VoiceRecord {
+  return {
+    id: batch.batch_id,
+    type: getVoiceRecordType(batch.request_source),
+    from: batch.operator || '群组通话',
+    fromRole: '语音转文本播报',
+    toNames: batch.jobs.map((job) => job.device_name || job.device_phone),
+    startTime: batch.created_at,
+    duration: Math.max(1, Math.ceil((batch.text || '').length / 4)),
+    transcript: batch.text,
+    batchId: batch.batch_id,
+  };
+}
+
+function isVoiceRecordResponse(payload: unknown): payload is VoiceRecordResponse {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const candidate = payload as Partial<VoiceRecordResponse>;
+  return typeof candidate.id === 'number' && typeof candidate.audio_url === 'string';
+}
+
+function isVoiceRecordResponseList(payload: unknown): payload is VoiceRecordResponse[] {
+  return Array.isArray(payload) && payload.every(isVoiceRecordResponse);
+}
+
+function createVoiceRecordFromResponse(record: VoiceRecordResponse): VoiceRecord {
+  const audioUrl = record.audio_url.startsWith('http')
+    ? record.audio_url
+    : `${API_BASE_URL}${record.audio_url.startsWith('/') ? '' : '/'}${record.audio_url}`;
+
+  return {
+    id: String(record.id),
+    type: record.type || 'group',
+    from: record.from || '群组通话',
+    fromRole: record.from_role || '语音通话',
+    toNames: record.to_names || [],
+    startTime: record.created_at,
+    duration: Math.max(1, record.duration || 1),
+    audioUrl,
+    transcript: record.transcript,
+    batchId: record.batch_id,
+  };
 }
 // 扩展 alarmInfo 类型，添加 screenshot 字段
 interface ExtendedAlarmInfo {
@@ -1655,7 +1750,8 @@ const VoicePlaybackContent = ({
   selectedVoice, setSelectedVoice,
   searchKeyword, setSearchKeyword,
   dateRange, setDateRange,
-  formatDuration, getVoiceTypeInfo
+  formatDuration, getVoiceTypeInfo,
+  voiceRecordsError
 }: any) => {
   const [playingVoice, setPlayingVoice] = useState<VoiceRecord | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1688,6 +1784,11 @@ const VoicePlaybackContent = ({
 
       {/* 通话记录列表 */}
       <div className="flex-1 overflow-auto space-y-3">
+        {voiceRecordsError ? (
+          <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {voiceRecordsError}
+          </div>
+        ) : null}
         {filteredVoices.map((voice: VoiceRecord) => {
           const typeInfo = getVoiceTypeInfo(voice.type);
           return (
@@ -1729,6 +1830,15 @@ const VoicePlaybackContent = ({
               <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">发起人</div><div className="text-white">{selectedVoice.from} ({selectedVoice.fromRole})</div></div>
               <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">接收方</div><div className="text-white">{selectedVoice.toNames.join('、')}</div></div>
               <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">通话时间</div><div className="text-white">{new Date(selectedVoice.startTime).toLocaleString()}</div></div>
+              {selectedVoice.transcript ? (
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <div className="text-sm text-slate-400">语音转文本</div>
+                  <div className="mt-1 whitespace-pre-wrap text-white">{selectedVoice.transcript}</div>
+                </div>
+              ) : null}
+              {selectedVoice.audioUrl ? (
+                <audio controls src={selectedVoice.audioUrl} className="w-full" />
+              ) : null}
               <div className="bg-slate-800/50 rounded-lg p-4">
                 <div className="flex items-center gap-4">
                   <button onClick={() => setIsPlaying(!isPlaying)} className="w-10 h-10 rounded-full bg-cyan-500 flex items-center justify-center">{isPlaying ? <Pause size={18} /> : <Play size={18} />}</button>
@@ -1886,12 +1996,52 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
   const [trackCurrentPage, setTrackCurrentPage] = useState(1);
   
   // 新增：语音数据
-  const [voiceRecords] = useState<VoiceRecord[]>(mockVoiceRecords);
+  const [voiceRecords, setVoiceRecords] = useState<VoiceRecord[]>([]);
+  const [voiceRecordsError, setVoiceRecordsError] = useState('');
   const [selectedVoice, setSelectedVoice] = useState<VoiceRecord | null>(null);
   const [voiceSearchKeyword, setVoiceSearchKeyword] = useState('');
   const [voiceDateRange, setVoiceDateRange] = useState({ start: '', end: '' });
   const [voiceCurrentPage, setVoiceCurrentPage] = useState(1);
   const itemsPerPageTrackVoice = 10;
+
+  useEffect(() => {
+    const loadVoiceRecords = async () => {
+      try {
+        const [voiceResponse, textResponse] = await Promise.all([
+          fetch(getApiUrl('/call/voice-records?limit=100')),
+          fetch(getApiUrl('/call/tts/batches?limit=100')),
+        ]);
+        const voicePayload = (await voiceResponse.json().catch(() => null)) as unknown;
+        const textPayload = (await textResponse.json().catch(() => null)) as unknown;
+
+        if (!voiceResponse.ok || !isVoiceRecordResponseList(voicePayload)) {
+          throw new Error('加载通信回放失败');
+        }
+
+        if (!textResponse.ok || !isTtsBatchResponseList(textPayload)) {
+          throw new Error('鍔犺浇閫氫俊鍥炴斁澶辫触');
+        }
+
+        const audioRecords = voicePayload.map(createVoiceRecordFromResponse);
+        const audioBatchIds = new Set(audioRecords.map((record) => record.batchId).filter(Boolean));
+        const textRecords = textPayload
+          .filter((batch) => !audioBatchIds.has(batch.batch_id))
+          .map(createVoiceRecordFromBatch);
+
+        setVoiceRecords(
+          [...audioRecords, ...textRecords].sort(
+            (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+          )
+        );
+        setVoiceRecordsError('');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '加载通信回放失败';
+        setVoiceRecordsError(message);
+      }
+    };
+
+    loadVoiceRecords();
+  }, []);
     // 获取所有公司列表
     const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
     
@@ -2820,6 +2970,7 @@ onShowScreenshot={async (playback) => {
         setDateRange={setVoiceDateRange}
         formatDuration={formatDuration}
         getVoiceTypeInfo={getVoiceTypeInfo}
+        voiceRecordsError={voiceRecordsError}
       />
     )}
 

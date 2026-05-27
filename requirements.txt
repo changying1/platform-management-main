@@ -66,6 +66,7 @@ et_xmlfile
 evalidate
 executing
 fastapi==0.127.0
+python-multipart
 fastjsonschema
 filelock
 Flask

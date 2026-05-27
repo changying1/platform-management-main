@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ProjectListItem, ProjectDetail, Fence } from "../types";
 import { getApiUrl } from "@/src/api/config";
 
@@ -12,15 +12,34 @@ export function useProjectLogic() {
   );
   const [projectFences, setProjectFences] = useState<Fence[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 获取项目列表
-  const fetchProjects = async (search?: string) => {
+  const searchQueryRef = useRef(searchQuery);
+  const selectedBranchIdRef = useRef(selectedBranchId);
+
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
+
+  useEffect(() => {
+    selectedBranchIdRef.current = selectedBranchId;
+  }, [selectedBranchId]);
+
+  const fetchProjects = async (search?: string, branchId?: number | null) => {
     try {
       setLoading(true);
-      const url = search
-        ? getApiUrl(`/projects/?search=${encodeURIComponent(search)}`)
-        : getApiUrl("/projects/");
+      let url = getApiUrl("/projects/");
+      const params: string[] = [];
+      if (search) {
+        params.push(`search=${encodeURIComponent(search)}`);
+      }
+      if (branchId !== null && branchId !== undefined) {
+        params.push(`branch_id=${branchId}`);
+      }
+      if (params.length > 0) {
+        url += `?${params.join("&")}`;
+      }
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch projects");
       const data = await res.json();
@@ -32,7 +51,10 @@ export function useProjectLogic() {
     }
   };
 
-  // 获取项目详情
+  const triggerSearch = useCallback(() => {
+    fetchProjects(searchQueryRef.current, selectedBranchIdRef.current);
+  }, []);
+
   const fetchProjectDetail = async (projectId: number) => {
     try {
       const res = await fetch(getApiUrl(`/projects/${projectId}`));
@@ -44,7 +66,6 @@ export function useProjectLogic() {
     }
   };
 
-  // 获取项目围栏
   const fetchProjectFences = async (projectId: number) => {
     try {
       const res = await fetch(getApiUrl(`/projects/${projectId}/fences`));
@@ -56,7 +77,6 @@ export function useProjectLogic() {
     }
   };
 
-  // 删除项目
   const deleteProject = async (projectId: number) => {
     if (!confirm("确定要删除此项目吗？")) return;
 
@@ -65,7 +85,7 @@ export function useProjectLogic() {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete project");
-      fetchProjects(searchQuery);
+      fetchProjects(searchQueryRef.current, selectedBranchIdRef.current);
       if (expandedProjectId === projectId) {
         setExpandedProjectId(null);
         setProjectDetail(null);
@@ -77,7 +97,6 @@ export function useProjectLogic() {
     }
   };
 
-  // 展开/收起项目
   const toggleProject = async (projectId: number) => {
     if (expandedProjectId === projectId) {
       setExpandedProjectId(null);
@@ -90,7 +109,6 @@ export function useProjectLogic() {
     }
   };
 
-  // 初始化
   useEffect(() => {
     fetchProjects();
   }, []);
@@ -101,9 +119,12 @@ export function useProjectLogic() {
     projectDetail,
     projectFences,
     searchQuery,
+    selectedBranchId,
     loading,
     setSearchQuery,
+    setSelectedBranchId,
     fetchProjects,
+    triggerSearch,
     deleteProject,
     toggleProject,
     fetchProjectDetail,

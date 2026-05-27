@@ -2,10 +2,13 @@ package com.app.myapplication.data.model;
 
 import java.util.List;
 
+/**
+ * 项目区域数据模型 - 对齐后端字段
+ */
 public class ProjectRegion {
-    public Integer id;
+    public String id;
     public String name;
-
-    // 多边形点：[[lat,lng],[lat,lng],...]
-    public List<double[]> points;
+    public String company;
+    public String project;
+    public List<List<Double>> points; // [[lat,lng],[lat,lng],...]
 }

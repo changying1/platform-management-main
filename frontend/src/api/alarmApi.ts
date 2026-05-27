@@ -34,10 +34,17 @@ export interface AlarmResponse {
   handled_at?: string;
 
   alarm_image_path?: string;
+  image_url?: string;
+  snapshot_url?: string;
 
   recording_path?: string;
+  video_url?: string;
+  clip_url?: string;
   recording_status?: string;
   recording_error?: string;
+  error_message?: string;
+  duration?: number;
+  duration_seconds?: number;
 }
 
 export const alarmApi = {

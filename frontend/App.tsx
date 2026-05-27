@@ -32,7 +32,7 @@ import Dashboard from './views/Dashboard';
 import FenceManagement from './views/Fence';
 import ProjectManagement from './views/Project/index';
 import VideoCenter from './views/VideoCenter';
-import TrackPlayback from './views/TrackPlayback';
+
 import SettingsView from './views/SettingsView';
 import GroupCall from './views/GroupCall';
 import AlarmRecord from './views/AlarmRecord';
@@ -609,7 +609,12 @@ const normalizeRealtimeAlarm = (raw: any) => {
 // --- Main App Component ---
 export default function App() {
   const [activeMenu, setActiveMenu] = useState<MenuKey>(MenuKey.DASHBOARD);
-  const [managementTab, setManagementTab] = useState<'project' | 'person' | 'camera' | 'location' | 'permission'>('person');
+  
+  // 根据用户权限设置管理中心默认tab：高权限显示项目管理，低权限显示网格管理
+  const role = localStorage.getItem('role') || 'HQ';
+  const defaultManagementTab = role === 'HQ' ? 'project' : 'grid';
+  const [managementTab, setManagementTab] = useState<'project' | 'grid' | 'person' | 'camera' | 'location' | 'permission'>(defaultManagementTab);
+  
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   // ✅ 启动时如果本地有 logged_in 或 auth，认为已登录（不再依赖 access_token）
@@ -800,17 +805,12 @@ export default function App() {
 
   <button onClick={() => setActiveMenu(MenuKey.MANAGEMENT)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.MANAGEMENT ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
               <MonitorCog size={24} />
-              <span className="text-xs">信息管理</span>
+              <span className="text-xs">管理中心</span>
             </button>
 
   <button onClick={() => setActiveMenu(MenuKey.SYSTEM_LOG)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SYSTEM_LOG ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
     <FileText size={24} />
     <span className="text-xs">系统日志</span>
-  </button>
-  
-  <button onClick={() => setActiveMenu(MenuKey.GRID)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.GRID ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>
-    <Grid3X3 size={24} />
-    <span className="text-xs">网格化管理</span>
   </button>
   
   <button onClick={() => setActiveMenu(MenuKey.SETTINGS)} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${activeMenu === MenuKey.SETTINGS ? 'text-blue-400 bg-white/10' : 'text-white/60'}`}>

@@ -1,24 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/fullscreen_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000">
+    android:background="#000000">
 
-    <!-- 全屏容器：把原来的 PlayerView 挪到这里 -->
-    <FrameLayout
-        android:id="@+id/full_container"
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/fullscreen_player_view"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        app:show_buffering="when_playing"
+        app:surface_type="texture_view"
+        app:use_controller="true" />
 
-    <!-- 退出全屏按钮（右上角） -->
-    <ImageButton
-        android:id="@+id/btn_exit_fullscreen"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
+    <TextView
+        android:id="@+id/btn_fullscreen_play"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_gravity="center"
+        android:background="#88000000"
+        android:clickable="true"
+        android:elevation="20dp"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="▶"
+        android:textColor="#FFFFFF"
+        android:textSize="56sp" />
+
+    <TextView
+        android:id="@+id/btn_close_fullscreen"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
         android:layout_gravity="top|end"
-        android:layout_margin="12dp"
-        android:background="@android:color/transparent"
-        android:src="@drawable/ic_fullscreen_exit"
-        android:tint="#FFFFFF"
-        android:contentDescription="exit_fullscreen" />
+        android:background="#88000000"
+        android:clickable="true"
+        android:elevation="30dp"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="×"
+        android:textColor="#FFFFFF"
+        android:textSize="32sp" />
 </FrameLayout>

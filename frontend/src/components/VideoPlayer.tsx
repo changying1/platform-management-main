@@ -32,21 +32,18 @@ const RETRY_DELAY_MS = 1200;
 const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
 
 const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry }) => (
-  <div className="absolute inset-0 z-20 grid h-full w-full place-items-center bg-white">
-    <div className="absolute inset-0 bg-white p-8">
-      <img
-        src={CHINA_RAILWAY_LOGO}
-        alt="China Railway logo"
-        className="absolute block h-auto max-h-[70%] w-auto max-w-[70%] object-contain"
-        style={{ left: '50%', top: '38%', transform: 'translate(-50%, -50%)' }}
-      />
-    </div>
+  <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
+    <img
+      src={CHINA_RAILWAY_LOGO}
+      alt="China Railway logo"
+      className="max-h-[70%] max-w-[70%] object-contain"
+    />
     {onRetry && (
       <button
         onClick={onRetry}
         className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
       >
-        Retry
+        重试
       </button>
     )}
   </div>

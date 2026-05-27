@@ -8,8 +8,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:name=".MyApp"
@@ -28,6 +32,10 @@
         <meta-data
             android:name="com.amap.api.v2.apikey"
             android:value="b9839562d62c089adb32adc4a81c5902" />
+
+        <meta-data
+            android:name="EZVIZ_APP_KEY"
+            android:value="${EZVIZ_APP_KEY}" />
 
         <service
             android:name="com.amap.api.location.APSService"
@@ -62,7 +70,8 @@
 
         <activity
             android:name=".ui.video.VideoPlayActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" />
         <activity
             android:name=".ui.video.VideoFilePlayActivity"
             android:exported="false"
@@ -75,8 +84,15 @@
         <activity
             android:name=".ui.call.GroupCallActivity"
             android:exported="false"
-            android:label="语音播报" />
+            android:label="语音通话" />
+        <activity
+            android:name=".ui.call.VoiceRoomActivity"
+            android:exported="false"
+            android:label="语音房间" />
         <activity android:name=".ui.alarm.AlarmRecordsActivity" />
+        <activity
+            android:name=".ui.alarm.ImagePreviewActivity"
+            android:exported="false" />
 
         <activity android:name=".ui.user.UserManagementActivity" />
         <activity android:name=".ui.user.AddUserActivity" />

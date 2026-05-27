@@ -32,6 +32,14 @@ public class SessionManager {
         return sp.getString(K_TOKEN, "");
     }
 
+    public String getUserId() {
+        return sp.getString(K_USER_ID, "");
+    }
+
+    public String getNickname() {
+        return sp.getString(K_NICK, "");
+    }
+
     public void saveSession(LoginResult r) {
         sp.edit()
                 .putString(K_TOKEN, r.token)
@@ -40,6 +48,17 @@ public class SessionManager {
                 .putString(K_USER_ID, r.userId)
                 .putString(K_NICK, r.nickname)
                 .putString(K_AVATAR, r.avatarUrl)
+                .apply();
+    }
+
+    public void saveTestUser(String userId, String nickname) {
+        sp.edit()
+                .putString(K_TOKEN, "test_voice_call")
+                .putString(K_REFRESH, "")
+                .putLong(K_EXPIRES, 0L)
+                .putString(K_USER_ID, userId)
+                .putString(K_NICK, nickname)
+                .putString(K_AVATAR, "")
                 .apply();
     }
 

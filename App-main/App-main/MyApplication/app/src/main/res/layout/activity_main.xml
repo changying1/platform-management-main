@@ -6,12 +6,28 @@
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
+    <TextView
+        android:id="@+id/alarm_banner"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:background="#D32F2F"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- 内容区域：占满 BottomNav 上方 -->
     <FrameLayout
         android:id="@+id/fragment_container"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/alarm_banner"
         app:layout_constraintBottom_toTopOf="@id/bottom_nav"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

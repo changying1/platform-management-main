@@ -113,6 +113,13 @@ type BrowserSpeechRecognition = {
 
 type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
+interface VoiceRecording {
+  blob: Blob;
+  startedAt: string;
+  duration: number;
+  mimeType: string;
+}
+
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') {
     return null;
@@ -143,6 +150,23 @@ function isBatchResponse(payload: unknown): payload is TtsBatchResponse {
 
   const candidate = payload as Partial<TtsBatchResponse>;
   return typeof candidate.batch_id === 'string' && Array.isArray(candidate.jobs);
+}
+
+function isBatchResponseList(payload: unknown): payload is TtsBatchResponse[] {
+  return Array.isArray(payload) && payload.every(isBatchResponse);
+}
+
+function createSendRecordFromBatch(batch: TtsBatchResponse): SendRecord {
+  const targetNames = batch.jobs.map((job) => job.device_name || job.device_phone);
+
+  return {
+    id: batch.batch_id,
+    createdAt: batch.created_at,
+    mode: batch.request_source === 'broadcast' ? 'broadcast' : 'group',
+    text: batch.text,
+    result: batch,
+    targetNames,
+  };
 }
 
 function getPendingCount(result: TtsBatchResponse) {
@@ -310,6 +334,10 @@ export default function GroupCall() {
   const [listening, setListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const voiceRecordingRef = useRef<VoiceRecording | null>(null);
 
   const loadDevices = async () => {
     setLoadingDevices(true);
@@ -341,8 +369,25 @@ export default function GroupCall() {
     }
   };
 
+  const loadTtsHistory = async () => {
+    try {
+      const response = await fetch(getApiUrl(`/call/tts/batches?limit=${MAX_HISTORY}`));
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!response.ok || !isBatchResponseList(payload)) {
+        throw new Error(summarizeError(payload, '加载播报历史失败'));
+      }
+
+      setSendRecords(payload.map(createSendRecordFromBatch));
+      setLatestResult((current) => current ?? payload[0] ?? null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '加载播报历史失败';
+      setSendError(message);
+    }
+  };
+
   useEffect(() => {
     loadDevices();
+    loadTtsHistory();
   }, []);
 
   useEffect(() => {
@@ -352,6 +397,7 @@ export default function GroupCall() {
   useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
+      mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -526,11 +572,82 @@ export default function GroupCall() {
     }
   };
 
-  const stopVoiceRecognition = () => {
-    recognitionRef.current?.stop();
+  const getSupportedAudioMimeType = () => {
+    if (typeof MediaRecorder === 'undefined') {
+      return '';
+    }
+
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
   };
 
-  const startVoiceRecognition = () => {
+  const startVoiceRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      throw new Error('当前浏览器不支持录音保存，请使用 Chrome 或 Edge 浏览器。');
+    }
+
+    mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = getSupportedAudioMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+    audioChunksRef.current = [];
+    recordingStartedAtRef.current = Date.now();
+    voiceRecordingRef.current = null;
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const chunks = audioChunksRef.current;
+      const startedAt = recordingStartedAtRef.current ?? Date.now();
+      const resolvedMimeType = recorder.mimeType || mimeType || 'audio/webm';
+
+      if (chunks.length > 0) {
+        voiceRecordingRef.current = {
+          blob: new Blob(chunks, { type: resolvedMimeType }),
+          startedAt: new Date(startedAt).toISOString(),
+          duration: Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
+          mimeType: resolvedMimeType,
+        };
+      }
+
+      stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current = null;
+      audioChunksRef.current = [];
+      recordingStartedAtRef.current = null;
+    };
+
+    recorder.start();
+    mediaRecorderRef.current = recorder;
+  };
+
+  const stopVoiceRecording = async () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      return voiceRecordingRef.current;
+    }
+
+    return new Promise<VoiceRecording | null>((resolve) => {
+      const originalOnStop = recorder.onstop;
+      recorder.onstop = (event) => {
+        originalOnStop?.call(recorder, event);
+        resolve(voiceRecordingRef.current);
+      };
+      recorder.stop();
+    });
+  };
+
+  const stopVoiceRecognition = async () => {
+    recognitionRef.current?.stop();
+    return stopVoiceRecording();
+  };
+
+  const startVoiceRecognition = async () => {
     const SpeechRecognition = getSpeechRecognitionConstructor();
     if (!SpeechRecognition) {
       setSendError('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器，或改用文本播报。');
@@ -540,6 +657,14 @@ export default function GroupCall() {
     setSendError('');
     setInterimTranscript('');
     recognitionRef.current?.abort();
+
+    try {
+      await startVoiceRecording();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '无法启动录音保存';
+      setSendError(message);
+      return;
+    }
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'zh-CN';
@@ -591,6 +716,7 @@ export default function GroupCall() {
       setSendError(message);
       recognitionRef.current = null;
       setListening(false);
+      stopVoiceRecording().catch(() => undefined);
     }
   };
 
@@ -620,9 +746,41 @@ export default function GroupCall() {
     return payload;
   };
 
+  const uploadVoiceRecord = async (
+    batch: TtsBatchResponse,
+    recording: VoiceRecording,
+    transcript: string
+  ) => {
+    const extension = recording.mimeType.includes('ogg')
+      ? 'ogg'
+      : recording.mimeType.includes('mp4')
+        ? 'm4a'
+        : 'webm';
+    const formData = new FormData();
+
+    formData.append('audio', recording.blob, `group-call-${batch.batch_id}.${extension}`);
+    formData.append('transcript', transcript);
+    formData.append('record_type', sendMode);
+    formData.append('to_names', JSON.stringify(targetDevices.map((device) => device.device_name || device.phone)));
+    formData.append('target_phones', JSON.stringify(targetPhones));
+    formData.append('duration', String(recording.duration));
+    formData.append('batch_id', batch.batch_id);
+    formData.append('operator', '群组通话');
+
+    const response = await fetch(getApiUrl('/call/voice-records'), {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(summarizeError(payload, '保存语音回放失败'));
+    }
+  };
+
   const sendTts = async () => {
+    let voiceRecording: VoiceRecording | null = null;
     if (inputMode === 'voice') {
-      stopVoiceRecognition();
+      voiceRecording = await stopVoiceRecognition();
     }
 
     const text = ttsText.trim();
@@ -648,6 +806,7 @@ export default function GroupCall() {
         body: JSON.stringify({
           text,
           target_phones: targetPhones,
+          request_source: sendMode,
         }),
       });
 
@@ -657,6 +816,10 @@ export default function GroupCall() {
       }
 
       const result = payload;
+      if (inputMode === 'voice' && voiceRecording?.blob.size) {
+        await uploadVoiceRecord(result, voiceRecording, text);
+        voiceRecordingRef.current = null;
+      }
       applyBatchUpdate(result);
       setSendRecords((prev) => [
         {

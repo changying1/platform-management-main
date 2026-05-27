@@ -40,12 +40,12 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         recyclerView.setAdapter(alarmAdapter);
         alarmAdapter.setOnAlarmActionListener(new AlarmAdapter.OnAlarmActionListener() {
             @Override
-            public void onResolve(int alarmId, String severity) {
+            public void onResolve(long alarmId, String severity) {
                 alarmViewModel.resolveAlarm(getApplicationContext(), alarmId, severity);
             }
 
             @Override
-            public void onDelete(int alarmId) {
+            public void onDelete(long alarmId) {
                 alarmViewModel.deleteAlarm(getApplicationContext(), alarmId);
             }
 
@@ -77,9 +77,6 @@ public class AlarmRecordsActivity extends AppCompatActivity {
             public void afterTextChanged(android.text.Editable editable) {}
         });
 
-        // 加载数据
-        alarmViewModel.fetchAlarms(getApplicationContext());
-
         // 观察数据变化并更新 UI
         alarmViewModel.getFilteredAlarms().observe(this, list -> {
             alarmAdapter.submitList(list);
@@ -89,6 +86,20 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         alarmViewModel.getAlarmStats().observe(this, stats -> {
             updateStatsUI(stats); // 更新统计数据UI
         });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 启动轮询
+        alarmViewModel.startPolling(getApplicationContext());
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // 停止轮询
+        alarmViewModel.stopPolling();
     }
 
     private void updateStatsUI(AlarmStats stats) {
@@ -152,9 +163,48 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         Log.d("query", "query: " + query);
         Log.d("selectedStatus", "selectedStatus: " + selectedStatus);
         Log.d("selectedLevel", "selectedLevel: " + selectedLevel);
+
         // 将中文筛选项转换为后端值
-         // 触发更新
-        alarmViewModel.filterData(query, selectedStatus, selectedLevel);
+        String statusFilter = convertStatusToCode(selectedStatus);
+        String levelFilter = convertLevelToCode(selectedLevel);
+
+        Log.d("statusFilter", "statusFilter: " + statusFilter);
+        Log.d("levelFilter", "levelFilter: " + levelFilter);
+
+        // 触发更新
+        alarmViewModel.filterData(query, statusFilter, levelFilter);
+    }
+
+    /**
+     * 将中文状态转换为代码值
+     */
+    private String convertStatusToCode(String chineseStatus) {
+        switch (chineseStatus) {
+            case "待处理":
+                return "pending";
+            case "已处置":
+                return "resolved";
+            case "所有状态":
+            default:
+                return "all";
+        }
+    }
+
+    /**
+     * 将中文级别转换为代码值
+     */
+    private String convertLevelToCode(String chineseLevel) {
+        switch (chineseLevel) {
+            case "高危":
+                return "high";
+            case "警告":
+                return "medium";
+            case "提示":
+                return "low";
+            case "所有级别":
+            default:
+                return "all";
+        }
     }
 
 }

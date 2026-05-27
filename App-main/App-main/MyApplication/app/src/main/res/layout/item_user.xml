@@ -73,7 +73,7 @@
                 android:layout_height="18dp"
                 android:layout_marginStart="10dp"
                 android:layout_marginEnd="6dp"
-                android:src="@drawable/ic_phone"
+                android:src="@drawable/ic_phone1"
                 android:tint="#6D768A"/>
 
             <TextView

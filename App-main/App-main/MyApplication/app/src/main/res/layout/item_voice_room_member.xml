@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="130dp"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="6dp">
+
+    <TextView
+        android:id="@+id/tv_avatar"
+        android:layout_width="58dp"
+        android:layout_height="58dp"
+        android:background="@drawable/bg_voice_room_avatar"
+        android:gravity="center"
+        android:text="语"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:singleLine="true"
+        android:text="成员"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:gravity="center"
+        android:text="呼叫中"
+        android:textColor="#B2F5EA"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/tv_role"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="成员"
+        android:textColor="#78909C"
+        android:textSize="11sp" />
+</LinearLayout>

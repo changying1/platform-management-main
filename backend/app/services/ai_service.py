@@ -44,6 +44,7 @@ class AIService:
 
         # 默认按钮：5秒，特殊名单：300秒；支持按规则覆盖
         current_cooldown = self.cooldown_seconds if cooldown_seconds is None else cooldown_seconds
+        current_cooldown = max(10, current_cooldown)
         
         is_long_cooldown = cooldown_key in ["SAFETY_SIGN_COOLDOWN", "SUPERVISOR_COOLDOWN", "LADDER_COOLDOWN"]
         if is_long_cooldown:
@@ -81,6 +82,7 @@ class AIService:
         last = self.last_alarm_time_map.get(cooldown_key, 0.0)
 
         current_cooldown = self.cooldown_seconds if cooldown_seconds is None else cooldown_seconds
+        current_cooldown = max(10, current_cooldown)
 
         if now - last > current_cooldown:
             self.last_alarm_time_map[cooldown_key] = now

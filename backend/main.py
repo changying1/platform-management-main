@@ -4,6 +4,7 @@ import logging
 import threading
 import asyncio
 import json
+import re
 import subprocess
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -50,6 +51,8 @@ from app.controllers import (
     grid_controller,
     grid_personnel_controller,
     responsibility_unit_controller,
+    log_controller,
+    app_voice_call_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -91,8 +94,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting track cleanup service...")
     track_cleanup_service.start()
     
-    """
-    # 2. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)
+    # 5. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)
     db = SessionLocal()
     try:
         logger.info("Checking video device recording status...")
@@ -103,7 +105,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"Video Recording Check Failed: {e}. (System will continue to run)")
     finally:
         db.close()
-    """
     
     yield
     
@@ -209,30 +210,60 @@ def _get_ffprobe_path() -> str:
     )
     return os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe")
 
+def _get_ffmpeg_path() -> str:
+    return os.getenv(
+        "FFMPEG_PATH",
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "ffmpeg-8.0.1-essentials_build",
+            "bin",
+            "ffmpeg.exe",
+        ),
+    )
+
+def _parse_duration_text(text: str):
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text or "")
+    if not match:
+        return None
+    return int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+
 @lru_cache(maxsize=2048)
 def _is_playable_video_cached(file_path: str, size: int, mtime: float) -> bool:
     if size <= 0:
         return False
 
     ffprobe_path = _get_ffprobe_path()
-    if not os.path.exists(ffprobe_path):
-        return True
-
     try:
+        if os.path.exists(ffprobe_path):
+            result = subprocess.run(
+                [
+                    ffprobe_path,
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=6,
+            )
+            if result.returncode == 0:
+                try:
+                    return float((result.stdout or "").strip()) > 0
+                except Exception:
+                    return False
+            return False
+
+        ffmpeg_path = _get_ffmpeg_path()
         result = subprocess.run(
-            [
-                ffprobe_path,
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                file_path,
-            ],
+            [ffmpeg_path, "-hide_banner", "-i", file_path],
             capture_output=True,
             text=True,
             timeout=6,
         )
-        return result.returncode == 0 and bool((result.stdout or "").strip())
+        duration = _parse_duration_text((result.stderr or "") + "\n" + (result.stdout or ""))
+        return bool(duration and duration > 0)
     except Exception:
         return False
 
@@ -338,11 +369,14 @@ app.include_router(llm_controller.router)
 app.include_router(grid_controller.router)
 app.include_router(grid_personnel_controller.router)
 app.include_router(responsibility_unit_controller.router)
+app.include_router(log_controller.router)
+app.include_router(app_voice_call_controller.router)
+app.include_router(app_voice_call_controller.ws_router)
 
 print("=" * 60)
-print("鉁?AI 鍔╂墜鏈嶅姟宸查泦鎴愬埌涓诲悗绔?")
-print("馃摗 鎺ュ彛鍦板潃: http://localhost:9000/api/ai")
-print("馃攳 鍋ュ悍妫€鏌? http://localhost:9000/api/ai/health")
+print("AI 助手服务已集成到主后端")
+print("接口地址: http://localhost:9000/api/ai")
+print("健康检查: http://localhost:9000/api/ai/health")
 print("=" * 60)
 
 @app.post("/api/keyboard-test/begin")

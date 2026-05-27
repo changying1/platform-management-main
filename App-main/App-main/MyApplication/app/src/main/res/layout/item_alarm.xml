@@ -53,6 +53,40 @@
             android:text="位置: 未命名"
             android:textSize="14sp" />
 
+        <TextView
+            android:id="@+id/tvAlarmContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="报警内容: "
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvPerson"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="人员: 未知"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnImage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="图片" />
+
+            <Button
+                android:id="@+id/btnVideo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="视频" />
+        </LinearLayout>
+
         <!-- 报警级别 -->
         <!-- 报警级别（可下拉选择） -->
         <Spinner

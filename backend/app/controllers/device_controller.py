@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from app.core.database import get_device_collection
+from app.core.database import get_mongo_collection
 from app.schemas.device_schema import (
     DbDeviceCreate,
     DbDeviceOut,
@@ -19,9 +19,11 @@ from app.schemas.device_schema import (
 )
 from app.services.Device.device_service import device_service
 from app.services.jt808_service import jt808_manager
+from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/device", tags=["设备管理"])
 db_router = APIRouter(prefix="/devices", tags=["Mongo Devices"])
+logger = get_logger("DeviceController")
 
 
 class DeviceCreateRequest(BaseModel):
@@ -67,27 +69,57 @@ def _device_to_response(device: dict) -> dict:
     last_update = (
         device.get("lastUpdate")
         or device.get("updatedAt")
+        or device.get("updated_at")
         or device.get("createdAt")
+        or device.get("created_at")
         or ""
     )
+    if isinstance(last_update, datetime):
+        last_update = last_update.isoformat()
+
+    created_at = device.get("createdAt") or device.get("created_at")
+    if isinstance(created_at, datetime):
+        created_at = created_at.isoformat()
+
+    updated_at = device.get("updatedAt") or device.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+
+    is_fault = bool(device.get("is_fault", False))
+    is_online = bool(device.get("is_online", False))
+    status = device.get("status")
+    if not status:
+        status = "fault" if is_fault else "online" if is_online else "offline"
+
+    lat = device.get("lat")
+    if lat is None:
+        lat = device.get("last_lat")
+    if lat is None:
+        lat = 0.0
+
+    lng = device.get("lng")
+    if lng is None:
+        lng = device.get("last_lng")
+    if lng is None:
+        lng = 0.0
 
     return {
-        "device_id": device.get("device_id"),
-        "name": device.get("name"),
-        "lat": device.get("lat", 0.0),
-        "lng": device.get("lng", 0.0),
-        "company": device.get("company", ""),
-        "project": device.get("project", ""),
-        "type": device.get("type", ""),
-        "team": device.get("team", ""),
-        "status": device.get("status", "offline"),
-        "holder": device.get("holder", ""),
-        "holderPhone": device.get("holderPhone", ""),
+        "device_id": str(device.get("device_id") or device.get("device_code") or device.get("id") or ""),
+        "name": device.get("name") or device.get("device_name") or "",
+        "lat": lat,
+        "lng": lng,
+        "company": str(device.get("company") or device.get("branch_id") or ""),
+        "project": str(device.get("project") or device.get("project_id") or ""),
+        "type": device.get("type") or device.get("device_type") or "",
+        "team": device.get("team") or device.get("install_location") or "",
+        "status": status,
+        "holder": str(device.get("holder") or device.get("holder_id") or ""),
+        "holderPhone": device.get("holderPhone") or "",
         "remark": device.get("remark", ""),
-        "lastUpdate": last_update,
-        "createdAt": device.get("createdAt"),
-        "updatedAt": device.get("updatedAt"),
-        "trajectory": device.get("trajectory", []),
+        "lastUpdate": str(last_update or ""),
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+        "trajectory": device.get("trajectory") or [],
     }
 
 def _mongo_device_query(device_id: str) -> dict:
@@ -117,13 +149,17 @@ def _mongo_device_to_response(device: dict) -> dict:
 @router.get("/list", response_model=List[DeviceItem])
 def get_devices():
     """获取所有设备"""
-    devices = device_service.get_devices()
-    return [_device_to_response(device) for device in devices]
+    try:
+        devices = device_service.get_devices()
+        return [_device_to_response(device) for device in devices]
+    except Exception as e:
+        logger.error(f"获取设备列表失败: {e}")
+        return []
 
 
 @router.get("/devices", response_model=List[DeviceItem])
 def get_all_devices():
-    """获取所有设备列表（与fence/devices兼容）"""
+    """获取所有设备列表（与 fence/devices 兼容）"""
     devices = device_service.get_devices()
     result = []
 
@@ -175,7 +211,7 @@ def get_device(device_id: str, hours: Optional[int] = None):
     
     # 如果指定了hours参数，筛选最近hours小时内的轨迹
     if hours is not None and hours > 0 and device.get("trajectory"):
-        # 使用UTC时区的当前时间，与轨迹中的timestamp保持一致
+        # 使用UTC时区的当前时间，与轨迹中的timestamp保持一�?
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         device["trajectory"] = [
             point for point in device["trajectory"]
@@ -241,7 +277,7 @@ def delete_device(device_id: str):
 
 @router.post("/{device_id}/trajectory", response_model=DeviceItem)
 def add_trajectory(device_id: str, payload: TrajectoryPointRequest):
-    """添加轨迹点"""
+    """Add trajectory point."""
     point = TrajectoryPoint(
         timestamp=payload.timestamp,
         lat=payload.lat,
@@ -263,8 +299,8 @@ def get_trajectory(device_id: str, hours: int = 24):
 
 @db_router.get("/", response_model=List[DbDeviceOut])
 def get_db_devices():
-    """获取 MongoDB 定位设备列表，不影响 /video 的 video_device"""
-    collection = get_device_collection()
+    """List MongoDB location devices."""
+    collection = get_mongo_collection("sql_devices")
     mongo_devices = list(collection.find({}))
 
     result = [_mongo_device_to_response(device) for device in mongo_devices]
@@ -276,7 +312,7 @@ def get_db_devices():
         if item.get("stream_url")
     }
 
-    # 合并 JT808 内存里的实时设备状态
+    # 合并 JT808 内存里的实时设备状�?
     for phone, m_dev in jt808_manager.device_store.items():
         phone_str = str(phone)
 
@@ -291,7 +327,7 @@ def get_db_devices():
 
         result.append({
             "id": phone_str,
-            "device_name": m_dev.get("device_name", f"定位器-{phone_str}"),
+            "device_name": m_dev.get("device_name", f"定位�?{phone_str}"),
             "device_type": "JT808",
             "ip_address": "0.0.0.0",
             "port": 8989,
@@ -308,7 +344,7 @@ def get_db_devices():
 @db_router.post("/", response_model=DbDeviceOut)
 def create_db_device(device_in: DbDeviceCreate):
     """新增 MongoDB 定位设备"""
-    collection = get_device_collection()
+    collection = get_mongo_collection("sql_devices")
     data = device_in.model_dump()
 
     custom_id = str(data.pop("id", "")).strip()
@@ -333,7 +369,7 @@ def create_db_device(device_in: DbDeviceCreate):
 @db_router.put("/{device_id}", response_model=DbDeviceOut)
 def update_db_device(device_id: str, device_in: DbDeviceUpdate):
     """更新 MongoDB 定位设备"""
-    collection = get_device_collection()
+    collection = get_mongo_collection("sql_devices")
     update_data = device_in.model_dump(exclude_unset=True)
 
     if not update_data:
@@ -359,7 +395,7 @@ def update_db_device(device_id: str, device_in: DbDeviceUpdate):
 @db_router.delete("/{device_id}")
 def delete_db_device(device_id: str):
     """删除 MongoDB 定位设备"""
-    collection = get_device_collection()
+    collection = get_mongo_collection("sql_devices")
     result = collection.delete_one(_mongo_device_query(device_id))
 
     if result.deleted_count == 0:
@@ -378,8 +414,8 @@ class DevicePositionUpdate(BaseModel):
 
 @router.post("/update-position")
 def update_device_position(payload: DevicePositionUpdate):
-    """更新设备位置"""
-    # 使用现有的update_device方法来更新设备位置
+    """Update device position."""
+    # 使用现有的update_device方法来更新设备位�?
     device_data = DeviceUpdate(
         lat=payload.lat,
         lng=payload.lng

@@ -1,22 +1,23 @@
 package com.app.myapplication.ui.alarm;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
+
 import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.model.Alarm;
-import com.app.myapplication.data.model.AlarmUpdateBody;
-import com.app.myapplication.ui.alarm.AlarmStats;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
@@ -24,7 +25,7 @@ import retrofit2.Response;
 public class AlarmViewModel extends ViewModel {
 
     private final MutableLiveData<List<Alarm>> alarmData = new MutableLiveData<>();
-    private final MutableLiveData<List<Alarm>> filteredAlarms = new MutableLiveData<>();  // 存储筛选后的数据
+    private final MutableLiveData<List<Alarm>> filteredAlarms = new MutableLiveData<>();
     private final MutableLiveData<AlarmStats> alarmStats = new MutableLiveData<>();
     private final MutableLiveData<Boolean> loading = new MutableLiveData<>(false);
 
@@ -32,6 +33,48 @@ public class AlarmViewModel extends ViewModel {
     private final MutableLiveData<String> statusFilter = new MutableLiveData<>("all");
     private final MutableLiveData<String> levelFilter = new MutableLiveData<>("all");
     private final MutableLiveData<String> searchTerm = new MutableLiveData<>("");
+
+    // 轮询相关
+    private Handler pollingHandler;
+    private Runnable pollingRunnable;
+    private static final long POLLING_INTERVAL = 30000; // 30秒
+    private Context appContext;
+
+    public AlarmViewModel() {
+        pollingHandler = new Handler(Looper.getMainLooper());
+    }
+
+    @Override
+    protected void onCleared() {
+        super.onCleared();
+        stopPolling();
+    }
+
+    // 开始轮询
+    public void startPolling(Context context) {
+        this.appContext = context.getApplicationContext();
+        stopPolling(); // 先停止之前的轮询
+
+        pollingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                fetchAlarms(appContext);
+                pollingHandler.postDelayed(this, POLLING_INTERVAL);
+            }
+        };
+
+        // 立即执行一次，然后开始轮询
+        pollingRunnable.run();
+        Log.d("AlarmViewModel", "Started polling alarms every " + POLLING_INTERVAL + "ms");
+    }
+
+    // 停止轮询
+    public void stopPolling() {
+        if (pollingHandler != null && pollingRunnable != null) {
+            pollingHandler.removeCallbacks(pollingRunnable);
+            Log.d("AlarmViewModel", "Stopped polling alarms");
+        }
+    }
 
     // 获取报警数据
     public LiveData<List<Alarm>> getAlarmData() {
@@ -48,55 +91,51 @@ public class AlarmViewModel extends ViewModel {
         return alarmStats;
     }
 
+    // 获取加载状态
+    public LiveData<Boolean> getLoading() {
+        return loading;
+    }
+
     // 加载报警数据
     public void fetchAlarms(Context context) {
         AlarmApi alarmApi = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
-        alarmApi.getAlarms().enqueue(new Callback<List<Map<String, Object>>>() {
+        alarmApi.getAlarms().enqueue(new Callback<List<Alarm>>() {
             @Override
-            public void onResponse(Call<List<Map<String, Object>>> call, Response<List<Map<String, Object>>> response) {
-                if (response.isSuccessful()) {
-                    List<Map<String, Object>> alarmMaps = response.body();
-                    List<Alarm> alarms = new ArrayList<>();
+            public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
+                loading.setValue(false);
 
-                    // 后处理数据，检查 deviceId 和其他字段
-                    if (alarmMaps != null) {
-                        for (Map<String, Object> map : alarmMaps) {
-                            Alarm alarm = new Alarm();
-                            alarm.setId(map.get("id") != null ? Integer.parseInt(map.get("id").toString()) : 0);
-                            alarm.setDeviceId(map.get("device_id") != null ? map.get("device_id").toString() : "");
-                            alarm.setDescription(map.get("msg") != null ? map.get("msg").toString() : "");
-                            alarm.setAlarmType(map.get("type") != null ? map.get("type").toString() : "");
-                            alarm.setStatus(map.get("status") != null ? map.get("status").toString() : "");
-                            alarm.setSeverity(map.get("severity") != null ? map.get("severity").toString() : "");
-                            alarm.setTimestamp(map.get("timestamp") != null ? map.get("timestamp").toString() : "");
-                            
-                            // 打印日志检查 deviceId 和状态字段
-                            Log.d("AlarmViewModel", "Device ID: " + alarm.getDeviceId());
+                if (response.isSuccessful() && response.body() != null) {
+                    List<Alarm> alarms = response.body();
+                    Log.d("AlarmViewModel", "Fetched " + alarms.size() + " alarms");
 
-                            // 转换报警状态和级别
-                            alarm.setStatus(translateStatus(alarm.getStatus()));
-                            alarm.setSeverity(translateSeverity(alarm.getSeverity()));
-                            
-                            alarms.add(alarm);
+                    // 打印围栏相关报警
+                    for (Alarm alarm : alarms) {
+                        if ("fence".equals(alarm.getAlarmSource()) ||
+                            "fence".equals(alarm.getSourceType()) ||
+                            (alarm.getAlarmType() != null && alarm.getAlarmType().contains("fence"))) {
+                            Log.d("AlarmViewModel", "Fence alarm: " + alarm.getAlarmType() +
+                                    " - " + alarm.getDisplayAlarmType() +
+                                    " - Device: " + alarm.getDeviceId());
                         }
-
-                        alarmData.setValue(alarms);
-                        filteredAlarms.setValue(alarms); // ✅ 必须加：默认展示全量
-
-                        // 计算统计数据
-                        AlarmStats stats = calculateStats(alarms);
-                        alarmStats.setValue(stats);  // 更新统计数据
                     }
+
+                    alarmData.setValue(alarms);
+                    applyFilters();
+
+                    // 计算统计数据
+                    AlarmStats stats = calculateStats(alarms);
+                    alarmStats.setValue(stats);
+                } else {
+                    Log.e("AlarmViewModel", "Failed to fetch alarms: " + response.code());
                 }
-                loading.setValue(false);  // 请求结束
             }
 
             @Override
-            public void onFailure(Call<List<Map<String, Object>>> call, Throwable t) {
-                loading.setValue(false); // 请求结束
-                // 处理失败
+            public void onFailure(Call<List<Alarm>> call, Throwable t) {
+                loading.setValue(false);
+                Log.e("AlarmViewModel", "Error fetching alarms", t);
             }
         });
     }
@@ -105,94 +144,82 @@ public class AlarmViewModel extends ViewModel {
     private AlarmStats calculateStats(List<Alarm> alarms) {
         int total = alarms.size();
         int pending = 0;
-        int processed = 0;
-        int critical = 0;
+        int resolved = 0;
+        int high = 0;
+        int medium = 0;
+        int low = 0;
 
-        // 统计不同状态的报警数量
         for (Alarm alarm : alarms) {
-            String sev = alarm.getSeverity();
-            if ("待处理".equals(alarm.getStatus())) {
+            String status = alarm.getDisplayStatus();
+            String severity = alarm.getDisplaySeverity();
+
+            if ("pending".equals(status)) {
                 pending++;
-            } else if ("已处置".equals(alarm.getStatus())) {
-                processed++;
+            } else if ("resolved".equals(status)) {
+                resolved++;
             }
-            if (sev != null) {
-                sev = sev.trim();
-                if ("high".equalsIgnoreCase(sev) || "高危".equals(sev) ) {
-                    critical++;
-                }
+
+            if ("high".equals(severity)) {
+                high++;
+            } else if ("medium".equals(severity)) {
+                medium++;
+            } else if ("low".equals(severity)) {
+                low++;
             }
         }
 
-        // 返回统计数据
-        return new AlarmStats(total, pending, processed, critical);
+        return new AlarmStats(total, pending, resolved, high, medium, low);
     }
 
-    // 格式化报警编号
-
-    // 转换状态
-    private String translateStatus(String status) {
-        switch (status) {
-            case "pending":
-                return "待处理";
-            case "resolved":
-                return "已处置";
-            default:
-                return status;
+    // 应用筛选
+    private void applyFilters() {
+        List<Alarm> allAlarms = alarmData.getValue();
+        if (allAlarms == null) {
+            filteredAlarms.setValue(new ArrayList<>());
+            return;
         }
-    }
 
-    // 转换级别
-    private String translateSeverity(String severity) {
-        switch (severity) {
-            case "high":
-                return "高危";
-            case "medium":
-                return "警告";
-            case "low":
-                return "提示";
-            default:
-                return severity;
-        }
-    }
+        String status = statusFilter.getValue();
+        String level = levelFilter.getValue();
+        String search = searchTerm.getValue();
 
-    // 筛选数据
-    public void filterData(String query, String status, String level) {
+        if (status == null) status = "all";
+        if (level == null) level = "all";
+        if (search == null) search = "";
+
         List<Alarm> filteredList = new ArrayList<>();
-        List<Alarm> allAlarms = alarmData.getValue();  // 获取所有的报警数据
 
-        if (allAlarms != null) {
-            Log.d("selectedStatus", "jing lai le ");
-            for (Alarm alarm : allAlarms) {
-                // 确保没有 null 值，若为 null 则设置为默认空字符串
-                String searchQuery = query != null ? query.toLowerCase() : "";
-                String alarmStatus = alarm.getStatus() != null ? alarm.getStatus().toLowerCase() : "";
-                String alarmSeverity = alarm.getSeverity() != null ? alarm.getSeverity().toLowerCase() : "";
-                // 检查 DeviceId 是否为 null，若为 null 则用空字符串替代
-                String deviceId = alarm.getDeviceId() != null ? alarm.getDeviceId().toLowerCase() : "";
-                Log.d("alarmStatus", "alarmStatus: " + alarmStatus);
-                Log.d("alarmSeverity", "alarmSeverity: " + alarmSeverity);
-                Log.d("status", "status: " + status);
-                Log.d("level", "level: " + level);
-                // 比较查询内容、状态、级别、设备 ID
-                boolean matchesQuery = deviceId.contains(searchQuery); // 只对设备 ID 执行查询匹配
-                boolean matchesStatus = status.equals("所有状态") || alarmStatus.equals(status); // 状态匹配
-                boolean matchesLevel = level.equals("所有级别") || alarmSeverity.equals(level); // 级别匹配
+        for (Alarm alarm : allAlarms) {
+            boolean matchesStatus = "all".equals(status) ||
+                    status.equals(alarm.getDisplayStatus());
 
-                // 当查询条件、状态和级别都匹配时，加入到筛选结果中
-                if (matchesQuery &&matchesStatus && matchesLevel) {
-                    filteredList.add(alarm);
-                }
+            boolean matchesLevel = "all".equals(level) ||
+                    level.equals(alarm.getDisplaySeverity());
+
+            String searchLower = search.toLowerCase();
+            boolean matchesSearch = search.isEmpty() ||
+                    (alarm.getDeviceId() != null && alarm.getDeviceId().toLowerCase().contains(searchLower)) ||
+                    (alarm.getDescription() != null && alarm.getDescription().toLowerCase().contains(searchLower)) ||
+                    (alarm.getDisplayAlarmType() != null && alarm.getDisplayAlarmType().toLowerCase().contains(searchLower));
+
+            if (matchesStatus && matchesLevel && matchesSearch) {
+                filteredList.add(alarm);
             }
-        }else {
-            Log.d("selectedStatus", "cao nima ");
         }
 
-        // 更新筛选后的数据
-       filteredAlarms.setValue(filteredList);
+        filteredAlarms.setValue(filteredList);
     }
 
-    public void deleteAlarm(Context context, int alarmId) {
+    // 筛选数据（供外部调用）
+    public void filterData(String query, String status, String level) {
+        searchTerm.setValue(query);
+        statusFilter.setValue(status);
+        levelFilter.setValue(level);
+        applyFilters();
+    }
+
+    // 删除报警
+    public void deleteAlarm(Context context, long alarmId) {
         AlarmApi alarmApi = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
@@ -201,75 +228,68 @@ public class AlarmViewModel extends ViewModel {
             public void onResponse(Call<Void> call, Response<Void> response) {
                 loading.setValue(false);
 
-                if (!response.isSuccessful()) {
-                    Log.e("AlarmViewModel", "delete failed: " + response.code());
-                    return;
+                if (response.isSuccessful()) {
+                    Log.d("AlarmViewModel", "Deleted alarm: " + alarmId);
+                    // 重新获取数据
+                    fetchAlarms(context);
+                } else {
+                    Log.e("AlarmViewModel", "Failed to delete alarm: " + response.code());
                 }
-
-                List<Alarm> all = alarmData.getValue();
-                if (all == null) return;
-
-                // 从全量数据中移除
-                List<Alarm> newAll = new ArrayList<>();
-                for (Alarm a : all) {
-                    if (a.getId() != alarmId) newAll.add(a);
-                }
-
-                alarmData.setValue(newAll);
-
-                // 如果你是用 filteredAlarms 展示，需要同步刷新一下
-                filteredAlarms.setValue(newAll);
-
-                // 统计也顺便更新
-                alarmStats.setValue(calculateStats(newAll));
             }
 
             @Override
             public void onFailure(Call<Void> call, Throwable t) {
                 loading.setValue(false);
-                Log.e("AlarmViewModel", "delete error", t);
+                Log.e("AlarmViewModel", "Error deleting alarm", t);
             }
         });
     }
-    public void resolveAlarm(Context context, int alarmId, String severity) {
+
+    // 解决报警
+    public void resolveAlarm(Context context, long alarmId, String severity) {
         AlarmApi api = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
-        // 后端需要：status=resolved，severity=high/medium/low
-        AlarmUpdateBody body = new AlarmUpdateBody("resolved", severity);
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", "resolved");
+        if (severity != null) {
+            body.put("severity", severity);
+        }
 
         api.updateAlarm(alarmId, body).enqueue(new Callback<Alarm>() {
             @Override
             public void onResponse(Call<Alarm> call, Response<Alarm> response) {
                 loading.setValue(false);
-                if (!response.isSuccessful()) {
-                    Log.e("AlarmViewModel", "resolve failed: " + response.code());
-                    return;
+                if (response.isSuccessful()) {
+                    Log.d("AlarmViewModel", "Resolved alarm: " + alarmId);
+                    // 重新获取数据
+                    fetchAlarms(context);
+                } else {
+                    Log.e("AlarmViewModel", "Failed to resolve alarm: " + response.code());
                 }
-                // ✅ 最稳妥：成功后重新拉取后端，确保状态/级别同步
-                fetchAlarms(context);
             }
 
             @Override
             public void onFailure(Call<Alarm> call, Throwable t) {
                 loading.setValue(false);
-                Log.e("AlarmViewModel", "resolve error", t);
+                Log.e("AlarmViewModel", "Error resolving alarm", t);
             }
         });
     }
 
-
-
     // 更新筛选器状态
     public void setStatusFilter(String status) {
         statusFilter.setValue(status);
+        applyFilters();
     }
 
     public void setLevelFilter(String level) {
         levelFilter.setValue(level);
+        applyFilters();
     }
 
     public void setSearchTerm(String search) {
         searchTerm.setValue(search);
+        applyFilters();
     }
 }

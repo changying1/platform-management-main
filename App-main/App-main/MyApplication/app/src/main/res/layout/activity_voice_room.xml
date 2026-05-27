@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B1720"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="16dp">
+
+        <ImageButton
+            android:id="@+id/iv_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Back"
+            android:src="@android:drawable/ic_menu_revert"
+            app:tint="#E6FFFB" />
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:text="Voice Room"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Connecting..."
+            android:textColor="#B2F5EA"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="00:00"
+            android:textColor="#FFFFFF"
+            android:textSize="42sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_member_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="0 members"
+            android:textColor="#8FA7B2"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rv_members"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingStart="18dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="12dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="126dp"
+        android:background="#102A36"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <LinearLayout
+            android:id="@+id/btn_mute"
+            style="@style/VoiceRoomControlButton">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_mic"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/tv_mute"
+                style="@style/VoiceRoomControlText"
+                android:text="Mute" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btn_speaker"
+            style="@style/VoiceRoomControlButton">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_speaker"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/tv_speaker"
+                style="@style/VoiceRoomControlText"
+                android:text="Speaker" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btn_refresh"
+            style="@style/VoiceRoomControlButton">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@android:drawable/ic_popup_sync"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                style="@style/VoiceRoomControlText"
+                android:text="Refresh" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btn_hangup"
+            style="@style/VoiceRoomControlButton">
+
+            <ImageView
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:src="@drawable/ic_phone_off"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                style="@style/VoiceRoomControlText"
+                android:text="Hang up" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

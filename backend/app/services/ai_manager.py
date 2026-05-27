@@ -15,6 +15,7 @@ from app.services.video_service import VideoService, RECORD_SEGMENT_SECONDS, REC
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from PIL import Image, ImageDraw, ImageFont
 from app.utils.logger import get_logger
+from app.core.ws_manager import push_alarm_threadsafe
 
 
 logger = get_logger("AIManager")
@@ -24,7 +25,7 @@ class AIManager:
     def __init__(self):
         self.active_monitors = {}
         self.device_rules = {}
-        self.alarm_cooldown_seconds = max(1, int(os.getenv("AI_ALARM_TRIGGER_COOLDOWN_SECONDS", "120")))
+        self.alarm_cooldown_seconds = max(10, int(os.getenv("AI_ALARM_TRIGGER_COOLDOWN_SECONDS", "10")))
         self.alarm_last_trigger_time = {}
         self.alarm_state_lock = threading.Lock()
         # 全局共享冷却时间映射，解决重启监控或多路干扰导致的冷却失效
@@ -306,7 +307,7 @@ class AIManager:
                             algo_key,
                             alarm_type or algo_key,
                         )
-                        if not self._should_trigger_alarm(device_id, alarm_type or algo_key):
+                        if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
                             self._emit_alarm_log(
                                 "info",
                                 "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
@@ -539,7 +540,7 @@ class AIManager:
                             algo_key,
                             alarm_type or algo_key,
                         )
-                        if not self._should_trigger_alarm(device_id, alarm_type or algo_key):
+                        if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
                             self._emit_alarm_log(
                                 "info",
                                 "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
@@ -611,11 +612,34 @@ class AIManager:
             )
             return ""
 
-    def _should_trigger_alarm(self, device_id, alarm_type):
+    def _alarm_target_key(self, details):
+        if not isinstance(details, dict):
+            return ""
+        boxes = details.get("boxes")
+        first_box = boxes[0] if isinstance(boxes, list) and boxes else {}
+        person = first_box.get("person") if isinstance(first_box, dict) else {}
+        if not isinstance(person, dict):
+            person = {}
+        return str(
+            person.get("id")
+            or person.get("_id")
+            or first_box.get("personnel_id")
+            or first_box.get("target_id")
+            or first_box.get("personName")
+            or person.get("username")
+            or person.get("name")
+            or ""
+        ).strip()
+
+    def _should_trigger_alarm(self, device_id, algo_type, alarm_type, details=None):
         if not alarm_type:
             return True
 
-        cooldown_key = f"{device_id}:{alarm_type}"
+        target_key = self._alarm_target_key(details)
+        key_parts = [str(device_id), str(algo_type or ""), str(alarm_type)]
+        if target_key:
+            key_parts.append(target_key)
+        cooldown_key = ":".join(key_parts)
         now = time.time()
 
         with self.alarm_state_lock:
@@ -731,21 +755,8 @@ class AIManager:
                 )
                 return
 
-            # 从系统配置读取告警前后录制时长
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
-            surround_minutes = 1
-            if os.path.exists(config_path):
-                try:
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                        surround_minutes = config.get('alarmVideoSurroundMinutes', 1)
-                except:
-                    pass
-            surround_seconds = int(surround_minutes * 60)
-            
-            # 保存报警前后各指定秒数的视频段
-            clip_after_seconds = surround_seconds
-            clip_before_seconds = surround_seconds
+            clip_before_seconds = int(os.getenv("ALARM_VIDEO_CLIP_BEFORE_SECONDS", "30"))
+            clip_after_seconds = int(os.getenv("ALARM_VIDEO_CLIP_AFTER_SECONDS", "30"))
             mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
             self._emit_alarm_log(
@@ -760,11 +771,14 @@ class AIManager:
             )
             time.sleep(wait_seconds)
 
-            trigger_time = datetime.now() - timedelta(seconds=wait_seconds)
+            trigger_time = alarm_time if isinstance(alarm_time, datetime) else datetime.now() - timedelta(seconds=wait_seconds)
+            if getattr(trigger_time, "tzinfo", None) is not None:
+                trigger_time = trigger_time.astimezone().replace(tzinfo=None)
             clip_start = trigger_time - timedelta(seconds=clip_before_seconds)
             clip_end = trigger_time + timedelta(seconds=clip_after_seconds)
 
             last_error = None
+            failure_status = "no_video_segment"
             for attempt in range(1, 3):
                 try:
                     self._emit_alarm_log(
@@ -789,6 +803,9 @@ class AIManager:
                         "saved",
                         result.get("recording_path"),
                         None,
+                        duration_seconds=result.get("duration_seconds"),
+                        start_time=result.get("start_time"),
+                        end_time=result.get("end_time"),
                     )
                     print(f"✅ 报警视频已保存 (alarm_id={alarm_id}): {result.get('recording_path')}")
                     self._emit_alarm_log(
@@ -802,6 +819,11 @@ class AIManager:
                     return
                 except Exception as e:
                     last_error = e
+                    error_text = str(e)
+                    if "合并失败" in error_text or "裁剪失败" in error_text or "生成的视频文件" in error_text:
+                        failure_status = "video_failed"
+                    else:
+                        failure_status = "no_video_segment"
                     self._emit_alarm_log(
                         "warning",
                         "[ALARM_VIDEO_RETRY] trace_id={} alarm_id={} device_id={} attempt={} error={}",
@@ -814,7 +836,7 @@ class AIManager:
                     if attempt < 2:
                         time.sleep(max(8, RECORD_SEGMENT_SAFE_MARGIN_SECONDS))
 
-            self._update_alarm_recording_status(alarm_id, "failed", None, str(last_error))
+            self._update_alarm_recording_status(alarm_id, failure_status, None, str(last_error))
             print(f"❌ 报警视频保存失败 (alarm_id={alarm_id}): {last_error}")
             self._emit_alarm_log(
                 "error",
@@ -827,7 +849,16 @@ class AIManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _update_alarm_recording_status(self, alarm_id: int, status: str, path: str | None, error: str | None):
+    def _update_alarm_recording_status(
+        self,
+        alarm_id: int,
+        status: str,
+        path: str | None,
+        error: str | None,
+        duration_seconds: int | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ):
         try:
             record = self._find_alarm_doc_by_id(alarm_id)
             if not record:
@@ -837,6 +868,9 @@ class AIManager:
                 "recording_status": status,
                 "recording_path": path or "",
                 "recording_error": (error[:255] if error else ""),
+                "duration_seconds": duration_seconds or 0,
+                "recording_start_time": start_time,
+                "recording_end_time": end_time,
             }
 
             self._update_alarm_fields(alarm_id, updates)
@@ -921,6 +955,7 @@ class AIManager:
             }
 
             self._alarm_collection().insert_one(payload)
+            saved_payload = self._find_alarm_doc_by_id(next_id) or payload
 
             print(f"[alarm] save db: device_id={device_id}, image_path={image_path}, alarm_type={alarm_type}, alarm_msg={alarm_msg}")
             self._emit_alarm_log(
@@ -941,6 +976,7 @@ class AIManager:
             )
 
             print(f"✅ 报警已保存 (ID: {next_id})")
+            push_alarm_threadsafe(saved_payload)
             return next_id
 
         except Exception as e:

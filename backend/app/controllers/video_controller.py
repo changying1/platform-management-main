@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.core.database import get_db
 # 统一使用 video_schema 以匹配模块结构
 from app.schemas.video_schema import (
@@ -56,7 +56,7 @@ class TempCacheTriggerRequest(BaseModel):
     force: bool = True
 
 @router.post("/ai/start")
-async def start_ai(req: AIMonitorRequest, db: Session = Depends(get_db)):
+async def start_ai(req: AIMonitorRequest, db=Depends(get_db)):
     """开启 AI 监控"""
     device_id = str(req.device_id or "").strip()
     if not device_id:
@@ -150,7 +150,7 @@ def get_ai_rules():
     }
 
 @router.post("/add_camera", response_model=VideoOut)
-def add_camera_dynamically(camera: CameraCreateRequest, db: Session = Depends(get_db)):
+def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db)):
     """
     Dynamically adds a new camera by commanding the media server
     and then creating a record in the database.
@@ -161,12 +161,12 @@ def add_camera_dynamically(camera: CameraCreateRequest, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/", response_model=List[VideoOut])
-def read_videos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db)):
     """获取所有视频设备列表"""
     return service.get_videos(db, skip=skip, limit=limit)
 
 @router.post("/", response_model=VideoOut)
-def create_video(video: VideoCreate, db: Session = Depends(get_db)):
+def create_video(video: VideoCreate, db=Depends(get_db)):
     """手动创建/添加视频设备"""
     try:
         return service.create_video(db, video)
@@ -197,7 +197,7 @@ def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest):
     return {"status": "ok", "rules": rules}
 
 @router.put("/{video_id}", response_model=VideoOut)
-def update_video(video_id: int, video: VideoUpdate, db: Session = Depends(get_db)):
+def update_video(video_id: int, video: VideoUpdate, db=Depends(get_db)):
     """更新视频设备信息"""
     updated_video = service.update_video(db, video_id, video)
     if not updated_video:
@@ -205,7 +205,7 @@ def update_video(video_id: int, video: VideoUpdate, db: Session = Depends(get_db
     return updated_video
 
 @router.delete("/{video_id}")
-def delete_video(video_id: int, db: Session = Depends(get_db)):
+def delete_video(video_id: int, db=Depends(get_db)):
     """删除视频设备"""
     success = service.delete_video(db, video_id)
     if not success:
@@ -213,7 +213,7 @@ def delete_video(video_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 @router.post("/sync")
-def sync_devices(db: Session = Depends(get_db)):
+def sync_devices(db=Depends(get_db)):
     """从海康威视等平台同步设备列表"""
     service.sync_hikvision_devices(db)
     return {"message": "Sync started"}
@@ -226,9 +226,9 @@ def get_ezviz_health():
 
 
 @router.get("/stream/{video_id}", response_model=StreamUrlResponse)
-def get_video_stream(video_id: int, db: Session = Depends(get_db)):
+def get_video_stream(video_id: int, protocol: Optional[str] = None, db: Session = Depends(get_db)):
     try:
-        info = service.get_stream_info(db, video_id)  # ← 调用 service 层方法
+        info = service.get_stream_info(db, video_id, protocol=protocol)  # ← 调用 service 层方法
         if not info or not info.get("url"):
             raise HTTPException(status_code=404, detail="Stream URL not found or device offline")
         return info
@@ -296,7 +296,7 @@ def list_saved_playback_videos(video_id: int, limit: int = 120):
 
 
 @router.get("/{video_id}/monitoring-summary")
-def get_monitoring_summary(video_id: int, db: Session = Depends(get_db)):
+def get_monitoring_summary(video_id: int, db=Depends(get_db)):
     """获取设备流量监测摘要（已使用/阈值/剩余）"""
     try:
         summary = service.get_monitoring_summary(db, video_id)
@@ -328,7 +328,7 @@ def list_saved_alarm_videos(video_id: int, limit: int = 120):
 
 
 @router.post("/time/sync/{video_id}")
-def sync_camera_time(video_id: int, force: bool = True, db: Session = Depends(get_db)):
+def sync_camera_time(video_id: int, force: bool = True, db=Depends(get_db)):
     """手动触发摄像头时间同步（默认强制同步）"""
     result = service.sync_camera_time_if_needed(db, video_id, force=force)
     if result.get("status") == "error":
@@ -371,7 +371,7 @@ def _mjpeg_frame_generator(rtsp_url: str):
 
 
 @router.get("/mjpeg/{video_id}")
-def get_video_mjpeg(video_id: int, db: Session = Depends(get_db)):
+def get_video_mjpeg(video_id: int, db=Depends(get_db)):
     """
     提供简易 MJPEG 实时预览流（multipart/x-mixed-replace）。
     适合快速演示，但占用 CPU，生产建议接入 MediaMTX/ZLMediaKit 或 HLS/WebRTC。
@@ -382,7 +382,7 @@ def get_video_mjpeg(video_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(_mjpeg_frame_generator(url), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @router.post("/ptz/{video_id}")
-def ptz_control(video_id: int, body: PTZControlRequest, db: Session = Depends(get_db)):
+def ptz_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
     """云台控制接口，前端发送方向和速度，然后通过 ONVIF 控制摄像头"""
     try:
         # 添加日志
@@ -398,7 +398,7 @@ def ptz_control(video_id: int, body: PTZControlRequest, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"PTZ 控制失败: {e}")
 
 @router.post("/ptz/{video_id}/start")
-def ptz_start(video_id: int, body: PTZControlRequest, db: Session = Depends(get_db)):
+def ptz_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
     """云台持续移动（按下开始），前端按键按下时调用"""
     try:
         service.ptz_start_move(db, video_id, body.direction.value, body.speed or 0.5)
@@ -410,7 +410,7 @@ def ptz_start(video_id: int, body: PTZControlRequest, db: Session = Depends(get_
 
 
 @router.post("/ptz/{video_id}/stop")
-def ptz_stop(video_id: int, db: Session = Depends(get_db)):
+def ptz_stop(video_id: int, db=Depends(get_db)):
     """云台停止移动（松开停止），前端按键松开时调用"""
     try:
         service.ptz_stop_move(db, video_id)
@@ -422,7 +422,7 @@ def ptz_stop(video_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/zoom/{video_id}")
-def zoom_control(video_id: int, body: PTZControlRequest, db: Session = Depends(get_db)):
+def zoom_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
     """变焦单次控制接口"""
     try:
         direction = body.direction.value
@@ -438,7 +438,7 @@ def zoom_control(video_id: int, body: PTZControlRequest, db: Session = Depends(g
 
 
 @router.post("/zoom/{video_id}/start")
-def zoom_start(video_id: int, body: PTZControlRequest, db: Session = Depends(get_db)):
+def zoom_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
     """变焦持续控制开始（按下开始）"""
     try:
         direction = body.direction.value
@@ -454,7 +454,7 @@ def zoom_start(video_id: int, body: PTZControlRequest, db: Session = Depends(get
 
 
 @router.post("/zoom/{video_id}/stop")
-def zoom_stop(video_id: int, db: Session = Depends(get_db)):
+def zoom_stop(video_id: int, db=Depends(get_db)):
     """变焦持续控制停止（松开停止）"""
     try:
         service.zoom_stop_move(db, video_id)
@@ -466,7 +466,7 @@ def zoom_stop(video_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/ptz/{video_id}/presets", response_model=list[PTZPresetItem])
-def get_presets(video_id: int, db: Session = Depends(get_db)):
+def get_presets(video_id: int, db=Depends(get_db)):
     """获取摄像头预置点列表"""
     try:
         return service.list_presets(db, video_id)
@@ -477,7 +477,7 @@ def get_presets(video_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/presets", response_model=PTZPresetItem)
-def create_preset(video_id: int, body: PresetCreateRequest, db: Session = Depends(get_db)):
+def create_preset(video_id: int, body: PresetCreateRequest, db=Depends(get_db)):
     """保存当前云台位置为预置点"""
     try:
         return service.set_preset(db, video_id, body.name, body.token)
@@ -488,7 +488,7 @@ def create_preset(video_id: int, body: PresetCreateRequest, db: Session = Depend
 
 
 @router.post("/ptz/{video_id}/presets/{preset_token}/goto")
-def goto_preset(video_id: int, preset_token: str, body: PresetGotoRequest, db: Session = Depends(get_db)):
+def goto_preset(video_id: int, preset_token: str, body: PresetGotoRequest, db=Depends(get_db)):
     """跳转到指定预置点"""
     try:
         return service.goto_preset(db, video_id, preset_token, body.speed or 0.5)
@@ -499,7 +499,7 @@ def goto_preset(video_id: int, preset_token: str, body: PresetGotoRequest, db: S
 
 
 @router.delete("/ptz/{video_id}/presets/{preset_token}")
-def delete_preset(video_id: int, preset_token: str, db: Session = Depends(get_db)):
+def delete_preset(video_id: int, preset_token: str, db=Depends(get_db)):
     """删除预置点"""
     try:
         return service.remove_preset(db, video_id, preset_token)
@@ -510,7 +510,7 @@ def delete_preset(video_id: int, preset_token: str, db: Session = Depends(get_db
 
 
 @router.post("/ptz/{video_id}/presets/bulk-delete", response_model=PresetBulkDeleteResponse)
-def bulk_delete_presets(video_id: int, body: PresetBulkDeleteRequest, db: Session = Depends(get_db)):
+def bulk_delete_presets(video_id: int, body: PresetBulkDeleteRequest, db=Depends(get_db)):
     """批量删除预置点（减少前端逐条 DELETE 导致的 CORS 预检刷屏）"""
     try:
         return service.remove_presets_bulk(db, video_id, body.preset_tokens)
@@ -521,7 +521,7 @@ def bulk_delete_presets(video_id: int, body: PresetBulkDeleteRequest, db: Sessio
 
 
 @router.post("/ptz/{video_id}/cruise/start")
-def start_cruise(video_id: int, body: CruiseStartRequest, db: Session = Depends(get_db)):
+def start_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_db)):
     """启动常规巡航（按预置点列表轮巡）"""
     try:
         return service.start_cruise(db, video_id, body.preset_tokens, body.dwell_seconds or 8.0, body.rounds)
@@ -550,7 +550,7 @@ def cruise_status(video_id: int):
 
 
 @router.post("/ptz/{video_id}/cruise/start-current")
-def start_current_cruise(video_id: int, db: Session = Depends(get_db)):
+def start_current_cruise(video_id: int, db=Depends(get_db)):
     """使用当前保存的配置启动巡航"""
     try:
         return service.start_current_cruise(db, video_id)
@@ -561,7 +561,7 @@ def start_current_cruise(video_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/ptz/{video_id}/cruise/current")
-def save_current_cruise(video_id: int, body: CruiseStartRequest, db: Session = Depends(get_db)):
+def save_current_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_db)):
     """保存当前巡航配置"""
     try:
         return service.save_current_cruise_config(
@@ -578,7 +578,7 @@ def save_current_cruise(video_id: int, body: CruiseStartRequest, db: Session = D
 
 
 @router.get("/ptz/{video_id}/cruise/current")
-def get_current_cruise(video_id: int, db: Session = Depends(get_db)):
+def get_current_cruise(video_id: int, db=Depends(get_db)):
     """获取当前巡航配置"""
     try:
         return service.get_current_cruise_config(db, video_id)

@@ -1,254 +1,316 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#EEF2FF"
-    android:paddingTop="12dp"
-    android:paddingLeft="12dp"
-    android:paddingRight="12dp">
+    android:orientation="vertical"
+    android:background="#0f172a">
 
-    <!-- 顶部浮层卡片（新增 wrapper，不改变 topBar 的 id） -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/topBarCard"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        app:cardBackgroundColor="#FFFFFF"
-        app:cardCornerRadius="18dp"
-        app:cardElevation="4dp"
-        app:cardUseCompatPadding="true"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:background="#1e293b">
 
-        <!-- 你的 topBar 保持原 id，不删不改 -->
-        <LinearLayout
-            android:id="@+id/topBar"
-            android:layout_width="match_parent"
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_back"
+            android:contentDescription="返回" />
+
+        <TextView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:background="@android:color/transparent"
-            android:orientation="vertical"
-            android:padding="12dp">
+            android:layout_weight="1"
+            android:text="轨迹回放"
+            android:textColor="#ffffff"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center" />
 
-            <!-- 第 1 行：关键词 + 搜索（胶囊） -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+        <View
+            android:layout_width="40dp"
+            android:layout_height="40dp" />
+    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/etKeyword"
-                    android:layout_width="0dp"
-                    android:layout_height="42dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_pill_input"
-                    android:hint="设备号/人员"
-                    android:paddingLeft="14dp"
-                    android:paddingRight="14dp"
-                    android:singleLine="true"
-                    android:textColor="#1F2A44"
-                    android:textColorHint="#8B94A7" />
+    <!-- 设备选择栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical">
 
-                <Button
-                    android:id="@+id/btnSearch"
-                    android:layout_width="88dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="10dp"
-                    android:background="@drawable/bg_pill_primary"
-                    android:stateListAnimator="@null"
-                    android:text="搜索"
-                    android:textColor="#FFFFFF"
-                    android:textSize="14sp" />
-            </LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="设备:"
+            android:textColor="#94a3b8"
+            android:textSize="14sp" />
 
-            <!-- 第 2 行：日期范围（胶囊） -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+        <Spinner
+            android:id="@+id/spinnerDevice"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_spinner" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="日期："
-                    android:textColor="#6D768A"
-                    android:textSize="14sp" />
+        <Button
+            android:id="@+id/btnLoadTrack"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="加载轨迹"
+            android:textSize="12sp"
+            android:backgroundTint="#06b6d4"
+            android:textColor="#ffffff" />
+    </LinearLayout>
 
-                <TextView
-                    android:id="@+id/tvStartDate"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_marginStart="10dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_pill_soft"
-                    android:gravity="center"
-                    android:paddingLeft="10dp"
-                    android:paddingRight="10dp"
-                    android:text="2026-01-04"
-                    android:textColor="#1F2A44"
-                    android:textSize="14sp" />
+    <!-- 时间范围选择 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="8dp"
+        android:gravity="center_vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginLeft="10dp"
-                    android:layout_marginRight="10dp"
-                    android:text="—"
-                    android:textColor="#A0A9BC"
-                    android:textSize="16sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="时间:"
+            android:textColor="#94a3b8"
+            android:textSize="14sp" />
 
-                <TextView
-                    android:id="@+id/tvEndDate"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_pill_soft"
-                    android:gravity="center"
-                    android:paddingLeft="10dp"
-                    android:paddingRight="10dp"
-                    android:text="2026-01-04"
-                    android:textColor="#1F2A44"
-                    android:textSize="14sp" />
-            </LinearLayout>
+        <TextView
+            android:id="@+id/tvTimeRange"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="近24小时"
+            android:textColor="#ffffff"
+            android:textSize="14sp" />
 
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
+        <Spinner
+            android:id="@+id/spinnerTimeRange"
+            android:layout_width="120dp"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_spinner" />
+    </LinearLayout>
 
-    <!-- 地图区域：给一点圆角边框+留白（不改 mapView id） -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/mapCard"
-        android:layout_width="0dp"
+    <!-- 地图容器 -->
+    <FrameLayout
+        android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="6dp"
-        android:layout_marginBottom="6dp"
-        app:cardCornerRadius="18dp"
-        app:cardElevation="2dp"
-        app:cardUseCompatPadding="true"
-        app:cardBackgroundColor="#FFFFFF"
-        app:layout_constraintTop_toBottomOf="@id/topBarCard"
-        app:layout_constraintBottom_toTopOf="@id/playbackCard"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:layout_weight="1">
 
-        <org.osmdroid.views.MapView
+        <com.amap.api.maps.MapView
             android:id="@+id/mapView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#FFFFFF" />
+            android:layout_height="match_parent" />
 
-    </androidx.cardview.widget.CardView>
-
-    <!-- 底部浮层卡片（新增 wrapper，不改变 playbackPanel 的 id） -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/playbackCard"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
-        app:cardBackgroundColor="#FFFFFF"
-        app:cardCornerRadius="22dp"
-        app:cardElevation="2dp"
-        app:cardUseCompatPadding="true"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.0"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <!-- 你的 playbackPanel 保持原 id，不删不改 -->
+        <!-- 轨迹信息浮层 -->
         <LinearLayout
-            android:id="@+id/playbackPanel"
+            android:id="@+id/layoutTrackInfo"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@android:color/transparent"
+            android:layout_gravity="top"
+            android:layout_margin="12dp"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="12dp"
+            android:background="#cc1e293b"
+            android:visibility="gone">
 
-            <!-- 时间行：弱化灰字（更像参考图） -->
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tvDeviceInfo"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:textColor="#ffffff"
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/tvTimeStart"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="开始"
-                    android:textColor="#7A8499"
-                    android:textSize="12sp" />
+            <TextView
+                android:id="@+id/tvTrackStats"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#94a3b8"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
 
-                <TextView
-                    android:id="@+id/tvTimeEnd"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="end"
-                    android:text="结束"
-                    android:textColor="#7A8499"
-                    android:textSize="12sp" />
-            </LinearLayout>
+    <!-- 播放控制栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="#1e293b">
+
+        <!-- 进度条 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvProgress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 / 0"
+                android:textColor="#94a3b8"
+                android:textSize="12sp" />
 
             <SeekBar
-                android:id="@+id/seekProgress"
-                android:layout_width="match_parent"
+                android:id="@+id/seekBarProgress"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:max="1000" />
-
-            <!-- 控制行：统一圆形/胶囊，间距更自然 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:layout_marginTop="10dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <ImageButton
-                    android:id="@+id/btnRestart"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:background="@drawable/bg_circle_soft"
-                    android:contentDescription="重新开始"
-                    android:scaleType="centerInside"
-                    android:src="@drawable/ic_restart"
-                    app:tint="#475066" />
-
-                <ImageButton
-                    android:id="@+id/btnPlayPause"
-                    android:layout_width="58dp"
-                    android:layout_height="58dp"
-                    android:layout_marginLeft="18dp"
-                    android:layout_marginRight="18dp"
-                    android:background="@drawable/bg_circle_primary"
-                    android:contentDescription="播放暂停"
-                    android:scaleType="centerInside"
-                    android:src="@android:drawable/ic_media_play"
-                    app:tint="#FFFFFF" />
-
-                <Spinner
-                    android:id="@+id/spSpeed"
-                    android:layout_width="46dp"
-                    android:layout_height="44dp"
-                    android:background="@drawable/bg_pill_soft"
-                    android:popupBackground="#FFFFFF" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-            </LinearLayout>
-
+                android:layout_weight="1"
+                android:layout_marginHorizontal="8dp"
+                android:progressTint="#06b6d4"
+                android:thumbTint="#06b6d4" />
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+        <!-- 时间显示 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="4dp">
+
+            <TextView
+                android:id="@+id/tvStartTime"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#64748b"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/tvCurrentTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#06b6d4"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvEndTime"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:textColor="#64748b"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <!-- 控制按钮 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="12dp"
+            android:gravity="center">
+
+            <ImageButton
+                android:id="@+id/btnFirst"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_first"
+                android:contentDescription="首点" />
+
+            <ImageButton
+                android:id="@+id/btnPrev10"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_prev_10"
+                android:contentDescription="后退10点" />
+
+            <ImageButton
+                android:id="@+id/btnPrev"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_prev"
+                android:contentDescription="后退1点" />
+
+            <ImageButton
+                android:id="@+id/btnPlayPause"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_marginHorizontal="16dp"
+                android:background="@drawable/bg_play_button"
+                android:src="@drawable/ic_play"
+                android:contentDescription="播放/暂停" />
+
+            <ImageButton
+                android:id="@+id/btnNext"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_next"
+                android:contentDescription="前进1点" />
+
+            <ImageButton
+                android:id="@+id/btnNext10"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_next_10"
+                android:contentDescription="前进10点" />
+
+            <ImageButton
+                android:id="@+id/btnLast"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_track_last"
+                android:contentDescription="末点" />
+        </LinearLayout>
+
+        <!-- 速度选择 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="倍速:"
+                android:textColor="#94a3b8"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/spinnerSpeed"
+                android:layout_width="80dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_spinner_small" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/tvCurrentSpeed"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#94a3b8"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

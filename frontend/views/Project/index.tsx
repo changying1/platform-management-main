@@ -21,12 +21,12 @@ export default function ProjectManagement() {
 
   const handleCreateSuccess = () => {
     setShowCreateModal(false);
-    logic.fetchProjects(logic.searchQuery);
+    logic.triggerSearch();
   };
 
   const handleEditSuccess = () => {
     setShowEditModal(false);
-    logic.fetchProjects(logic.searchQuery);
+    logic.triggerSearch();
     if (logic.expandedProjectId) {
       logic.fetchProjectDetail(logic.expandedProjectId);
       logic.fetchProjectFences(logic.expandedProjectId);
@@ -36,8 +36,20 @@ export default function ProjectManagement() {
   return (
     <div className="h-full w-full flex flex-col p-6 overflow-hidden">
       {/* 标题和操作栏 */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold text-white">项目管理</h1>
+
+        {/* 搜索栏 */}
+        <div className="flex-1">
+          <SearchBar
+            searchQuery={logic.searchQuery}
+            selectedBranchId={logic.selectedBranchId}
+            onSearchChange={logic.setSearchQuery}
+            onBranchChange={logic.setSelectedBranchId}
+            onSearch={logic.triggerSearch}
+          />
+        </div>
+
         <button
           onClick={() => setShowCreateModal(true)}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors"
@@ -46,13 +58,6 @@ export default function ProjectManagement() {
           新建项目
         </button>
       </div>
-
-      {/* 搜索栏 */}
-      <SearchBar
-        searchQuery={logic.searchQuery}
-        onSearchChange={logic.setSearchQuery}
-        onSearch={() => logic.fetchProjects(logic.searchQuery)}
-      />
 
       {/* 项目列表 */}
       <div className="flex-1 overflow-y-auto">

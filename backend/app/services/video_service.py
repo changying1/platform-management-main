@@ -9,6 +9,7 @@ from app.utils.logger import get_logger
 import requests
 import os
 import glob
+import re
 import time
 import threading
 import subprocess
@@ -96,6 +97,7 @@ TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_R
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
+MIN_RECORD_SEGMENT_BYTES = int(os.getenv("VIDEO_MIN_RECORD_SEGMENT_BYTES", str(64 * 1024)))
 PLAYBACK_ARCHIVE_WINDOW_HOURS = max(1, int(os.getenv("PLAYBACK_ARCHIVE_WINDOW_HOURS", "3")))
 PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
                                       int(os.getenv("PLAYBACK_ARCHIVE_LOOKBACK_HOURS", "24")))
@@ -1503,8 +1505,11 @@ class VideoService:
             "access_token": None,
         }
 
-    def _get_stream_info_ezviz(self, db_video: VideoDevice) -> dict:
-        protocol_name = self._normalize_stream_protocol(getattr(db_video, "stream_protocol", None))
+    def _get_stream_info_ezviz(self, db_video: VideoDevice, protocol: Optional[str] = None) -> dict:
+        requested_protocol = (protocol or "").strip().lower()
+        if requested_protocol and requested_protocol not in STREAM_PROTOCOL_MAP:
+            raise ValueError(f"UNSUPPORTED_PROTOCOL: {requested_protocol}")
+        protocol_name = self._normalize_stream_protocol(requested_protocol or getattr(db_video, "stream_protocol", None))
         channel_no = int(getattr(db_video, "channel_no", None) or 1)
         device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
         if not device_serial:
@@ -1515,7 +1520,7 @@ class VideoService:
         #     preferred_code = 2  # HLS
         # else:
         preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
-        protocol_candidates = [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
+        protocol_candidates = [preferred_code] if requested_protocol == "hls" else [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
         # protocol_candidates = [preferred_code] + [c for c in [2, 4, 3, 1] if c != preferred_code]
 
         url = ""
@@ -1541,18 +1546,34 @@ class VideoService:
                 continue
 
             data = body.get("data") or {}
-            url = (
-                    data.get("url")
-                    or data.get("liveAddress")
-                    or data.get("hls")
-                    or data.get("rtmp")
-                    or data.get("ezopen")
-                    or ""
-            )
+            if requested_protocol == "hls":
+                explicit_hls = str(data.get("hls") or "").strip()
+                if ".m3u8" in explicit_hls.lower():
+                    url = explicit_hls
+                else:
+                    url = next(
+                        (
+                            str(data.get(key) or "").strip()
+                            for key in ("url", "liveAddress")
+                            if ".m3u8" in str(data.get(key) or "").lower()
+                        ),
+                        "",
+                    )
+            else:
+                url = (
+                        data.get("url")
+                        or data.get("liveAddress")
+                        or data.get("hls")
+                        or data.get("rtmp")
+                        or data.get("ezopen")
+                        or ""
+                )
             if url:
                 break
 
         if not url:
+            if requested_protocol == "hls":
+                raise ValueError("UPSTREAM_ERROR: 萤石未返回真正的 HLS(.m3u8) 地址")
             raise last_error or ValueError("UPSTREAM_ERROR: 平台未返回可用播放地址")
 
         lower_url = str(url).lower()
@@ -1565,6 +1586,9 @@ class VideoService:
             resolved_play_type = "rtmp"
         elif ".flv" in lower_url:
             resolved_play_type = "flv"
+
+        if requested_protocol == "hls" and (resolved_play_type != "hls" or lower_url.startswith("ezopen://")):
+            raise ValueError("UPSTREAM_ERROR: 萤石未返回可用于模拟器播放的 HLS 地址")
 
         # ✅ 关键：转换 ezopen 为 HLS 地址
         # if url and url.startswith("ezopen://"):
@@ -1752,13 +1776,13 @@ class VideoService:
             logger.warning(f"EZVIZ PTZ stop failed video_id={db_video.id}: {first_error}")
             raise ValueError(f"PTZ_STOP_FAILED: {first_error}")
 
-    def get_stream_info(self, db: Session, video_id: int):
+    def get_stream_info(self, db: Session, video_id: int, protocol: Optional[str] = None):
         db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return None
 
         if self._is_ezviz_access(db_video):
-            return self._get_stream_info_ezviz(db_video)
+            return self._get_stream_info_ezviz(db_video, protocol=protocol)
         return self._get_stream_info_local(db_video)
 
     def _create_ptz_and_media(self, db: Session, video_id: int):
@@ -2508,9 +2532,42 @@ class VideoService:
         )
 
     def _get_ffprobe_path(self) -> str:
+        configured_path = os.getenv("FFPROBE_PATH")
+        if configured_path:
+            return configured_path
+
+        ffprobe_from_path = shutil.which("ffprobe")
+        if ffprobe_from_path:
+            return ffprobe_from_path
+
         ffmpeg_path = self._get_ffmpeg_path()
-        ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe")
-        return ffprobe_path
+        ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+        return os.path.join(os.path.dirname(ffmpeg_path), ffprobe_name)
+
+    def _get_record_segment_seconds(self) -> int:
+        config = self._get_system_config()
+        raw_seconds = config.get("videoSegmentSeconds")
+        if raw_seconds is not None:
+            try:
+                seconds = int(float(raw_seconds))
+                return max(1, seconds)
+            except Exception:
+                logger.warning(f"Invalid videoSegmentSeconds={raw_seconds!r}, fallback={RECORD_SEGMENT_SECONDS}")
+
+        raw_minutes = config.get("videoSegmentMinutes")
+        if raw_minutes is not None:
+            try:
+                minutes = float(raw_minutes)
+                if minutes >= 10:
+                    logger.warning(
+                        f"videoSegmentMinutes={minutes:g} looks like seconds; using {RECORD_SEGMENT_SECONDS}s"
+                    )
+                    return RECORD_SEGMENT_SECONDS
+                return max(1, int(minutes * 60))
+            except Exception:
+                logger.warning(f"Invalid videoSegmentMinutes={raw_minutes!r}, fallback={RECORD_SEGMENT_SECONDS}")
+
+        return RECORD_SEGMENT_SECONDS
 
     def _get_system_config(self) -> dict:
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
@@ -2727,8 +2784,7 @@ class VideoService:
             input_options.extend(["-rtsp_transport", "tcp"])
 
         config = self._get_system_config()
-        segment_minutes = config.get('videoSegmentMinutes', 0.5)
-        segment_seconds = int(segment_minutes * 60)
+        segment_seconds = self._get_record_segment_seconds()
         
         quality_params = {
             'high': ['-b:v', '4M', '-c:v', 'libx264'],
@@ -2821,46 +2877,80 @@ class VideoService:
         except Exception:
             return None
 
-    def _is_segment_usable(self, file_path: str, min_age_seconds: int = 6) -> bool:
-        """过滤未写完/损坏分段，避免 concat 阶段出现 moov atom not found。"""
-        try:
-            if not os.path.exists(file_path):
-                return False
+    def _parse_duration_text(self, text: str) -> Optional[float]:
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text or "")
+        if not match:
+            return None
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        seconds = float(match.group(3))
+        return hours * 3600 + minutes * 60 + seconds
 
-            # 录像按固定分段时长切片，至少等待一个完整分段周期再参与拼接，
-            # 避免把仍在写入中的当前分段加入 concat。
-            seg_start = self._parse_segment_start(file_path)
-            if seg_start:
-                if (datetime.now() - seg_start).total_seconds() < (
-                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
-                    return False
-
-            stat = os.stat(file_path)
-            if stat.st_size < 64 * 1024:
-                return False
-
-            age = time.time() - stat.st_mtime
-            if age < min_age_seconds:
-                return False
-
-            ffprobe_path = self._get_ffprobe_path()
-            if not os.path.exists(ffprobe_path):
-                # 没有 ffprobe 时至少保证文件不是“正在写入”状态
-                return True
-
+    def _probe_video_duration(self, file_path: str) -> Optional[float]:
+        ffprobe_path = self._get_ffprobe_path()
+        if os.path.exists(ffprobe_path):
             cmd = [
                 ffprobe_path,
                 "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name",
+                "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 file_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
-            if not (result.returncode == 0 and bool((result.stdout or "").strip())):
-                return False
+            if result.returncode == 0:
+                try:
+                    duration = float((result.stdout or "").strip())
+                    if duration > 0:
+                        return duration
+                except Exception:
+                    pass
 
-            # 二次校验：快速解码 1 秒视频，尽早剔除明显损坏分段
+            logger.warning(
+                f"ffprobe duration failed file={file_path} returncode={result.returncode} "
+                f"stderr={(result.stderr or '').strip()[-800:]}"
+            )
+            return None
+
+        ffmpeg_path = self._get_ffmpeg_path()
+        probe_cmd = [ffmpeg_path, "-hide_banner", "-i", file_path]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        duration = self._parse_duration_text((result.stderr or "") + "\n" + (result.stdout or ""))
+        if duration and duration > 0:
+            return duration
+
+        logger.warning(
+            f"video duration probe failed file={file_path} ffprobe_missing={ffprobe_path} "
+            f"returncode={result.returncode} stderr={(result.stderr or '').strip()[-800:]}"
+        )
+        return None
+
+    def _validate_recording_segment(self, file_path: str, min_age_seconds: int = 6) -> tuple[bool, Optional[float], str]:
+        try:
+            if not os.path.exists(file_path):
+                return False, None, "file_not_found"
+
+            stat = os.stat(file_path)
+            if stat.st_size <= 0:
+                return False, None, "file_empty"
+            if stat.st_size < MIN_RECORD_SEGMENT_BYTES:
+                return False, None, f"file_too_small:{stat.st_size}"
+
+            seg_start = self._parse_segment_start(file_path)
+            if seg_start:
+                if (datetime.now() - seg_start).total_seconds() < (
+                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                    return False, None, "segment_still_writing"
+
+            age = time.time() - stat.st_mtime
+            if age < min_age_seconds:
+                return False, None, "file_recently_modified"
+
+            duration = self._probe_video_duration(file_path)
+            if duration is None:
+                return False, None, "duration_unreadable"
+            if duration <= 0:
+                return False, duration, f"duration_invalid:{duration}"
+
             ffmpeg_path = self._get_ffmpeg_path()
             decode_check_cmd = [
                 ffmpeg_path,
@@ -2872,9 +2962,19 @@ class VideoService:
                 "-",
             ]
             decode_result = subprocess.run(decode_check_cmd, capture_output=True, text=True)
-            return decode_result.returncode == 0
-        except Exception:
-            return False
+            if decode_result.returncode != 0:
+                return False, duration, f"decode_failed:{(decode_result.stderr or '').strip()[-300:]}"
+
+            return True, duration, ""
+        except Exception as exc:
+            return False, None, f"validate_exception:{exc}"
+
+    def _is_segment_usable(self, file_path: str, min_age_seconds: int = 6) -> bool:
+        """过滤未写完/损坏分段，避免 concat 阶段出现 moov atom not found。"""
+        ok, _, reason = self._validate_recording_segment(file_path, min_age_seconds=min_age_seconds)
+        if not ok:
+            logger.debug(f"recording segment skipped file={file_path} reason={reason}")
+        return ok
 
     def ensure_all_recordings(self, db: Session):
         docs = list(self._video_collection().find({}, {"_id": 0}))
@@ -3027,9 +3127,9 @@ class VideoService:
         return "/static/" + rel_path.replace("\\", "/")
 
     def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
-        tuple[str, datetime, datetime]]:
+        tuple[str, datetime, datetime, float]]:
         seen = set()
-        candidates: list[tuple[str, datetime, datetime]] = []
+        candidates: list[tuple[str, datetime, datetime, float]] = []
         
         for record_root in self._get_all_record_roots():
             device_root = os.path.join(record_root, str(video_id))
@@ -3045,16 +3145,51 @@ class VideoService:
                 if not seg_start:
                     continue
 
-                seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
-                if seg_end <= start_dt or seg_start >= end_dt:
-                    continue
-                if not self._is_segment_usable(seg_path):
+                ok, duration_seconds, reason = self._validate_recording_segment(seg_path)
+                if not ok or not duration_seconds:
+                    logger.warning(
+                        f"recording segment invalid video_id={video_id} file={seg_path} reason={reason}"
+                    )
                     continue
 
-                candidates.append((seg_path, seg_start, seg_end))
+                seg_end = seg_start + timedelta(seconds=duration_seconds)
+                if seg_end <= start_dt or seg_start >= end_dt:
+                    continue
+
+                candidates.append((seg_path, seg_start, seg_end, duration_seconds))
                 seen.add(seg_filename)
 
         return candidates
+
+    def _validate_segment_coverage(
+            self,
+            segments: list[tuple[str, datetime, datetime, float]],
+            start_dt: datetime,
+            end_dt: datetime,
+    ) -> Optional[str]:
+        if not segments:
+            return "常规录像分段不可用：未找到有效分段"
+
+        sorted_segments = sorted(segments, key=lambda item: item[1])
+        tolerance = timedelta(seconds=2)
+        cursor = start_dt
+        for seg_path, seg_start, seg_end, duration_seconds in sorted_segments:
+            if seg_end <= cursor:
+                continue
+            if seg_start > cursor + tolerance:
+                return (
+                    "常规录像分段不可用：录像窗口不连续，"
+                    f"缺口={cursor.strftime('%Y-%m-%d %H:%M:%S')}~{seg_start.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+            if seg_end > cursor:
+                cursor = seg_end
+            if cursor + tolerance >= end_dt:
+                return None
+
+        return (
+            "常规录像分段不可用：有效录像不足，"
+            f"覆盖到={cursor.strftime('%Y-%m-%d %H:%M:%S')}，需要到={end_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
     def _floor_to_archive_slot(self, dt: datetime) -> datetime:
         floored_hour = dt.hour - (dt.hour % PLAYBACK_ARCHIVE_WINDOW_HOURS)
@@ -3129,19 +3264,21 @@ class VideoService:
                 seg_filename = os.path.basename(seg_path)
                 if seg_filename in seen:
                     continue
-                if not self._is_segment_usable(seg_path):
+                ok, duration_seconds, reason = self._validate_recording_segment(seg_path)
+                if not ok or not duration_seconds:
+                    logger.debug(f"recording segment skipped file={seg_path} reason={reason}")
                     continue
 
                 seg_start = self._parse_segment_start(seg_path)
                 if not seg_start:
                     continue
 
-                seg_end = seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                seg_end = seg_start + timedelta(seconds=duration_seconds)
                 segments.append({
                     "name": seg_filename,
                     "start_time": seg_start.strftime("%Y-%m-%d %H:%M:%S"),
                     "end_time": seg_end.strftime("%Y-%m-%d %H:%M:%S"),
-                    "duration_seconds": RECORD_SEGMENT_SECONDS,
+                    "duration_seconds": int(duration_seconds),
                     "size_bytes": int(os.path.getsize(seg_path)),
                     "web_path": self._to_static_web_path(seg_path),
                     "source": os.path.basename(os.path.dirname(record_root))
@@ -3162,7 +3299,11 @@ class VideoService:
 
         segments = self._collect_segments_for_timerange(video_id, start_dt, end_dt)
         if not segments:
-            raise ValueError("所选时间段没有可用录像分段")
+            raise ValueError("常规录像分段不可用：未找到有效分段")
+
+        coverage_error = self._validate_segment_coverage(segments, start_dt, end_dt)
+        if coverage_error:
+            raise ValueError(coverage_error)
 
         if output_type == "alarm":
             output_root = self._get_alarm_video_root()
@@ -3185,8 +3326,9 @@ class VideoService:
         final_output_path = os.path.join(output_root, final_name)
 
         try:
+            input_files = [seg_path for seg_path, _, _, _ in segments]
             with open(concat_list_path, "w", encoding="utf-8") as f:
-                for seg_path, _, _ in segments:
+                for seg_path in input_files:
                     safe_seg_path = seg_path.replace("\\", "/").replace("'", "\\'")
                     f.write(f"file '{safe_seg_path}'\n")
 
@@ -3215,12 +3357,11 @@ class VideoService:
                 concat_fallback_proc = subprocess.run(concat_fallback_cmd, capture_output=True, text=True)
                 if concat_fallback_proc.returncode != 0:
                     logger.error(
-                        "Concat failed video_id=%s start=%s end=%s copy_err=%s reencode_err=%s",
-                        video_id,
-                        start_dt,
-                        end_dt,
-                        (concat_proc.stderr or "").strip()[-1200:],
-                        (concat_fallback_proc.stderr or "").strip()[-1200:],
+                        f"Concat failed video_id={video_id} start={start_dt} end={end_dt} "
+                        f"copy_returncode={concat_proc.returncode} reencode_returncode={concat_fallback_proc.returncode} "
+                        f"copy_err={(concat_proc.stderr or '').strip()[-4000:]} "
+                        f"reencode_err={(concat_fallback_proc.stderr or '').strip()[-4000:]} "
+                        f"concat_list={concat_list_path} input_files={input_files}"
                     )
                     raise ValueError("录像分段合并失败")
 
@@ -3251,10 +3392,22 @@ class VideoService:
                 ]
                 trim_fallback_proc = subprocess.run(trim_fallback_cmd, capture_output=True, text=True)
                 if trim_fallback_proc.returncode != 0:
+                    logger.error(
+                        f"Trim failed video_id={video_id} start={start_dt} end={end_dt} "
+                        f"offset={clip_offset:.3f} duration={clip_duration:.3f} "
+                        f"copy_returncode={trim_proc.returncode} reencode_returncode={trim_fallback_proc.returncode} "
+                        f"copy_err={(trim_proc.stderr or '').strip()[-4000:]} "
+                        f"reencode_err={(trim_fallback_proc.stderr or '').strip()[-4000:]} "
+                        f"input_files={input_files}"
+                    )
                     raise ValueError("录像裁剪失败")
 
             if not os.path.exists(final_output_path) or os.path.getsize(final_output_path) == 0:
                 raise ValueError("生成的视频文件无效")
+
+            generated_duration = self._probe_video_duration(final_output_path)
+            if not generated_duration or generated_duration <= 0:
+                raise ValueError("生成的视频文件时长无效")
 
             if output_type == "alarm":
                 mirror_subdir = "alarm_videos"
@@ -3362,12 +3515,32 @@ class VideoService:
 
             try:
                 stat = os.stat(file_path)
+                start_time = ""
+                end_time = ""
+                duration_seconds = 0
+                match = re.search(r"_(\d{8}_\d{6})_(\d{8}_\d{6})\.mp4$", file_name)
+                if match:
+                    try:
+                        start_dt = datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+                        end_dt = datetime.strptime(match.group(2), "%Y%m%d_%H%M%S")
+                        start_time = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        duration_seconds = max(0, int((end_dt - start_dt).total_seconds()))
+                    except Exception:
+                        duration_seconds = 0
                 clips.append(
                     {
                         "name": file_name,
                         "size_bytes": int(stat.st_size),
                         "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                         "web_path": self._to_backend_static_web_path(file_path),
+                        "url": self._to_backend_static_web_path(file_path),
+                        "duration": duration_seconds,
+                        "duration_seconds": duration_seconds,
+                        "video_duration": duration_seconds,
+                        "clip_duration": duration_seconds,
+                        "start_time": start_time,
+                        "end_time": end_time,
                     }
                 )
             except Exception:

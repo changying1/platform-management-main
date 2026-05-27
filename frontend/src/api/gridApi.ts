@@ -10,6 +10,8 @@ const gridPersonnelApi = axios.create({
   baseURL: `${API_BASE_URL}/api/grid-personnel`,
 });
 
+const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? value : []);
+
 export const gridApiClient = {
   // 获取网格列表
   getGrids: async (level?: string, status?: string): Promise<Grid[]> => {
@@ -18,7 +20,7 @@ export const gridApiClient = {
     if (status) params.status = status;
 
     const response = await gridApi.get('/', { params });
-    return response.data;
+    return asArray<Grid>(response.data);
   },
 
   // 获取网格详情
@@ -59,7 +61,7 @@ export const gridPersonnelApiClient = {
     if (department) params.department = department;
 
     const response = await gridPersonnelApi.get('/', { params });
-    return response.data;
+    return asArray<GridPersonnel>(response.data);
   },
 
   // 获取责任人员详情

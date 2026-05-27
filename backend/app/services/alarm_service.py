@@ -116,26 +116,50 @@ class AlarmService:
 
         doc = dict(doc)
         doc.pop("_id", None)
+        image_path = doc.get("alarm_image_path") or doc.get("image_url") or doc.get("snapshot_url") or doc.get("picture_url") or doc.get("image_path") or doc.get("snapshot_path") or ""
+        video_path = doc.get("recording_path") or doc.get("video_url") or doc.get("clip_url") or doc.get("video_path") or ""
+        recording_error = doc.get("recording_error") or doc.get("error_message") or ""
+        duration = doc.get("duration_seconds") or doc.get("duration") or doc.get("video_duration") or doc.get("clip_duration")
+        alarm_type = doc.get("alarm_type") or doc.get("event_type") or doc.get("type") or doc.get("rule_name") or doc.get("algo_name") or "未知报警类型"
+        person = doc.get("person") or {}
+        person_name = doc.get("person_name") or person.get("username") or person.get("name") or ""
+        device_id = str(doc.get("device_id")) if doc.get("device_id") is not None else ""
+        description = doc.get("description") or doc.get("message") or doc.get("msg") or ""
+        if not description:
+            description = f"{person_name or '未知人员'} - {alarm_type}（设备: {doc.get('device_name') or device_id or '未知设备'}）"
 
         return {
             "id": self._safe_int(doc.get("id")) or doc.get("id"),
-            "device_id": str(doc.get("device_id")) if doc.get("device_id") is not None else "",
+            "device_id": device_id,
+            "device_name": doc.get("device_name") or device_id,
             "fence_id": self._safe_int(doc.get("fence_id")),
             "project_id": self._safe_int(doc.get("project_id")),
-            "alarm_type": doc.get("alarm_type"),
-            "severity": doc.get("severity"),
-            "timestamp": doc.get("timestamp"),
-            "description": doc.get("description"),
-            "status": doc.get("status"),
+            "alarm_type": alarm_type,
+            "severity": doc.get("severity") or doc.get("level") or "medium",
+            "timestamp": doc.get("timestamp") or doc.get("alarm_time") or doc.get("create_time"),
+            "description": description,
+            "status": doc.get("status") or "pending",
             "handled_at": doc.get("handled_at"),
-            "location": doc.get("location"),
-            "recording_path": doc.get("recording_path") or "",
+            "location": doc.get("location") or doc.get("device_name") or device_id or "未知位置",
+            "recording_path": video_path,
             "recording_status": doc.get("recording_status") or "pending",
-            "recording_error": doc.get("recording_error") or "",
-            "alarm_image_path": doc.get("alarm_image_path") or "",
+            "recording_error": recording_error,
+            "alarm_image_path": image_path,
             "personnel_id": doc.get("personnel_id") or "",
             "person_name": doc.get("person_name") or doc.get("person", {}).get("username") or "未知",
-            "person": doc.get("person") or {},
+            "person": person,
+            "image_url": image_path,
+            "snapshot_url": image_path,
+            "picture_url": image_path,
+            "video_url": video_path,
+            "clip_url": video_path,
+            "duration": duration,
+            "duration_seconds": duration,
+            "video_duration": duration,
+            "clip_duration": duration,
+            "start_time": doc.get("recording_start_time") or doc.get("start_time"),
+            "end_time": doc.get("recording_end_time") or doc.get("end_time"),
+            "error_message": recording_error,
         }
 
     def _find_alarm_doc_by_id(self, alarm_id: int | str):

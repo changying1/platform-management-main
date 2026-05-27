@@ -1,71 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="76dp"
+    android:layout_marginBottom="10dp"
+    android:background="@drawable/bg_contact_selectable"
+    android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:padding="12dp"
-    android:background="@drawable/list_item_background">
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp">
 
-    <!-- 头像和状态 -->
-    <RelativeLayout
-        android:layout_width="56dp"
-        android:layout_height="56dp">
+    <TextView
+        android:id="@+id/tv_avatar"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:background="@drawable/bg_voice_avatar"
+        android:gravity="center"
+        android:text="语"
+        android:textColor="#FFFFFF"
+        android:textSize="17sp"
+        android:textStyle="bold" />
 
-        <ImageView
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:src="@drawable/ic_person"
-            android:background="@drawable/circle_gray_background"/>
-
-        <View
-            android:id="@+id/v_status"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:layout_alignParentBottom="true"
-            android:layout_alignParentEnd="true"/>
-    </RelativeLayout>
-
-    <!-- 信息 -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
+        android:layout_marginStart="12dp"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:paddingLeft="12dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:orientation="vertical">
 
         <TextView
             android:id="@+id/tv_name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="联系人姓名"
-            android:textColor="@color/white"
+            android:text="联系人"
+            android:textColor="#17212B"
             android:textSize="16sp"
-            android:textStyle="bold"/>
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tv_company"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="公司名称"
-            android:textColor="@color/gray_400"
-            android:textSize="12sp"
-            android:layout_marginTop="2dp"/>
+            android:layout_marginTop="3dp"
+            android:text="部门"
+            android:textColor="#607D8B"
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/tv_project"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="项目名称"
-            android:textColor="@color/gray_500"
-            android:textSize="12sp"/>
+            android:layout_marginTop="1dp"
+            android:text="角色"
+            android:textColor="#90A4AE"
+            android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- 箭头 -->
-    <ImageView
-        android:layout_width="24dp"
-        android:layout_height="24dp"
-        android:src="@drawable/ic_arrow_right"
-        android:layout_gravity="center_vertical"
-        android:padding="4dp"/>
+    <CheckBox
+        android:id="@+id/cb_selected"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:buttonTint="#12B886" />
 </LinearLayout>

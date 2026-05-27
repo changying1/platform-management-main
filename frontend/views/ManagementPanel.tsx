@@ -4,6 +4,7 @@ import {
   Camera,
   MapPin,
   FolderTree,
+  Grid3X3,
   // Fence,
   Shield,
   ChevronRight,
@@ -22,28 +23,35 @@ import {
 import PersonManagement from '../src/components/PersonManagement';
 import CameraManagement from '../src/components/CameraManagement';
 import LocationDeviceManagement from '../src/components/LocationDeviceManagement';
-import ProjectManagement from '../src/components/ProjectManagement';
+import ProjectManagement from './Project';
 import PermissionManagement from '../src/components/PermissionManagement';
+import GridManagement from './GridManagement';
 // import FenceManagement from '../src/components/FenceManagement';
 
 // type ManagementTab = 'person' | 'camera' | 'location' | 'project' | 'fence';
-type ManagementTab = 'project' | 'person' | 'device' | 'permission';
+type ManagementTab = 'project' | 'grid' | 'person' | 'device' | 'camera' | 'location' | 'permission';
 type DeviceSubTab = 'camera' | 'location';
 
 interface ManagementPanelProps {
   defaultTab?: ManagementTab;
 }
 
-export default function ManagementPanel({ defaultTab = 'person' }: ManagementPanelProps) {
-  const [activeTab, setActiveTab] = useState<ManagementTab>(defaultTab);
-  const [deviceSubTab, setDeviceSubTab] = useState<DeviceSubTab>('camera');
+export default function ManagementPanel({ defaultTab = 'project' }: ManagementPanelProps) {
+  const normalizeTab = (tab: ManagementTab): ManagementTab => (tab === 'camera' || tab === 'location' ? 'device' : tab);
+  const initialDeviceSubTab = (tab: ManagementTab): DeviceSubTab => (tab === 'location' ? 'location' : 'camera');
+  const [activeTab, setActiveTab] = useState<ManagementTab>(normalizeTab(defaultTab));
+  const [deviceSubTab, setDeviceSubTab] = useState<DeviceSubTab>(initialDeviceSubTab(defaultTab));
 
   useEffect(() => {
-    setActiveTab(defaultTab);
+    setActiveTab(normalizeTab(defaultTab));
+    if (defaultTab === 'camera' || defaultTab === 'location') {
+      setDeviceSubTab(defaultTab);
+    }
   }, [defaultTab]);
 
   const tabs = [
     { id: 'project' as ManagementTab, label: '项目管理', icon: FolderTree, description: '项目、工队、参建单位' },
+    { id: 'grid' as ManagementTab, label: '网格管理', icon: Grid3X3, description: '网格划分、责任单元' },
     { id: 'person' as ManagementTab, label: '人员管理', icon: Users, description: '人员信息、岗位管理' },
     { id: 'device' as ManagementTab, label: '设备管理', icon: HardDrive, description: '摄像头、定位装置' },
     { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield, description: '角色权限配置' },
@@ -88,6 +96,8 @@ export default function ManagementPanel({ defaultTab = 'person' }: ManagementPan
         );
       case 'project':
         return <ProjectManagement />;
+      case 'grid':
+        return <GridManagement />;
       case 'permission':
         return <PermissionManagement />;
         
@@ -101,34 +111,38 @@ export default function ManagementPanel({ defaultTab = 'person' }: ManagementPan
   return (
     <div className="h-full flex flex-col gap-4 p-4 text-slate-100 bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)]">
       
-      {/* 页面标题 */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-cyan-500/20 rounded-lg">
-          <Shield className="text-cyan-400" size={24} />
+      {/* 页面标题和 Tab 切换栏 */}
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-cyan-500/20 rounded-lg">
+            <Shield className="text-cyan-400" size={24} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-100">管理中心</h1>
+            <p className="text-sm text-slate-400">人员、设备、项目、围栏统一管理</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-100">管理中心</h1>
-          <p className="text-sm text-slate-400">人员、设备、项目、围栏统一管理</p>
-        </div>
-      </div>
 
-      {/* Tab 切换栏 */}
-      <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-1 flex gap-1 flex-wrap">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all text-sm ${
-              activeTab === tab.id
-                ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <tab.icon size={18} />
-            {tab.label}
-            <ChevronRight size={14} className={activeTab === tab.id ? 'opacity-100' : 'opacity-0'} />
-          </button>
-        ))}
+        {/* Tab 切换栏 */}
+        <div className="flex-1">
+          <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-2 flex gap-2">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-5 py-3 rounded-md transition-all text-base font-medium ${
+                  activeTab === tab.id
+                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                <tab.icon size={20} />
+                {tab.label}
+                <ChevronRight size={16} className={activeTab === tab.id ? 'opacity-100' : 'opacity-0'} />
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* 内容区域 */}

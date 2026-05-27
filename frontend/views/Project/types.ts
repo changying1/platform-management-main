@@ -1,5 +1,3 @@
-// 项目相关类型定义
-
 export interface User {
   id: number;
   username: string;
@@ -20,11 +18,6 @@ export interface Region {
   remark?: string;
 }
 
-export interface Branch {
-  id: number;
-  name: string;
-}
-
 export interface ProjectListItem {
   id: number;
   name: string;
@@ -33,10 +26,12 @@ export interface ProjectListItem {
   status: string;
   remark?: string;
   branch_id?: number;
+  branch_name?: string;
   user_count: number;
   device_count: number;
   region_count: number;
   fence_count: number;
+  alarm_count: number;
 }
 
 export interface ProjectDetail {
@@ -71,7 +66,3 @@ export interface ProjectFormData {
   status: string;
   remark: string;
   branch_id?: number;
-  user_ids: number[];
-  device_ids: string[];
-  region_ids: number[];
-}

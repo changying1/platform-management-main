@@ -26,5 +26,9 @@ cryptography
 onvif-zeep
 
 fastapi
+python-multipart
 uvicorn[standard]
 sqlalchemy
+pymongo
+agora-token-builder
+loguru

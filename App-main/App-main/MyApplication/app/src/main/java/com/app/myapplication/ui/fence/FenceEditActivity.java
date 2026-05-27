@@ -27,15 +27,20 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
 import retrofit2.Retrofit;
 import retrofit2.http.*;
 
+/**
+ * 围栏编辑Activity - 对齐后端新接口
+ */
 public class FenceEditActivity extends AppCompatActivity {
 
-    // ✅ 用 int id（与后端一致）。传 -1 代表新建
     public static final String EXTRA_FENCE_ID = "extra_fence_id";
 
     // ---- UI ----
@@ -47,24 +52,24 @@ public class FenceEditActivity extends AppCompatActivity {
     // ---- AMap ----
     private MapView mapView;
     private AMap aMap;
-    private LatLng pickedLatLng; // 当前选中的围栏中心点
+    private LatLng pickedLatLng;
 
     // ---- Data ----
     private FenceItem editing;
 
-    // ---- Retrofit API（如果你项目里已有 FenceApi，就删掉这里，换成引用你的那个） ----
+    // ---- Retrofit API ----
     interface FenceApi {
-        @GET("fence/")
-        Call<JsonArray> getFences(@Query("skip") int skip, @Query("limit") int limit);
+        @GET("fence/list")
+        Call<JsonArray> getFences();
 
         @POST("fence/")
         Call<JsonObject> createFence(@Body JsonObject body);
 
         @PUT("fence/{fence_id}")
-        Call<JsonObject> updateFence(@Path("fence_id") int id, @Body JsonObject body);
+        Call<JsonObject> updateFence(@Path("fence_id") String id, @Body JsonObject body);
 
-        @DELETE("fence/{fence_id}")
-        Call<JsonObject> deleteFence(@Path("fence_id") int id);
+        @DELETE("fence/delete/{fence_id}")
+        Call<JsonObject> deleteFence(@Path("fence_id") String id);
     }
 
     private FenceApi api;
@@ -87,8 +92,8 @@ public class FenceEditActivity extends AppCompatActivity {
         btnSave = findViewById(R.id.btn_save);
         btnDelete = findViewById(R.id.btn_delete);
 
-        // 触发类型 Spinner
-        String[] items = new String[]{"进入+离开", "进入", "离开"};
+        // 触发类型 Spinner - 对齐后端 behavior: No Entry / No Exit
+        String[] items = new String[]{"禁入 (No Entry)", "禁出 (No Exit)"};
         ArrayAdapter<String> triggerAdapter =
                 new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, items);
         spTrigger.setAdapter(triggerAdapter);
@@ -99,10 +104,10 @@ public class FenceEditActivity extends AppCompatActivity {
         aMap = mapView.getMap();
 
         // 默认镜头
-        LatLng defaultCenter = new LatLng(31.2304, 121.4737); // 上海
+        LatLng defaultCenter = new LatLng(31.2304, 121.4737);
         aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultCenter, 12f));
 
-        // 点击地图选点：写入经纬度 + 画圆预览
+        // 点击地图选点
         aMap.setOnMapClickListener(latLng -> {
             pickedLatLng = latLng;
             etLat.setText(String.valueOf(latLng.latitude));
@@ -117,22 +122,13 @@ public class FenceEditActivity extends AppCompatActivity {
         });
 
         // --- load editing/new ---
-        int fenceId = getIntent().getIntExtra(EXTRA_FENCE_ID, -1);
-        if (fenceId > 0) {
-            // 编辑模式：从后端拉列表并找到对应 fence
+        String fenceId = getIntent().getStringExtra(EXTRA_FENCE_ID);
+        if (fenceId != null && !fenceId.isEmpty()) {
+            // 编辑模式
             loadFenceFromServer(fenceId);
         } else {
-            // 新建模式：初始化默认值
-            editing = new FenceItem();
-            editing.shapeType = "CIRCLE";  // 这个编辑页只做圆形（你的布局也是圆形字段）
-            editing.ruleType = "BOTH";
-            editing.radiusMeters = 50.0;
-            editing.enabled = true;
-
-            btnDelete.setEnabled(false);
-            btnDelete.setAlpha(0.5f);
-
-            bindToUi(editing);
+            // 新建模式
+            initAsNew();
         }
 
         // 保存
@@ -140,27 +136,41 @@ public class FenceEditActivity extends AppCompatActivity {
             FenceItem f = collectFromUi(editing);
             if (f == null) return;
 
-            if (f.id == null || f.id <= 0) {
-                // 新建：POST
-                api.createFence(buildFenceBody(f)).enqueue(new SimpleResp("保存成功(新建)"));
+            if (f.id == null || f.id.isEmpty()) {
+                // 新建
+                api.createFence(buildFenceBody(f)).enqueue(new SimpleResp("保存成功"));
             } else {
-                // 更新：PUT
-                api.updateFence(f.id, buildFenceBody(f)).enqueue(new SimpleResp("保存成功(更新)"));
+                // 更新
+                api.updateFence(f.id, buildFenceBody(f)).enqueue(new SimpleResp("更新成功"));
             }
         });
 
         // 删除
         btnDelete.setOnClickListener(v -> {
-            if (editing == null || editing.id == null || editing.id <= 0) return;
+            if (editing == null || editing.id == null || editing.id.isEmpty()) return;
             api.deleteFence(editing.id).enqueue(new SimpleResp("已删除"));
         });
     }
 
+    private void initAsNew() {
+        editing = new FenceItem();
+        editing.shape = "circle";
+        editing.behavior = "No Entry";
+        editing.radius = 50.0;
+        editing.is_active = 1;
+        editing.severity = "normal";
+
+        btnDelete.setEnabled(false);
+        btnDelete.setAlpha(0.5f);
+
+        bindToUi(editing);
+    }
+
     // -------------------------
-    // Load fence by id (since backend has no GET /fence/{id}, we fetch list and find it)
+    // Load fence by id
     // -------------------------
-    private void loadFenceFromServer(int fenceId) {
-        api.getFences(0, 200).enqueue(new Callback<JsonArray>() {
+    private void loadFenceFromServer(String fenceId) {
+        api.getFences().enqueue(new Callback<JsonArray>() {
             @Override
             public void onResponse(@NonNull Call<JsonArray> call, @NonNull Response<JsonArray> resp) {
                 if (!resp.isSuccessful() || resp.body() == null) {
@@ -173,8 +183,8 @@ public class FenceEditActivity extends AppCompatActivity {
                 for (JsonElement e : resp.body()) {
                     if (!e.isJsonObject()) continue;
                     JsonObject o = e.getAsJsonObject();
-                    Integer id = optIntNullable(o, "id", null);
-                    if (id != null && id == fenceId) {
+                    String id = optStr(o, "id", null);
+                    if (id != null && id.equals(fenceId)) {
                         found = jsonToFenceItem(o);
                         break;
                     }
@@ -202,19 +212,6 @@ public class FenceEditActivity extends AppCompatActivity {
         });
     }
 
-    private void initAsNew() {
-        editing = new FenceItem();
-        editing.shapeType = "CIRCLE";
-        editing.ruleType = "BOTH";
-        editing.radiusMeters = 50.0;
-        editing.enabled = true;
-
-        btnDelete.setEnabled(false);
-        btnDelete.setAlpha(0.5f);
-
-        bindToUi(editing);
-    }
-
     // -------------------------
     // UI bind/collect
     // -------------------------
@@ -223,17 +220,23 @@ public class FenceEditActivity extends AppCompatActivity {
 
         etName.setText(f.name == null ? "" : f.name);
 
-        etLat.setText(f.lat == null ? "" : String.valueOf(f.lat));
-        etLng.setText(f.lng == null ? "" : String.valueOf(f.lng));
+        // center [lat, lng]
+        if (f.center != null && f.center.size() >= 2) {
+            etLat.setText(String.valueOf(f.center.get(0)));
+            etLng.setText(String.valueOf(f.center.get(1)));
+        } else {
+            etLat.setText("");
+            etLng.setText("");
+        }
 
-        int r = (f.radiusMeters == null) ? 0 : (int) Math.round(f.radiusMeters);
+        int r = (f.radius == null) ? 0 : (int) Math.round(f.radius);
         etRadius.setText(r == 0 ? "" : String.valueOf(r));
 
-        swEnable.setChecked(f.enabled != null ? f.enabled : true);
+        swEnable.setChecked(f.is_active != null && f.is_active == 1);
 
+        // behavior: No Entry / No Exit
         int pos = 0;
-        if ("ENTER".equals(f.ruleType)) pos = 1;
-        else if ("EXIT".equals(f.ruleType)) pos = 2;
+        if ("No Exit".equals(f.behavior)) pos = 1;
         spTrigger.setSelection(pos);
     }
 
@@ -278,16 +281,20 @@ public class FenceEditActivity extends AppCompatActivity {
         }
 
         f.name = name;
-        f.shapeType = "CIRCLE";
-        f.lat = lat;
-        f.lng = lng;
-        f.radiusMeters = rad;
-        f.enabled = swEnable.isChecked();
+        f.shape = "circle";
+        f.center = new ArrayList<>();
+        f.center.add(lat);
+        f.center.add(lng);
+        f.radius = rad;
+        f.is_active = swEnable.isChecked() ? 1 : 0;
 
         int pos = spTrigger.getSelectedItemPosition();
-        if (pos == 1) f.ruleType = "ENTER";
-        else if (pos == 2) f.ruleType = "EXIT";
-        else f.ruleType = "BOTH";
+        f.behavior = (pos == 1) ? "No Exit" : "No Entry";
+
+        // 默认值
+        f.severity = "normal";
+        f.company = "";
+        f.project = "";
 
         pickedLatLng = new LatLng(lat, lng);
         redrawCirclePreview();
@@ -300,9 +307,9 @@ public class FenceEditActivity extends AppCompatActivity {
     // -------------------------
     private void showFenceOnMapIfPossible(FenceItem f) {
         if (aMap == null || f == null) return;
-        if (f.lat == null || f.lng == null) return;
+        if (f.center == null || f.center.size() < 2) return;
 
-        pickedLatLng = new LatLng(f.lat, f.lng);
+        pickedLatLng = new LatLng(f.center.get(0), f.center.get(1));
         aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(pickedLatLng, 16f));
         redrawCirclePreview();
     }
@@ -337,30 +344,35 @@ public class FenceEditActivity extends AppCompatActivity {
     }
 
     // -------------------------
-    // Build request body (对齐后端字段名的关键位置)
+    // Build request body - 对齐后端新字段
     // -------------------------
     private JsonObject buildFenceBody(FenceItem f) {
-        // ⚠️ 如果你的后端字段是 snake_case（shape_type / radius_meters 等）
-        // 你只需要在这里改字段名即可。
         JsonObject b = new JsonObject();
-        if (f.name != null) b.addProperty("name", f.name);
-        if (f.shapeType != null) b.addProperty("shapeType", f.shapeType);
 
-        if (f.lat != null) b.addProperty("lat", f.lat);
-        if (f.lng != null) b.addProperty("lng", f.lng);
-        if (f.radiusMeters != null) b.addProperty("radiusMeters", f.radiusMeters);
+        b.addProperty("name", f.name != null ? f.name : "未命名围栏");
+        b.addProperty("shape", "circle");
+        b.addProperty("behavior", f.behavior != null ? f.behavior : "No Entry");
+        b.addProperty("severity", f.severity != null ? f.severity : "normal");
+        b.addProperty("is_active", f.is_active != null ? f.is_active : 1);
+        b.addProperty("company", f.company != null ? f.company : "");
+        b.addProperty("project", f.project != null ? f.project : "");
 
-        if (f.ruleType != null) b.addProperty("ruleType", f.ruleType);
-        if (f.level != null) b.addProperty("level", f.level);
-        if (f.enabled != null) b.addProperty("enabled", f.enabled);
+        // schedule 对象
+        JsonObject schedule = new JsonObject();
+        schedule.addProperty("start", "00:00");
+        schedule.addProperty("end", "23:59");
+        b.add("schedule", schedule);
 
-        if (f.regionId != null) b.addProperty("regionId", f.regionId);
-
-        if (f.bindDeviceIds != null) {
-            JsonArray arr = new JsonArray();
-            for (String d : f.bindDeviceIds) arr.add(d);
-            b.add("bindDeviceIds", arr);
+        // center 数组 [lat, lng]
+        if (f.center != null && f.center.size() >= 2) {
+            JsonArray centerArr = new JsonArray();
+            centerArr.add(f.center.get(0));
+            centerArr.add(f.center.get(1));
+            b.add("center", centerArr);
         }
+
+        b.addProperty("radius", f.radius != null ? f.radius : 50.0);
+
         return b;
     }
 
@@ -392,25 +404,47 @@ public class FenceEditActivity extends AppCompatActivity {
     }
 
     // -------------------------
-    // JSON -> FenceItem（容错解析）
+    // JSON -> FenceItem（对齐后端新字段）
     // -------------------------
     private FenceItem jsonToFenceItem(JsonObject o) {
         FenceItem f = new FenceItem();
-        f.id = optIntNullable(o, "id", null);
-        f.name = optStr(o, "name", optStr(o, "fence_name", null));
-        f.shapeType = optStr(o, "shapeType", optStr(o, "shape_type", "CIRCLE"));
+        f.id = optStr(o, "id", null);
+        f.name = optStr(o, "name", null);
+        f.company = optStr(o, "company", "");
+        f.project = optStr(o, "project", "");
+        f.shape = optStr(o, "shape", "circle");
+        f.behavior = optStr(o, "behavior", "No Entry");
+        f.severity = optStr(o, "severity", "normal");
 
-        f.lat = optDoubleNullable(o, "lat", optDoubleNullable(o, "center_lat", null));
-        f.lng = optDoubleNullable(o, "lng", optDoubleNullable(o, "center_lng", null));
-        f.radiusMeters = optDoubleNullable(o, "radiusMeters", optDoubleNullable(o, "radius_meters", null));
+        // schedule
+        JsonObject sched = o.getAsJsonObject("schedule");
+        if (sched != null) {
+            f.schedule = new FenceItem.Schedule();
+            f.schedule.start = optStr(sched, "start", "00:00");
+            f.schedule.end = optStr(sched, "end", "23:59");
+        }
 
-        f.ruleType = optStr(o, "ruleType", optStr(o, "rule_type", null));
-        f.level = optStr(o, "level", optStr(o, "alarm_level", null));
-        f.enabled = optBoolNullable(o, "enabled", optBoolNullable(o, "is_enabled", null));
+        // center [lat, lng]
+        JsonArray centerArr = o.getAsJsonArray("center");
+        if (centerArr != null && centerArr.size() >= 2) {
+            f.center = new ArrayList<>();
+            f.center.add(centerArr.get(0).getAsDouble());
+            f.center.add(centerArr.get(1).getAsDouble());
+        }
 
-        f.regionId = optIntNullable(o, "regionId", optIntNullable(o, "region_id", null));
+        // radius
+        if (o.has("radius") && !o.get("radius").isJsonNull()) {
+            f.radius = o.get("radius").getAsDouble();
+        }
 
-        // points / bindDeviceIds 若后端返回你再加也不迟（这个编辑页只用圆形字段）
+        // is_active
+        if (o.has("is_active") && !o.get("is_active").isJsonNull()) {
+            f.is_active = o.get("is_active").getAsInt();
+        }
+
+        f.createdAt = optStr(o, "createdAt", null);
+        f.updatedAt = optStr(o, "updatedAt", null);
+
         return f;
     }
 
@@ -418,23 +452,11 @@ public class FenceEditActivity extends AppCompatActivity {
         return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsString() : def;
     }
 
-    private static Integer optIntNullable(JsonObject o, String k, Integer def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsInt() : def;
-    }
-
-    private static Double optDoubleNullable(JsonObject o, String k, Double def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsDouble() : def;
-    }
-
-    private static Boolean optBoolNullable(JsonObject o, String k, Boolean def) {
-        return (o != null && o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsBoolean() : def;
-    }
-
     private void toast(String s) {
         Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 
-    // ---- MapView lifecycle (必须) ----
+    // ---- MapView lifecycle ----
     @Override protected void onResume() {
         super.onResume();
         if (mapView != null) mapView.onResume();

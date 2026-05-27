@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { 
@@ -34,116 +34,14 @@ interface AlarmRecord {
   videoPath?: string;
   fenceId?: string;
   fenceName?: string;
+  projectId?: number;
 }
 
-// 模拟围栏告警数据
-const mockFenceAlarms: AlarmRecord[] = [
-  {
-    id: 'f1',
-    type: 'fence',
-    title: '非法闯入',
-    description: '张工的安全帽进入基坑禁入区',
-    time: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    level: 'high',
-    status: 'pending',
-    location: '西安地铁8号线-基坑禁入区',
-    deviceName: '张工的安全帽',
-    deviceId: '1001',
-    team: '土建工队',
-    fenceId: '1',
-    fenceName: '基坑禁入区'
-  },
-  {
-    id: 'f2',
-    type: 'fence',
-    title: '非法越界',
-    description: '李工的安全帽离开办公区',
-    time: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    level: 'medium',
-    status: 'pending',
-    location: '西安地铁8号线-办公区禁出区',
-    deviceName: '李工的安全帽',
-    deviceId: '1002',
-    team: '机电工队',
-    fenceId: '2',
-    fenceName: '办公区禁出区'
-  },
-  {
-    id: 'f3',
-    type: 'fence',
-    title: '非法闯入',
-    description: '王工的定位器进入隧道施工区',
-    time: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    level: 'high',
-    status: 'resolved',
-    location: '西安地铁10号线-隧道施工区',
-    deviceName: '王工的定位器',
-    deviceId: '1003',
-    team: '隧道工队',
-    fenceId: '3',
-    fenceName: '隧道施工区'
-  },
-];
-
-// 模拟视频告警数据
-const mockVideoAlarms: AlarmRecord[] = [
-  {
-    id: 'v1',
-    type: 'video',
-    title: '未佩戴安全帽',
-    description: '施工人员未佩戴安全帽',
-    time: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-    level: 'high',
-    status: 'pending',
-    location: '西安地铁8号线-基坑施工区',
-    deviceName: '摄像头-基坑东侧',
-    deviceId: 'cam001',
-    team: '安全工队',
-    snapshot: '/images/alarm-snapshot.jpg'
-  },
-  {
-    id: 'v2',
-    type: 'video',
-    title: '区域入侵',
-    description: '无关人员进入危险区域',
-    time: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    level: 'high',
-    status: 'pending',
-    location: '隧道入口',
-    deviceName: '摄像头-隧道口',
-    deviceId: 'cam002',
-  },
-  {
-    id: 'v3',
-    type: 'video',
-    title: '人员摔倒',
-    description: '检测到人员异常倒地',
-    time: new Date(Date.now() - 180 * 60 * 1000).toISOString(),
-    level: 'medium',
-    status: 'resolved',
-    location: '办公区走廊',
-    deviceName: '摄像头-办公区',
-    deviceId: 'cam003',
-  },
-];
-// 模拟分公司、项目和工队数据
-const companyTree = [
-  {
-    id: '中铁一局',
-    name: '中铁一局',
-    projects: [
-      { name: '西安地铁8号线', teams: ['土建工队', '机电工队', '安全工队'] },
-      { name: '西安地铁10号线', teams: ['土建工队', '机电工队'] }
-    ]
-  },
-  {
-    id: '中铁隧道局',
-    name: '中铁隧道局',
-    projects: [
-      { name: '西安地铁10号线', teams: ['隧道工队', '安全工队'] }
-    ]
-  }
-];
+type AlarmFilterTreeNode = {
+  id: string;
+  name: string;
+  projects: Array<{ name: string; teams: string[] }>;
+};
 export default function AlarmRecords() {
   const [activeTab, setActiveTab] = useState<'all' | 'fence' | 'video'>('all');
   const [alarms, setAlarms] = useState<AlarmRecord[]>([]);
@@ -168,7 +66,11 @@ const [selectedTeam, setSelectedTeam] = useState<string>('all');
 const [filterTreePos, setFilterTreePos] = useState<{ top: number; left: number } | null>(null);
 const filterTreeRef = useRef<HTMLDivElement>(null);
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
-  const isFence = item.fence_id !== undefined && item.fence_id !== null;
+  const rawItem = item as any;
+  const sourceType = rawItem.source_type || '';
+  const isFence =
+    sourceType === 'fence' ||
+    (!sourceType && item.fence_id !== undefined && item.fence_id !== null);
 
   const rawType = String(item.alarm_type || '');
   const title = rawType || (isFence ? '围栏告警' : '视频告警');
@@ -178,14 +80,14 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
       ? String(item.location)
       : '未提供位置';
 
-  const rawItem = item as any;
   const team = rawItem.team || rawItem.team_name || rawItem.work_team || '';
+  const personText = [rawItem.person_name, rawItem.person_label].filter(Boolean).join(' / ');
 
   return {
     id: String(item.id),
     type: isFence ? 'fence' : 'video',
     title,
-    description: item.description || '',
+    description: item.description || personText || title,
     time: item.timestamp,
     level:
       item.severity === 'HIGH'
@@ -208,16 +110,13 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
         ? String(item.fence_id)
         : undefined,
     fenceName: isFence ? locationText : undefined,
+    projectId: rawItem.project_id,
   };
 };
 const loadAlarms = async () => {
   try {
-    const projectId =
-      selectedProject !== 'all' && /^\d+$/.test(selectedProject)
-        ? Number(selectedProject)
-        : undefined;
-
-    const data = await alarmApi.getAlarms(projectId);
+    const sourceType = activeTab === 'all' ? undefined : activeTab;
+    const data = await alarmApi.getAlarms(undefined, sourceType);
     const mapped = data
       .map(mapAlarmFromApi)
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
@@ -231,7 +130,7 @@ const loadAlarms = async () => {
 
 useEffect(() => {
   loadAlarms();
-}, [selectedProject]);
+}, [activeTab]);
 
 // 监听新告警事件
 useEffect(() => {
@@ -241,15 +140,7 @@ useEffect(() => {
 
   window.addEventListener('alarmAdded', handleAlarmAdded as EventListener);
   return () => window.removeEventListener('alarmAdded', handleAlarmAdded as EventListener);
-}, [selectedProject]);
-
-  // useEffect(() => {
-  //   // 合并围栏和视频告警数据
-  //   const allAlarms = [...mockFenceAlarms, ...mockVideoAlarms].sort(
-  //     (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
-  //   );
-  //   setAlarms(allAlarms);
-  // }, []);
+}, [activeTab]);
 
   useEffect(() => {
   const handleClickOutside = (event: MouseEvent) => {
@@ -321,11 +212,20 @@ const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignore
 const handleConfirmProcess = async () => {
   if (!processingAlarm) return;
 
+  const currentUser = localStorage.getItem('username') || '未知用户';
+
   try {
     if (processAction === 'resolved') {
-      await alarmApi.resolveAlarm(Number(processingAlarm.id));
+      await alarmApi.resolveAlarm(Number(processingAlarm.id), {
+        handler: currentUser,
+        remark: processRemark,
+      });
     } else {
-      await alarmApi.updateAlarm(Number(processingAlarm.id), { status: 'ignored' });
+      await alarmApi.updateAlarm(Number(processingAlarm.id), {
+        status: 'ignored',
+        handler: currentUser,
+        remark: processRemark,
+      });
     }
 
     await loadAlarms();
@@ -338,30 +238,53 @@ const handleConfirmProcess = async () => {
   }
 };
 
+  const companyTree: AlarmFilterTreeNode[] = Array.from(
+    alarms.reduce((map, alarm) => {
+      const projectName =
+        alarm.projectId !== undefined && alarm.projectId !== null
+          ? `项目 ${alarm.projectId}`
+          : '未分配项目';
+
+      if (!map.has(projectName)) {
+        map.set(projectName, {
+          id: projectName,
+          name: projectName,
+          projects: [{ name: projectName, teams: [] as string[] }],
+        });
+      }
+
+      if (alarm.team) {
+        const entry = map.get(projectName)!;
+        if (!entry.projects[0].teams.includes(alarm.team)) {
+          entry.projects[0].teams.push(alarm.team);
+        }
+      }
+
+      return map;
+    }, new Map<string, AlarmFilterTreeNode>())
+  ).map(([, value]) => value);
+
   const filteredAlarms = alarms.filter(alarm => {
     // 类型筛选
     if (activeTab !== 'all' && alarm.type !== activeTab) return false;
     // 状态筛选
     if (filterStatus !== 'all' && alarm.status !== filterStatus) return false;
-    // 分公司筛选：优先兼容后端字段，其次用位置/描述做低风险前端判断
     if (selectedCompany !== 'all') {
-      const searchableText = `${alarm.location} ${alarm.description} ${alarm.deviceName} ${alarm.team || ''}`;
-
-      if (selectedCompany === '中铁一局') {
-        if (!searchableText.includes('中铁一局') && !searchableText.includes('8号线')) {
-          return false;
-        }
-      } else if (selectedCompany === '中铁隧道局') {
-        if (!searchableText.includes('中铁隧道局') && !searchableText.includes('10号线') && !searchableText.includes('隧道')) {
-          return false;
-        }
+      const projectName =
+        alarm.projectId !== undefined && alarm.projectId !== null
+          ? `项目 ${alarm.projectId}`
+          : '未分配项目';
+      if (projectName !== selectedCompany) {
+        return false;
       }
     }
 
-    // 项目筛选：当前 selectedProject 是项目名称，不传给后端，只在前端筛选
     if (selectedProject !== 'all') {
-      const searchableText = `${alarm.location} ${alarm.description} ${alarm.deviceName}`;
-      if (!searchableText.includes(selectedProject)) {
+      const projectName =
+        alarm.projectId !== undefined && alarm.projectId !== null
+          ? `项目 ${alarm.projectId}`
+          : '未分配项目';
+      if (projectName !== selectedProject) {
         return false;
       }
     }

@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.app.myapplication.R;
+import com.app.myapplication.data.local.AppConfig;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -73,7 +74,7 @@ public class VoicePlaybackFragment extends Fragment {
                     "设备-" + (i + 1),
                     new Date(System.currentTimeMillis() - i * 3600 * 1000),
                     30 + i * 5,
-                    "http://10.0.2.2:9000/static/voice/record_" + (i + 1) + ".mp3"
+                    AppConfig.toAbsoluteUrl(requireContext(), "/static/voice/record_" + (i + 1) + ".mp3")
             ));
         }
         adapter.setItems(items);

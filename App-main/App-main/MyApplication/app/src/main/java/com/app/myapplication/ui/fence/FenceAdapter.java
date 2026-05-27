@@ -16,6 +16,9 @@ import com.app.myapplication.data.model.FenceItem;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * 围栏列表适配器 - 对齐后端新字段
+ */
 public class FenceAdapter extends RecyclerView.Adapter<FenceAdapter.VH> {
 
     public interface OnItemClick {
@@ -65,27 +68,24 @@ public class FenceAdapter extends RecyclerView.Adapter<FenceAdapter.VH> {
         String name = (f.name == null || f.name.trim().isEmpty()) ? "未命名围栏" : f.name.trim();
         h.tvName.setText(name);
 
-        // 行为/规则
-        String rule = f.ruleType == null ? "BOTH" : f.ruleType;
-        String triggerText =
-                "BOTH".equalsIgnoreCase(rule) ? "进入+离开"
-                        : ("ENTER".equalsIgnoreCase(rule) || "FORBID_IN".equalsIgnoreCase(rule)) ? "进入"
-                        : "离开";
+        // 行为/规则 - 对齐后端 behavior: No Entry / No Exit
+        String behavior = f.behavior == null ? "No Entry" : f.behavior;
+        String triggerText = "No Exit".equalsIgnoreCase(behavior) ? "禁出" : "禁入";
 
-        // 描述（圆/多边形）
+        // 描述（圆/多边形）- 对齐后端 shape: circle / polygon
         String desc;
-        if ("POLYGON".equalsIgnoreCase(f.shapeType)) {
+        if ("polygon".equalsIgnoreCase(f.shape)) {
             int n = (f.points == null) ? 0 : f.points.size();
             desc = String.format(Locale.getDefault(), "多边形 · 点数 %d · %s", n, triggerText);
         } else {
-            double radius = (f.radiusMeters == null) ? 0.0 : f.radiusMeters;
+            double radius = (f.radius == null) ? 0.0 : f.radius;
             desc = String.format(Locale.getDefault(), "圆形 · 半径 %.0fm · %s", radius, triggerText);
         }
         h.tvDesc.setText(desc);
 
-        // 开关
+        // 开关 - 对齐后端 is_active: 0/1
         h.swEnable.setOnCheckedChangeListener(null);
-        boolean enabled = (f.enabled != null && f.enabled);
+        boolean enabled = (f.is_active != null && f.is_active == 1);
         h.swEnable.setChecked(enabled);
 
         h.swEnable.setOnCheckedChangeListener((buttonView, isChecked) -> {
