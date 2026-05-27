@@ -15,8 +15,6 @@ def _to_out(doc: dict) -> dict:
         "grid_id": doc.get("grid_id", ""),
         "name": doc.get("name", ""),
         "level": doc.get("level", ""),
-        "status": doc.get("status", "normal"),
-        "area": doc.get("area"),
         "description": doc.get("description", ""),
         "bounds_json": doc.get("bounds_json", ""),
         "parent_id": doc.get("parent_id"),
@@ -38,11 +36,9 @@ class GridService:
         return [_to_out(doc) for doc in docs]
 
     def get_grid_by_id(self, grid_id: str):
-        # 优先按业务ID grid_id 查询
         doc = grid_collection.find_one({"grid_id": grid_id})
         if doc:
             return _to_out(doc)
-        # 兼容 MongoDB ObjectId 查询
         if ObjectId.is_valid(grid_id):
             doc = grid_collection.find_one({"_id": ObjectId(grid_id)})
             return _to_out(doc) if doc else None
@@ -100,24 +96,15 @@ class GridService:
 
     def get_grid_stats(self):
         total = grid_collection.count_documents({})
-        normal = grid_collection.count_documents({"status": "normal"})
-        warning = grid_collection.count_documents({"status": "warning"})
-        alarm = grid_collection.count_documents({"status": "alarm"})
-
-        danger_rank = []
-        for doc in grid_collection.find({"status": {"$in": ["warning", "alarm"]}}).sort("created_at", -1).limit(5):
-            danger_rank.append({
-                "grid_id": str(doc["_id"]),
-                "grid_name": doc.get("name", ""),
-                "status": doc.get("status", ""),
-            })
+        normal = grid_collection.count_documents({})
+        warning = 0
+        alarm = 0
 
         return {
             "total_count": total,
             "normal_count": normal,
             "warning_count": warning,
             "alarm_count": alarm,
-            "danger_rank": danger_rank,
         }
 
 

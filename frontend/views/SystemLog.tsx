@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MenuKey } from '../types';
+import { alarmApi, LogResponse } from '../src/api/alarmApi';
 import { 
   FileText, 
   Search, 
@@ -23,12 +24,12 @@ import {
 } from 'lucide-react';
 
 interface SystemLog {
-  id: string;
+  id: string | number;
   operator: string;
   action: string;
   targetType: 'fence' | 'project' | 'device' | 'person' | 'alarm' | 'permission' | 'system' | 'login';
   targetName: string;
-  details: string;
+  details?: string;
   time: string;
   company?: string;
   project?: string;
@@ -36,140 +37,20 @@ interface SystemLog {
   extra?: Record<string, any>;
 }
 
-const mockLogs: SystemLog[] = [
-  {
-    id: '1',
-    operator: '管理员',
-    action: '创建围栏',
-    targetType: 'fence',
-    targetName: '基坑禁入区',
-    details: '',
-    time: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    company: '中建一局',
-    project: '西安地铁8号线',
-    team: '土建一队',
-    extra: {
-      shape: '圆形',
-      radius: 50,
-      behavior: 'No Entry',
-      severity: 'severe',
-      scheduleStart: '2026-01-01',
-      scheduleEnd: '2026-12-31'
-    }
-  },
-  {
-    id: '2',
-    operator: '李四',
-    action: '添加设备',
-    targetType: 'device',
-    targetName: '张工的安全帽',
-    details: '',
-    time: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    company: '中建一局',
-    project: '西安地铁8号线',
-    team: '安装二队',
-    extra: {
-      holder: '张工',
-      deviceId: '1001'
-    }
-  },
-  {
-    id: '3',
-    operator: '王五',
-    action: '处理告警',
-    targetType: 'alarm',
-    targetName: '非法闯入告警',
-    details: '',
-    time: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    company: '中铁二局',
-    project: '郑州地铁3号线',
-    team: '安全队',
-    extra: {
-      alarmType: '越界告警',
-      result: '误报',
-      triggerBy: '张工安全帽'
-    }
-  },
-  {
-    id: '4',
-    operator: '管理员',
-    action: '删除围栏',
-    targetType: 'fence',
-    targetName: '办公区禁出区',
-    details: '',
-    time: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    company: '中建一局',
-    project: '西安地铁8号线',
-    team: '土建一队'
-  },
-  {
-    id: '5',
-    operator: '赵六',
-    action: '登录系统',
-    targetType: 'login',
-    targetName: '登录成功',
-    details: '',
-    time: new Date(Date.now() - 180 * 60 * 1000).toISOString(),
-    company: '中铁二局',
-    project: '郑州地铁3号线',
-    team: '管理组',
-    extra: {
-      sessionId: 'SESS20260415001',
-      userAgent: 'Chrome'
-    }
-  },
-  {
-    id: '6',
-    operator: '孙七',
-    action: '修改权限',
-    targetType: 'permission',
-    targetName: '李四权限变更',
-    details: '',
-    time: new Date(Date.now() - 240 * 60 * 1000).toISOString(),
-    company: '中建一局',
-    project: '西安地铁8号线',
-    team: '管理组',
-    extra: {
-      targetUser: '李四',
-      oldRole: '普通用户',
-      newRole: '项目管理员'
-    }
-  },
-  {
-    id: '7',
-    operator: '周八',
-    action: '修改系统设置',
-    targetType: 'system',
-    targetName: '告警阈值调整',
-    details: '',
-    time: new Date(Date.now() - 300 * 60 * 1000).toISOString(),
-    company: '中铁二局',
-    project: '郑州地铁3号线',
-    team: '技术组',
-    extra: {
-      setting: '越界告警延迟',
-      oldValue: '5秒',
-      newValue: '10秒'
-    }
-  },
-  {
-    id: '8',
-    operator: '吴九',
-    action: '添加人员',
-    targetType: 'person',
-    targetName: '新员工郑十',
-    details: '',
-    time: new Date(Date.now() - 360 * 60 * 1000).toISOString(),
-    company: '中建一局',
-    project: '西安地铁8号线',
-    team: '人力资源',
-    extra: {
-      employeeId: '00256',
-      position: '设备运维工程师',
-      department: '设备管理部'
-    }
-  },
-];
+// 转换后端返回的数据格式
+const transformLogResponse = (log: LogResponse): SystemLog => ({
+  id: log.id,
+  operator: log.operator,
+  action: log.action,
+  targetType: log.target_type as any,
+  targetName: log.target_name,
+  details: log.details,
+  time: log.time,
+  company: log.company,
+  project: log.project,
+  team: log.team,
+  extra: log.extra
+});
 
 const actionIcons = {
   fence: <MapPin size={18} />,
@@ -326,8 +207,19 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
   const treeFilterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const sortedLogs = [...mockLogs].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
-    setLogs(sortedLogs);
+    const fetchLogs = async () => {
+      try {
+        const logsFromApi = await alarmApi.getLogs();
+        const sortedLogs = logsFromApi.map(transformLogResponse).sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+        setLogs(sortedLogs);
+      } catch (error) {
+        console.error('Failed to fetch logs:', error);
+        // 如果API失败，显示空日志
+        setLogs([]);
+      }
+    };
+    
+    fetchLogs();
     setSelectedCompany('all');
     setSelectedProject('all');
     setSelectedTeam('all');

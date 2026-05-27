@@ -182,7 +182,7 @@ const AIChatAssistant: React.FC = () => {
       const data = await response.json();
       console.log('响应数据:', data);
 
-      if (data.status === 'success') {
+      if (data.status === 'success' || data.status === 'warning') {
         const assistantMessage: Message = {
           id: Date.now() + 1,
           role: 'assistant',
@@ -192,7 +192,7 @@ const AIChatAssistant: React.FC = () => {
         setMessages((prev) => [...prev, assistantMessage]);
         setConnectionStatus('connected');
       } else {
-        throw new Error(data.message || '服务返回错误');
+        throw new Error(data.response || data.message || '服务返回错误');
       }
     } catch (error: any) {
       console.error('连接错误:', error);

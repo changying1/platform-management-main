@@ -13,11 +13,14 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+/**
+ * 围栏本地存储 - 对齐后端新字段
+ */
 public class FenceLocalStore {
 
     private static final String SP_NAME = "fence_store";
     private static final String KEY_FENCES = "fences_json";
-    private static final String KEY_LOCAL_ID_SEQ = "local_id_seq"; // 用于生成本地临时 id（负数）
+    private static final String KEY_LOCAL_ID_SEQ = "local_id_seq";
 
     private final SharedPreferences sp;
 
@@ -25,7 +28,7 @@ public class FenceLocalStore {
         sp = ctx.getApplicationContext().getSharedPreferences(SP_NAME, Context.MODE_PRIVATE);
     }
 
-    /** 读取全部围栏（本地缓存/草稿用） */
+    /** 读取全部围栏 */
     public List<FenceItem> getAll() {
         String raw = sp.getString(KEY_FENCES, "[]");
         List<FenceItem> list = new ArrayList<>();
@@ -37,13 +40,13 @@ public class FenceLocalStore {
                 if (f != null) list.add(f);
             }
         } catch (JSONException e) {
-            // 若损坏则返回空，避免崩
+            // 若损坏则返回空
         }
         return list;
     }
 
-    /** 按 id 查询（Integer） */
-    public FenceItem getById(Integer id) {
+    /** 按 id 查询（String） */
+    public FenceItem getById(String id) {
         if (id == null) return null;
         List<FenceItem> all = getAll();
         for (FenceItem f : all) {
@@ -54,14 +57,12 @@ public class FenceLocalStore {
 
     /**
      * 保存或更新（Upsert）
-     * - 如果 fence.id == null：生成一个本地临时负数 id，避免与后端正数 id 冲突
-     * - 如果 fence.id != null：按 id 覆盖更新
      */
     public FenceItem upsert(FenceItem fence) {
         if (fence == null) return null;
 
         if (fence.id == null) {
-            fence.id = nextLocalTempId(); // 本地草稿 id（负数）
+            fence.id = nextLocalTempId();
         }
 
         List<FenceItem> all = getAll();
@@ -80,8 +81,8 @@ public class FenceLocalStore {
         return fence;
     }
 
-    /** 删除（Integer id） */
-    public boolean delete(Integer id) {
+    /** 删除（String id） */
+    public boolean delete(String id) {
         if (id == null) return false;
         List<FenceItem> all = getAll();
         Iterator<FenceItem> it = all.iterator();
@@ -114,7 +115,7 @@ public class FenceLocalStore {
         sp.edit().putString(KEY_FENCES, arr.toString()).apply();
     }
 
-    /** 清空本地缓存（可选） */
+    /** 清空本地缓存 */
     public void clear() {
         sp.edit().remove(KEY_FENCES).apply();
     }
@@ -122,16 +123,15 @@ public class FenceLocalStore {
     // -------------------------
     // Local temp id generator
     // -------------------------
-    private Integer nextLocalTempId() {
-        // 从 -1, -2, -3 ... 递减
+    private String nextLocalTempId() {
         int seq = sp.getInt(KEY_LOCAL_ID_SEQ, 0);
         seq += 1;
         sp.edit().putInt(KEY_LOCAL_ID_SEQ, seq).apply();
-        return -seq;
+        return "local_" + seq;
     }
 
     // -------------------------
-    // JSON <-> FenceItem (Store internal)
+    // JSON <-> FenceItem
     // -------------------------
     private FenceItem parseFenceItem(JSONObject o) {
         if (o == null) return null;
@@ -139,45 +139,53 @@ public class FenceLocalStore {
         FenceItem f = new FenceItem();
 
         // id
-        if (o.has("id") && !o.isNull("id")) f.id = o.optInt("id");
+        if (o.has("id") && !o.isNull("id")) f.id = o.optString("id");
 
         f.name = o.optString("name", null);
-        f.shapeType = o.optString("shapeType", "CIRCLE");
+        f.company = o.optString("company", null);
+        f.project = o.optString("project", null);
+        f.shape = o.optString("shape", "circle");
+        f.behavior = o.optString("behavior", "No Entry");
+        f.severity = o.optString("severity", "normal");
 
-        // circle fields
-        if (o.has("lat") && !o.isNull("lat")) f.lat = o.optDouble("lat");
-        if (o.has("lng") && !o.isNull("lng")) f.lng = o.optDouble("lng");
-        if (o.has("radiusMeters") && !o.isNull("radiusMeters")) f.radiusMeters = o.optDouble("radiusMeters");
+        // schedule
+        JSONObject sched = o.optJSONObject("schedule");
+        if (sched != null) {
+            f.schedule = new FenceItem.Schedule();
+            f.schedule.start = sched.optString("start", "00:00");
+            f.schedule.end = sched.optString("end", "23:59");
+        }
 
-        // polygon points: [[lat,lng],[lat,lng],...]
+        // center [lat, lng]
+        JSONArray centerArr = o.optJSONArray("center");
+        if (centerArr != null && centerArr.length() >= 2) {
+            f.center = new ArrayList<>();
+            f.center.add(centerArr.optDouble(0));
+            f.center.add(centerArr.optDouble(1));
+        }
+
+        // radius
+        if (o.has("radius") && !o.isNull("radius")) f.radius = o.optDouble("radius");
+
+        // points [[lat,lng],...]
         JSONArray pts = o.optJSONArray("points");
         if (pts != null) {
-            List<double[]> list = new ArrayList<>();
+            f.points = new ArrayList<>();
             for (int i = 0; i < pts.length(); i++) {
                 JSONArray p = pts.optJSONArray(i);
                 if (p == null || p.length() < 2) continue;
-                list.add(new double[]{p.optDouble(0), p.optDouble(1)});
+                List<Double> point = new ArrayList<>();
+                point.add(p.optDouble(0));
+                point.add(p.optDouble(1));
+                f.points.add(point);
             }
-            f.points = list;
         }
 
-        // rule/level/enabled
-        f.ruleType = o.optString("ruleType", null);
-        f.level = o.optString("level", null);
-        if (o.has("enabled") && !o.isNull("enabled")) f.enabled = o.optBoolean("enabled");
+        // is_active
+        if (o.has("is_active") && !o.isNull("is_active")) f.is_active = o.optInt("is_active", 1);
 
-        // bindings
-        if (o.has("regionId") && !o.isNull("regionId")) f.regionId = o.optInt("regionId");
-
-        JSONArray devs = o.optJSONArray("bindDeviceIds");
-        if (devs != null) {
-            List<String> ids = new ArrayList<>();
-            for (int i = 0; i < devs.length(); i++) {
-                String d = devs.optString(i, null);
-                if (d != null) ids.add(d);
-            }
-            f.bindDeviceIds = ids;
-        }
+        f.createdAt = o.optString("createdAt", null);
+        f.updatedAt = o.optString("updatedAt", null);
 
         return f;
     }
@@ -187,35 +195,46 @@ public class FenceLocalStore {
 
         if (f.id != null) o.put("id", f.id);
         if (f.name != null) o.put("name", f.name);
-        if (f.shapeType != null) o.put("shapeType", f.shapeType);
+        if (f.company != null) o.put("company", f.company);
+        if (f.project != null) o.put("project", f.project);
+        if (f.shape != null) o.put("shape", f.shape);
+        if (f.behavior != null) o.put("behavior", f.behavior);
+        if (f.severity != null) o.put("severity", f.severity);
 
-        if (f.lat != null) o.put("lat", f.lat);
-        if (f.lng != null) o.put("lng", f.lng);
-        if (f.radiusMeters != null) o.put("radiusMeters", f.radiusMeters);
+        // schedule
+        if (f.schedule != null) {
+            JSONObject sched = new JSONObject();
+            sched.put("start", f.schedule.start != null ? f.schedule.start : "00:00");
+            sched.put("end", f.schedule.end != null ? f.schedule.end : "23:59");
+            o.put("schedule", sched);
+        }
 
+        // center
+        if (f.center != null && f.center.size() >= 2) {
+            JSONArray centerArr = new JSONArray();
+            centerArr.put(f.center.get(0));
+            centerArr.put(f.center.get(1));
+            o.put("center", centerArr);
+        }
+
+        if (f.radius != null) o.put("radius", f.radius);
+
+        // points
         if (f.points != null) {
             JSONArray pts = new JSONArray();
-            for (double[] p : f.points) {
-                if (p == null || p.length < 2) continue;
-                JSONArray one = new JSONArray();
-                one.put(p[0]);
-                one.put(p[1]);
-                pts.put(one);
+            for (List<Double> p : f.points) {
+                if (p == null || p.size() < 2) continue;
+                JSONArray point = new JSONArray();
+                point.put(p.get(0));
+                point.put(p.get(1));
+                pts.put(point);
             }
             o.put("points", pts);
         }
 
-        if (f.ruleType != null) o.put("ruleType", f.ruleType);
-        if (f.level != null) o.put("level", f.level);
-        if (f.enabled != null) o.put("enabled", f.enabled);
-
-        if (f.regionId != null) o.put("regionId", f.regionId);
-
-        if (f.bindDeviceIds != null) {
-            JSONArray arr = new JSONArray();
-            for (String d : f.bindDeviceIds) arr.put(d);
-            o.put("bindDeviceIds", arr);
-        }
+        if (f.is_active != null) o.put("is_active", f.is_active);
+        if (f.createdAt != null) o.put("createdAt", f.createdAt);
+        if (f.updatedAt != null) o.put("updatedAt", f.updatedAt);
 
         return o;
     }

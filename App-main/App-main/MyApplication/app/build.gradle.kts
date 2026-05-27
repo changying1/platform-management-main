@@ -109,4 +109,7 @@ dependencies {
 
     // Fallback only: put official EZOpenSDK AAR/JAR files under app/libs if Maven is unavailable.
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
+
+    // Agora voice RTC for app group voice calls
+    implementation("io.agora.rtc:voice-sdk:4.6.3")
 }

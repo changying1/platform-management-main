@@ -1,9 +1,12 @@
 package com.app.myapplication.data.api;
 
-import com.app.myapplication.data.model.CheckStatusRequest;
 import com.app.myapplication.data.model.FenceItem;
+import com.app.myapplication.data.model.FenceCreateRequest;
+import com.app.myapplication.data.model.FenceUpdateRequest;
 import com.app.myapplication.data.model.ProjectRegion;
 import com.app.myapplication.data.model.SimpleStatusResponse;
+import com.app.myapplication.data.model.FenceStats;
+import com.app.myapplication.data.model.WorkTeam;
 
 import java.util.List;
 
@@ -12,36 +15,33 @@ import retrofit2.http.Body;
 import retrofit2.http.DELETE;
 import retrofit2.http.GET;
 import retrofit2.http.POST;
-import retrofit2.http.Path;
 import retrofit2.http.PUT;
-import retrofit2.http.Query;
+import retrofit2.http.Path;
 
 public interface FenceApi {
 
-    // Regions
+    // Regions - 只保留获取列表（后端只有这个）
     @GET("fence/regions")
-    Call<List<ProjectRegion>> getRegions(@Query("skip") int skip, @Query("limit") int limit);
-
-    @POST("fence/regions")
-    Call<ProjectRegion> createRegion(@Body ProjectRegion body);
-
-    @DELETE("fence/regions/{region_id}")
-    Call<SimpleStatusResponse> deleteRegion(@Path("region_id") int regionId);
+    Call<List<ProjectRegion>> getRegions();
 
     // Fences
-    @GET("fence/")
-    Call<List<FenceItem>> getFences(@Query("skip") int skip, @Query("limit") int limit);
+    @GET("fence/list")
+    Call<List<FenceItem>> getFences();
 
     @POST("fence/")
-    Call<FenceItem> createFence(@Body FenceItem body);
+    Call<FenceItem> createFence(@Body FenceCreateRequest body);
 
     @PUT("fence/{fence_id}")
-    Call<FenceItem> updateFence(@Path("fence_id") int fenceId, @Body FenceItem body);
+    Call<FenceItem> updateFence(@Path("fence_id") String fenceId, @Body FenceUpdateRequest body);
 
-    @DELETE("fence/{fence_id}")
-    Call<SimpleStatusResponse> deleteFence(@Path("fence_id") int fenceId);
+    @DELETE("fence/delete/{fence_id}")
+    Call<SimpleStatusResponse> deleteFence(@Path("fence_id") String fenceId);
 
-    // Check status（你后端现在是 query 参数形式，但你写的是 body；两者选一种）
-    @POST("fence/check-status")
-    Call<SimpleStatusResponse> checkStatus(@Body CheckStatusRequest body);
+    // Stats
+    @GET("fence/stats")
+    Call<FenceStats> getStats();
+
+    // Teams
+    @GET("fence/teams")
+    Call<List<WorkTeam>> getTeams();
 }

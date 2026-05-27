@@ -12,8 +12,8 @@ import androidx.viewpager2.adapter.FragmentStateAdapter;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.app.myapplication.R;
-import com.app.myapplication.ui.video.VideoPlaybackFragment;
 import com.app.myapplication.ui.track.TrackPlaybackFragment;
+import com.app.myapplication.ui.video.VideoPlaybackFragment;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 
@@ -47,7 +47,7 @@ public class PlaybackCenterActivity extends AppCompatActivity {
         adapter.addFragment(new VoicePlaybackFragment(), "语音回放");
 
         viewPager.setAdapter(adapter);
-        viewPager.setOffscreenPageLimit(2);
+        viewPager.setOffscreenPageLimit(3);
 
         new TabLayoutMediator(tabLayout, viewPager, (tab, position) -> {
             tab.setText(adapter.getPageTitle(position));

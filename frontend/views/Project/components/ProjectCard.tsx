@@ -6,6 +6,7 @@ import {
   Monitor,
   MapPin,
   ShieldAlert,
+  AlertTriangle,
   Edit2,
   Trash2,
 } from 'lucide-react';
@@ -35,50 +36,59 @@ export function ProjectCard({
     <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden transition-all">
       {/* 项目头部 */}
       <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5"
+        className="flex items-center justify-between p-5 cursor-pointer hover:bg-white/5"
         onClick={onToggle}
       >
-        <div className="flex items-center gap-4 flex-1">
-          <div className="flex-1">
-            <h3 className="text-lg font-bold text-white mb-1">{project.name}</h3>
-            {project.description && (
-              <p className="text-sm text-gray-300">{project.description}</p>
-            )}
+        <div className="flex items-center gap-5 flex-1">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-xl font-bold text-white mb-1.5">{project.name}</h3>
+            <div className="flex items-center gap-4">
+              {project.description && (
+                <span className="text-base text-gray-300">{project.description}</span>
+              )}
+              {project.branch_name && (
+                <span className="text-base text-cyan-400">{project.branch_name}</span>
+              )}
+            </div>
           </div>
 
           {/* 统计信息 */}
-          <div className="flex gap-6 pr-4">
-            <div className="flex items-center gap-2">
-              <Users size={16} className="text-blue-400" />
-              <span className="text-white text-sm">{project.user_count} 人</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 bg-blue-500/15 px-3 py-2 rounded-lg border border-blue-500/30">
+              <Users size={18} className="text-blue-400" />
+              <span className="text-white text-base font-medium">{project.user_count} 人</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Monitor size={16} className="text-green-400" />
-              <span className="text-white text-sm">{project.device_count} 设备</span>
+            <div className="flex items-center gap-2 bg-green-500/15 px-3 py-2 rounded-lg border border-green-500/30">
+              <Monitor size={18} className="text-green-400" />
+              <span className="text-white text-base font-medium">{project.device_count} 设备</span>
             </div>
-            <div className="flex items-center gap-2">
-              <MapPin size={16} className="text-yellow-400" />
-              <span className="text-white text-sm">{project.region_count} 区域</span>
+            <div className="flex items-center gap-2 bg-yellow-500/15 px-3 py-2 rounded-lg border border-yellow-500/30">
+              <MapPin size={18} className="text-yellow-400" />
+              <span className="text-white text-base font-medium">{project.region_count} 区域</span>
             </div>
-            <div className="flex items-center gap-2">
-              <ShieldAlert size={16} className="text-red-400" />
-              <span className="text-white text-sm">{project.fence_count} 围栏</span>
+            <div className="flex items-center gap-2 bg-red-500/15 px-3 py-2 rounded-lg border border-red-500/30">
+              <ShieldAlert size={18} className="text-red-400" />
+              <span className="text-white text-base font-medium">{project.fence_count} 围栏</span>
+            </div>
+            <div className="flex items-center gap-2 bg-orange-500/15 px-3 py-2 rounded-lg border border-orange-500/30">
+              <AlertTriangle size={18} className="text-orange-400" />
+              <span className="text-white text-base font-medium">{project.alarm_count} 告警</span>
             </div>
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+          <div className="flex gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={onEdit}
               disabled={!isExpanded}
-              className="p-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="编辑项目"
             >
               <Edit2 size={18} className="text-blue-400" />
             </button>
             <button
               onClick={onDelete}
-              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              className="px-3 py-2 hover:bg-white/10 rounded-lg transition-colors"
               title="删除项目"
             >
               <Trash2 size={18} className="text-red-400" />
@@ -87,11 +97,11 @@ export function ProjectCard({
         </div>
 
         {/* 展开/收起图标 */}
-        <div className="ml-4">
+        <div className="ml-2">
           {isExpanded ? (
-            <ChevronUp size={20} className="text-white" />
+            <ChevronUp size={24} className="text-white" />
           ) : (
-            <ChevronDown size={20} className="text-white" />
+            <ChevronDown size={24} className="text-white" />
           )}
         </div>
       </div>

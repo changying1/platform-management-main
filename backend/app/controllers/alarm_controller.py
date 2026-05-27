@@ -18,8 +18,8 @@ class AlarmTestRequest(BaseModel):
     description: str | None = None
 
 @router.get("/", response_model=list[AlarmOut])
-def get_alarms(skip: int = 0, limit: int = 100, project_id: int | None = None, db: Session = Depends(get_db)):
-    return service.get_alarms(db, skip, limit, project_id=project_id)
+def get_alarms(skip: int = 0, limit: int = 100, project_id: int | None = None, source_type: str | None = None, db: Session = Depends(get_db)):
+    return service.get_alarms(db, skip, limit, project_id=project_id, source_type=source_type)
 
 # @router.post("/", response_model=AlarmOut)
 @router.post("/", response_model=AlarmOut)

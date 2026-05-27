@@ -17,13 +17,13 @@ import com.app.myapplication.R;
 import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.local.AppConfig;
+import com.app.myapplication.data.model.Alarm;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -72,55 +72,55 @@ public class AlarmEventsFragment extends Fragment {
         progressBar.setVisibility(View.VISIBLE);
         tvEmpty.setVisibility(View.GONE);
 
-        ApiClient.get(requireContext())
-                .create(AlarmApi.class)
-                .getAlarms(0, 100, null)
-                .enqueue(new Callback<List<Map<String, Object>>>() {
-                    @Override
-                    public void onResponse(Call<List<Map<String, Object>>> call, Response<List<Map<String, Object>>> response) {
-                        if (!isAdded()) return;
-                        progressBar.setVisibility(View.GONE);
-
-                        if (!response.isSuccessful() || response.body() == null) {
-                            tvEmpty.setVisibility(View.VISIBLE);
-                            Toast.makeText(requireContext(), "Failed to get alarm records", Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-
-                        items.clear();
-                        for (Map<String, Object> row : response.body()) {
-                            AlarmEventItem item = toAlarmEvent(row);
+        AlarmApi api = ApiClient.get(requireContext()).create(AlarmApi.class);
+        api.getAlarms().enqueue(new Callback<List<Alarm>>() {
+            @Override
+            public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
+                if (!isAdded()) return;
+                progressBar.setVisibility(View.GONE);
+                if (response.isSuccessful() && response.body() != null) {
+                    items.clear();
+                    for (Alarm alarm : response.body()) {
+                        try {
+                            AlarmEventItem item = toAlarmEvent(alarm);
                             if (deviceId == null || deviceId.isEmpty() || deviceId.equals(item.deviceId)) {
                                 items.add(item);
                             }
+                        } catch (Exception e) {
+                            e.printStackTrace();
                         }
-                        adapter.notifyDataSetChanged();
-                        tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
                     }
+                    adapter.notifyDataSetChanged();
+                    tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+                } else {
+                    tvEmpty.setVisibility(View.VISIBLE);
+                    Toast.makeText(requireContext(), "Failed to get alarm records", Toast.LENGTH_SHORT).show();
+                }
+            }
 
-                    @Override
-                    public void onFailure(Call<List<Map<String, Object>>> call, Throwable t) {
-                        if (!isAdded()) return;
-                        progressBar.setVisibility(View.GONE);
-                        tvEmpty.setVisibility(View.VISIBLE);
-                        Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
-                    }
-                });
+            @Override
+            public void onFailure(Call<List<Alarm>> call, Throwable t) {
+                if (!isAdded()) return;
+                progressBar.setVisibility(View.GONE);
+                tvEmpty.setVisibility(View.VISIBLE);
+                Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
-    private AlarmEventItem toAlarmEvent(Map<String, Object> row) {
+    private AlarmEventItem toAlarmEvent(Alarm alarm) {
         AlarmEventItem item = new AlarmEventItem();
-        item.id = stringValue(row.get("id"));
-        item.deviceId = stringValue(row.get("device_id"));
-        item.type = firstNonEmpty(row.get("alarm_type"), row.get("type"), "unknown");
-        item.level = firstNonEmpty(row.get("severity"), row.get("alarmLevel"), "medium");
-        item.msg = firstNonEmpty(row.get("description"), row.get("msg"), "");
-        item.timestamp = firstNonEmpty(row.get("timestamp"), row.get("alarmTime"), "");
-        item.personnel = firstNonEmpty(row.get("person_name"), row.get("personnel"), "");
-        item.deviceName = firstNonEmpty(row.get("device_name"), item.deviceId, "unknown");
-        item.screenshotUrl = firstNonEmpty(row.get("alarm_image_path"), row.get("screenshot_url"), "");
-        item.videoUrl = firstNonEmpty(row.get("recording_path"), row.get("video_url"), "");
-        item.status = firstNonEmpty(row.get("status"), "pending");
+        item.id = String.valueOf(alarm.getId());
+        item.deviceId = firstNonEmpty(alarm.getDeviceId());
+        item.type = firstNonEmpty(alarm.getDisplayAlarmType(), alarm.getAlarmType(), "unknown");
+        item.level = firstNonEmpty(alarm.getDisplaySeverity(), alarm.getSeverity(), "medium");
+        item.msg = firstNonEmpty(alarm.getDescription(), "");
+        item.timestamp = firstNonEmpty(alarm.getTimestamp(), "");
+        item.personnel = firstNonEmpty(alarm.getPersonnelId(), "");
+        item.deviceName = firstNonEmpty(item.deviceId, "unknown");
+        item.screenshotUrl = firstNonEmpty(alarm.getAlarmImagePath(), "");
+        item.videoUrl = firstNonEmpty(alarm.getRecordingPath(), "");
+        item.status = firstNonEmpty(alarm.getDisplayStatus(), alarm.getStatus(), "pending");
         return item;
     }
 
