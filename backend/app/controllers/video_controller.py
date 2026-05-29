@@ -19,9 +19,11 @@ from app.schemas.video_schema import (
     StreamUrlResponse,
 )
 from app.services.video_service import VideoService
+from app.utils.logger import get_logger
 import cv2
 import time
 import threading
+from datetime import datetime
 # --- 在现有的 import 语句下面添加 ---
 from app.services.ai_manager import ai_manager
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ from app.services.ai_features.registry import list_rules
 
 router = APIRouter(prefix="/video", tags=["Video Surveillance"])
 service = VideoService()
+logger = get_logger("VideoController")
 
 
 def _ensure_zoom_direction(direction: str):
@@ -268,10 +271,32 @@ def save_playback_clip(video_id: int, body: PlaybackSaveRequest):
 
 @router.get("/{video_id}/recordings")
 def list_recording_segments(video_id: int, limit: int = 72):
+    started_at = time.time()
+    started_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    logger.info(
+        "recordings list controller start video_id=%s limit=%s started_at=%s",
+        video_id,
+        limit,
+        started_text,
+    )
     """获取设备录像分段列表（默认最近72段）"""
     try:
-        return service.list_recording_segments(video_id, limit)
+        result = service.list_recording_segments(video_id, limit)
+        logger.info(
+            "recordings list controller done video_id=%s limit=%s count=%s elapsed_ms=%.2f",
+            video_id,
+            limit,
+            len(result) if isinstance(result, list) else "unknown",
+            (time.time() - started_at) * 1000,
+        )
+        return result
     except Exception as e:
+        logger.exception(
+            "recordings list controller failed video_id=%s limit=%s elapsed_ms=%.2f",
+            video_id,
+            limit,
+            (time.time() - started_at) * 1000,
+        )
         raise HTTPException(status_code=500, detail=f"获取录像分段失败: {e}")
 
 

@@ -98,6 +98,8 @@ TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_R
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
 MIN_RECORD_SEGMENT_BYTES = int(os.getenv("VIDEO_MIN_RECORD_SEGMENT_BYTES", str(64 * 1024)))
+RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS", "2"))
+RECORDING_LIST_MAX_SECONDS = float(os.getenv("VIDEO_RECORDING_LIST_MAX_SECONDS", "6"))
 PLAYBACK_ARCHIVE_WINDOW_HOURS = max(1, int(os.getenv("PLAYBACK_ARCHIVE_WINDOW_HOURS", "3")))
 PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
                                       int(os.getenv("PLAYBACK_ARCHIVE_LOOKBACK_HOURS", "24")))
@@ -2886,7 +2888,7 @@ class VideoService:
         seconds = float(match.group(3))
         return hours * 3600 + minutes * 60 + seconds
 
-    def _probe_video_duration(self, file_path: str) -> Optional[float]:
+    def _probe_video_duration(self, file_path: str, timeout_seconds: float = 2.0) -> Optional[float]:
         ffprobe_path = self._get_ffprobe_path()
         if os.path.exists(ffprobe_path):
             cmd = [
@@ -2896,7 +2898,15 @@ class VideoService:
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 file_path,
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "ffprobe duration timeout file=%s timeout_seconds=%.1f",
+                    file_path,
+                    timeout_seconds,
+                )
+                return None
             if result.returncode == 0:
                 try:
                     duration = float((result.stdout or "").strip())
@@ -2913,7 +2923,15 @@ class VideoService:
 
         ffmpeg_path = self._get_ffmpeg_path()
         probe_cmd = [ffmpeg_path, "-hide_banner", "-i", file_path]
-        result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "ffmpeg duration probe timeout file=%s timeout_seconds=%.1f",
+                file_path,
+                timeout_seconds,
+            )
+            return None
         duration = self._parse_duration_text((result.stderr or "") + "\n" + (result.stdout or ""))
         if duration and duration > 0:
             return duration
@@ -2924,8 +2942,19 @@ class VideoService:
         )
         return None
 
-    def _validate_recording_segment(self, file_path: str, min_age_seconds: int = 6) -> tuple[bool, Optional[float], str]:
+    def _validate_recording_segment(
+            self,
+            file_path: str,
+            min_age_seconds: int = 6,
+            probe_timeout_seconds: float = 2.0,
+            check_decode: bool = True,
+            trace: Optional[dict] = None,
+    ) -> tuple[bool, Optional[float], str]:
         try:
+            if trace is not None:
+                trace["ffprobe_called"] = False
+                trace["decode_check_called"] = False
+
             if not os.path.exists(file_path):
                 return False, None, "file_not_found"
 
@@ -2945,11 +2974,16 @@ class VideoService:
             if age < min_age_seconds:
                 return False, None, "file_recently_modified"
 
-            duration = self._probe_video_duration(file_path)
+            if trace is not None:
+                trace["ffprobe_called"] = True
+            duration = self._probe_video_duration(file_path, timeout_seconds=probe_timeout_seconds)
             if duration is None:
                 return False, None, "duration_unreadable"
             if duration <= 0:
                 return False, duration, f"duration_invalid:{duration}"
+
+            if not check_decode:
+                return True, duration, ""
 
             ffmpeg_path = self._get_ffmpeg_path()
             decode_check_cmd = [
@@ -2961,7 +2995,17 @@ class VideoService:
                 "-f", "null",
                 "-",
             ]
-            decode_result = subprocess.run(decode_check_cmd, capture_output=True, text=True)
+            if trace is not None:
+                trace["decode_check_called"] = True
+            try:
+                decode_result = subprocess.run(
+                    decode_check_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=probe_timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                return False, duration, f"decode_timeout:{probe_timeout_seconds}"
             if decode_result.returncode != 0:
                 return False, duration, f"decode_failed:{(decode_result.stderr or '').strip()[-300:]}"
 
@@ -3251,26 +3295,108 @@ class VideoService:
                 )
 
     def list_recording_segments(self, video_id: int, limit: int = 72):
+        started_at = time.time()
+        started_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        bounded_limit = max(1, min(int(limit or 72), 720))
+        logger.info(
+            "recordings list service start video_id=%s limit=%s bounded_limit=%s started_at=%s",
+            video_id,
+            limit,
+            bounded_limit,
+            started_text,
+        )
         self._auto_archive_periodic_playback(video_id)
+
         seen = set()
         segments = []
-        
-        for record_root in self._get_all_record_roots():
+        scanned_files = 0
+        candidate_files: list[tuple[str, str]] = []
+
+        for storage_root in self._get_enabled_local_storage_roots():
+            record_root = os.path.join(storage_root, "recordings")
             device_root = os.path.join(record_root, str(video_id))
+            logger.info("recordings list directory video_id=%s path=%s", video_id, device_root)
             if not os.path.isdir(device_root):
+                logger.info("recordings list directory missing video_id=%s path=%s", video_id, device_root)
                 continue
 
-            for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=True):
+            files = sorted(glob.glob(os.path.join(device_root, "*.mp4")), reverse=True)
+            scanned_files += len(files)
+            logger.info(
+                "recordings list directory scanned video_id=%s path=%s file_count=%s",
+                video_id,
+                device_root,
+                len(files),
+            )
+
+            for seg_path in files:
                 seg_filename = os.path.basename(seg_path)
                 if seg_filename in seen:
                     continue
-                ok, duration_seconds, reason = self._validate_recording_segment(seg_path)
-                if not ok or not duration_seconds:
-                    logger.debug(f"recording segment skipped file={seg_path} reason={reason}")
-                    continue
+                seen.add(seg_filename)
+                candidate_files.append((record_root, seg_path))
+                if len(candidate_files) >= bounded_limit:
+                    break
 
+            if len(candidate_files) >= bounded_limit:
+                break
+
+        logger.info(
+            "recordings list scan summary video_id=%s scanned_file_count=%s candidate_count=%s",
+            video_id,
+            scanned_files,
+            len(candidate_files),
+        )
+
+        if not candidate_files:
+            logger.info(
+                "recordings list service done video_id=%s count=0 total_elapsed_ms=%.2f",
+                video_id,
+                (time.time() - started_at) * 1000,
+            )
+            return []
+
+        for processed_count, (record_root, seg_path) in enumerate(candidate_files):
+            if time.time() - started_at > RECORDING_LIST_MAX_SECONDS:
+                logger.warning(
+                    "recordings list time budget exceeded video_id=%s max_seconds=%.1f processed_count=%s result_count=%s",
+                    video_id,
+                    RECORDING_LIST_MAX_SECONDS,
+                    processed_count,
+                    len(segments),
+                )
+                break
+
+            file_started_at = time.time()
+            trace: dict[str, Any] = {}
+            seg_filename = os.path.basename(seg_path)
+            try:
                 seg_start = self._parse_segment_start(seg_path)
                 if not seg_start:
+                    logger.info(
+                        "recordings list file skipped video_id=%s file=%s elapsed_ms=%.2f ffprobe_called=%s reason=parse_start_failed",
+                        video_id,
+                        seg_path,
+                        (time.time() - file_started_at) * 1000,
+                        trace.get("ffprobe_called", False),
+                    )
+                    continue
+
+                ok, duration_seconds, reason = self._validate_recording_segment(
+                    seg_path,
+                    probe_timeout_seconds=RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS,
+                    check_decode=False,
+                    trace=trace,
+                )
+                if not ok or not duration_seconds:
+                    logger.info(
+                        "recordings list file skipped video_id=%s file=%s elapsed_ms=%.2f ffprobe_called=%s reason=%s",
+                        video_id,
+                        seg_path,
+                        (time.time() - file_started_at) * 1000,
+                        trace.get("ffprobe_called", False),
+                        reason,
+                    )
                     continue
 
                 seg_end = seg_start + timedelta(seconds=duration_seconds)
@@ -3283,11 +3409,31 @@ class VideoService:
                     "web_path": self._to_static_web_path(seg_path),
                     "source": os.path.basename(os.path.dirname(record_root))
                 })
-                seen.add(seg_filename)
+                logger.info(
+                    "recordings list file processed video_id=%s file=%s elapsed_ms=%.2f ffprobe_called=%s duration_seconds=%s",
+                    video_id,
+                    seg_path,
+                    (time.time() - file_started_at) * 1000,
+                    trace.get("ffprobe_called", False),
+                    int(duration_seconds),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "recordings list file skipped video_id=%s file=%s elapsed_ms=%.2f ffprobe_called=%s reason=exception:%s",
+                    video_id,
+                    seg_path,
+                    (time.time() - file_started_at) * 1000,
+                    trace.get("ffprobe_called", False),
+                    exc,
+                )
 
-                if len(segments) >= max(1, min(limit, 720)):
-                    break
-
+        logger.info(
+            "recordings list service done video_id=%s count=%s scanned_file_count=%s total_elapsed_ms=%.2f",
+            video_id,
+            len(segments),
+            scanned_files,
+            (time.time() - started_at) * 1000,
+        )
         return segments
 
     def save_playback_clip(self, video_id: int, start_time: datetime | str, end_time: datetime | str,
