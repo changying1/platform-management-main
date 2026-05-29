@@ -704,11 +704,17 @@ useEffect(() => {
       if (!data || typeof data !== "object") return [];
 
       const candidates = [
+        data.alarm_boxes,
         data.boxes,
+        data.data?.alarm_boxes,
         data.data?.boxes,
+        data.payload?.alarm_boxes,
         data.payload?.boxes,
+        data.detail?.alarm_boxes,
         data.detail?.boxes,
+        data.result?.alarm_boxes,
         data.result?.boxes,
+        data.event?.alarm_boxes,
         data.event?.boxes,
       ];
 
@@ -730,6 +736,23 @@ useEffect(() => {
       const alarmLike = (raw?.data && typeof raw.data === "object" ? raw.data : raw) || {};
       const boxes = normalizeAlarmBoxes(raw);
       return { boxes, alarmLike };
+    };
+
+    const getAlarmDeviceId = (alarmLike: any): string => {
+      const value =
+        alarmLike?.device_id ??
+        alarmLike?.deviceId ??
+        alarmLike?.video_id ??
+        alarmLike?.videoId ??
+        alarmLike?.camera_id ??
+        alarmLike?.cameraId;
+      return value === undefined || value === null ? "" : String(value);
+    };
+
+    const isCurrentDeviceAlarm = (alarmLike: any): boolean => {
+      if (!maximizedVideo) return false;
+      const alarmDeviceId = getAlarmDeviceId(alarmLike);
+      return alarmDeviceId !== "" && alarmDeviceId === String(maximizedVideo.id);
     };
 
   useEffect(() => {
@@ -782,6 +805,7 @@ useEffect(() => {
           }
 
           const { boxes, alarmLike } = parseAlarmPayload(data);
+          if (!isCurrentDeviceAlarm(alarmLike)) return;
 
           // 人脸识别：只画框显示 5 秒，不弹窗、不响声
           if (alarmLike?.face_recognition && boxes.length) {
@@ -791,7 +815,7 @@ useEffect(() => {
             }
             alarmBoxesClearTimerRef.current = window.setTimeout(() => {
               setAlarmBoxes([]);
-            }, 5000);
+            }, 3000);
             return;
           }
 
@@ -813,7 +837,7 @@ useEffect(() => {
             }
             alarmBoxesClearTimerRef.current = window.setTimeout(() => {
               setAlarmBoxes([]);
-            }, 4200);
+            }, 3000);
           }
 
           const firstBox = boxes[0];
@@ -890,6 +914,27 @@ useEffect(() => {
       }
     };
   }, [isAIEnabled, maximizedVideo?.id]);  // ✅ 依赖项加上 isAIEnabled 和 maximizedVideo?.id
+
+  useEffect(() => {
+    const handleRealtimeAlarm = (event: Event) => {
+      const data = (event as CustomEvent).detail;
+      const { boxes, alarmLike } = parseAlarmPayload(data);
+      if (!streamUrl || !boxes.length || !isCurrentDeviceAlarm(alarmLike)) return;
+
+      setAlarmBoxes(boxes);
+      if (alarmBoxesClearTimerRef.current) {
+        window.clearTimeout(alarmBoxesClearTimerRef.current);
+      }
+      alarmBoxesClearTimerRef.current = window.setTimeout(() => {
+        setAlarmBoxes([]);
+      }, 3000);
+    };
+
+    window.addEventListener("realtime-alarm", handleRealtimeAlarm);
+    return () => {
+      window.removeEventListener("realtime-alarm", handleRealtimeAlarm);
+    };
+  }, [maximizedVideo?.id, streamUrl]);
 
 
     const formatLocalDateTimeForApi = (date: Date) => {
@@ -1271,15 +1316,70 @@ useEffect(() => {
     });
   }, [devices, searchTerm, selectedCompany, selectedDevices, selectedProject]);
 
-  const totalPages = Math.ceil(filteredDevicesForGrid.length / itemsPerPage);
-  const paginatedDevices = useMemo(() => {
-    return filteredDevicesForGrid.slice(
+  type VirtualCameraCell = {
+    kind: "virtual";
+    id: string;
+    name: string;
+  };
+
+  type DisplayCell =
+    | {
+        kind: "real";
+        device: Video;
+      }
+    | VirtualCameraCell;
+
+  const virtualCameraCells = useMemo<VirtualCameraCell[]>(
+    () =>
+      Array.from({ length: 5 }, (_, index) => ({
+        kind: "virtual" as const,
+        id: `virtual-camera-${index + 1}`,
+        name: `摄像头 ${index + 1}`,
+      })),
+    []
+  );
+
+  const realCells = useMemo<DisplayCell[]>(
+    () =>
+      filteredDevicesForGrid.map((device) => ({
+        kind: "real" as const,
+        device,
+      })),
+    [filteredDevicesForGrid]
+  );
+
+  const allDisplayCells = useMemo(
+    () => [...realCells, ...virtualCameraCells],
+    [realCells, virtualCameraCells]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(allDisplayCells.length / itemsPerPage));
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
+  const paginatedCells = useMemo(() => {
+    return allDisplayCells.slice(
       (currentPage - 1) * itemsPerPage,
       currentPage * itemsPerPage
     );
-  }, [currentPage, filteredDevicesForGrid, itemsPerPage]);
-  const actualCount = paginatedDevices.length;
-  const cols = actualCount > 0 ? Math.ceil(Math.sqrt(actualCount)) : 1;
+  }, [allDisplayCells, currentPage, itemsPerPage]);
+
+  const gridLayoutByCount: Record<number, { cols: number; rows: number }> = {
+    1: { cols: 1, rows: 1 },
+    4: { cols: 2, rows: 2 },
+    9: { cols: 3, rows: 3 },
+    16: { cols: 4, rows: 4 },
+    25: { cols: 5, rows: 5 },
+  };
+  const fallbackCols = Math.ceil(Math.sqrt(itemsPerPage));
+  const currentGridLayout = gridLayoutByCount[itemsPerPage] || {
+    cols: fallbackCols,
+    rows: Math.ceil(itemsPerPage / fallbackCols),
+  };
+  const cols = currentGridLayout.cols;
+  const rows = currentGridLayout.rows;
 
     // const handleShowStream = async (device: Video) => {
     //   try {
@@ -1455,12 +1555,12 @@ useEffect(() => {
   }, []);
 
     useEffect(() => {
-      paginatedDevices.forEach((device) => {
-        if (device) {
-          loadPreviewStream(device);
+      paginatedCells.forEach((cell) => {
+        if (cell.kind === "real") {
+          loadPreviewStream(cell.device);
         }
       });
-    }, [loadPreviewStream, paginatedDevices]);
+    }, [loadPreviewStream, paginatedCells]);
 
     const handleVideoDoubleClick = async (device: Video) => {
       await handleShowStream(device);
@@ -1675,8 +1775,8 @@ useEffect(() => {
           const drawH = Math.max(2, (y2 - y1) * scaleY);
 
           const id = Number(box.track_id || 0);
-          const color = `hsl(${(id * 50) % 360}, 80%, 50%)`;
-          const label = `${box.msg || box.type || "报警"} #${id}`;
+          const color = "#ef4444";
+          const label = `${box.msg || box.type || "报警"}${id ? ` #${id}` : ""}`;
 
           ctx.strokeStyle = color;
           ctx.lineWidth = 3;
@@ -1896,6 +1996,7 @@ useEffect(() => {
             <h3 className="text-lg font-bold text-cyan-300">
               监控设备 
               <span className="text-sm text-slate-400 ml-2">(共{filteredDevicesForGrid.length}个设备)</span>
+              <span className="text-xs text-slate-500 ml-2">含5个虚拟占位</span>
             </h3>
             <div className="flex gap-2 items-center">
     <label className="text-xs text-slate-300 font-medium">每页视窗数：</label>
@@ -1920,18 +2021,44 @@ useEffect(() => {
   <div
     style={{
       display: "grid",
-      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+      gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+      gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
       gap: "1rem",
     }}
-    className="flex-1"
+    className="flex-1 min-h-0"
   >
-    {paginatedDevices.map((device) => (
+    {paginatedCells.map((cell) => {
+      if (cell.kind === "virtual") {
+        return (
+          <div
+            key={cell.id}
+            className="relative min-w-0 min-h-0 overflow-hidden rounded-md border border-blue-300/20 bg-black shadow-[inset_0_0_18px_rgba(14,165,233,0.08),0_6px_14px_rgba(2,6,23,.5)]"
+          >
+            <div className="relative w-full h-full bg-black">
+              <div className="absolute inset-0 flex items-center justify-center bg-black">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-red-500">无信号</div>
+                </div>
+              </div>
+            </div>
+            <div className="absolute bottom-2 right-2 z-10">
+              <span className="text-base bg-slate-900/75 backdrop-blur px-5 py-2 rounded text-slate-300 border border-slate-700/60 shadow-sm">
+                {cell.name}
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      const device = cell.device;
+
+      return (
       <div
-        key={device.id}
-        className="relative group overflow-hidden rounded-md border border-blue-300/20 bg-slate-900/55 shadow-[inset_0_0_18px_rgba(14,165,233,0.08),0_6px_14px_rgba(2,6,23,.5)] hover:border-cyan-300/45 transition-colors"
+        key={`real-${device.id}`}
+        className="relative group min-w-0 min-h-0 overflow-hidden rounded-md border border-blue-300/20 bg-slate-900/55 shadow-[inset_0_0_18px_rgba(14,165,233,0.08),0_6px_14px_rgba(2,6,23,.5)] hover:border-cyan-300/45 transition-colors"
       >
         <div
-          className="relative w-full pt-[56.25%] bg-black"
+          className="relative w-full h-full bg-black"
           onDoubleClick={() => handleVideoDoubleClick(device)}
         >
           <div className="absolute inset-0">
@@ -1993,7 +2120,8 @@ useEffect(() => {
           </button>
         </div>
       </div>
-    ))}
+      );
+    })}
   </div>
         
         {/* 分页控件 */}
@@ -2177,7 +2305,19 @@ useEffect(() => {
             </div>
             )}
             <div className={`flex-1 flex min-h-0 ${isMonitorOnlyMode ? 'gap-0' : 'gap-4'}`}>
-              <div className={`flex-1 flex flex-col overflow-hidden ${isMonitorOnlyMode ? 'bg-black rounded-none border-0' : 'bg-slate-900/65 rounded-lg border border-blue-300/25'}`}>
+              <div className={`relative flex-1 flex flex-col overflow-hidden ${isMonitorOnlyMode ? 'bg-black rounded-none border-0' : 'bg-slate-900/65 rounded-lg border border-blue-300/25'}`}>
+                {isMonitorOnlyMode && (
+                  <button
+                    type="button"
+                    onClick={() => setIsMonitorOnlyMode(false)}
+                    className="absolute right-0 top-1/2 z-50 flex -translate-y-1/2 items-center gap-2 rounded-l-md border border-cyan-200 bg-cyan-400 px-3 py-4 text-sm font-bold text-slate-950 shadow-[0_0_24px_rgba(34,211,238,0.65)] transition hover:bg-cyan-300"
+                    title="Open PTZ panel"
+                    aria-label="Open PTZ panel"
+                  >
+                    <PanelRightOpen size={18} />
+                    <span>PTZ</span>
+                  </button>
+                )}
                 {streamUrl ? (
                   <>
                     {!isMonitorOnlyMode && (
@@ -2209,7 +2349,7 @@ useEffect(() => {
     videoId={maximizedVideo?.id}
     onError={handlePlayerError}
   />
-                        <canvas id="aiCanvas" ref={aiCanvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
+                        <canvas id="aiCanvas" ref={aiCanvasRef} className="absolute top-0 left-0 z-10 w-full h-full pointer-events-none" />
                       <div className="absolute top-28 left-16 z-20 pointer-events-none flex flex-col gap-1.5 max-w-[45vw] text-black text-3xl font-bold leading-8 ">
                           <div className="truncate">{maximizedVideo.name || ""}</div>
                           <div className="truncate">{maximizedVideo.remark?.trim() || ""}</div>

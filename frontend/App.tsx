@@ -584,7 +584,11 @@ const getAlarmLevel = (severity?: unknown): 'low' | 'medium' | 'high' => {
 
 const normalizeRealtimeAlarm = (raw: any) => {
   const payload = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) || {};
-  const boxes = Array.isArray(payload.boxes) ? payload.boxes : [];
+  const boxes = Array.isArray(payload.alarm_boxes)
+    ? payload.alarm_boxes
+    : Array.isArray(payload.boxes)
+      ? payload.boxes
+      : [];
   const firstBox = boxes[0] || {};
 
   const type = String(firstBox.type || payload.type || payload.alarm_type || '').trim();
@@ -655,6 +659,8 @@ export default function App() {
           } catch {
             return;
           }
+
+          window.dispatchEvent(new CustomEvent('realtime-alarm', { detail: data }));
 
           const alarm = normalizeRealtimeAlarm(data);
           if (!alarm) return;

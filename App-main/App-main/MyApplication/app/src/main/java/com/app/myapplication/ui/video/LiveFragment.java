@@ -22,6 +22,7 @@ import androidx.fragment.app.Fragment;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -34,6 +35,10 @@ import com.app.myapplication.data.api.VideoApi;
 import com.app.myapplication.data.local.AppConfig;
 import com.app.myapplication.data.model.LiveStreamInfo;
 import com.app.myapplication.ui.video.ezviz.EzvizPlayerManager;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,6 +46,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
@@ -60,6 +69,7 @@ public class LiveFragment extends Fragment {
 
     private PlayerView playerView;
     private FrameLayout ezvizPlayerContainer;
+    private AlarmBoxOverlayView alarmOverlayView;
     private TextView tvPlayerStatus;
     private ImageButton btnPlayPause;
     private ImageButton btnFullscreen;
@@ -105,6 +115,8 @@ public class LiveFragment extends Fragment {
     private boolean invalidDeviceId = false;
     private final List<Map<String, Object>> presetCache = new ArrayList<>();
     private final Map<String, CheckBox> aiRuleCheckBoxes = new LinkedHashMap<>();
+    private final OkHttpClient alarmSocketClient = new OkHttpClient();
+    private WebSocket alarmWebSocket;
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -115,6 +127,7 @@ public class LiveFragment extends Fragment {
     public void onViewCreated(@NonNull View v, Bundle savedInstanceState) {
         playerView = v.findViewById(R.id.player_view);
         ezvizPlayerContainer = v.findViewById(R.id.ezviz_player_container);
+        alarmOverlayView = v.findViewById(R.id.alarm_overlay_view);
         tvPlayerStatus = v.findViewById(R.id.tv_player_status);
         btnPlayPause = v.findViewById(R.id.btn_play_pause);
         btnFullscreen = v.findViewById(R.id.btn_fullscreen);
@@ -182,6 +195,7 @@ public class LiveFragment extends Fragment {
             videoId = -1;
             invalidDeviceId = true;
         }
+        connectAlarmWebSocket();
 
         btnPlayPause.setOnClickListener(view -> {
             if (!streamPrepared) {
@@ -1024,6 +1038,150 @@ public class LiveFragment extends Fragment {
         });
     }
 
+    private void connectAlarmWebSocket() {
+        closeAlarmWebSocket();
+        String wsUrl = toWsUrl(AppConfig.getBaseUrl(requireContext())) + "ws/alarm";
+        Request request = new Request.Builder().url(wsUrl).build();
+        alarmWebSocket = alarmSocketClient.newWebSocket(request, new WebSocketListener() {
+            @Override
+            public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
+                handleAlarmSocketMessage(text);
+            }
+
+            @Override
+            public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, okhttp3.Response response) {
+                Log.w(TAG, "alarm websocket failed: " + safeMessage(t));
+            }
+        });
+    }
+
+    private void closeAlarmWebSocket() {
+        if (alarmWebSocket != null) {
+            alarmWebSocket.close(1000, "closed");
+            alarmWebSocket = null;
+        }
+        if (alarmOverlayView != null) {
+            alarmOverlayView.clearBoxes();
+        }
+    }
+
+    private void handleAlarmSocketMessage(String text) {
+        try {
+            JsonObject payload = JsonParser.parseString(text).getAsJsonObject();
+            JsonObject alarm = payload.has("data") && payload.get("data").isJsonObject()
+                    ? payload.getAsJsonObject("data")
+                    : payload;
+            if (!matchesCurrentDevice(alarm)) return;
+
+            List<AlarmBoxOverlayView.AlarmBox> boxes = parseAlarmBoxes(alarm);
+            if (boxes.isEmpty()) return;
+
+            if (!isAdded()) return;
+            requireActivity().runOnUiThread(() -> {
+                if (alarmOverlayView == null) return;
+                int[] videoSize = currentVideoSize();
+                alarmOverlayView.showBoxes(boxes, 3000, videoSize[0], videoSize[1]);
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "failed to parse alarm websocket message", e);
+        }
+    }
+
+    private boolean matchesCurrentDevice(JsonObject alarm) {
+        String alarmDeviceId = firstString(alarm, "device_id", "deviceId", "video_id", "videoId", "camera_id", "cameraId");
+        return !alarmDeviceId.isEmpty() && alarmDeviceId.equals(String.valueOf(deviceId));
+    }
+
+    private List<AlarmBoxOverlayView.AlarmBox> parseAlarmBoxes(JsonObject alarm) {
+        List<AlarmBoxOverlayView.AlarmBox> result = new ArrayList<>();
+        JsonArray boxes = firstArray(alarm, "alarm_boxes", "boxes");
+        if (boxes == null) return result;
+
+        for (JsonElement element : boxes) {
+            if (!element.isJsonObject()) continue;
+            JsonObject box = element.getAsJsonObject();
+            float[] coords = parseCoords(box);
+            if (coords == null) continue;
+            String label = firstString(box, "msg", "type", "personName");
+            result.add(new AlarmBoxOverlayView.AlarmBox(coords[0], coords[1], coords[2], coords[3], label));
+        }
+        return result;
+    }
+
+    private float[] parseCoords(JsonObject box) {
+        JsonArray coords = firstArray(box, "coords", "bbox", "xyxy", "box");
+        if (coords != null && coords.size() >= 4) {
+            return new float[] {
+                    coords.get(0).getAsFloat(),
+                    coords.get(1).getAsFloat(),
+                    coords.get(2).getAsFloat(),
+                    coords.get(3).getAsFloat()
+            };
+        }
+
+        float x1 = firstFloat(box, "x1", "left", "x");
+        float y1 = firstFloat(box, "y1", "top", "y");
+        float x2 = hasAny(box, "x2", "right") ? firstFloat(box, "x2", "right") : x1 + firstFloat(box, "w", "width");
+        float y2 = hasAny(box, "y2", "bottom") ? firstFloat(box, "y2", "bottom") : y1 + firstFloat(box, "h", "height");
+        if (x2 <= x1 || y2 <= y1) return null;
+        return new float[] { x1, y1, x2, y2 };
+    }
+
+    private int[] currentVideoSize() {
+        if (player == null) return new int[] {0, 0};
+        VideoSize size = player.getVideoSize();
+        return new int[] {size.width, size.height};
+    }
+
+    private JsonArray firstArray(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && obj.get(key).isJsonArray()) {
+                return obj.getAsJsonArray(key);
+            }
+        }
+        return null;
+    }
+
+    private String firstString(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && !obj.get(key).isJsonNull()) {
+                String value = obj.get(key).getAsString();
+                if (value != null && !value.trim().isEmpty()) return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private float firstFloat(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && !obj.get(key).isJsonNull()) {
+                try {
+                    return obj.get(key).getAsFloat();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return 0f;
+    }
+
+    private boolean hasAny(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && !obj.get(key).isJsonNull()) return true;
+        }
+        return false;
+    }
+
+    private String toWsUrl(String baseUrl) {
+        String url = baseUrl == null ? "" : baseUrl.trim();
+        if (url.startsWith("https://")) {
+            url = "wss://" + url.substring("https://".length());
+        } else if (url.startsWith("http://")) {
+            url = "ws://" + url.substring("http://".length());
+        }
+        if (!url.endsWith("/")) url += "/";
+        return url;
+    }
+
     private String safeMessage(Throwable t) {
         return t == null || t.getMessage() == null ? "unknown" : t.getMessage();
     }
@@ -1102,6 +1260,7 @@ public class LiveFragment extends Fragment {
             ezvizPlayerManager.release();
             ezvizPlayerManager = null;
         }
+        closeAlarmWebSocket();
         releaseExoPlayer();
     }
 }

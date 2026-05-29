@@ -140,7 +140,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         // ===== 基本字段 =====
         String displayId = buildDisplayId(alarm.getId(), alarm.getTimestamp());
         holder.tvAlarmId.setText("报警编号: " + displayId);
-        holder.tvAlarmType.setText("报警类型: " + valueOr(alarm.getAlarmType(), "未知报警类型"));
+        holder.tvAlarmType.setText("报警类型: " + valueOr(alarm.getDisplayAlarmType(), "未知报警类型"));
         holder.tvAlarmContent.setText("报警内容: " + valueOr(alarm.getDescription(), "暂无报警内容"));
         holder.tvDevice.setText("设备: " + valueOr(valueOr(alarm.getDeviceName(), alarm.getDeviceId()), "未知设备"));
         holder.tvPerson.setText("人员: " + valueOr(alarm.getPersonName(), "未知人员"));

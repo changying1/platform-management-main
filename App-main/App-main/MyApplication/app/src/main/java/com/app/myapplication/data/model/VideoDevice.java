@@ -45,6 +45,8 @@ public class VideoDevice {
     @SerializedName("is_active")
     private Integer isActive;
 
+    private transient boolean frontendOnly;
+
     /* ===================== getters & setters ===================== */
 
     public Integer getId() {
@@ -141,5 +143,13 @@ public class VideoDevice {
     /** 1 = 启用，0 = 禁用 */
     public void setIsActive(Integer isActive) {
         this.isActive = isActive;
+    }
+
+    public boolean isFrontendOnly() {
+        return frontendOnly;
+    }
+
+    public void setFrontendOnly(boolean frontendOnly) {
+        this.frontendOnly = frontendOnly;
     }
 }

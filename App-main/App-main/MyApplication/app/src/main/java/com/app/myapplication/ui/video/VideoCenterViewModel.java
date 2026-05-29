@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class VideoCenterViewModel extends AndroidViewModel {
+    private static final int LOCAL_CAMERA_COUNT = 5;
+    private static final int LOCAL_CAMERA_ID_BASE = -10000;
 
     public static class UiState {
         public List<VideoDevice> allDevices = new ArrayList<>();
@@ -74,12 +76,13 @@ public class VideoCenterViewModel extends AndroidViewModel {
                 List<VideoDevice> offline = new ArrayList<>();
                 for (VideoDevice d : list) {
                     if (d == null) continue;
-                    if (d.getIsActive()) online.add(d);
+                    if (VideoDeviceStatus.isOnline(d)) online.add(d);
                     else offline.add(d);
                 }
                 ns.allDevices = new ArrayList<>();
                 ns.allDevices.addAll(online);
                 ns.allDevices.addAll(offline);
+                ns.allDevices.addAll(createLocalCameraTiles());
 
                 // ✅ 2) 默认选中在线（保留你原逻辑）
                 ns.selectedDevices = new ArrayList<>(online);
@@ -294,6 +297,20 @@ public class VideoCenterViewModel extends AndroidViewModel {
             if (name.contains(k) || idStr.contains(k) || ip.contains(k)) {
                 out.add(d);
             }
+        }
+        return out;
+    }
+
+    private List<VideoDevice> createLocalCameraTiles() {
+        List<VideoDevice> out = new ArrayList<>();
+        for (int i = 1; i <= LOCAL_CAMERA_COUNT; i++) {
+            VideoDevice d = new VideoDevice();
+            d.setId(LOCAL_CAMERA_ID_BASE - i);
+            d.setName("摄像头 " + i);
+            d.setStatus("offline");
+            d.setIsActive(0);
+            d.setFrontendOnly(true);
+            out.add(d);
         }
         return out;
     }

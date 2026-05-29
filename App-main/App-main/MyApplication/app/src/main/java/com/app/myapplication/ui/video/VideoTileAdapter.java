@@ -1,5 +1,6 @@
 package com.app.myapplication.ui.video;
 
+import android.graphics.Color;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -12,6 +13,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.app.myapplication.R;
 import com.app.myapplication.data.model.VideoDevice;
+import com.google.android.material.card.MaterialCardView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -74,12 +76,29 @@ public class VideoTileAdapter extends RecyclerView.Adapter<VideoTileAdapter.VH> 
         // 只保留标题（sub 已删除）
         String title = firstNonEmpty(item.getName(), item.getId(), item.getStreamUrl());
         h.tvTitle.setText(title);
+        h.tvStatus.setText(VideoDeviceStatus.label(item));
+
+        if (item.isFrontendOnly()) {
+            h.card.setCardBackgroundColor(Color.BLACK);
+            h.videoContainer.setBackgroundColor(Color.BLACK);
+            h.tvNoSignal.setVisibility(View.VISIBLE);
+            h.tvTitle.setTextColor(Color.WHITE);
+            h.tvStatus.setTextColor(Color.WHITE);
+        } else {
+            h.card.setCardBackgroundColor(Color.parseColor("#B6E3FA"));
+            h.videoContainer.setBackgroundColor(Color.parseColor("#EFEFF4"));
+            h.tvNoSignal.setVisibility(View.GONE);
+            h.tvTitle.setTextColor(Color.parseColor("#0B1220"));
+            h.tvStatus.setTextColor(Color.parseColor("#475467"));
+        }
 
         // ✅ 超过9格：隐藏标题区域（只留视频/占位区域），避免字变形
         if (gridMode > 9) {
             h.tvTitle.setVisibility(View.GONE);
+            h.tvStatus.setVisibility(View.GONE);
         } else {
             h.tvTitle.setVisibility(View.VISIBLE);
+            h.tvStatus.setVisibility(View.VISIBLE);
 
             // ✅ 防止 “De\nvice” 断行变形：单行 + 省略号（XML 也建议写）
             h.tvTitle.setSingleLine(true);
@@ -94,11 +113,15 @@ public class VideoTileAdapter extends RecyclerView.Adapter<VideoTileAdapter.VH> 
     @Override public int getItemCount() { return data.size(); }
 
     static class VH extends RecyclerView.ViewHolder {
+        MaterialCardView card;
         FrameLayout videoContainer;
-        TextView tvTitle;
+        TextView tvTitle, tvStatus, tvNoSignal;
         VH(@NonNull View itemView) {
             super(itemView);
+            card = itemView.findViewById(R.id.card);
             tvTitle = itemView.findViewById(R.id.tv_title);
+            tvStatus = itemView.findViewById(R.id.tv_status);
+            tvNoSignal = itemView.findViewById(R.id.tv_no_signal);
             videoContainer = itemView.findViewById(R.id.video_container);
         }
     }

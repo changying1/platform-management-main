@@ -73,8 +73,7 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.VH> {
         String title = firstNonEmpty(item.getName(), item.getId(), item.getStreamUrl());
         h.tvName.setText(title);
 
-        boolean online = item.getIsActive();
-        h.tvStatus.setText(online ? "online" : "offline");
+        h.tvStatus.setText(VideoDeviceStatus.label(item));
 
         Integer id = item.getId();
         boolean isSel = id != null && selectedIds.contains(id);

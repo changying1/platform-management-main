@@ -8,6 +8,7 @@ import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -22,6 +23,7 @@ public class AlarmRecordsActivity extends AppCompatActivity {
     private AlarmViewModel alarmViewModel;
     private AppCompatEditText etSearch;
     private Spinner spinnerStatus, spinnerLevel;
+    private final AlarmWebSocketClient alarmWebSocketClient = new AlarmWebSocketClient();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,6 +95,15 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         super.onResume();
         // 启动轮询
         alarmViewModel.startPolling(getApplicationContext());
+        alarmWebSocketClient.connect(getApplicationContext(), (alarmType, description) -> {
+            alarmViewModel.fetchAlarms(getApplicationContext());
+            if (isVideoDeviceStatusAlarm(alarmType)) {
+                String text = description == null || description.trim().isEmpty()
+                        ? displayAlarmType(alarmType)
+                        : description.trim();
+                Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override
@@ -100,6 +111,31 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         super.onPause();
         // 停止轮询
         alarmViewModel.stopPolling();
+        alarmWebSocketClient.close();
+    }
+
+    private boolean isVideoDeviceStatusAlarm(String alarmType) {
+        return alarmType != null && alarmType.trim().toUpperCase().startsWith("VIDEO_DEVICE_");
+    }
+
+    private String displayAlarmType(String alarmType) {
+        if (alarmType == null) return "视频设备状态报警";
+        switch (alarmType.trim().toUpperCase()) {
+            case "VIDEO_DEVICE_OFFLINE":
+                return "视频设备离线";
+            case "VIDEO_DEVICE_SLEEPING":
+                return "视频设备休眠";
+            case "VIDEO_DEVICE_PRIVACY_ENABLED":
+                return "视频设备隐私模式开启";
+            case "VIDEO_DEVICE_STORAGE_ABNORMAL":
+                return "视频设备存储异常";
+            case "VIDEO_DEVICE_LOW_BATTERY":
+                return "视频设备低电量";
+            case "VIDEO_DEVICE_WEAK_SIGNAL":
+                return "视频设备信号弱";
+            default:
+                return "视频设备状态报警";
+        }
     }
 
     private void updateStatsUI(AlarmStats stats) {

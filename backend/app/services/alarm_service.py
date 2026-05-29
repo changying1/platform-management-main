@@ -317,10 +317,28 @@ class AlarmService:
             logger.error(f"DATABASE SAVE ERROR: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Database save error: {str(e)}")
         
-    def get_alarms(self, db: Session, skip: int = 0, limit: int = 100, project_id: int | None = None):
+    def get_alarms(
+        self,
+        db: Session,
+        skip: int = 0,
+        limit: int = 100,
+        project_id: int | None = None,
+        source_type: str | None = None,
+    ):
         query = {}
         if project_id is not None:
             query["project_id"] = project_id
+        
+        if source_type == "fence":
+            query["fence_id"] = {"$nin": [None, "", 0, "0"]}
+        elif source_type == "video":
+            query["$or"] = [
+                {"alarm_type": {"$regex": "^VIDEO_"}},
+                {"recording_path": {"$nin": [None, ""]}},
+                {"alarm_image_path": {"$nin": [None, ""]}},
+                {"alarm_boxes": {"$nin": [None, "", []]}},
+                {"device_id": {"$nin": [None, ""]}},
+            ]
 
         docs = list(
             self._alarm_collection()

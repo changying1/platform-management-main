@@ -740,7 +740,99 @@ class AIManager:
             print(f"⚠️ 图片标注绘制失败: {draw_err}")
             return frame
 
-    def _save_alarm_clip_async(self, alarm_id: int, device_id: str, alarm_time: datetime, alarm_trace_id: str | None = None):
+    def _draw_alarm_boxes_on_video(
+        self,
+        video_path,
+        boxes,
+        trigger_offset_seconds,
+        draw_window_before=1.0,
+        draw_window_after=2.0,
+        alarm_trace_id=None,
+    ):
+        if not boxes:
+            return video_path
+        if not video_path:
+            raise ValueError("video_path is empty")
+
+        cap = None
+        writer = None
+        tmp_path = f"{video_path}.boxed.tmp.mp4"
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise ValueError("cannot open video")
+
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+            if not fps or fps <= 0 or width <= 0 or height <= 0:
+                raise ValueError(f"invalid video metadata fps={fps} width={width} height={height}")
+
+            writer = cv2.VideoWriter(
+                tmp_path,
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                fps,
+                (width, height),
+            )
+            if not writer.isOpened():
+                raise ValueError("cannot open temp video writer")
+
+            start_seconds = max(0.0, float(trigger_offset_seconds) - float(draw_window_before))
+            end_seconds = float(trigger_offset_seconds) + float(draw_window_after)
+
+            frame_index = 0
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+
+                current_seconds = frame_index / fps
+                if start_seconds <= current_seconds <= end_seconds:
+                    frame = self._draw_boxes_on_frame(frame, boxes)
+
+                writer.write(frame)
+                frame_index += 1
+
+            if frame_index <= 0:
+                raise ValueError("no frames written")
+
+            writer.release()
+            writer = None
+            cap.release()
+            cap = None
+
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                raise ValueError("temp boxed video is empty")
+
+            os.replace(tmp_path, video_path)
+            return video_path
+        except Exception:
+            try:
+                if writer is not None:
+                    writer.release()
+                if cap is not None:
+                    cap.release()
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            raise
+
+    def _save_alarm_clip_async(
+        self,
+        alarm_id: int,
+        device_id: str,
+        alarm_time: datetime,
+        alarm_trace_id: str | None = None,
+        details=None,
+        boxes=None,
+    ):
+        if boxes is None and isinstance(details, dict):
+            boxes = details.get("boxes") or []
+        boxes = boxes if isinstance(boxes, list) else []
+
         def _worker():
             try:
                 video_id = int(device_id)
@@ -798,6 +890,48 @@ class AIManager:
                         output_type="alarm",
                         filename_prefix=f"alarm_{alarm_id}",
                     )
+                    recording_full_path = result.get("recording_full_path")
+                    if boxes:
+                        try:
+                            trigger_offset_seconds = (trigger_time - clip_start).total_seconds()
+                            self._draw_alarm_boxes_on_video(
+                                recording_full_path,
+                                boxes,
+                                trigger_offset_seconds,
+                                alarm_trace_id=alarm_trace_id,
+                            )
+                            try:
+                                alarm_root = self.video_service._get_alarm_video_root()
+                                rel_path = os.path.relpath(recording_full_path, alarm_root)
+                                self.video_service._mirror_write_file(
+                                    recording_full_path,
+                                    os.path.join("alarm_videos", rel_path),
+                                )
+                            except Exception:
+                                pass
+                            self._emit_alarm_log(
+                                "info",
+                                "[ALARM_VIDEO_BOXED] trace_id={} alarm_id={} path={} box_count={}",
+                                alarm_trace_id or "-",
+                                alarm_id,
+                                recording_full_path,
+                                len(boxes),
+                            )
+                        except Exception as box_error:
+                            self._emit_alarm_log(
+                                "error",
+                                "[ALARM_VIDEO_BOX_FAILED] trace_id={} alarm_id={} error={}",
+                                alarm_trace_id or "-",
+                                alarm_id,
+                                box_error,
+                            )
+                    else:
+                        self._emit_alarm_log(
+                            "info",
+                            "[ALARM_VIDEO_BOX_SKIPPED] trace_id={} alarm_id={} reason=no_boxes",
+                            alarm_trace_id or "-",
+                            alarm_id,
+                        )
                     self._update_alarm_recording_status(
                         alarm_id,
                         "saved",
@@ -889,6 +1023,8 @@ class AIManager:
         # 2) {"alarm": true, "boxes": [{"type": "...", "msg": "..."}]}
         alarm_type = self._extract_alarm_type(details)
         alarm_msg = details.get("msg") if isinstance(details, dict) else None
+        boxes = (details.get("boxes") or []) if isinstance(details, dict) else []
+        boxes = boxes if isinstance(boxes, list) else []
 
         box_count = 0
         person_info = {}
@@ -947,6 +1083,7 @@ class AIManager:
                 "recording_status": "pending",
                 "recording_error": "",
                 "alarm_image_path": image_path or "",
+                "alarm_boxes": boxes,
 
                 # 人脸识别融合后的人员信息
                 "personnel_id": personnel_id,
@@ -973,10 +1110,25 @@ class AIManager:
                 str(device_id),
                 now,
                 alarm_trace_id=alarm_trace_id,
+                boxes=boxes,
             )
 
             print(f"✅ 报警已保存 (ID: {next_id})")
-            push_alarm_threadsafe(saved_payload)
+            websocket_payload = {
+                "id": saved_payload.get("id", next_id),
+                "device_id": str(saved_payload.get("device_id", device_id)),
+                "alarm_type": saved_payload.get("alarm_type", alarm_type),
+                "description": saved_payload.get("description", alarm_msg),
+                "timestamp": (
+                    saved_payload.get("timestamp").isoformat()
+                    if hasattr(saved_payload.get("timestamp"), "isoformat")
+                    else str(saved_payload.get("timestamp") or now.isoformat())
+                ),
+                "alarm_image_path": saved_payload.get("alarm_image_path", image_path or ""),
+                "recording_status": saved_payload.get("recording_status", "pending"),
+                "alarm_boxes": boxes,
+            }
+            push_alarm_threadsafe(websocket_payload)
             return next_id
 
         except Exception as e:

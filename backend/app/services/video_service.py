@@ -38,6 +38,7 @@ def suppress_verbose_logging():
 suppress_verbose_logging()
 
 from app.core.database import SessionLocal, get_video_device_collection, get_next_sequence, get_mongo_db
+from app.core.ws_manager import push_alarm_threadsafe
 
 try:
     import onvif
@@ -94,6 +95,7 @@ TOKEN_ERROR_CODES = {"10002", "10029", "10030", "10031", "20002"}
 DEFAULT_WEEKLY_QUOTA_GB = float(os.getenv("VIDEO_DEFAULT_WEEKLY_QUOTA_GB", "5"))
 DEFAULT_WEEKLY_QUOTA_BYTES = int(DEFAULT_WEEKLY_QUOTA_GB * 1024 * 1024 * 1024)
 TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_RATIO", "0.2"))
+EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
@@ -110,9 +112,13 @@ CRUISE_TASKS: Dict[int, dict] = {}
 CRUISE_TASKS_LOCK = threading.Lock()
 
 class VideoService:
+    _ezviz_status_worker_lock = threading.Lock()
+    _ezviz_status_worker_started = False
+
     def __init__(self):
         self._cleanup_thread_running = True
         self._mirror_thread_running = True
+        self._ezviz_status_thread_running = True
         self._mirror_processed = set()
         self._storage_paths = []
         self._storage_paths = self._load_storage_paths()
@@ -120,6 +126,17 @@ class VideoService:
         self._cleanup_thread.start()
         self._mirror_thread = threading.Thread(target=self._mirror_sync_worker, daemon=True)
         self._mirror_thread.start()
+        self.start_ezviz_status_worker()
+
+    def start_ezviz_status_worker(self):
+        with VideoService._ezviz_status_worker_lock:
+            if VideoService._ezviz_status_worker_started:
+                return
+            VideoService._ezviz_status_worker_started = True
+
+        self._ezviz_status_thread = threading.Thread(target=self._ezviz_status_polling_worker, daemon=True)
+        self._ezviz_status_thread.start()
+        logger.info("EZVIZ device status polling worker started")
 
     def _video_collection(self):
         return get_video_device_collection()
@@ -145,11 +162,13 @@ class VideoService:
         severity: str,
         description: str,
         location: str | None,
+        device_name: str | None = None,
     ):
         next_id = int(get_next_sequence("alarm_record_id"))
         payload = {
             "id": next_id,
             "device_id": str(device_id),
+            "device_name": device_name or str(device_id),
             "fence_id": None,
             "project_id": None,
             "alarm_type": alarm_type,
@@ -166,6 +185,56 @@ class VideoService:
         }
         self._alarm_collection().insert_one(payload)
         return payload
+
+    def _json_safe_value(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(k): self._json_safe_value(v) for k, v in value.items() if k != "_id"}
+        if isinstance(value, list):
+            return [self._json_safe_value(item) for item in value]
+        return value
+
+    def _build_monitoring_alarm_websocket_payload(self, alarm_doc: dict) -> dict:
+        doc = dict(alarm_doc or {})
+        doc.pop("_id", None)
+        image_path = doc.get("alarm_image_path") or ""
+        video_path = doc.get("recording_path") or ""
+        recording_error = doc.get("recording_error") or ""
+        payload = {
+            "id": doc.get("id"),
+            "device_id": str(doc.get("device_id")) if doc.get("device_id") is not None else "",
+            "device_name": doc.get("device_name") or doc.get("location") or str(doc.get("device_id") or ""),
+            "fence_id": doc.get("fence_id"),
+            "project_id": doc.get("project_id"),
+            "alarm_type": doc.get("alarm_type") or "VIDEO_DEVICE_STATUS",
+            "severity": doc.get("severity") or "medium",
+            "timestamp": doc.get("timestamp"),
+            "description": doc.get("description") or "",
+            "status": doc.get("status") or "pending",
+            "handled_at": doc.get("handled_at"),
+            "location": doc.get("location") or doc.get("device_name") or "",
+            "recording_path": video_path,
+            "recording_status": doc.get("recording_status") or "pending",
+            "recording_error": recording_error,
+            "alarm_image_path": image_path,
+            "personnel_id": doc.get("personnel_id") or "",
+            "person_name": doc.get("person_name") or "",
+            "person": doc.get("person") or {},
+            "image_url": image_path,
+            "snapshot_url": image_path,
+            "picture_url": image_path,
+            "video_url": video_path,
+            "clip_url": video_path,
+            "duration": doc.get("duration"),
+            "duration_seconds": doc.get("duration_seconds"),
+            "video_duration": doc.get("video_duration"),
+            "clip_duration": doc.get("clip_duration"),
+            "start_time": doc.get("recording_start_time") or doc.get("start_time"),
+            "end_time": doc.get("recording_end_time") or doc.get("end_time"),
+            "error_message": recording_error,
+        }
+        return self._json_safe_value(payload)
 
     def _resolve_monitoring_alarm_doc(self, alarm_id: int | str):
         self._alarm_collection().update_one(
@@ -268,6 +337,13 @@ class VideoService:
             "latitude": doc.get("latitude"),
             "longitude": doc.get("longitude"),
             "status": doc.get("status"),
+            "sleeping": doc.get("sleeping", False),
+            "privacy_enabled": doc.get("privacy_enabled", False),
+            "storage_abnormal": doc.get("storage_abnormal", False),
+            "low_battery": doc.get("low_battery", False),
+            "weak_signal": doc.get("weak_signal", False),
+            "last_status_checked_at": doc.get("last_status_checked_at"),
+            "last_status_error": doc.get("last_status_error"),
             "remark": doc.get("remark"),
             "is_active": doc.get("is_active", 1),
             "company": doc.get("company"),
@@ -637,6 +713,188 @@ class VideoService:
                 continue
         return None
 
+    def _normalize_ezviz_status_value(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+
+        raw = str(value).strip().lower()
+        if raw in {"1", "online", "on", "true", "connected"}:
+            return "online"
+        if raw in {"0", "offline", "off", "false", "disconnected"}:
+            return "offline"
+        if raw in {"2", "sleep", "sleeping", "dormant", "standby"}:
+            return "sleeping"
+        return None
+
+    def _extract_first_value(self, data: Any, keys: tuple[str, ...]) -> Any:
+        if isinstance(data, dict):
+            for key in keys:
+                if key in data:
+                    return data.get(key)
+            for value in data.values():
+                nested = self._extract_first_value(value, keys)
+                if nested is not None:
+                    return nested
+        elif isinstance(data, list):
+            for item in data:
+                nested = self._extract_first_value(item, keys)
+                if nested is not None:
+                    return nested
+        return None
+
+    def _normalize_ezviz_problem_flag(self, value: Any, good_numbers: set[str] | None = None) -> bool:
+        if value is None:
+            return False
+        raw = str(value).strip().lower()
+        if good_numbers and raw in good_numbers:
+            return False
+        if raw in {"normal", "ok", "online", "good", "healthy", "available"}:
+            return False
+        if raw in {"abnormal", "error", "fault", "failed", "low", "weak", "unavailable"}:
+            return True
+        return self._normalize_flag(value)
+
+    def _extract_ezviz_device_status_updates(self, body: dict) -> dict:
+        data = body.get("data") if isinstance(body, dict) else body
+        status = self._normalize_ezviz_status_value(
+            self._extract_first_value(data, ("status", "deviceStatus", "online", "onlineStatus"))
+        )
+        sleeping_value = self._extract_first_value(data, ("sleeping", "sleepStatus", "sleepMode", "sleep", "isSleep"))
+        sleeping = self._normalize_flag(sleeping_value)
+        if sleeping:
+            status = "sleeping"
+
+        updates = {
+            "last_status_checked_at": datetime.utcnow(),
+            "last_status_error": "",
+        }
+        if sleeping_value is not None:
+            updates["sleeping"] = sleeping
+        if status:
+            updates["status"] = status
+            if status == "sleeping":
+                updates["sleeping"] = True
+            elif sleeping_value is None:
+                updates["sleeping"] = False
+
+        privacy_value = self._extract_first_value(data, ("privacy_enabled", "privacyStatus", "privacy", "isPrivacy", "isPrivacyEnabled"))
+        if privacy_value is not None:
+            updates["privacy_enabled"] = self._normalize_flag(privacy_value)
+
+        storage_value = self._extract_first_value(data, ("storage_abnormal", "storageAbnormal", "sdStatus", "diskStatus", "storageStatus"))
+        if storage_value is not None:
+            updates["storage_abnormal"] = self._normalize_ezviz_problem_flag(storage_value, good_numbers={"0", "1"})
+
+        battery_value = self._extract_first_value(data, ("low_battery", "lowBattery", "batteryLow", "isLowBattery"))
+        if battery_value is not None:
+            updates["low_battery"] = self._normalize_ezviz_problem_flag(battery_value)
+
+        signal_value = self._extract_first_value(data, ("weak_signal", "weakSignal", "signalWeak", "isWeakSignal"))
+        if signal_value is not None:
+            updates["weak_signal"] = self._normalize_ezviz_problem_flag(signal_value, good_numbers={"0"})
+        return updates
+
+    def _refresh_ezviz_device_status(self, db_video: VideoDevice) -> bool:
+        if not self._is_ezviz_access(db_video):
+            return False
+
+        device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
+        if not device_serial:
+            return False
+
+        channel_no = int(getattr(db_video, "channel_no", None) or 1)
+        paths_and_payloads = [
+            ("/api/lapp/device/status/get", {"deviceSerial": device_serial, "channelNo": channel_no}),
+            ("/api/lapp/v2/device/status/get", {"deviceSerial": device_serial, "channelNo": channel_no}),
+            ("/api/lapp/device/info", {"deviceSerial": device_serial}),
+            ("/api/lapp/device/camera/list", {"deviceSerial": device_serial}),
+        ]
+
+        last_error = ""
+        merged_updates = {
+            "last_status_checked_at": datetime.utcnow(),
+            "last_status_error": "",
+        }
+        succeeded = False
+        for path, payload in paths_and_payloads:
+            try:
+                body = self._call_ezviz_api(path, payload, retry_on_token_error=True)
+                merged_updates.update(self._extract_ezviz_device_status_updates(body))
+                succeeded = True
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+        if succeeded:
+            self._update_video_fields(db_video.id, merged_updates)
+            return True
+
+        self._update_video_fields(db_video.id, {
+            "last_status_checked_at": datetime.utcnow(),
+            "last_status_error": last_error or "EZVIZ status refresh failed",
+        })
+        logger.warning(f"EZVIZ status refresh failed video_id={getattr(db_video, 'id', '')}: {last_error}")
+        return False
+
+    def _calculate_monitoring_usage(self, db_video: VideoDevice, cycle_start: datetime, cycle_end: datetime) -> tuple[int, int, int]:
+        weekly_quota_bytes = self._get_weekly_quota_bytes(db_video)
+        if self._is_ezviz_access(db_video):
+            ezviz_traffic = self._get_ezviz_device_traffic_bytes(db_video, cycle_start, cycle_end)
+            if ezviz_traffic is not None:
+                weekly_used_bytes = ezviz_traffic
+            else:
+                weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
+        else:
+            weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
+
+        weekly_remaining_bytes = max(0, weekly_quota_bytes - weekly_used_bytes)
+        return weekly_quota_bytes, weekly_used_bytes, weekly_remaining_bytes
+
+    def _ezviz_status_polling_worker(self):
+        time.sleep(3)
+        while self._ezviz_status_thread_running:
+            try:
+                query = {
+                    "device_serial": {"$exists": True, "$nin": [None, ""]},
+                    "$or": [
+                        {"platform_type": "ezviz"},
+                        {"access_source": "cloud"},
+                    ],
+                }
+                docs = list(self._video_collection().find(query, {"_id": 0}))
+                for doc in docs:
+                    try:
+                        db_video = self._get_video_runtime_by_id(doc.get("id"))
+                        if not db_video:
+                            continue
+                        self._refresh_ezviz_device_status(db_video)
+                        refreshed = self._get_video_runtime_by_id(db_video.id) or db_video
+                        now = datetime.now()
+                        cycle_start, cycle_end = self._get_week_cycle_bounds(now)
+                        weekly_quota_bytes, weekly_used_bytes, weekly_remaining_bytes = self._calculate_monitoring_usage(
+                            refreshed,
+                            cycle_start,
+                            cycle_end,
+                        )
+                        db = SessionLocal()
+                        try:
+                            status_summary = self._build_device_status_summary(db, refreshed)
+                            self._sync_monitoring_alarms(
+                                db=db,
+                                db_video=refreshed,
+                                status_summary=status_summary,
+                                weekly_quota_bytes=weekly_quota_bytes,
+                                weekly_used_bytes=weekly_used_bytes,
+                                weekly_remaining_bytes=weekly_remaining_bytes,
+                            )
+                        finally:
+                            db.close()
+                    except Exception as exc:
+                        logger.error(f"EZVIZ status polling failed for video_id={doc.get('id')}: {exc}")
+            except Exception as exc:
+                logger.error(f"EZVIZ status polling worker loop failed: {exc}")
+            time.sleep(EZVIZ_STATUS_POLL_INTERVAL_SECONDS)
+
     def _collect_weekly_recording_usage_bytes(self, video_id: int, cycle_start: datetime, cycle_end: datetime) -> int:
         device_root = os.path.join(self._get_record_root(), str(video_id))
         if not os.path.isdir(device_root):
@@ -735,13 +993,15 @@ class VideoService:
             if pending_alarm:
                 return False
 
-            self._create_monitoring_alarm_doc(
+            alarm_doc = self._create_monitoring_alarm_doc(
                 device_id=device_id,
                 alarm_type=alarm_type,
                 severity=severity,
                 description=description,
                 location=db_video.name or f"视频设备-{device_id}",
+                device_name=db_video.name or f"Video-{device_id}",
             )
+            push_alarm_threadsafe(self._build_monitoring_alarm_websocket_payload(alarm_doc))
             return True
 
         if pending_alarm:
@@ -836,22 +1096,17 @@ class VideoService:
         if not db_video:
             return None
 
+        if self._is_ezviz_access(db_video):
+            self._refresh_ezviz_device_status(db_video)
+            db_video = self._get_video_runtime_by_id(video_id) or db_video
+
         now = datetime.now()
         cycle_start, cycle_end = self._get_week_cycle_bounds(now)
-        weekly_quota_bytes = self._get_weekly_quota_bytes(db_video)
-
-        is_ezviz_cloud = self._is_ezviz_access(db_video)
-        weekly_used_bytes = 0
-        if is_ezviz_cloud:
-            ezviz_traffic = self._get_ezviz_device_traffic_bytes(db_video, cycle_start, cycle_end)
-            if ezviz_traffic is not None:
-                weekly_used_bytes = ezviz_traffic
-            else:
-                weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
-        else:
-            weekly_used_bytes = self._collect_weekly_recording_usage_bytes(db_video.id, cycle_start, cycle_end)
-
-        weekly_remaining_bytes = max(0, weekly_quota_bytes - weekly_used_bytes)
+        weekly_quota_bytes, weekly_used_bytes, weekly_remaining_bytes = self._calculate_monitoring_usage(
+            db_video,
+            cycle_start,
+            cycle_end,
+        )
         status_summary = self._build_device_status_summary(db, db_video)
         has_alarm_changes = self._sync_monitoring_alarms(
             db=db,
@@ -1332,7 +1587,9 @@ class VideoService:
         return "onvif"
 
     def _is_ezviz_access(self, db_video: VideoDevice) -> bool:
-        return self._resolve_access_source(db_video) == "cloud" and bool(getattr(db_video, "device_serial", None))
+        platform = (getattr(db_video, "platform_type", None) or "").strip().lower()
+        source = (getattr(db_video, "access_source", None) or "").strip().lower()
+        return (platform == "ezviz" or source == "cloud") and bool(getattr(db_video, "device_serial", None))
 
     def _is_ezviz_ptz(self, db_video: VideoDevice) -> bool:
         return self._resolve_ptz_source(db_video) == "ezviz" and bool(getattr(db_video, "device_serial", None))

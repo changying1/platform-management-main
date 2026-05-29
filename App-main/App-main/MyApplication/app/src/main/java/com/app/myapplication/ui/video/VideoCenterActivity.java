@@ -202,6 +202,11 @@ public class VideoCenterActivity extends AppCompatActivity {
     }
 
     private void openPlay(VideoDevice item) {
+        if (item != null && item.isFrontendOnly()) {
+            Toast.makeText(this, "该摄像头无信号", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         Intent i = new Intent(this, VideoPlayActivity.class);
         i.putExtra("device_id", String.valueOf(item.getId()));
 
@@ -262,6 +267,11 @@ public class VideoCenterActivity extends AppCompatActivity {
 
     // ================= 编辑设备（新增） =================
     private void showEditCameraDialog(VideoDevice old) {
+        if (old != null && old.isFrontendOnly()) {
+            Toast.makeText(this, "该摄像头无信号", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         View v = LayoutInflater.from(this).inflate(R.layout.dialog_add_camera, null);
 
         EditText etName = v.findViewById(R.id.et_name);
@@ -321,6 +331,11 @@ public class VideoCenterActivity extends AppCompatActivity {
 
     // ================= 删除设备（新增） =================
     private void confirmDelete(VideoDevice d) {
+        if (d != null && d.isFrontendOnly()) {
+            Toast.makeText(this, "该摄像头无信号", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         new MaterialAlertDialogBuilder(this)
                 .setTitle("删除设备")
                 .setMessage("确认删除 " + (d.getName() == null ? d.getId() : d.getName()) + " 吗？")

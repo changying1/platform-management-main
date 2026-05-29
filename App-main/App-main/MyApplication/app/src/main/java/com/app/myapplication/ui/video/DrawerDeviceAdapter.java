@@ -55,11 +55,13 @@ public class DrawerDeviceAdapter extends RecyclerView.Adapter<DrawerDeviceAdapte
                 : d.getName().trim();
 
         String ip = (d.getIpAddress() == null) ? "" : d.getIpAddress().trim();
-        int port = d.getPort();
+        Integer port = d.getPort();
         String ipPort = ip.isEmpty() ? "-" : (ip + ":" + port);
 
         h.tvName.setText(name);
-        h.tvIp.setText(ipPort);
+        h.tvIp.setText(ipPort + " · " + VideoDeviceStatus.label(d));
+        h.ivEdit.setVisibility(d.isFrontendOnly() ? View.GONE : View.VISIBLE);
+        h.ivDelete.setVisibility(d.isFrontendOnly() ? View.GONE : View.VISIBLE);
 
         h.itemView.setOnClickListener(v -> {
             if (onClick != null) onClick.onClick(d);

@@ -27,7 +27,19 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintDimensionRatio="16:9" />
+            app:layout_constraintDimensionRatio="16:9">
+
+            <TextView
+                android:id="@+id/tv_no_signal"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="无信号"
+                android:textColor="#E11D48"
+                android:textSize="26sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <!-- ✅ 文字区域：>9格时隐藏 -->
         <LinearLayout
@@ -48,6 +60,16 @@
                 android:text="Device 1"
                 android:textStyle="bold"
                 android:textSize="13sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/tv_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="在线"
+                android:textSize="11sp"
+                android:textColor="#475467"
                 android:maxLines="1"
                 android:ellipsize="end" />
 
