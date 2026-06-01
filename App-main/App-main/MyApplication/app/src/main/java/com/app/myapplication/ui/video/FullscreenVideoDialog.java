@@ -162,6 +162,8 @@ public class FullscreenVideoDialog extends DialogFragment {
 
         fullscreenPlayer = new ExoPlayer.Builder(requireContext()).build();
         fullscreenPlayerView.setPlayer(fullscreenPlayer);
+        fullscreenPlayerView.setControllerShowTimeoutMs(3000);
+        fullscreenPlayerView.setControllerHideOnTouch(true);
         fullscreenPlayer.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int playbackState) {

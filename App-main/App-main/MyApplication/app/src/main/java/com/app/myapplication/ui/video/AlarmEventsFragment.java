@@ -133,6 +133,8 @@ public class AlarmEventsFragment extends Fragment {
         item.videoUrl = alarm.getVideoUrl();
         item.status = alarm.getStatus();
         item.durationSeconds = alarm.getDurationSeconds();
+        item.startTime = alarm.getStartTime();
+        item.alarmSecond = alarm.getAlarmSecond();
         item.videoError = alarm.getRecordingError();
         item.recordingStatus = alarm.getRecordingStatus();
         return item;
@@ -156,6 +158,8 @@ public class AlarmEventsFragment extends Fragment {
         public String videoUrl;
         public String status;
         public int durationSeconds;
+        public String startTime;
+        public Integer alarmSecond;
         public String videoError;
         public String recordingStatus;
     }
@@ -258,11 +262,42 @@ public class AlarmEventsFragment extends Fragment {
                     if (unavailable) {
                         Toast.makeText(itemView.getContext(), videoFailureMessage(item), Toast.LENGTH_SHORT).show();
                     } else {
-                        VideoFilePlayActivity.start(requireContext(), url);
+                        VideoFilePlayActivity.start(requireContext(), url, true, resolveAlarmSecond(item));
                     }
                 });
             }
         }
+    }
+
+    private static long resolveAlarmSecond(AlarmEventItem item) {
+        if (item.alarmSecond != null) {
+            return Math.max(0, item.alarmSecond);
+        }
+        long alarmTime = parseTimeMillis(item.timestamp);
+        long startTime = parseTimeMillis(item.startTime);
+        if (alarmTime > 0 && startTime > 0) {
+            return Math.max(0, Math.round((alarmTime - startTime) / 1000.0));
+        }
+        return item.durationSeconds > 0 && item.durationSeconds < 30
+                ? Math.max(0, item.durationSeconds / 2L)
+                : 30L;
+    }
+
+    private static long parseTimeMillis(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return 0;
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss"
+        };
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
+                if (date != null) return date.getTime();
+            } catch (Exception ignored) {}
+        }
+        return 0;
     }
 
     private static String formatTime(String raw) {

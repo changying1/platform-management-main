@@ -1074,7 +1074,7 @@ class FenceService:
 
         alarms_collection.insert_one(payload)
 
-        logger.warning(f"Fence alarm saved to alarm_record: alarm_id={next_id}, device={device_id}, fence={fence_id}")
+        logger.debug(f"Fence alarm saved to alarm_record: alarm_id={next_id}, device={device_id}, fence={fence_id}")
 
         
 
@@ -1218,7 +1218,7 @@ class FenceService:
 
                         if alarm_created:
 
-                            logger.warning(f"Fence alarm created: {description}")
+                            logger.debug(f"Fence alarm created: {description}")
 
                         return alarm_created
 
@@ -1281,7 +1281,7 @@ class FenceService:
 
                         if alarm_created:
 
-                            logger.warning(f"Fence alarm created: {description}")
+                            logger.debug(f"Fence alarm created: {description}")
 
                         return alarm_created
 

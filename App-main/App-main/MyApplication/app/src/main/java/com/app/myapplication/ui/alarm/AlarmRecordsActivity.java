@@ -218,8 +218,11 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         switch (chineseStatus) {
             case "待处理":
                 return "pending";
+            case "已处理":
             case "已处置":
                 return "resolved";
+            case "已忽略":
+                return "ignored";
             case "所有状态":
             default:
                 return "all";
@@ -234,6 +237,7 @@ public class AlarmRecordsActivity extends AppCompatActivity {
             case "高危":
                 return "high";
             case "警告":
+            case "一般":
                 return "medium";
             case "提示":
                 return "low";

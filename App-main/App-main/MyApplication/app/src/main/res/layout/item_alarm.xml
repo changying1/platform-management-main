@@ -3,123 +3,147 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_margin="8dp"
-    android:padding="16dp"
     android:elevation="4dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="8dp">
+        android:padding="12dp">
 
-        <!-- 报警编号 -->
         <TextView
             android:id="@+id/tvAlarmId"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="报警编号: ALM-20240807-001"
+            android:text="报警编号: ALM-20240807-1"
             android:textSize="16sp"
             android:textStyle="bold" />
 
-        <!-- 报警类型 -->
         <TextView
             android:id="@+id/tvAlarmType"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:text="报警类型: 电子围栏入侵"
             android:textSize="14sp" />
 
-        <!-- 人员/设备 -->
         <TextView
             android:id="@+id/tvDevice"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:text="设备: 设备1"
             android:textSize="14sp" />
 
-        <!-- 报警时间 -->
+        <TextView
+            android:id="@+id/tvDeviceId"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="设备ID: 1"
+            android:textSize="14sp" />
+
         <TextView
             android:id="@+id/tvTime"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="时间: 2024-08-07 16:11:56"
+            android:layout_marginTop="4dp"
+            android:text="报警时间: 2024-08-07 16:11:56"
             android:textSize="14sp" />
 
-        <!-- 位置 -->
         <TextView
             android:id="@+id/tvLocation"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="位置: 未命名"
+            android:layout_marginTop="4dp"
+            android:text="位置: 未知"
             android:textSize="14sp" />
 
         <TextView
             android:id="@+id/tvAlarmContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="报警内容: "
+            android:layout_marginTop="4dp"
+            android:text="报警信息: "
             android:textSize="14sp" />
 
         <TextView
             android:id="@+id/tvPerson"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:text="人员: 未知"
             android:textSize="14sp" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:orientation="horizontal">
+            android:layout_marginTop="4dp"
+            android:text="状态: 待处理"
+            android:textSize="14sp" />
 
-            <Button
-                android:id="@+id/btnImage"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="图片" />
-
-            <Button
-                android:id="@+id/btnVideo"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="视频" />
-        </LinearLayout>
-
-        <!-- 报警级别 -->
-        <!-- 报警级别（可下拉选择） -->
         <Spinner
             android:id="@+id/spinnerLevel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical">
 
-        <!-- 报警状态 -->
-        <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="状态: 待处理"
-            android:textSize="14sp" />
-        <Button
-            android:id="@+id/btnResolve"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="处置"
-            android:textColor="#FFFFFF"
-            android:background="#4CAF50"
-            android:layout_marginTop="8dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
 
-        <!-- 删除按钮 -->
-        <Button
-            android:id="@+id/btnDelete"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="删除"
-            android:textColor="#FFFFFF"
-            android:background="#F44336"
-            android:layout_marginTop="8dp" />
+            <Button
+                android:id="@+id/btnImage"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:text="图片" />
+
+            <Button
+                android:id="@+id/btnVideo"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="视频" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnResolve"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:background="#4CAF50"
+                android:text="处置"
+                android:textColor="#FFFFFF" />
+
+            <Button
+                android:id="@+id/btnDelete"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:background="#F44336"
+                android:text="删除"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+    </LinearLayout>
     </LinearLayout>
 </androidx.cardview.widget.CardView>

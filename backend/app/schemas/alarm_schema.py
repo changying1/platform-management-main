@@ -1,7 +1,5 @@
 from pydantic import BaseModel
 from datetime import datetime
-from pydantic import BaseModel
-from datetime import datetime
 from typing import Optional
 
 class AlarmCreate(BaseModel):
@@ -38,6 +36,7 @@ class AlarmOut(AlarmCreate):
     clip_url: Optional[str] = None
     duration: Optional[int] = None
     duration_seconds: Optional[int] = None
+    alarm_second: Optional[int] = None
     video_duration: Optional[int] = None
     clip_duration: Optional[int] = None
     start_time: Optional[datetime] = None

@@ -3771,15 +3771,30 @@ class VideoService:
             clip_offset = max(0.0, (start_dt - first_seg_start).total_seconds())
             clip_duration = max(1.0, (end_dt - start_dt).total_seconds())
 
-            trim_cmd = [
-                ffmpeg_path,
-                "-y",
-                "-ss", f"{clip_offset:.3f}",
-                "-i", concat_output_path,
-                "-t", f"{clip_duration:.3f}",
-                "-c", "copy",
-                final_output_path,
-            ]
+            if output_type == "alarm":
+                trim_cmd = [
+                    ffmpeg_path,
+                    "-y",
+                    "-ss", f"{clip_offset:.3f}",
+                    "-i", concat_output_path,
+                    "-t", f"{clip_duration:.3f}",
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    final_output_path,
+                ]
+            else:
+                trim_cmd = [
+                    ffmpeg_path,
+                    "-y",
+                    "-ss", f"{clip_offset:.3f}",
+                    "-i", concat_output_path,
+                    "-t", f"{clip_duration:.3f}",
+                    "-c", "copy",
+                    final_output_path,
+                ]
             trim_proc = subprocess.run(trim_cmd, capture_output=True, text=True)
             if trim_proc.returncode != 0:
                 trim_fallback_cmd = [
@@ -3790,7 +3805,9 @@ class VideoService:
                     "-t", f"{clip_duration:.3f}",
                     "-c:v", "libx264",
                     "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p",
                     "-c:a", "aac",
+                    "-movflags", "+faststart",
                     final_output_path,
                 ]
                 trim_fallback_proc = subprocess.run(trim_fallback_cmd, capture_output=True, text=True)
@@ -4030,11 +4047,77 @@ class VideoService:
         用于"报警监控回放"
         """
         self._refresh_storage_paths()
+        max_limit = max(1, min(limit, 500))
+        sort_reverse = sort_order.lower() != "asc"
+        video_id_values = [str(video_id), video_id]
+
+        def _stringify_dt(value):
+            if isinstance(value, datetime):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            if value is None:
+                return ""
+            return str(value)
+
+        def _path_name(value: str) -> str:
+            if not value:
+                return ""
+            parsed = urlparse(str(value))
+            path = parsed.path or str(value)
+            return os.path.basename(path.replace("\\", "/"))
+
+        record_clips: list[dict] = []
+        try:
+            cursor = self._alarm_collection().find({
+                "device_id": {"$in": video_id_values},
+                "recording_path": {"$nin": [None, ""]},
+            }).sort("timestamp", -1 if sort_reverse else 1).limit(max_limit)
+            for doc in cursor:
+                recording_path = doc.get("recording_path") or doc.get("web_path") or doc.get("url") or ""
+                if not recording_path:
+                    continue
+
+                timestamp = doc.get("timestamp") or doc.get("created_at") or doc.get("updated_at")
+                updated_at = _stringify_dt(timestamp)
+                alarm_image_path = (
+                    doc.get("alarm_image_path")
+                    or doc.get("screenshot_path")
+                    or doc.get("thumbnail_path")
+                    or ""
+                )
+                name = _path_name(recording_path) or f"alarm_{doc.get('id') or doc.get('_id')}.mp4"
+
+                record_clips.append({
+                    "alarm_id": doc.get("id"),
+                    "device_id": str(doc.get("device_id") or video_id),
+                    "device_name": doc.get("device_name") or "",
+                    "name": name,
+                    "size_bytes": int(doc.get("size_bytes") or 0),
+                    "duration_seconds": int(doc.get("duration_seconds") or 60),
+                    "alarm_second": int(doc.get("alarm_second") or 30),
+                    "updated_at": updated_at,
+                    "start_time": _stringify_dt(doc.get("recording_start_time") or doc.get("start_time") or timestamp),
+                    "end_time": _stringify_dt(doc.get("recording_end_time") or doc.get("end_time") or timestamp),
+                    "web_path": recording_path,
+                    "recording_path": recording_path,
+                    "url": recording_path,
+                    "alarm_image_path": alarm_image_path,
+                    "screenshot_path": doc.get("screenshot_path") or alarm_image_path,
+                    "thumbnail_path": doc.get("thumbnail_path") or alarm_image_path,
+                    "alarm_type": doc.get("alarm_type") or "",
+                    "description": doc.get("description") or "",
+                    "recording_status": doc.get("recording_status") or "",
+                })
+        except Exception as exc:
+            logger.warning(f"Failed to list alarm videos from alarm_record, fallback to files: {exc}")
+
+        if record_clips:
+            return record_clips
+
         clips = []
         for alarm_root in self._get_all_alarm_video_roots():
             clips.extend(self._list_saved_videos(alarm_root, video_id, limit))
         clips.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
-        clips = clips[:max(1, min(limit, 500))]
+        clips = clips[:max_limit]
 
         if sort_order.lower() == "asc":
             clips.reverse()

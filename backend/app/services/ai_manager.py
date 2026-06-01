@@ -6,6 +6,7 @@ import uuid
 import re
 import json
 import requests
+import subprocess
 import numpy as np
 from datetime import datetime, timedelta
 from app.services.ai_service import AIService
@@ -612,6 +613,39 @@ class AIManager:
             )
             return ""
 
+    def _bind_alarm_image_filename(self, image_path: str | None, alarm_id: int, device_id: str) -> str:
+        if not image_path:
+            return ""
+
+        path_name = os.path.basename(urlsplit(str(image_path)).path)
+        if not path_name:
+            return image_path
+
+        if path_name.startswith(f"alarm_{alarm_id}_"):
+            return image_path
+
+        source_path = os.path.join(self.static_dir, path_name)
+        if not os.path.exists(source_path):
+            return image_path
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_device_id = re.sub(r"[^0-9A-Za-z_-]+", "_", str(device_id))
+        target_name = f"alarm_{alarm_id}_{safe_device_id}_{timestamp}.jpg"
+        target_path = os.path.join(self.static_dir, target_name)
+        try:
+            os.replace(source_path, target_path)
+            return f"/static/alarms/{target_name}"
+        except Exception as e:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_SCREENSHOT_RENAME_FAILED] trace_id=- alarm_id={} source={} target={} error={}",
+                alarm_id,
+                source_path,
+                target_path,
+                e,
+            )
+            return image_path
+
     def _alarm_target_key(self, details):
         if not isinstance(details, dict):
             return ""
@@ -756,7 +790,8 @@ class AIManager:
 
         cap = None
         writer = None
-        tmp_path = f"{video_path}.boxed.tmp.mp4"
+        raw_tmp_path = f"{video_path}.boxed.raw.tmp.mp4"
+        h264_tmp_path = f"{video_path}.boxed.h264.tmp.mp4"
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
@@ -771,7 +806,7 @@ class AIManager:
                 raise ValueError(f"invalid video metadata fps={fps} width={width} height={height}")
 
             writer = cv2.VideoWriter(
-                tmp_path,
+                raw_tmp_path,
                 cv2.VideoWriter_fourcc(*"mp4v"),
                 fps,
                 (width, height),
@@ -803,10 +838,50 @@ class AIManager:
             cap.release()
             cap = None
 
-            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+            if not os.path.exists(raw_tmp_path) or os.path.getsize(raw_tmp_path) == 0:
                 raise ValueError("temp boxed video is empty")
 
-            os.replace(tmp_path, video_path)
+            ffmpeg_path = self.video_service._get_ffmpeg_path()
+            transcode_cmd = [
+                ffmpeg_path,
+                "-y",
+                "-i", raw_tmp_path,
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-an",
+                h264_tmp_path,
+            ]
+            transcode_proc = subprocess.run(transcode_cmd, capture_output=True, text=True)
+            if transcode_proc.returncode != 0:
+                logger.error(
+                    "[ALARM_VIDEO_BOX_TRANSCODE_FAILED] video_path=%s stderr=%s",
+                    video_path,
+                    (transcode_proc.stderr or "").strip()[-4000:],
+                )
+                raise ValueError(
+                    "boxed video transcode failed: "
+                    f"{(transcode_proc.stderr or '').strip()[-1000:]}"
+                )
+            if not os.path.exists(h264_tmp_path) or os.path.getsize(h264_tmp_path) == 0:
+                logger.error(
+                    "[ALARM_VIDEO_BOX_TRANSCODE_FAILED] video_path=%s stderr=empty output",
+                    video_path,
+                )
+                raise ValueError("boxed h264 video is empty")
+
+            os.replace(h264_tmp_path, video_path)
+            logger.info(
+                "[ALARM_VIDEO_BOX_TRANSCODED] video_path=%s tmp=%s final=%s",
+                video_path,
+                raw_tmp_path,
+                video_path,
+            )
+            try:
+                os.remove(raw_tmp_path)
+            except Exception:
+                pass
             return video_path
         except Exception:
             try:
@@ -814,11 +889,137 @@ class AIManager:
                     writer.release()
                 if cap is not None:
                     cap.release()
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                if os.path.exists(raw_tmp_path):
+                    os.remove(raw_tmp_path)
+                if os.path.exists(h264_tmp_path):
+                    os.remove(h264_tmp_path)
             except Exception:
                 pass
             raise
+
+    def _resolve_alarm_image_file_path(self, alarm_image_path: str | None) -> str:
+        if not alarm_image_path:
+            return ""
+
+        parsed_path = unquote(urlsplit(str(alarm_image_path)).path)
+        filename = os.path.basename(parsed_path)
+        if not filename:
+            return ""
+
+        if os.path.isabs(str(alarm_image_path)) and os.path.exists(str(alarm_image_path)):
+            return str(alarm_image_path)
+
+        if parsed_path.startswith("/static/alarms/"):
+            return os.path.join(self.static_dir, filename)
+
+        candidate = os.path.join(self.static_dir, filename)
+        if os.path.exists(candidate):
+            return candidate
+
+        return str(alarm_image_path)
+
+    def _prepare_alarm_match_frame(self, frame):
+        if frame is None:
+            return None
+
+        resized = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
+        height, width = resized.shape[:2]
+        # Ignore the camera time/title strip and the very bottom controls/text area.
+        cropped = resized[int(height * 0.15):int(height * 0.92), int(width * 0.04):int(width * 0.96)]
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        return cv2.GaussianBlur(gray, (3, 3), 0)
+
+    def _frame_match_score(self, alarm_gray, video_gray) -> float:
+        if alarm_gray is None or video_gray is None or alarm_gray.shape != video_gray.shape:
+            return 0.0
+
+        corr = cv2.matchTemplate(video_gray, alarm_gray, cv2.TM_CCOEFF_NORMED)
+        corr_score = float(corr[0][0]) if corr.size else 0.0
+        corr_score = max(0.0, min(1.0, (corr_score + 1.0) / 2.0))
+
+        mse = float(np.mean((alarm_gray.astype(np.float32) - video_gray.astype(np.float32)) ** 2))
+        mse_score = max(0.0, 1.0 - (mse / (255.0 * 255.0)))
+
+        hist_a = cv2.calcHist([alarm_gray], [0], None, [64], [0, 256])
+        hist_b = cv2.calcHist([video_gray], [0], None, [64], [0, 256])
+        cv2.normalize(hist_a, hist_a)
+        cv2.normalize(hist_b, hist_b)
+        hist_corr = float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
+        hist_score = max(0.0, min(1.0, (hist_corr + 1.0) / 2.0))
+
+        return (corr_score * 0.55) + (mse_score * 0.30) + (hist_score * 0.15)
+
+    def _locate_alarm_frame_in_video(
+        self,
+        video_path,
+        alarm_image_path,
+        expected_second,
+        search_before=10,
+        search_after=15,
+    ):
+        if not video_path or not os.path.exists(video_path):
+            raise ValueError("video_path is missing")
+
+        alarm_file_path = self._resolve_alarm_image_file_path(alarm_image_path)
+        if not alarm_file_path or not os.path.exists(alarm_file_path):
+            raise ValueError(f"alarm image is missing: {alarm_image_path}")
+
+        alarm_image = cv2.imread(alarm_file_path)
+        if alarm_image is None:
+            raise ValueError(f"cannot read alarm image: {alarm_file_path}")
+
+        alarm_gray = self._prepare_alarm_match_frame(alarm_image)
+        if alarm_gray is None:
+            raise ValueError("cannot prepare alarm image")
+
+        cap = cv2.VideoCapture(video_path)
+        try:
+            if not cap.isOpened():
+                raise ValueError("cannot open alarm video")
+
+            fps = cap.get(cv2.CAP_PROP_FPS) or 0
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+            duration = (frame_count / fps) if fps > 0 and frame_count > 0 else 0
+
+            expected_second = float(expected_second or 0)
+            start_second = max(0.0, expected_second - float(search_before))
+            end_second = expected_second + float(search_after)
+            if duration > 0:
+                end_second = min(duration, end_second)
+            if end_second < start_second:
+                raise ValueError("invalid search range")
+
+            best_second = None
+            best_score = -1.0
+            current_second = start_second
+            while current_second <= end_second + 0.001:
+                cap.set(cv2.CAP_PROP_POS_MSEC, current_second * 1000.0)
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    video_gray = self._prepare_alarm_match_frame(frame)
+                    score = self._frame_match_score(alarm_gray, video_gray)
+                    if score > best_score:
+                        best_score = score
+                        best_second = current_second
+                current_second += 0.5
+
+            if best_second is None:
+                raise ValueError("no frames sampled")
+
+            min_score = float(os.getenv("ALARM_VIDEO_FRAME_MATCH_MIN_SCORE", "0.55"))
+            if best_score < min_score:
+                raise ValueError(f"match score too low: {best_score:.4f} < {min_score:.4f}")
+
+            return int(round(best_second)), best_score
+        finally:
+            cap.release()
+
+    def _get_alarm_frame_fallback_second(self, expected_second, duration_seconds=None):
+        offset = int(os.getenv("ALARM_VIDEO_ALARM_SECOND_OFFSET", "7"))
+        final_second = int(round(float(expected_second or 0))) + offset
+        if duration_seconds:
+            final_second = min(final_second, max(0, int(duration_seconds)))
+        return max(0, final_second), offset
 
     def _save_alarm_clip_async(
         self,
@@ -891,13 +1092,46 @@ class AIManager:
                         filename_prefix=f"alarm_{alarm_id}",
                     )
                     recording_full_path = result.get("recording_full_path")
+                    expected_alarm_second = (trigger_time - clip_start).total_seconds()
+                    final_alarm_second = int(round(expected_alarm_second))
+                    match_score = None
+                    alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
+                    alarm_image_path = alarm_record.get("alarm_image_path") or ""
+                    try:
+                        final_alarm_second, match_score = self._locate_alarm_frame_in_video(
+                            recording_full_path,
+                            alarm_image_path,
+                            expected_alarm_second,
+                        )
+                        self._emit_alarm_log(
+                            "info",
+                            "[ALARM_VIDEO_FRAME_MATCHED] alarm_id={} expected={} actual={} score={:.4f}",
+                            alarm_id,
+                            int(round(expected_alarm_second)),
+                            final_alarm_second,
+                            match_score,
+                        )
+                    except Exception as match_error:
+                        final_alarm_second, fallback_offset = self._get_alarm_frame_fallback_second(
+                            expected_alarm_second,
+                            result.get("duration_seconds"),
+                        )
+                        self._emit_alarm_log(
+                            "warning",
+                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected={} offset={} final={} reason={}",
+                            alarm_id,
+                            int(round(expected_alarm_second)),
+                            fallback_offset,
+                            final_alarm_second,
+                            match_error,
+                        )
+
                     if boxes:
                         try:
-                            trigger_offset_seconds = (trigger_time - clip_start).total_seconds()
                             self._draw_alarm_boxes_on_video(
                                 recording_full_path,
                                 boxes,
-                                trigger_offset_seconds,
+                                final_alarm_second,
                                 alarm_trace_id=alarm_trace_id,
                             )
                             try:
@@ -940,6 +1174,7 @@ class AIManager:
                         duration_seconds=result.get("duration_seconds"),
                         start_time=result.get("start_time"),
                         end_time=result.get("end_time"),
+                        alarm_second=final_alarm_second,
                     )
                     print(f"✅ 报警视频已保存 (alarm_id={alarm_id}): {result.get('recording_path')}")
                     self._emit_alarm_log(
@@ -992,6 +1227,7 @@ class AIManager:
         duration_seconds: int | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
+        alarm_second: int | None = None,
     ):
         try:
             record = self._find_alarm_doc_by_id(alarm_id)
@@ -1003,11 +1239,21 @@ class AIManager:
                 "recording_path": path or "",
                 "recording_error": (error[:255] if error else ""),
                 "duration_seconds": duration_seconds or 0,
+                "alarm_second": alarm_second,
                 "recording_start_time": start_time,
                 "recording_end_time": end_time,
             }
 
             self._update_alarm_fields(alarm_id, updates)
+            updated_record = self._find_alarm_doc_by_id(alarm_id) or record
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_RECORD_BINDING] alarm_id={} image={} video={} alarm_second={}",
+                alarm_id,
+                updated_record.get("alarm_image_path") or "",
+                updated_record.get("recording_path") or "",
+                updated_record.get("alarm_second"),
+            )
         except Exception as e:
             print(f"⚠️ 更新报警录像状态失败 alarm_id={alarm_id}: {e}")
 
@@ -1065,6 +1311,7 @@ class AIManager:
         try:
             next_id = int(get_next_sequence("alarm_record_id"))
             now = datetime.now()
+            bound_image_path = self._bind_alarm_image_filename(image_path, next_id, str(device_id))
 
             project_id = self._infer_project_id_from_device(device_id)
             payload = {
@@ -1082,7 +1329,7 @@ class AIManager:
                 "recording_path": "",
                 "recording_status": "pending",
                 "recording_error": "",
-                "alarm_image_path": image_path or "",
+                "alarm_image_path": bound_image_path or "",
                 "alarm_boxes": boxes,
 
                 # 人脸识别融合后的人员信息
@@ -1094,7 +1341,7 @@ class AIManager:
             self._alarm_collection().insert_one(payload)
             saved_payload = self._find_alarm_doc_by_id(next_id) or payload
 
-            print(f"[alarm] save db: device_id={device_id}, image_path={image_path}, alarm_type={alarm_type}, alarm_msg={alarm_msg}")
+            print(f"[alarm] save db: device_id={device_id}, image_path={bound_image_path}, alarm_type={alarm_type}, alarm_msg={alarm_msg}")
             self._emit_alarm_log(
                 "info",
                 "[ALARM_DB_SAVED] trace_id={} alarm_id={} device_id={} alarm_type={} image_path={} status=pending",
@@ -1102,7 +1349,7 @@ class AIManager:
                 next_id,
                 device_id,
                 alarm_type,
-                image_path or "",
+                bound_image_path or "",
             )
 
             self._save_alarm_clip_async(
@@ -1124,7 +1371,7 @@ class AIManager:
                     if hasattr(saved_payload.get("timestamp"), "isoformat")
                     else str(saved_payload.get("timestamp") or now.isoformat())
                 ),
-                "alarm_image_path": saved_payload.get("alarm_image_path", image_path or ""),
+                "alarm_image_path": saved_payload.get("alarm_image_path", bound_image_path or ""),
                 "recording_status": saved_payload.get("recording_status", "pending"),
                 "alarm_boxes": boxes,
             }

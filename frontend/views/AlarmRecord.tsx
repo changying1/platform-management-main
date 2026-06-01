@@ -20,18 +20,29 @@ import {
 // 告警记录类型
 interface AlarmRecord {
   id: string;
+  alarmCode: string;
+  alarmType: string;
   type: 'fence' | 'video';
   title: string;
   description: string;
   time: string;
   level: 'high' | 'medium' | 'low';
+  severityRaw: string;
   status: 'pending' | 'resolved' | 'ignored';
   location: string;
   deviceName: string;
   deviceId: string;
+  personName: string;
+  personnelId?: string;
   team?: string;
   snapshot?: string;
   videoPath?: string;
+  durationSeconds?: number;
+  startTime?: string;
+  endTime?: string;
+  alarmSecond?: number;
+  recordingStatus?: string;
+  recordingError?: string;
   fenceId?: string;
   fenceName?: string;
   projectId?: number;
@@ -42,6 +53,144 @@ type AlarmFilterTreeNode = {
   name: string;
   projects: Array<{ name: string; teams: string[] }>;
 };
+
+const formatVideoTime = (time: number) => {
+  const minutes = Math.floor(time / 60);
+  const seconds = Math.floor(time % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const resolveAlarmSecond = (alarm: AlarmRecord, duration: number) => {
+  if (Number.isFinite(alarm.alarmSecond)) {
+    return Math.max(0, Math.min(alarm.alarmSecond || 0, duration || alarm.alarmSecond || 0));
+  }
+
+  const alarmTime = new Date(alarm.time).getTime();
+  const startTime = new Date(alarm.startTime || '').getTime();
+  if (!Number.isNaN(alarmTime) && !Number.isNaN(startTime)) {
+    return Math.max(0, Math.min(Math.round((alarmTime - startTime) / 1000), duration || 30));
+  }
+
+  return duration > 0 ? Math.min(30, duration / 2) : 30;
+};
+
+function AlarmPlaybackPlayer({ src, alarm }: { src: string; alarm: AlarmRecord }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(alarm.durationSeconds || 0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(1);
+
+  const alarmSecond = resolveAlarmSecond(alarm, duration);
+  const alarmPercent = duration > 0 ? Math.max(0, Math.min(100, (alarmSecond / duration) * 100)) : 0;
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onLoadedMetadata = () => setDuration(Math.round(video.duration || alarm.durationSeconds || 0));
+    const onTimeUpdate = () => setCurrentTime(video.currentTime || 0);
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+    };
+  }, [src, alarm.durationSeconds]);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch((error) => console.error('播放失败:', error));
+    } else {
+      video.pause();
+    }
+  };
+
+  const handleProgressClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const video = videoRef.current;
+    if (!video || !duration) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    video.currentTime = ratio * duration;
+  };
+
+  const handleVolumeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVolume = Number(event.target.value);
+    setVolume(nextVolume);
+    if (videoRef.current) {
+      videoRef.current.volume = nextVolume;
+      videoRef.current.muted = nextVolume === 0;
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      containerRef.current?.requestFullscreen?.();
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative bg-black rounded-lg overflow-hidden">
+      <video
+        ref={videoRef}
+        key={src}
+        src={src}
+        autoPlay
+        controls={false}
+        className="w-full max-h-[78vh] bg-black"
+      />
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 py-3">
+        <div className="relative h-2 bg-white/30 rounded-full cursor-pointer mb-3" onClick={handleProgressClick}>
+          <div className="absolute h-full bg-cyan-400 rounded-full" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+          <div className="absolute w-3 h-3 bg-cyan-400 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2" style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+          {duration > 0 && (
+            <div
+              className="absolute w-3 h-3 bg-red-500 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-lg ring-2 ring-red-500/60"
+              style={{ left: `${alarmPercent}%` }}
+              title={`报警触发时刻 ${formatVideoTime(alarmSecond)}`}
+            />
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-4 text-white">
+          <div className="flex items-center gap-3">
+            <button onClick={togglePlay} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-sm">
+              {isPlaying ? '暂停' : '播放'}
+            </button>
+            <span className="font-mono text-sm">{formatVideoTime(currentTime)} / {formatVideoTime(duration)}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={handleVolumeChange}
+              className="w-28"
+              aria-label="音量"
+            />
+            <button onClick={toggleFullscreen} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-sm">
+              全屏
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 export default function AlarmRecords() {
   const [activeTab, setActiveTab] = useState<'all' | 'fence' | 'video'>('all');
   const [alarms, setAlarms] = useState<AlarmRecord[]>([]);
@@ -58,6 +207,7 @@ const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null)
 const [processRemark, setProcessRemark] = useState('');
 const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [previewVideo, setPreviewVideo] = useState<string | null>(null);
+const [selectedVideoAlarm, setSelectedVideoAlarm] = useState<AlarmRecord | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
 const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
@@ -65,6 +215,31 @@ const [selectedProject, setSelectedProject] = useState<string>('all');
 const [selectedTeam, setSelectedTeam] = useState<string>('all');
 const [filterTreePos, setFilterTreePos] = useState<{ top: number; left: number } | null>(null);
 const filterTreeRef = useRef<HTMLDivElement>(null);
+const formatAlarmCodeDate = (timestamp?: string) => {
+  const date = timestamp ? new Date(timestamp) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}${month}${day}`;
+  }
+  const fallback = String(timestamp || '').slice(0, 10).replace(/-/g, '');
+  return fallback || '00000000';
+};
+
+const getLevelFromSeverity = (severity?: string): AlarmRecord['level'] => {
+  const normalized = String(severity || '').toLowerCase();
+  if (['high', 'severe', 'critical', 'danger', '高危', '严重'].includes(normalized)) return 'high';
+  if (['medium', 'warning', '一般', '中'].includes(normalized)) return 'medium';
+  return 'low';
+};
+
+const normalizeSearchText = (value: unknown) =>
+  String(value ?? '')
+    .toLowerCase()
+    .replace(/[：:\s_-]+/g, '')
+    .replace(/设备|device/g, '');
+
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
   const rawItem = item as any;
   const sourceType = rawItem.source_type || '';
@@ -74,6 +249,8 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
 
   const rawType = String(item.alarm_type || '');
   const title = rawType || (isFence ? '围栏告警' : '视频告警');
+  const timestamp = item.timestamp || '';
+  const alarmCode = `ALM-${formatAlarmCodeDate(timestamp)}-${item.id}`;
 
   const locationText =
     item.location && String(item.location).trim()
@@ -81,30 +258,45 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
       : '未提供位置';
 
   const team = rawItem.team || rawItem.team_name || rawItem.work_team || '';
-  const personText = [rawItem.person_name, rawItem.person_label].filter(Boolean).join(' / ');
+  const personName = rawItem.person_name || rawItem.personnel_name || rawItem.person_label || '未知';
+  const personnelId =
+    rawItem.personnel_id !== undefined && rawItem.personnel_id !== null
+      ? String(rawItem.personnel_id)
+      : undefined;
+  const personText = [personName !== '未知' ? personName : '', personnelId].filter(Boolean).join(' / ');
+  const deviceId =
+    item.device_id !== undefined && item.device_id !== null
+      ? String(item.device_id)
+      : '';
 
   return {
     id: String(item.id),
+    alarmCode,
+    alarmType: rawType || title,
     type: isFence ? 'fence' : 'video',
     title,
     description: item.description || personText || title,
-    time: item.timestamp,
-    level:
-      item.severity === 'HIGH'
-        ? 'high'
-        : item.severity === 'MEDIUM'
-          ? 'medium'
-          : 'low',
+    time: timestamp,
+    level: getLevelFromSeverity(item.severity),
+    severityRaw: item.severity || '',
     status:
       item.status === 'pending' || item.status === 'resolved' || item.status === 'ignored'
         ? item.status
         : 'pending',
     location: locationText,
-    deviceName: rawItem.device_name || rawItem.video_name || `设备-${item.device_id}`,
-    deviceId: String(item.device_id),
+    deviceName: rawItem.device_name || rawItem.video_name || deviceId || '未知设备',
+    deviceId,
+    personName,
+    personnelId,
     team: team || undefined,
-    snapshot: toStaticUrl(item.alarm_image_path),
-    videoPath: toStaticUrl(item.recording_path),
+    snapshot: toStaticUrl(item.alarm_image_path || item.image_url || item.snapshot_url || rawItem.picture_url),
+    videoPath: toStaticUrl(item.recording_path || item.video_url || item.clip_url),
+    durationSeconds: item.duration_seconds || item.duration || rawItem.video_duration || rawItem.clip_duration,
+    startTime: rawItem.start_time || rawItem.recording_start_time,
+    endTime: rawItem.end_time || rawItem.recording_end_time,
+    alarmSecond: rawItem.alarm_second ?? rawItem.alarmSecond,
+    recordingStatus: item.recording_status,
+    recordingError: item.recording_error || item.error_message,
     fenceId:
       item.fence_id !== undefined && item.fence_id !== null
         ? String(item.fence_id)
@@ -209,6 +401,18 @@ const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignore
   setShowProcessModal(true);
 };
 
+const openAlarmVideo = (alarm: AlarmRecord) => {
+  if (!alarm.videoPath) return;
+  console.log('[ALARM_RECORD_BINDING]', {
+    alarm_id: alarm.id,
+    snapshot: alarm.snapshot || '',
+    videoPath: alarm.videoPath,
+    alarmSecond: alarm.alarmSecond,
+  });
+  setSelectedVideoAlarm(alarm);
+  setPreviewVideo(alarm.videoPath);
+};
+
 const handleConfirmProcess = async () => {
   if (!processingAlarm) return;
 
@@ -298,12 +502,35 @@ const handleConfirmProcess = async () => {
     }
 
     // 关键词搜索
-    if (searchKeyword && 
-    !alarm.title.includes(searchKeyword) && 
-    !alarm.description.includes(searchKeyword) &&
-    !alarm.deviceName.includes(searchKeyword) &&
-    !alarm.location.includes(searchKeyword)
-) return false;
+    const keyword = normalizeSearchText(searchKeyword);
+    if (keyword) {
+      const statusText = getStatusText(alarm.status);
+      const levelText = getLevelText(alarm.level);
+      const searchableValues = [
+        alarm.alarmCode,
+        alarm.id,
+        alarm.title,
+        alarm.alarmType,
+        alarm.description,
+        alarm.deviceName,
+        alarm.deviceId,
+        alarm.location,
+        alarm.personName,
+        alarm.personnelId,
+        alarm.team,
+        statusText,
+        levelText,
+        alarm.time,
+      ];
+      const normalizedValues = searchableValues.map(normalizeSearchText);
+      const matchesKeyword = normalizedValues.some(value => value.includes(keyword));
+      const deviceLikeNumber = normalizeSearchText(searchKeyword).match(/^\d+$/)?.[0];
+      const matchesNumeric =
+        !!deviceLikeNumber &&
+        (alarm.deviceId === deviceLikeNumber || alarm.id.includes(deviceLikeNumber));
+
+      if (!matchesKeyword && !matchesNumeric) return false;
+    }
     
     // 日期范围筛选
     const alarmDate = new Date(alarm.time);
@@ -409,6 +636,7 @@ const handleConfirmProcess = async () => {
             <option value="all">全部状态</option>
             <option value="pending">待处理</option>
             <option value="resolved">已处理</option>
+            <option value="ignored">已忽略</option>
           </select>
           {/* 树形筛选按钮 */}
 <div className="relative">
@@ -610,7 +838,7 @@ onClick={(e) => {
             <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
             <input
               type="text"
-              placeholder="搜索告警内容..."
+              placeholder="搜索报警编号/设备/人员/位置/内容"
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200"
@@ -625,11 +853,11 @@ onClick={(e) => {
           <table className="w-full">
             <thead className="border-b border-blue-400/20 bg-slate-800/50">
               <tr>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">类型</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">告警名称</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警编号</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警类型</th>
                 <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">等级</th>
                 <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">状态</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">工队</th>
+                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">人员</th>
                 <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">位置</th>
                 <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">设备</th>
                 <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">时间</th>
@@ -646,19 +874,25 @@ onClick={(e) => {
                    }`}
                  >
                    <td className="px-4 py-4">
-                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                       alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
-                     }`}>
-                       {alarm.type === 'fence' ? (
-                         <ShieldAlert size={16} className="text-blue-400" />
-                       ) : (
-                         <Video size={16} className="text-purple-400" />
-                       )}
-                     </div>
+                     <div className="text-sm text-cyan-300 font-medium">{alarm.alarmCode}</div>
+                     <div className="text-xs text-slate-500 mt-1">ID: {alarm.id}</div>
                    </td>
                    <td className="px-4 py-4">
-                     <div className="text-base text-white font-medium">{alarm.title}</div>
-                     <div className="text-sm text-slate-400 mt-1">{alarm.description}</div>
+                     <div className="flex items-center gap-2">
+                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                         alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                       }`}>
+                         {alarm.type === 'fence' ? (
+                           <ShieldAlert size={15} className="text-blue-400" />
+                         ) : (
+                           <Video size={15} className="text-purple-400" />
+                         )}
+                       </div>
+                       <div>
+                         <div className="text-base text-white font-medium">{alarm.alarmType}</div>
+                         <div className="text-sm text-slate-400 mt-1 max-w-[260px] truncate">{alarm.description}</div>
+                       </div>
+                     </div>
                    </td>
                    <td className="px-4 py-4">
                       <span className={`text-xs px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
@@ -671,9 +905,8 @@ onClick={(e) => {
                       </span>
                    </td>
                    <td className="px-4 py-4">
-                     <span className="px-2 py-0.5 text-xs rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                       {alarm.team || '-'}
-                     </span>
+                     <div className="text-sm text-slate-300">{alarm.personName}</div>
+                     {alarm.personnelId && <div className="text-xs text-slate-500 mt-1">ID: {alarm.personnelId}</div>}
                    </td>
                    <td className="px-4 py-4">
                      <div className="flex items-center gap-1 text-sm text-slate-300">
@@ -686,6 +919,7 @@ onClick={(e) => {
                        <User size={14} className="text-slate-500" />
                        {alarm.deviceName}
                      </div>
+                     <div className="text-xs text-slate-500 mt-1">设备ID: {alarm.deviceId || '-'}</div>
                    </td>
                    <td className="px-4 py-4">
                      <div className="flex items-center gap-1 text-sm text-slate-300">
@@ -712,7 +946,7 @@ onClick={(e) => {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setPreviewVideo(alarm.videoPath!);
+                            openAlarmVideo(alarm);
                           }}
                           className="px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
                         >
@@ -733,6 +967,18 @@ onClick={(e) => {
                           处理
                         </button>
                       )}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`确认删除 ${alarm.alarmCode}？`)) {
+                            await alarmApi.deleteAlarm(Number(alarm.id));
+                            await loadAlarms();
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm font-medium transition-all"
+                      >
+                        删除
+                      </button>
                     </div>
                   </td>
                  </tr>
@@ -773,9 +1019,13 @@ onClick={(e) => {
             
             <div className="space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <span className="text-slate-400">报警编号：</span>
+                  <span className="text-cyan-300 font-medium">{selectedAlarm.alarmCode}</span>
+                </div>
                 <div>
                   <span className="text-slate-400">告警类型：</span>
-                  <span className="text-slate-200">{selectedAlarm.type === 'fence' ? '电子围栏' : '视频分析'}</span>
+                  <span className="text-slate-200">{selectedAlarm.alarmType}</span>
                 </div>
                 <div>
                   <span className="text-slate-400">严重程度：</span>
@@ -797,14 +1047,37 @@ onClick={(e) => {
                   <span className="text-slate-400">发生位置：</span>
                   <span className="text-slate-200">{selectedAlarm.location}</span>
                 </div>
-                <div className="col-span-2">
-                  <span className="text-slate-400">设备名称：</span>
+                <div>
+                  <span className="text-slate-400">设备：</span>
                   <span className="text-slate-200">{selectedAlarm.deviceName}</span>
                 </div>
+                <div>
+                  <span className="text-slate-400">设备ID：</span>
+                  <span className="text-slate-200">{selectedAlarm.deviceId || '-'}</span>
+                </div>
                 <div className="col-span-2">
-                  <span className="text-slate-400">详细信息：</span>
+                  <span className="text-slate-400">人员：</span>
+                  <span className="text-slate-200">
+                    {selectedAlarm.personName}
+                    {selectedAlarm.personnelId ? ` / ${selectedAlarm.personnelId}` : ''}
+                  </span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-slate-400">报警信息：</span>
                   <p className="text-slate-200 mt-1">{selectedAlarm.description}</p>
                 </div>
+                {selectedAlarm.recordingStatus && (
+                  <div>
+                    <span className="text-slate-400">录像状态：</span>
+                    <span className="text-slate-200">{selectedAlarm.recordingStatus}</span>
+                  </div>
+                )}
+                {selectedAlarm.recordingError && (
+                  <div className="col-span-2">
+                    <span className="text-slate-400">错误信息：</span>
+                    <span className="text-red-300">{selectedAlarm.recordingError}</span>
+                  </div>
+                )}
                 {selectedAlarm.snapshot && (
                   <div className="col-span-2">
                     <span className="text-slate-400">报警截图：</span>
@@ -821,7 +1094,9 @@ onClick={(e) => {
                   <div className="col-span-2">
                     <span className="text-slate-400">报警视频：</span>
                     <button
-                      onClick={() => setPreviewVideo(selectedAlarm.videoPath!)}
+                      onClick={() => {
+                        openAlarmVideo(selectedAlarm);
+                      }}
                       className="ml-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
                     >
                       <Video size={14} />
@@ -841,6 +1116,18 @@ onClick={(e) => {
   已处理
 </button>
               )}
+              <button
+                onClick={async () => {
+                  if (window.confirm(`确认删除 ${selectedAlarm.alarmCode}？`)) {
+                    await alarmApi.deleteAlarm(Number(selectedAlarm.id));
+                    setSelectedAlarm(null);
+                    await loadAlarms();
+                  }
+                }}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-all"
+              >
+                删除
+              </button>
               <button onClick={() => setSelectedAlarm(null)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all">
                 关闭
               </button>
@@ -954,27 +1241,34 @@ onClick={(e) => {
 {previewVideo && (
   <div
     className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-    onClick={() => setPreviewVideo(null)}
+    onClick={() => {
+      setPreviewVideo(null);
+      setSelectedVideoAlarm(null);
+    }}
   >
     <div
       className="relative bg-slate-900 rounded-2xl border border-cyan-400/30 shadow-2xl p-4 w-[900px] max-w-[92vw]"
       onClick={(e) => e.stopPropagation()}
     >
       <button
-        onClick={() => setPreviewVideo(null)}
+        onClick={() => {
+          setPreviewVideo(null);
+          setSelectedVideoAlarm(null);
+        }}
         className="absolute right-3 top-3 z-10 p-1.5 bg-black/50 hover:bg-black/70 rounded-lg"
       >
         <X size={18} className="text-white" />
       </button>
 
-      <div className="mb-3 pr-10 text-base font-semibold text-white">报警视频</div>
-      <video
-        key={previewVideo}
-        src={previewVideo}
-        controls
-        autoPlay
-        className="w-full max-h-[78vh] rounded-lg bg-black"
-      />
+      <div className="mb-3 pr-10">
+        <div className="text-base font-semibold text-white">报警视频</div>
+        {selectedVideoAlarm && (
+          <div className="mt-1 text-xs text-slate-400 break-all">
+            alarm_id={selectedVideoAlarm.id} snapshot={selectedVideoAlarm.snapshot || '-'} videoPath={selectedVideoAlarm.videoPath || '-'} alarmSecond={selectedVideoAlarm.alarmSecond ?? '-'}
+          </div>
+        )}
+      </div>
+      {selectedVideoAlarm && <AlarmPlaybackPlayer src={previewVideo} alarm={selectedVideoAlarm} />}
     </div>
   </div>
 )}

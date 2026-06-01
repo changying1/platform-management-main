@@ -81,8 +81,23 @@ public class Alarm {
     @SerializedName("video_url")
     private String videoUrl;
 
+    @SerializedName("clip_url")
+    private String clipUrl;
+
     @SerializedName("duration_seconds")
     private int durationSeconds;
+
+    @SerializedName("start_time")
+    private String startTime;
+
+    @SerializedName("recording_start_time")
+    private String recordingStartTime;
+
+    @SerializedName("end_time")
+    private String endTime;
+
+    @SerializedName("alarm_second")
+    private Integer alarmSecond;
 
     public Alarm() {
     }
@@ -288,11 +303,21 @@ public class Alarm {
     }
 
     public String getVideoUrl() {
-        return videoUrl;
+        if (videoUrl != null && !videoUrl.trim().isEmpty()) return videoUrl;
+        if (recordingPath != null && !recordingPath.trim().isEmpty()) return recordingPath;
+        return clipUrl;
     }
 
     public void setVideoUrl(String videoUrl) {
         this.videoUrl = videoUrl;
+    }
+
+    public String getClipUrl() {
+        return clipUrl;
+    }
+
+    public void setClipUrl(String clipUrl) {
+        this.clipUrl = clipUrl;
     }
 
     public int getDurationSeconds() {
@@ -301,6 +326,31 @@ public class Alarm {
 
     public void setDurationSeconds(int durationSeconds) {
         this.durationSeconds = durationSeconds;
+    }
+
+    public String getStartTime() {
+        if (startTime != null && !startTime.trim().isEmpty()) return startTime;
+        return recordingStartTime;
+    }
+
+    public void setStartTime(String startTime) {
+        this.startTime = startTime;
+    }
+
+    public String getEndTime() {
+        return endTime;
+    }
+
+    public void setEndTime(String endTime) {
+        this.endTime = endTime;
+    }
+
+    public Integer getAlarmSecond() {
+        return alarmSecond;
+    }
+
+    public void setAlarmSecond(Integer alarmSecond) {
+        this.alarmSecond = alarmSecond;
     }
 
     public String getDisplayAlarmType() {

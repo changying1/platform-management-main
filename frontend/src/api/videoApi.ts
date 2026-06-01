@@ -194,11 +194,26 @@ export interface RecordingSegment {
 }
 
 export interface SavedPlaybackVideo {
+  alarm_id?: number | string;
+  device_id?: string;
+  device_name?: string;
   name: string;
   size_bytes: number;
   duration_seconds?: number;
   updated_at: string;
   web_path: string;
+  recording_path?: string;
+  url?: string;
+  alarm_image_path?: string;
+  screenshot_path?: string;
+  thumbnail_path?: string;
+  thumbnail?: string;
+  alarm_type?: string;
+  description?: string;
+  recording_status?: string;
+  start_time?: string;
+  end_time?: string;
+  alarm_second?: number;
 }
 
 export interface TempCacheSaveResponse extends PlaybackSaveResponse {

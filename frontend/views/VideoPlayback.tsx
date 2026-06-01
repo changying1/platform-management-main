@@ -41,7 +41,6 @@ import {
   getAllVideos,
   getRecordingVideos,
   getAlarmVideosList,
-  getAlarmScreenshots,
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
 import { API_BASE_URL, getApiUrl } from "../src/api/config";
@@ -609,8 +608,12 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         // ✅ 只有报警类型才显示红点
         // 优先级：currentPlayback.alarmSecond（真实计算） > 固定 10秒 > 不显示
         if (type === 'alarm') {
-          const realAlarmSecond = (currentPlayback as any)?.alarmSecond;
-          setAlarmTimestamp(realAlarmSecond ?? Math.min(10, realDuration / 3));
+          const realAlarmSecond = Number((currentPlayback as any)?.alarmSecond);
+          const fallbackAlarmSecond = Math.min(30, Math.max(0, realDuration / 2));
+          const nextAlarmSecond = Number.isFinite(realAlarmSecond)
+            ? realAlarmSecond
+            : fallbackAlarmSecond;
+          setAlarmTimestamp(Math.max(0, Math.min(nextAlarmSecond, realDuration || fallbackAlarmSecond)));
         } else {
           setAlarmTimestamp(null);
         }
@@ -649,7 +652,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         video.removeEventListener('pause', handlePause);
         video.removeEventListener('error', handleError);
       };
-    }, [videoUrl, type]);
+    }, [videoUrl, type, currentPlayback]);
 
     // 倍速选项
     const speedOptions = [
@@ -805,7 +808,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         </div>
 
         {/* 自定义控制栏 */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-100">
           <div className="px-4 py-3">
             {/* 进度条 */}
             <div
@@ -820,10 +823,10 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
                 className="absolute w-3 h-3 bg-cyan-400 rounded-full top-1/2 -translate-y-1/2"
                 style={{ left: `${(currentTime / duration) * 100 || 0}%` }}
               />
-              {alarmTimestamp && duration > 0 && (
+              {alarmTimestamp !== null && duration > 0 && (
                 <div
                   className="absolute w-3 h-3 bg-red-500 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-lg ring-2 ring-red-500/50 animate-pulse"
-                  style={{ left: `${(alarmTimestamp / duration) * 100}%` }}
+                  style={{ left: `${Math.max(0, Math.min(100, (alarmTimestamp / duration) * 100))}%` }}
                   title="报警发生时刻"
                 />
               )}
@@ -1870,7 +1873,7 @@ const VoicePlaybackContent = ({
 
   // 🎬 从报警视频文件名提取开始时间戳
   // alarm_3158_358_20260407_120600_20260407_120630.mp4 → 开始时间
-  const parseAlarmVideoStartTime = (filename: string): number => {
+  const disabledParseAlarmVideoStartTime = (filename: string): number => {
     const match = filename.match(/alarm_\d+_\d+_(\d{8}_\d{6})_\d{8}_\d{6}\.mp4/);
     if (!match) return 0;
     const [, dateTime] = match;
@@ -1892,22 +1895,19 @@ const VoicePlaybackContent = ({
   };
 
   // 🔗 给报警视频找匹配的截图 + 计算报警在视频里的秒数位置
-  const matchAlarmScreenshot = (videoFilename: string, screenshotList: string[]) => {
-    const videoStart = parseAlarmVideoStartTime(videoFilename);
+  const disabledAlarmScreenshotBinding = (videoFilename: string, screenshotList: string[]) => {
+    const videoStart = disabledParseAlarmVideoStartTime(videoFilename);
     if (!videoStart) return { screenshotUrl: '', alarmSecond: 10 };
 
     // 在截图中找同设备、时间差在30秒内的
-    let bestMatch: string | null = null;
-    let bestDiff = Infinity;
+    const bestMatch: string | null = null;
 
     for (const screenshot of screenshotList) {
       const screenshotTime = parseScreenshotTime(screenshot);
       if (!screenshotTime) continue;
       const diff = Math.abs(screenshotTime - videoStart);
-      if (diff < 30 && diff < bestDiff) {
-        bestDiff = diff;
-        bestMatch = screenshot;
-      }
+      void diff;
+      void screenshot;
     }
 
     // 报警在视频里的位置 = 截图时间 - 视频开始时间
@@ -1958,7 +1958,6 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   // ✅ 修改2：删除模拟数据，改用真实 API 数据
   const [recordingVideos, setRecordingVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
-  const [alarmScreenshots, setAlarmScreenshots] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedAlarm, setSelectedAlarm] = useState<ExtendedSavedPlayback | null>(null);
   const [filteredPlaybacks, setFilteredPlaybacks] = useState<ExtendedSavedPlayback[]>([]);
@@ -2108,19 +2107,16 @@ useEffect(() => {
     setLoadingVideos(true);
     try {
       // ✅ 等两个API都回来才一起更新状态！解决竞态！
-      const [recordings, alarms, screenshots] = await Promise.all([
+      const [recordings, alarms] = await Promise.all([
         getRecordingVideos(deviceToLoad.id, 500),
         getAlarmVideosList(deviceToLoad.id, 120),
-        getAlarmScreenshots(deviceToLoad.id, 120),
       ]);
 
       setRecordingVideos(Array.isArray(recordings) ? recordings : []);
       setAlarmVideos(Array.isArray(alarms) ? alarms : []);
-      setAlarmScreenshots(Array.isArray(screenshots) ? screenshots : []);
     } catch (err) {
       setRecordingVideos([]);
       setAlarmVideos([]);
-      setAlarmScreenshots([]);
     } finally {
       setLoadingVideos(false);
     }
@@ -2264,8 +2260,8 @@ useEffect(() => {
       alarmVideos.forEach(video => {
         const duration = video.duration_seconds || 60;
         // ✅ 通过文件名计算：报警在视频里的第几秒
-        const matchedScreenshot = (() => {
-          const screenshots = alarmScreenshots as any[];
+        (() => {
+          const screenshots = [] as any[];
 
           if (!screenshots || screenshots.length === 0) {
             return null;
@@ -2273,8 +2269,7 @@ useEffect(() => {
 
           const videoTime = new Date(video.updated_at).getTime();
 
-          let best: any = null;
-          let bestDiff = Number.POSITIVE_INFINITY;
+          const best: any = null;
 
           for (const shot of screenshots) {
             const shotTime = new Date(shot.updated_at).getTime();
@@ -2285,43 +2280,29 @@ useEffect(() => {
 
             const diff = Math.abs(shotTime - videoTime);
 
-            if (diff < bestDiff) {
-              best = shot;
-              bestDiff = diff;
-            }
+            void diff;
           }
 
           // 允许 5 分钟内匹配；如果没有合适时间，也兜底取最新一张
-          if (best && bestDiff <= 5 * 60 * 1000) {
+          if (best) {
             return best;
           }
 
-          return screenshots[0] || null;
+          return null;
         })();
 
         const screenshotRawPath =
-          matchedScreenshot?.web_path ||
-          matchedScreenshot?.thumbnail_path ||
-          matchedScreenshot?.thumbnail ||
-          matchedScreenshot?.url ||
+          video.alarm_image_path ||
+          video.screenshot_path ||
+          video.thumbnail_path ||
+          video.thumbnail ||
           '';
 
         const screenshotUrl = screenshotRawPath ? toVideoUrl(screenshotRawPath) : '';
 
-        const alarmSecond = (() => {
-          if (!matchedScreenshot) return 10;
-
-          const videoTime = new Date(video.updated_at).getTime();
-          const shotTime = new Date(matchedScreenshot.updated_at).getTime();
-
-          if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
-            return 10;
-          }
-
-          return Math.max(0, Math.min(duration - 1, Math.round((shotTime - videoTime) / 1000)));
-        })();
+        const alarmSecond = Math.max(0, Math.min(duration - 1, Number(video.alarm_second ?? 30)));
         list.push({
-          id: `alarm_${video.name}`,
+          id: `alarm_${video.alarm_id || video.name}`,
           deviceId: baseDevice.id,
           deviceName: baseDevice.name,
           company: baseDevice.company,
@@ -2340,12 +2321,12 @@ useEffect(() => {
             timestamp: video.updated_at,
             personnel: '未知',
             screenshotUrl,
-            screenshot: matchedScreenshot
+            screenshot: screenshotUrl
               ? {
-                  id: matchedScreenshot.name || matchedScreenshot.id || String(video.name),
+                  id: String(video.alarm_id || video.name),
                   url: screenshotUrl,
                   thumbnail: screenshotUrl,
-                  timestamp: matchedScreenshot.updated_at || video.updated_at,
+                  timestamp: video.updated_at,
                 }
               : undefined,
           },
@@ -2400,7 +2381,7 @@ useEffect(() => {
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
+  }, [selectedDevice, recordingVideos, alarmVideos, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
  
 
 // ✅ 分页计算 - 放在 useEffect 外面

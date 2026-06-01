@@ -23,6 +23,8 @@ export interface AlarmCreatePayload {
 export interface AlarmResponse {
   id: number;
   device_id: string;
+  device_name?: string;
+  video_name?: string;
   fence_id?: number;
   project_id?: number;
   alarm_type: string;
@@ -45,12 +47,20 @@ export interface AlarmResponse {
   error_message?: string;
   duration?: number;
   duration_seconds?: number;
+  start_time?: string;
+  end_time?: string;
+  alarm_second?: number;
+  person_name?: string;
+  personnel_name?: string;
+  personnel_id?: string;
+  picture_url?: string;
 }
 
 export const alarmApi = {
-  getAlarms: async (projectId?: number) => {
+  getAlarms: async (projectId?: number, sourceType?: string) => {
     const params: Record<string, any> = {};
     if (projectId !== undefined) params.project_id = projectId;
+    if (sourceType) params.source_type = sourceType;
     const response = await apiClient.get<AlarmResponse[]>('/alarms/', { params });
     return response.data;
   },
@@ -58,11 +68,11 @@ export const alarmApi = {
     const response = await apiClient.post<AlarmResponse>('/alarms/', alarm);
     return response.data;
   },
-  resolveAlarm: async (id: number) => {
-    const response = await apiClient.put<AlarmResponse>(`/alarms/${id}`, { status: 'resolved' });
+  resolveAlarm: async (id: number, data?: { handler?: string; remark?: string }) => {
+    const response = await apiClient.put<AlarmResponse>(`/alarms/${id}`, { status: 'resolved', ...data });
     return response.data;
   },
-  updateAlarm: async (id: number, data: { status?: string; severity?: string; description?: string }) => {
+  updateAlarm: async (id: number, data: { status?: string; severity?: string; description?: string; handler?: string; remark?: string }) => {
     const response = await apiClient.put<AlarmResponse>(`/alarms/${id}`, data);
     return response.data;
   },

@@ -120,6 +120,9 @@ class AlarmService:
         video_path = doc.get("recording_path") or doc.get("video_url") or doc.get("clip_url") or doc.get("video_path") or ""
         recording_error = doc.get("recording_error") or doc.get("error_message") or ""
         duration = doc.get("duration_seconds") or doc.get("duration") or doc.get("video_duration") or doc.get("clip_duration")
+        alarm_second = doc.get("alarm_second")
+        if alarm_second is None:
+            alarm_second = doc.get("alarmSecond")
         alarm_type = doc.get("alarm_type") or doc.get("event_type") or doc.get("type") or doc.get("rule_name") or doc.get("algo_name") or "未知报警类型"
         person = doc.get("person") or {}
         person_name = doc.get("person_name") or person.get("username") or person.get("name") or ""
@@ -155,6 +158,7 @@ class AlarmService:
             "clip_url": video_path,
             "duration": duration,
             "duration_seconds": duration,
+            "alarm_second": alarm_second,
             "video_duration": duration,
             "clip_duration": duration,
             "start_time": doc.get("recording_start_time") or doc.get("start_time"),

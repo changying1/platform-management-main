@@ -139,6 +139,7 @@ public class VideoPlaybackFragment extends Fragment {
         item.startTime = firstNonEmpty(row.get("start_time"), row.get("startTime"), row.get("created_at"));
         item.endTime = firstNonEmpty(row.get("end_time"), row.get("endTime"));
         item.duration = intValue(row.get("duration"), row.get("duration_seconds"), row.get("video_duration"), row.get("clip_duration"));
+        item.alarmSecond = intValue(row.get("alarm_second"), row.get("alarmSecond"));
         item.type = isAlarmMode ? "alarm" : "manual";
         item.filePath = firstNonEmpty(row.get("video_url"), row.get("clip_url"), row.get("web_path"), row.get("url"), row.get("path"), row.get("recording_path"));
         if (item.filePath.isEmpty()) {
@@ -161,6 +162,7 @@ public class VideoPlaybackFragment extends Fragment {
         public String startTime;
         public String endTime;
         public int duration;
+        public int alarmSecond;
         public String type;
         public String filePath;
         public String company;
@@ -254,7 +256,8 @@ public class VideoPlaybackFragment extends Fragment {
                     if (unavailable) {
                         Toast.makeText(requireContext(), firstNonEmpty(item.errorMessage, "暂无报警视频"), Toast.LENGTH_SHORT).show();
                     } else if (item.filePath != null && !item.filePath.isEmpty()) {
-                        VideoFilePlayActivity.start(requireContext(), AppConfig.toAbsoluteUrl(requireContext(), item.filePath));
+                        long alarmSecond = item.alarmSecond > 0 ? item.alarmSecond : (item.duration > 0 && item.duration < 30 ? item.duration / 2L : 30L);
+                        VideoFilePlayActivity.start(requireContext(), AppConfig.toAbsoluteUrl(requireContext(), item.filePath), "alarm".equals(item.type), alarmSecond);
                     } else {
                         Toast.makeText(requireContext(), "暂无播放地址", Toast.LENGTH_SHORT).show();
                     }

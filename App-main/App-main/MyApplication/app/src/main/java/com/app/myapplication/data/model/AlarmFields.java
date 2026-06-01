@@ -36,6 +36,10 @@ public final class AlarmFields {
         alarm.setImageUrl(first(row, "image_url", "snapshot_url", "alarm_image_path", "image_path", "snapshot_path"));
         alarm.setVideoUrl(first(row, "video_url", "clip_url", "recording_path", "video_path"));
         alarm.setDurationSeconds(intValue(get(row, "duration", "duration_seconds", "video_duration", "clip_duration"), 0));
+        alarm.setStartTime(first(row, "start_time", "recording_start_time"));
+        alarm.setEndTime(first(row, "end_time", "recording_end_time"));
+        Object alarmSecond = get(row, "alarm_second", "alarmSecond");
+        if (alarmSecond != null) alarm.setAlarmSecond(intValue(alarmSecond, 30));
         alarm.setRecordingStatus(first(row, "recording_status", "video_status", ""));
         alarm.setRecordingError(first(row, "recording_error", "error_message", ""));
         return alarm;

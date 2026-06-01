@@ -16,6 +16,7 @@ import com.app.myapplication.data.model.Alarm;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import retrofit2.Call;
@@ -196,11 +197,8 @@ public class AlarmViewModel extends ViewModel {
             boolean matchesLevel = "all".equals(level) ||
                     level.equals(alarm.getDisplaySeverity());
 
-            String searchLower = search.toLowerCase();
-            boolean matchesSearch = search.isEmpty() ||
-                    (alarm.getDeviceId() != null && alarm.getDeviceId().toLowerCase().contains(searchLower)) ||
-                    (alarm.getDescription() != null && alarm.getDescription().toLowerCase().contains(searchLower)) ||
-                    (alarm.getDisplayAlarmType() != null && alarm.getDisplayAlarmType().toLowerCase().contains(searchLower));
+            String normalizedSearch = normalizeSearchText(search);
+            boolean matchesSearch = normalizedSearch.isEmpty() || matchesAlarmSearch(alarm, normalizedSearch);
 
             if (matchesStatus && matchesLevel && matchesSearch) {
                 filteredList.add(alarm);
@@ -208,6 +206,77 @@ public class AlarmViewModel extends ViewModel {
         }
 
         filteredAlarms.setValue(filteredList);
+    }
+
+    private boolean matchesAlarmSearch(Alarm alarm, String normalizedSearch) {
+        String rawSearch = normalizeSearchText(searchTerm.getValue());
+        String[] values = new String[]{
+                buildDisplayId(alarm.getId(), alarm.getTimestamp()),
+                String.valueOf(alarm.getId()),
+                alarm.getAlarmType(),
+                alarm.getDisplayAlarmType(),
+                alarm.getDeviceId(),
+                alarm.getDeviceName(),
+                alarm.getTimestamp(),
+                alarm.getLocation(),
+                alarm.getDescription(),
+                alarm.getPersonName(),
+                alarm.getPersonnelId(),
+                alarm.getDisplaySeverity(),
+                severityToCn(alarm.getDisplaySeverity()),
+                alarm.getDisplayStatus(),
+                statusToCn(alarm.getDisplayStatus())
+        };
+
+        for (String value : values) {
+            if (normalizeSearchText(value).contains(normalizedSearch)) {
+                return true;
+            }
+        }
+
+        return rawSearch.matches("\\d+")
+                && ((alarm.getDeviceId() != null && alarm.getDeviceId().equals(rawSearch))
+                || String.valueOf(alarm.getId()).contains(rawSearch));
+    }
+
+    private String normalizeSearchText(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.ROOT)
+                .replaceAll("[：:\\s_-]+", "")
+                .replace("设备", "")
+                .replace("device", "");
+    }
+
+    private String extractYMD(String timestamp) {
+        if (timestamp == null) return "00000000";
+        try {
+            if (timestamp.contains("T")) {
+                return timestamp.split("T")[0].replace("-", "");
+            }
+            if (timestamp.length() >= 10) {
+                return timestamp.substring(0, 10).replace("-", "");
+            }
+        } catch (Exception ignored) {
+        }
+        return "00000000";
+    }
+
+    private String buildDisplayId(long id, String timestamp) {
+        return "ALM-" + extractYMD(timestamp) + "-" + id;
+    }
+
+    private String severityToCn(String severity) {
+        if (severity == null) return "";
+        if ("high".equalsIgnoreCase(severity) || "critical".equalsIgnoreCase(severity)) return "高危";
+        if ("low".equalsIgnoreCase(severity)) return "提示";
+        return "一般";
+    }
+
+    private String statusToCn(String status) {
+        if (status == null) return "";
+        if ("resolved".equalsIgnoreCase(status)) return "已处理";
+        if ("ignored".equalsIgnoreCase(status)) return "已忽略";
+        return "待处理";
     }
 
     // 筛选数据（供外部调用）

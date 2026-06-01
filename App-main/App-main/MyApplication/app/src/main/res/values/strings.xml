@@ -4,7 +4,8 @@
     <string-array name="alarm_status">
         <item>所有状态</item>
         <item>待处理</item>
-        <item>已处置</item>
+        <item>已处理</item>
+        <item>已忽略</item>
     </string-array>
 
     <!-- 报警级别数组 -->

@@ -17,6 +17,8 @@ import com.app.myapplication.data.local.AppConfig;
 import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.ui.video.VideoFilePlayActivity;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -69,7 +71,15 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
 
     private String buildDisplayId(long rawId, String timestamp) {
         String ymd = extractYMD(timestamp);
-        return "ALM-" + ymd + "-" + String.format(Locale.US, "%03d", rawId);
+        return "ALM-" + ymd + "-" + rawId;
+    }
+
+    private String statusAnyToCN(String s) {
+        if (s == null) return "待处理";
+        s = s.trim();
+        if ("resolved".equalsIgnoreCase(s) || "已处理".equals(s)) return "已处理";
+        if ("ignored".equalsIgnoreCase(s) || "已忽略".equals(s)) return "已忽略";
+        return "待处理";
     }
 
     // 兼容：status 可能是英文 pending/resolved，也可能已经被你 ViewModel 翻译成中文
@@ -143,10 +153,15 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         holder.tvAlarmType.setText("报警类型: " + valueOr(alarm.getDisplayAlarmType(), "未知报警类型"));
         holder.tvAlarmContent.setText("报警内容: " + valueOr(alarm.getDescription(), "暂无报警内容"));
         holder.tvDevice.setText("设备: " + valueOr(valueOr(alarm.getDeviceName(), alarm.getDeviceId()), "未知设备"));
-        holder.tvPerson.setText("人员: " + valueOr(alarm.getPersonName(), "未知人员"));
+        holder.tvDeviceId.setText("设备ID: " + valueOr(alarm.getDeviceId(), "-"));
+        String personText = valueOr(alarm.getPersonName(), "未知");
+        if (alarm.getPersonnelId() != null && !alarm.getPersonnelId().trim().isEmpty()) {
+            personText = personText + " / " + alarm.getPersonnelId();
+        }
+        holder.tvPerson.setText("人员: " + personText);
         holder.tvTime.setText("报警时间: " + (alarm.getTimestamp() == null ? "" : alarm.getTimestamp()));
         holder.tvLocation.setText("位置: " + valueOr(alarm.getLocation(), "未知位置"));
-        holder.tvStatus.setText("状态: " + (alarm.getStatus() == null ? "" : alarm.getStatus()));
+        holder.tvStatus.setText("状态: " + statusAnyToCN(alarm.getStatus()));
         holder.btnImage.setOnClickListener(v -> {
             String rawImagePath = firstNonEmpty(
                     alarm.getImageUrlField(),
@@ -177,7 +192,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
                 android.widget.Toast.makeText(holder.itemView.getContext(), videoFailureMessage(alarm), android.widget.Toast.LENGTH_SHORT).show();
                 return;
             }
-            VideoFilePlayActivity.start(holder.itemView.getContext(), url);
+            VideoFilePlayActivity.start(holder.itemView.getContext(), url, true, resolveAlarmSecond(alarm));
         });
 
         boolean isPending = isPendingStatus(alarm.getStatus());
@@ -254,13 +269,43 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         });
     }
 
+    private long resolveAlarmSecond(Alarm alarm) {
+        if (alarm.getAlarmSecond() != null) {
+            return Math.max(0, alarm.getAlarmSecond());
+        }
+        long alarmTime = parseTimeMillis(alarm.getTimestamp());
+        long startTime = parseTimeMillis(alarm.getStartTime());
+        if (alarmTime > 0 && startTime > 0) {
+            return Math.max(0, Math.round((alarmTime - startTime) / 1000.0));
+        }
+        int duration = alarm.getDurationSeconds();
+        return duration > 0 && duration < 30 ? Math.max(0, duration / 2) : 30;
+    }
+
+    private long parseTimeMillis(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return 0;
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = new String[]{
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss"
+        };
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
+                if (date != null) return date.getTime();
+            } catch (Exception ignored) {}
+        }
+        return 0;
+    }
+
     @Override
     public int getItemCount() {
         return alarmList == null ? 0 : alarmList.size();
     }
 
     public static class AlarmViewHolder extends RecyclerView.ViewHolder {
-        TextView tvAlarmId, tvAlarmType, tvAlarmContent, tvDevice, tvPerson, tvTime, tvLocation, tvStatus;
+        TextView tvAlarmId, tvAlarmType, tvAlarmContent, tvDevice, tvDeviceId, tvPerson, tvTime, tvLocation, tvStatus;
         Spinner spinnerLevel;
         Button btnResolve, btnDelete, btnImage, btnVideo;
 
@@ -270,6 +315,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
             tvAlarmType = itemView.findViewById(R.id.tvAlarmType);
             tvAlarmContent = itemView.findViewById(R.id.tvAlarmContent);
             tvDevice = itemView.findViewById(R.id.tvDevice);
+            tvDeviceId = itemView.findViewById(R.id.tvDeviceId);
             tvPerson = itemView.findViewById(R.id.tvPerson);
             tvTime = itemView.findViewById(R.id.tvTime);
             tvLocation = itemView.findViewById(R.id.tvLocation);
