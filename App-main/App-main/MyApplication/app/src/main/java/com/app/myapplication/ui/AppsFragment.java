@@ -105,7 +105,7 @@ public class AppsFragment extends Fragment {
                             startActivity(new Intent(requireContext(), GroupCallActivity.class));
                             break;
                         case "管理":
-                            startActivity(new Intent(requireContext(), UserManagementActivity.class));
+                            startActivity(new Intent(requireContext(), com.app.myapplication.ui.manage.ManagementCenterActivity.class));
                             break;
                     }
                 });

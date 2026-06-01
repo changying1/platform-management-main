@@ -12,11 +12,14 @@ import androidx.lifecycle.ViewModel;
 import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.model.Alarm;
+import com.app.myapplication.utils.AlarmNotificationHelper;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -39,6 +42,9 @@ public class AlarmViewModel extends ViewModel {
     private Runnable pollingRunnable;
     private static final long POLLING_INTERVAL = 30000; // 30秒
     private Context appContext;
+
+    // 已通知的报警ID集合，避免重复通知
+    private final Set<Long> notifiedAlarmIds = new HashSet<>();
 
     public AlarmViewModel() {
         pollingHandler = new Handler(Looper.getMainLooper());
@@ -110,14 +116,17 @@ public class AlarmViewModel extends ViewModel {
                     List<Alarm> alarms = response.body();
                     Log.d("AlarmViewModel", "Fetched " + alarms.size() + " alarms");
 
-                    // 打印围栏相关报警
+                    // 检查围栏报警并发送通知
                     for (Alarm alarm : alarms) {
-                        if ("fence".equals(alarm.getAlarmSource()) ||
-                            "fence".equals(alarm.getSourceType()) ||
-                            (alarm.getAlarmType() != null && alarm.getAlarmType().contains("fence"))) {
+                        if (isFenceAlarm(alarm) && "pending".equals(alarm.getDisplayStatus())) {
                             Log.d("AlarmViewModel", "Fence alarm: " + alarm.getAlarmType() +
                                     " - " + alarm.getDisplayAlarmType() +
                                     " - Device: " + alarm.getDeviceId());
+                            // 发送通知（只通知未处理的新报警）
+                            if (!notifiedAlarmIds.contains(alarm.getId())) {
+                                sendFenceAlarmNotification(alarm);
+                                notifiedAlarmIds.add(alarm.getId());
+                            }
                         }
                     }
 
@@ -291,5 +300,32 @@ public class AlarmViewModel extends ViewModel {
     public void setSearchTerm(String search) {
         searchTerm.setValue(search);
         applyFilters();
+    }
+
+    // 判断是否为围栏报警
+    private boolean isFenceAlarm(Alarm alarm) {
+        return "fence".equals(alarm.getAlarmSource()) ||
+               "fence".equals(alarm.getSourceType()) ||
+               (alarm.getAlarmType() != null && alarm.getAlarmType().toLowerCase().contains("fence"));
+    }
+
+    // 发送围栏报警通知
+    private void sendFenceAlarmNotification(Alarm alarm) {
+        if (appContext == null) return;
+
+        String title = alarm.getDisplayAlarmType();
+        String deviceName = alarm.getDeviceName() != null ? alarm.getDeviceName() : alarm.getDeviceId();
+        String location = alarm.getLocation() != null ? alarm.getLocation() : "未知位置";
+        String content = String.format("设备: %s\n位置: %s\n时间: %s",
+                deviceName,
+                location,
+                alarm.getTimestamp() != null ? alarm.getTimestamp() : "刚刚");
+
+        AlarmNotificationHelper.showFenceAlarmNotification(
+                appContext,
+                title,
+                content,
+                alarm.getId()
+        );
     }
 }
