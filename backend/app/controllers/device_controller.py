@@ -415,12 +415,33 @@ class DevicePositionUpdate(BaseModel):
 @router.post("/update-position")
 def update_device_position(payload: DevicePositionUpdate):
     """Update device position."""
-    # 使用现有的update_device方法来更新设备位�?
-    device_data = DeviceUpdate(
-        lat=payload.lat,
-        lng=payload.lng
-    )
-    updated_device = device_service.update_device(payload.device_id, device_data)
-    if not updated_device:
+    # 尝试多种方式查找设备
+    devices_collection = get_mongo_collection("device")
+    
+    # 方式1: 通过 device_id 字段查找
+    device = devices_collection.find_one({"device_id": payload.device_id})
+    
+    # 方式2: 通过 _id 字段查找（前端可能传入 MongoDB 的 _id）
+    if not device:
+        try:
+            device = devices_collection.find_one({"_id": payload.device_id})
+        except:
+            pass
+    
+    # 方式3: 通过 id 字段查找
+    if not device:
+        device = devices_collection.find_one({"id": payload.device_id})
+    
+    if not device:
         raise HTTPException(status_code=404, detail="设备不存在")
-    return {"status": "success", "device_id": payload.device_id, "lat": payload.lat, "lng": payload.lng}
+    
+    # 获取实际的 device_id 用于后续处理
+    actual_device_id = device.get("device_id") or device.get("_id") or device.get("id")
+    
+    # 更新位置
+    devices_collection.update_one(
+        {"_id": device["_id"]},
+        {"$set": {"lat": payload.lat, "lng": payload.lng, "updatedAt": datetime.now().isoformat()}}
+    )
+    
+    return {"status": "success", "device_id": actual_device_id, "lat": payload.lat, "lng": payload.lng}

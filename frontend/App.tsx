@@ -593,6 +593,11 @@ const normalizeRealtimeAlarm = (raw: any) => {
   const location = String(payload.fence_name || payload.location || '系统报警').trim();
   const level = getAlarmLevel(payload.severity || payload.level || firstBox.severity);
 
+  // 过滤掉围栏报警，由 Fence 页面自己处理
+  if (type.includes('电子围栏') || message.includes('电子围栏') || payload.fence_id) {
+    return null;
+  }
+
   if (!type && !message && !payload.alarm && !payload.id && boxes.length === 0) {
     return null;
   }

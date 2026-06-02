@@ -38,8 +38,6 @@
   "fenceDefaultBehavior": "No Entry",
   "fenceDefaultSeverity": "normal",
   "trackRetentionDays": 30,
-  "trackSimplifyPrecision": 2,
-  "trackRecordInterval": 0,
   "passwordExpireDays": 90,
   "logRetentionDays": 90,
   "logAutoClean": true,
@@ -245,5 +243,7 @@
       "level": "low",
       "description": "不同岗位安全帽颜色规范检查"
     }
-  ]
+  ],
+  "trackSimplifyPrecision": 2,
+  "trackRecordInterval": 0
 }

@@ -519,19 +519,16 @@ class FenceService:
         )
 
         device["last_latitude"] = float(lat)
-
         device["last_longitude"] = float(lng)
-
-
 
         active_fences = list(fences_collection.find({"is_active": True}))
 
         for fence in active_fences:
-
             if self.is_fence_active_now(fence):
-
-                self.check_device_against_fence(fence, device)
-
+                alarm_triggered = self.check_device_against_fence(fence, device)
+                if alarm_triggered:
+                    fence_name = fence.get("name", "未知")
+                    logger.info(f"[围栏报警] 设备 {device_id} 触发围栏 '{fence_name}' 报警!")
             self._update_fence_count(fence)
 
 
@@ -599,29 +596,29 @@ class FenceService:
 
 
     def _get_device_lat_lng(self, device: dict) -> tuple[float | None, float | None]:
-
-        lat = device.get("last_latitude")
-
-        lng = device.get("last_longitude")
-
-        if lat is None:
-
-            lat = device.get("lat")
-
-        if lng is None:
-
-            lng = device.get("lng")
-
+        # 支持多种字段名获取位置
+        lat = device.get("last_latitude") or device.get("lat") or device.get("last_lat")
+        lng = device.get("last_longitude") or device.get("lng") or device.get("last_lng")
+        
         if lat is None or lng is None:
-
             return None, None
-
+        
         try:
-
-            return float(lat), float(lng)
-
+            lat = float(lat)
+            lng = float(lng)
+            
+            # 检查坐标是否合法，如果不合法尝试交换
+            if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+                logger.warning(f"坐标值异常，尝试交换: lat={lat}, lng={lng}")
+                lat, lng = lng, lat
+                
+                # 再次检查
+                if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+                    logger.error(f"坐标值无效: lat={lat}, lng={lng}")
+                    return None, None
+            
+            return lat, lng
         except (TypeError, ValueError):
-
             return None, None
 
 
@@ -769,61 +766,37 @@ class FenceService:
 
 
         if shape == "circle":
-
             try:
-
                 center = geometry.get("center")
-
                 radius = float(geometry.get("radius", 0) or 0)
-
                 center_coord = self._extract_lat_lng(center)
-
                 if center_coord is None:
-
                     return False, False
-
                 center_lat, center_lng = center_coord
-
                 distance = self._get_distance(lat, lng, center_lat, center_lng)
-
-                inside = distance < max(0.0, radius - FENCE_TOUCH_TOLERANCE_METERS)
-
+                # 修复：直接使用距离判断，不减去容差
+                inside = distance < radius
                 touching = abs(distance - radius) <= FENCE_TOUCH_TOLERANCE_METERS
-
                 return inside, touching
-
             except Exception:
-
                 return False, False
 
 
 
         if shape == "polygon":
-
             try:
-
                 polygon_points = geometry.get("points", [])
-
                 poly = []
-
                 for point in polygon_points:
-
                     coord = self._extract_lat_lng(point)
-
                     if coord is not None:
-
                         point_lat, point_lng = coord
-
                         poly.append((point_lng, point_lat))
-
                 inside = self._is_inside_polygon((lng, lat), poly)
-
                 touching = self._is_point_near_polygon_boundary(lat, lng, polygon_points)
-
-                return inside and not touching, touching
-
+                # 修复：统一返回格式，与圆形围栏一致
+                return inside, touching
             except Exception:
-
                 return False, False
 
 
@@ -897,25 +870,15 @@ class FenceService:
 
 
     def check_device_violation(self, fence: dict, device: dict) -> bool:
-
         """Determine if a device is violating a fence's rules."""
-
         lat, lng = self._get_device_lat_lng(device)
-
         if lat is None or lng is None:
-
             return False
 
-
-
         is_inside, is_touching = self._get_fence_position(fence, device)
-
         
-
         behavior = fence.get("behavior")
-
         if behavior == "No Entry":
-
             return is_inside or is_touching
 
         elif behavior == "No Exit":
@@ -999,26 +962,18 @@ class FenceService:
 
 
     def _create_fence_alarm(self, fence: dict, device: dict, alarm_type: str, description: str, location: str) -> bool:
+        device_id = str(device.get("device_id") or device.get("id") or "")
+        fence_id = str(fence.get("fence_id") or fence.get("id") or "")
+        
         if get_fence_alarms_disabled():
             return False
 
-        device_id = str(device.get("device_id") or device.get("id") or "")
-
-        fence_id = str(fence.get("fence_id") or fence.get("id") or "")
-
         if not device_id or not fence_id:
-
             return False
-
-
 
         # 检查告警静默期
-
         if self._is_in_silence_period(device_id, fence_id):
-
             return False
-
-
 
         next_id = int(get_next_sequence("alarm_record_id", db=db))
 
@@ -1073,8 +1028,6 @@ class FenceService:
         }
 
         alarms_collection.insert_one(payload)
-
-        logger.warning(f"Fence alarm saved to alarm_record: alarm_id={next_id}, device={device_id}, fence={fence_id}")
 
         
 
@@ -1150,6 +1103,8 @@ class FenceService:
 
         fence_id = str(fence.get("fence_id") or fence.get("id") or "")
 
+        fence_name = fence.get("name", "未知")
+
         cache_key = (device_id, fence_id)
 
         current_time = time_module.time()
@@ -1157,15 +1112,10 @@ class FenceService:
         
 
         # 获取越界判定延迟配置(秒?
-
         grace_period = get_fence_grace_period()
-
         
-
         if violation:
-
             # 检测到越界
-
             if cache_key in _pending_violations:
 
                 # 已有待确认的越界记录
@@ -1179,8 +1129,6 @@ class FenceService:
                 if elapsed >= grace_period:
 
                     # 延迟时间已到,确认越界,触发警报
-
-                    logger.debug(f"设备 {device_id} 越界确认：延迟{grace_period}秒后仍越界,触发警报")
 
                     del _pending_violations[cache_key]
 
