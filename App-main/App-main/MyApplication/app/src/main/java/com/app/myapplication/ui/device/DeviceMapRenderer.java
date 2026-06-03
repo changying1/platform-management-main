@@ -139,6 +139,15 @@ public class DeviceMapRenderer {
      * 创建设备标记（每次 redrawAll 后重新创建）
      */
     private void createMarker(DeviceItem device, String violationType) {
+        // 检查坐标是否合法（高德地图要求纬度 -90~90，经度 -180~180）
+        if (device.lat == null || device.lng == null ||
+            device.lat < -90 || device.lat > 90 ||
+            device.lng < -180 || device.lng > 180) {
+            android.util.Log.w("DeviceMapRenderer", "非法坐标值: deviceId=" + device.deviceId + 
+                ", lat=" + device.lat + ", lng=" + device.lng);
+            return;
+        }
+        
         LatLng position = new LatLng(device.lat, device.lng);
 
         // 确定标记颜色

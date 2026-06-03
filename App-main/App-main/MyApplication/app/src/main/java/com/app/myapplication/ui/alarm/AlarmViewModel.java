@@ -12,12 +12,15 @@ import androidx.lifecycle.ViewModel;
 import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.model.Alarm;
+import com.app.myapplication.utils.AlarmNotificationHelper;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -40,6 +43,7 @@ public class AlarmViewModel extends ViewModel {
     private Runnable pollingRunnable;
     private static final long POLLING_INTERVAL = 30000; // 30秒
     private Context appContext;
+    private final Set<Long> notifiedAlarmIds = new HashSet<>();
 
     public AlarmViewModel() {
         pollingHandler = new Handler(Looper.getMainLooper());
@@ -121,6 +125,8 @@ public class AlarmViewModel extends ViewModel {
                                     " - Device: " + alarm.getDeviceId());
                         }
                     }
+
+                    notifyPendingFenceAlarms(alarms);
 
                     alarmData.setValue(alarms);
                     applyFilters();
@@ -347,6 +353,99 @@ public class AlarmViewModel extends ViewModel {
     }
 
     // 更新筛选器状态
+    private void notifyPendingFenceAlarms(List<Alarm> alarms) {
+        List<Alarm> pendingFenceAlarms = new ArrayList<>();
+        for (Alarm alarm : alarms) {
+            if (isFenceAlarm(alarm) && "pending".equals(alarm.getDisplayStatus())) {
+                pendingFenceAlarms.add(alarm);
+            }
+        }
+
+        Set<Long> currentPendingFenceAlarmIds = new HashSet<>();
+        for (Alarm alarm : pendingFenceAlarms) {
+            currentPendingFenceAlarmIds.add(alarm.getId());
+        }
+        notifiedAlarmIds.retainAll(currentPendingFenceAlarmIds);
+
+        List<Alarm> newAlarms = new ArrayList<>();
+        for (Alarm alarm : pendingFenceAlarms) {
+            if (!notifiedAlarmIds.contains(alarm.getId())) {
+                newAlarms.add(alarm);
+            }
+        }
+
+        if (newAlarms.isEmpty()) {
+            return;
+        }
+
+        if (pendingFenceAlarms.size() == 1) {
+            Alarm alarm = pendingFenceAlarms.get(0);
+            sendFenceAlarmNotification(alarm);
+            notifiedAlarmIds.add(alarm.getId());
+            return;
+        }
+
+        sendMergedFenceAlarmNotification(pendingFenceAlarms);
+        for (Alarm alarm : newAlarms) {
+            notifiedAlarmIds.add(alarm.getId());
+        }
+    }
+
+    private boolean isFenceAlarm(Alarm alarm) {
+        String alarmSource = alarm.getAlarmSource();
+        String sourceType = alarm.getSourceType();
+        String alarmType = alarm.getAlarmType();
+        String description = alarm.getDescription();
+
+        if ("fence".equals(alarmSource) || "fence".equals(sourceType)) {
+            return true;
+        }
+        if (alarmType != null && (alarmType.contains("围栏") || alarmType.toLowerCase(Locale.ROOT).contains("fence"))) {
+            return true;
+        }
+        return description != null && (description.contains("围栏") || description.contains("禁入") || description.contains("禁出"));
+    }
+
+    private void sendFenceAlarmNotification(Alarm alarm) {
+        if (appContext == null) return;
+
+        String title = alarm.getDisplayAlarmType();
+        String deviceName = alarm.getDeviceName() != null ? alarm.getDeviceName() : alarm.getDeviceId();
+        String location = alarm.getLocation() != null ? alarm.getLocation() : "unknown location";
+        String content = String.format(Locale.ROOT, "Device: %s\nLocation: %s\nTime: %s",
+                deviceName,
+                location,
+                alarm.getTimestamp() != null ? alarm.getTimestamp() : "now");
+
+        AlarmNotificationHelper.showFenceAlarmNotification(appContext, title, content, alarm.getId());
+    }
+
+    private void sendMergedFenceAlarmNotification(List<Alarm> alarms) {
+        if (appContext == null || alarms.isEmpty()) return;
+
+        String title = "Fence alarms (" + alarms.size() + ")";
+        StringBuilder contentBuilder = new StringBuilder();
+        int displayCount = Math.min(alarms.size(), 3);
+
+        for (int i = 0; i < displayCount; i++) {
+            Alarm alarm = alarms.get(i);
+            String deviceName = alarm.getDeviceName() != null ? alarm.getDeviceName() : alarm.getDeviceId();
+            String personName = alarm.getPersonName() != null ? alarm.getPersonName() : "unknown";
+            String description = alarm.getDescription() != null ? alarm.getDescription() : alarm.getAlarmType();
+            contentBuilder.append(String.format(Locale.ROOT, "%d. %s (%s)\n   %s\n",
+                    i + 1,
+                    personName,
+                    deviceName,
+                    description));
+        }
+
+        if (alarms.size() > 3) {
+            contentBuilder.append("... and ").append(alarms.size() - 3).append(" more");
+        }
+
+        AlarmNotificationHelper.showFenceAlarmNotification(appContext, title, contentBuilder.toString(), 999999L);
+    }
+
     public void setStatusFilter(String status) {
         statusFilter.setValue(status);
         applyFilters();

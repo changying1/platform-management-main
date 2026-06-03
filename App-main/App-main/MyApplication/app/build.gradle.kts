@@ -90,6 +90,7 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
 
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.8.7")
     implementation("androidx.lifecycle:lifecycle-livedata:2.8.7")
     implementation("androidx.preference:preference:1.2.1")
