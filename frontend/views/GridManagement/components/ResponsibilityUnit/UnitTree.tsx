@@ -10,6 +10,8 @@ interface UnitTreeProps {
   onMoveUp: (unitId: string) => void;
   onMoveDown: (unitId: string) => void;
   onChangeParent: (unit: UnitTreeNode) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 const TreeRow: React.FC<{
@@ -20,7 +22,9 @@ const TreeRow: React.FC<{
   onMoveUp: (unitId: string) => void;
   onMoveDown: (unitId: string) => void;
   onChangeParent: (unit: UnitTreeNode) => void;
-}> = ({ unit, depth, onEdit, onDelete, onMoveUp, onMoveDown, onChangeParent }) => {
+  canEdit: boolean;
+  canDelete: boolean;
+}> = ({ unit, depth, onEdit, onDelete, onMoveUp, onMoveDown, onChangeParent, canEdit, canDelete }) => {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = unit.children && unit.children.length > 0;
   const indent = depth * 24;
@@ -58,42 +62,42 @@ const TreeRow: React.FC<{
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center gap-1">
-            <button
+            {canEdit && <button
               onClick={() => onMoveUp(unit.unit_id)}
               className="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors"
             >
               上移
-            </button>
-            <button
+            </button>}
+            {canEdit && <button
               onClick={() => onMoveDown(unit.unit_id)}
               className="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors"
             >
               下移
-            </button>
-            <button
+            </button>}
+            {canEdit && <button
               onClick={() => onChangeParent(unit)}
               className="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors"
             >
               变更上级
-            </button>
+            </button>}
           </div>
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
-            <button
+            {canEdit && <button
               onClick={() => onEdit(unit)}
               className="p-2 rounded-lg bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 transition-colors"
               title="编辑"
             >
               <Edit2 size={14} />
-            </button>
-            <button
+            </button>}
+            {canDelete && <button
               onClick={() => onDelete(unit.unit_id)}
               className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
               title="删除"
             >
               <Trash2 size={14} />
-            </button>
+            </button>}
           </div>
         </td>
       </tr>
@@ -108,6 +112,8 @@ const TreeRow: React.FC<{
             onMoveUp={onMoveUp}
             onMoveDown={onMoveDown}
             onChangeParent={onChangeParent}
+            canEdit={canEdit}
+            canDelete={canDelete}
           />
         ))}
     </>
@@ -121,6 +127,8 @@ export const UnitTree: React.FC<UnitTreeProps> = ({
   onMoveUp,
   onMoveDown,
   onChangeParent,
+  canEdit = false,
+  canDelete = false,
 }) => {
   if (units.length === 0) {
     return (
@@ -156,6 +164,8 @@ export const UnitTree: React.FC<UnitTreeProps> = ({
             onMoveUp={onMoveUp}
             onMoveDown={onMoveDown}
             onChangeParent={onChangeParent}
+            canEdit={canEdit}
+            canDelete={canDelete}
           />
         ))}
       </tbody>

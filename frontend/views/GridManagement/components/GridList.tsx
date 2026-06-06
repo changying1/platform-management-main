@@ -8,6 +8,8 @@ interface GridListProps {
   onEdit: (grid: Grid) => void;
   onDelete: (gridId: string) => void;
   onView: (grid: Grid) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 const getStatusIcon = (status: Grid['status']) => {
@@ -49,7 +51,7 @@ const getStatusBgClass = (status: Grid['status']) => {
   }
 };
 
-export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onView }) => {
+export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onView, canEdit = false, canDelete = false }) => {
   return (
     <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
       <div className="bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-3 border-b border-white/10 flex items-center justify-between">
@@ -110,6 +112,7 @@ export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onV
                     >
                       <Eye size={16} />
                     </button>
+                    {canEdit && (
                     <button
                       onClick={() => onEdit(grid)}
                       className="p-2 rounded-lg bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 transition-colors"
@@ -117,6 +120,8 @@ export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onV
                     >
                       <Edit2 size={16} />
                     </button>
+                    )}
+                    {canDelete && (
                     <button
                       onClick={() => onDelete(grid.id || grid.grid_id)}
                       className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
@@ -124,6 +129,7 @@ export const GridList: React.FC<GridListProps> = ({ grids, onEdit, onDelete, onV
                     >
                       <Trash2 size={16} />
                     </button>
+                    )}
                   </div>
                 </td>
               </tr>

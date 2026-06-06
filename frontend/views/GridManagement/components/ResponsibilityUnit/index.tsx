@@ -8,10 +8,14 @@ import {
   type ResponsibilityUnit,
   type UnitTreeNode,
 } from '../../../../src/api/responsibilityUnitApi';
+import { hasStoredPermission } from '../../../../src/utils/permissions';
 
 export const ResponsibilityUnitView: React.FC = () => {
   const [units, setUnits] = useState<UnitTreeNode[]>([]);
   const [allUnits, setAllUnits] = useState<ResponsibilityUnit[]>([]);
+  const canCreatePersonnel = hasStoredPermission('personnel.create');
+  const canEditPersonnel = hasStoredPermission('personnel.edit');
+  const canDeletePersonnel = hasStoredPermission('personnel.delete');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -178,6 +182,7 @@ export const ResponsibilityUnitView: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {canCreatePersonnel && (
           <button
             onClick={handleCreateTop}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white font-medium hover:from-cyan-400 hover:to-blue-400 transition-colors"
@@ -185,6 +190,7 @@ export const ResponsibilityUnitView: React.FC = () => {
             <Plus size={18} />
             <span>新建一级</span>
           </button>
+          )}
         </div>
       </div>
 
@@ -203,6 +209,9 @@ export const ResponsibilityUnitView: React.FC = () => {
             onMoveUp={handleMoveUp}
             onMoveDown={handleMoveDown}
             onChangeParent={handleChangeParent}
+            canCreate={canCreatePersonnel}
+            canEdit={canEditPersonnel}
+            canDelete={canDeletePersonnel}
           />
         </div>
       )}

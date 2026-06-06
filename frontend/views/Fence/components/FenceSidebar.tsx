@@ -1,26 +1,32 @@
 // components/FenceSidebar.tsx
 import React, { useState } from "react";
-import { 
-  Trash2, 
-  Edit, 
-  Shield, 
-  Users, 
+import {
+  Trash2,
+  Edit,
+  Shield,
+  Users,
   Clock,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   AlertTriangle,
   Info,
-  X
+  X,
+  Building2,
+  FolderTree,
+  MapPin,
+  UserRound
 } from "lucide-react";
-import { FenceData, WorkTeamData } from "../types";
+import { FenceData, FenceDevice, OrganizationTreeNode, WorkTeamData } from "../types";
 
 interface SidebarProps {
   fences: FenceData[];
   teams?: WorkTeamData[];
+  organizationTree?: OrganizationTreeNode[];
   devices: any[];
   selectedFence: FenceData | null;
   onSelectFence: (f: FenceData) => void;
+  onSelectDevice?: (device: FenceDevice) => void;
   onEditFence: (f: FenceData) => void;
   onDeleteFence: (id: string, e: React.MouseEvent) => void;
   stats?: {
@@ -32,29 +38,191 @@ interface SidebarProps {
   collapsed?: boolean;           // 新增
   onToggleCollapse?: () => void;
   violationTypes?: Record<string, any>;
+  canDeleteFence?: boolean;
   
 }
 
-export const FenceSidebar: React.FC<SidebarProps> = ({ 
-  fences, 
-  teams = [], 
-  devices, 
+export const FenceSidebar: React.FC<SidebarProps> = ({
+  fences,
+  teams = [],
+  organizationTree = [],
+  devices,
   stats, 
   collapsed, 
   onToggleCollapse, 
   onSelectFence, 
+  onSelectDevice,
   onEditFence, 
   onDeleteFence, 
   violationTypes = {},
+  canDeleteFence = false,
   selectedFence,
 }) => {
   const [activeTab, setActiveTab] = useState<"fence" | "device">("fence");
   const [selectedDetail, setSelectedDetail] = useState<{ type: 'fence' | 'device'; data: any } | null>(null);
   const [expandedTeams, setExpandedTeams] = useState<string[]>(["team1", "team2", "team3"]);
+  const [expandedOrgNodes, setExpandedOrgNodes] = useState<string[]>([]);
 
   const toggleTeam = (teamId: string) => {
     setExpandedTeams(prev => 
       prev.includes(teamId) ? prev.filter(id => id !== teamId) : [...prev, teamId]
+    );
+  };
+
+  const text = (value: unknown) => String(value ?? "").trim();
+
+  const fenceMatchesNode = (fence: FenceData, node: OrganizationTreeNode) => {
+    const nodeType = text(node.type);
+    const nodeUnitId = text(node.unit_id || node.id);
+    if (!nodeUnitId) return false;
+
+    if (nodeType === "branch") {
+      return text(fence.branch_id) === nodeUnitId || text(fence.branch_id) === nodeUnitId.replace(/^BRANCH-/, "");
+    }
+    if (nodeType === "project") {
+      return text(fence.project_id) === nodeUnitId || text(fence.project_id) === text(node.project_id) || text(fence.project) === text(node.name);
+    }
+    if (nodeType === "grid" || nodeType === "safety_office") {
+      return text(fence.grid_id) === nodeUnitId || text(fence.grid_id) === text(node.grid_id);
+    }
+    if (nodeType === "team") {
+      return text(fence.team_id) === nodeUnitId || text(fence.team_id) === text(node.team_id);
+    }
+    return false;
+  };
+
+  const shouldShowOrgNode = (node: OrganizationTreeNode) => text(node.type) !== "personnel";
+
+  const withFenceCounts = (nodes: OrganizationTreeNode[]): OrganizationTreeNode[] => {
+    return nodes.flatMap((node) => {
+      if (!shouldShowOrgNode(node)) return [];
+
+      const children = withFenceCounts(node.children || []);
+      const directFences = fences.filter((fence) => fenceMatchesNode(fence, node));
+      const childCount = children.reduce((sum, child) => sum + (child.fenceCount || 0), 0);
+      return [{
+        ...node,
+        children,
+        fences: directFences,
+        fenceCount: directFences.length + childCount,
+      }];
+    });
+  };
+
+  const organizationNodes = withFenceCounts(organizationTree);
+
+  const toggleOrgNode = (nodeId: string) => {
+    setExpandedOrgNodes(prev =>
+      prev.includes(nodeId) ? prev.filter(id => id !== nodeId) : [...prev, nodeId]
+    );
+  };
+
+  const getNodeIcon = (type: string) => {
+    if (type === "branch") return Building2;
+    if (type === "project") return FolderTree;
+    if (type === "grid" || type === "safety_office") return MapPin;
+    if (type === "team") return Users;
+    return UserRound;
+  };
+
+  const getNodeColor = (type: string) => {
+    if (type === "branch") return "text-cyan-300";
+    if (type === "project") return "text-blue-300";
+    if (type === "grid" || type === "safety_office") return "text-violet-300";
+    if (type === "team") return "text-amber-300";
+    return "text-slate-400";
+  };
+
+  const hasValidDevicePosition = (device: FenceDevice) => {
+    const lat = Number(device.lat);
+    const lng = Number(device.lng);
+    return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
+  };
+
+  const renderFenceCard = (fence: FenceData) => (
+    <div
+      key={fence.id}
+      onClick={() => onSelectFence(fence)}
+      className={`p-2 rounded-lg border cursor-pointer transition-all ${
+        selectedFence?.id === fence.id
+          ? "bg-cyan-500/15 border-cyan-400/50"
+          : "bg-slate-800/30 border-slate-700/50 hover:border-cyan-400/30"
+      }`}
+    >
+      <div className="flex justify-between items-start">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <h3 className="font-medium text-slate-200 text-sm truncate">{fence.name}</h3>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+              fence.behavior === "No Entry"
+                ? "bg-red-500/20 text-red-300"
+                : "bg-cyan-500/20 text-cyan-300"
+            }`}>
+              {fence.behavior === "No Entry" ? "禁入" : "禁出"}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 truncate">
+            {fence.company}/{fence.project}
+          </div>
+        </div>
+        <div className="flex gap-0.5 ml-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); setSelectedDetail({ type: 'fence', data: fence }); }}
+            className="p-1 text-slate-400 hover:text-cyan-300 rounded"
+            title="查看详情"
+          >
+            <Info size={12} />
+          </button>
+          {canDeleteFence && (
+          <button
+            onClick={(e) => onDeleteFence(fence.id, e)}
+            className="p-1 text-slate-400 hover:text-red-300 rounded"
+          >
+            <Trash2 size={12} />
+          </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderOrgNode = (node: OrganizationTreeNode, depth = 0) => {
+    const nodeId = text(node.unit_id || node.id);
+    const children = node.children || [];
+    const directFences = node.fences || [];
+    const isExpanded = expandedOrgNodes.includes(nodeId) || depth < 2;
+    const Icon = getNodeIcon(text(node.type));
+    const color = getNodeColor(text(node.type));
+
+    return (
+      <div key={nodeId || node.id} className="space-y-1">
+        <div
+          onClick={() => toggleOrgNode(nodeId)}
+          className="px-2 py-1.5 flex items-center justify-between bg-slate-800/60 rounded-lg border border-slate-700/50 cursor-pointer hover:bg-slate-800/80 transition-all"
+          style={{ marginLeft: depth ? Math.min(depth * 10, 32) : 0 }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Icon size={14} className={color} />
+            <span className={`text-sm font-bold truncate ${color}`}>{node.name}</span>
+            <span className="text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">
+              {node.fenceCount || 0}
+            </span>
+          </div>
+          <ChevronDown
+            size={14}
+            className={`text-slate-500 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+          />
+        </div>
+        {isExpanded && (
+          <div className="space-y-1.5 border-l border-slate-700/30 ml-3 pl-3">
+            {directFences.map(renderFenceCard)}
+            {children.map(child => renderOrgNode(child, depth + 1))}
+            {directFences.length === 0 && children.length === 0 && (
+              <div className="text-xs text-slate-500 py-2">暂无下级组织</div>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -117,13 +285,14 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
       <div className="flex p-2 gap-1 border-b border-cyan-400/20">
         <button
           onClick={() => setActiveTab("fence")}
-          className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${
+          className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all flex items-center justify-center gap-1.5 [&>span+text]:hidden ${
             activeTab === "fence"
               ? "bg-cyan-500/30 text-cyan-300"
               : "bg-slate-800/50 text-slate-300 hover:bg-slate-700/50"
           }`}
         >
           <Shield size={14} />
+          <span>组织树</span>
           作业队
         </button>
         <button
@@ -142,7 +311,11 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
       {/* 内容区域 */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {activeTab === "fence" ? (
-          teams.length > 0 ? (
+          organizationNodes.length > 0 ? (
+            <div className="space-y-2">
+              {organizationNodes.map(node => renderOrgNode(node))}
+            </div>
+          ) : teams.length > 0 ? (
             <div className="space-y-4">
               {teams.map(team => (
                 <div key={team.id} className="space-y-1">
@@ -200,12 +373,14 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                                 >
                                   <Info size={12} />
                                 </button>
+                                {canDeleteFence && (
                                 <button
                                   onClick={(e) => onDeleteFence(fence.id, e)}
                                   className="p-1 text-slate-400 hover:text-red-300 rounded"
                                 >
                                   <Trash2 size={12} />
                                 </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -253,12 +428,14 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                     >
                       <Info size={12} />
                     </button>
+                    {canDeleteFence && (
                     <button
                       onClick={(e) => onDeleteFence(fence.id, e)}
                       className="p-1 text-slate-400 hover:text-red-300 rounded"
                     >
                       <Trash2 size={12} />
                     </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -273,7 +450,23 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
 }).map(device => (
   <div
     key={device.device_id}
-    className="p-2 rounded-lg bg-slate-800/30 border border-slate-700/50"
+    onClick={() => {
+      if (device.status === "online" && hasValidDevicePosition(device)) {
+        onSelectDevice?.(device);
+      }
+    }}
+    className={`p-2 rounded-lg bg-slate-800/30 border border-slate-700/50 transition-all ${
+      device.status === "online" && hasValidDevicePosition(device)
+        ? "cursor-pointer hover:border-cyan-400/50 hover:bg-cyan-500/10"
+        : "cursor-not-allowed opacity-70"
+    }`}
+    title={
+      device.status !== "online"
+        ? "离线设备不可定位"
+        : hasValidDevicePosition(device)
+          ? "点击跳转到设备定位点"
+          : "设备暂无有效坐标"
+    }
   >
     <div className="flex items-center justify-between">
       <div className="flex-1">
@@ -288,7 +481,10 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
       </div>
       <div className="flex items-center gap-2">
         <button
-          onClick={() => setSelectedDetail({ type: 'device', data: device })}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedDetail({ type: 'device', data: device });
+          }}
           className="p-1 text-slate-400 hover:text-cyan-300 rounded"
           title="查看详情"
         >

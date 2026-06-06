@@ -9,6 +9,7 @@ import { FenceAddModal } from "./components/FenceAddModal";
 import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
+import { hasStoredPermission } from "../../src/utils/permissions";
 
 import { FenceData } from "./types";
 
@@ -62,6 +63,8 @@ export default function FenceManagement() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const canCreateFence = hasStoredPermission("fence.create");
+  const canDeleteFence = hasStoredPermission("fence.delete");
   const [selectedFence, setSelectedFence] = useState<FenceData | null>(null);
   const [violationTypes, setViolationTypes] = useState<Record<string, "No Entry" | "No Exit" | null>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -1330,7 +1333,7 @@ const handleEditFence = (fence: FenceData) => {
       ))}
     </div>
     
-    {collectedPoints.length >= 3 && (
+    {canCreateFence && collectedPoints.length >= 3 && (
       <button
         onClick={() => setShowAddModal(true)}
         className="w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 rounded-xl text-xs font-bold transition-all"
@@ -1341,6 +1344,7 @@ const handleEditFence = (fence: FenceData) => {
   </div>
 )}
 
+{canCreateFence && (
 <button
   onClick={() => {
     setShowAddModal(true);
@@ -1351,6 +1355,7 @@ const handleEditFence = (fence: FenceData) => {
   <Plus size={20} />
   设置新围栏
 </button>
+)}
 
 <button
   onClick={() => setDebugMode(!debugMode)}
@@ -1402,6 +1407,7 @@ const handleEditFence = (fence: FenceData) => {
           }}
           onEditFence={handleEditFence}
           onDeleteFence={handleDeleteClick}
+          canDeleteFence={canDeleteFence}
           violationTypes={violationTypes}
           selectedFence={selectedFence}
         />

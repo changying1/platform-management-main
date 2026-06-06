@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Grid3X3, Map, Users, FolderTree } from 'lucide-react';
 import type { Grid, GridDetail, GridStats } from '../../types';
 import { GridList } from './components/GridList';
+import { hasStoredPermission } from '../../src/utils/permissions';
 import { GridDetailModal } from './components/GridDetailModal';
 import { GridFormModal } from './components/GridFormModal';
 import { GridMap } from './components/GridMap';
@@ -26,6 +27,9 @@ interface PersonnelItem {
 
 const GridManagement: React.FC = () => {
   const [grids, setGrids] = useState<Grid[]>([]);
+  const canCreatePersonnel = hasStoredPermission('personnel.create');
+  const canEditPersonnel = hasStoredPermission('personnel.edit');
+  const canDeletePersonnel = hasStoredPermission('personnel.delete');
   const [personnelList, setPersonnelList] = useState<PersonnelItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('list');
@@ -178,6 +182,7 @@ const GridManagement: React.FC = () => {
           <span>筛选</span>
         </button>
 
+        {canCreatePersonnel && (
         <button
           onClick={handleCreate}
           className="flex items-center gap-2 px-4 py-1.5 bg-cyan-500/20 border border-cyan-500/50 rounded-lg text-sm text-cyan-300 hover:bg-cyan-500/30 transition-colors"
@@ -185,6 +190,7 @@ const GridManagement: React.FC = () => {
           <Plus size={14} />
           <span>新建网格</span>
         </button>
+        )}
 
         {/* 标签切换按钮 */}
         <button
@@ -240,6 +246,8 @@ const GridManagement: React.FC = () => {
             onEdit={handleEdit}
             onDelete={handleDelete}
             onView={handleView}
+            canEdit={canEditPersonnel}
+            canDelete={canDeletePersonnel}
           />
         )}
 

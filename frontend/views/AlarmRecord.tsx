@@ -1,6 +1,7 @@
 ﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
+import { hasStoredPermission } from '../src/utils/permissions';
 import { 
   Bell, 
   ShieldAlert, 
@@ -56,6 +57,7 @@ const datePickerRef = useRef<HTMLDivElement>(null);
 const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
+const canHandleAlarm = hasStoredPermission('alarm.handle');
 const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
@@ -721,7 +723,7 @@ onClick={(e) => {
                         </button>
                       )}
 
-                      {alarm.status === 'pending' && (
+                      {canHandleAlarm && alarm.status === 'pending' && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -833,7 +835,7 @@ onClick={(e) => {
             </div>
             
             <div className="flex gap-3 mt-6">
-              {selectedAlarm.status === 'pending' && (
+              {canHandleAlarm && selectedAlarm.status === 'pending' && (
  <button
   onClick={() => handleOpenProcessModal(selectedAlarm, 'resolved')}
   className="flex-1 py-2 bg-green-500 hover:bg-green-600 rounded-lg text-sm font-medium transition-all"
@@ -850,7 +852,7 @@ onClick={(e) => {
       )}
 
     {/* 处理弹窗 */}
-{showProcessModal && processingAlarm && (
+{canHandleAlarm && showProcessModal && processingAlarm && (
   <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowProcessModal(false)}>
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[450px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
       <div className="flex justify-between items-center mb-4">

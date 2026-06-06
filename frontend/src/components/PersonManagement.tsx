@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Save, Loader, Users, Camera, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { hasStoredPermission } from '../utils/permissions';
 
 interface Person {
   avatar?: string;
@@ -95,6 +96,9 @@ const SQL_PERSONNEL: Person[] = [
 
 const [viewingPerson, setViewingPerson] = useState<Person | null>(null);
 const [persons, setPersons] = useState<Person[]>(SQL_PERSONNEL);
+const canCreatePersonnel = hasStoredPermission('personnel.create');
+const canEditPersonnel = hasStoredPermission('personnel.edit');
+const canDeletePersonnel = hasStoredPermission('personnel.delete');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState<string>('all');
@@ -347,6 +351,7 @@ const confirmImport = () => {
   
   {/* 按钮组 */}
   <div className="flex gap-2">
+    {canCreatePersonnel && (
     <button
       onClick={() => setShowUploadModal(true)}
       className="px-3 py-1.5 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors flex items-center gap-1 text-sm"
@@ -354,6 +359,7 @@ const confirmImport = () => {
       <Upload size={14} />
       批量导入
     </button>
+    )}
     <button
       onClick={downloadTemplate}
       className="px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors flex items-center gap-1 text-sm"
@@ -361,6 +367,7 @@ const confirmImport = () => {
       <Download size={14} />
       下载模板
     </button>
+    {canCreatePersonnel && (
     <button
       onClick={() => {
         setEditingItem({
@@ -387,6 +394,7 @@ const confirmImport = () => {
       <Plus size={14} />
       添加人员
     </button>
+    )}
   </div>
 </div>
 
@@ -453,6 +461,7 @@ const confirmImport = () => {
       </td>
       <td className="px-4 py-3 text-right">
         <div className="flex items-center justify-end gap-2">
+          {canEditPersonnel && (
           <button 
             onClick={() => {
               setEditingItem(person);
@@ -462,6 +471,8 @@ const confirmImport = () => {
           >
             <Edit2 size={16} />
           </button>
+          )}
+          {canDeletePersonnel && (
           <button 
             onClick={async () => {
               if (!confirm('确定删除该人员吗？')) return;
@@ -485,6 +496,7 @@ const confirmImport = () => {
           >
             <Trash2 size={16} />
           </button>
+          )}
         </div>
       </td>
     </tr>
@@ -774,6 +786,7 @@ const confirmImport = () => {
         >
           保存
         </button>
+        {canEditPersonnel && (
         <button 
           onClick={() => {
             setShowModal(false);
@@ -783,6 +796,7 @@ const confirmImport = () => {
         >
           取消
         </button>
+        )}
       </div>
     </div>
   </div>
