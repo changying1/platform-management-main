@@ -61,19 +61,28 @@ public class ProjectManagementActivity extends AppCompatActivity {
         loadProjects();
     }
 
+    private java.util.Map<String, String> getAuthHeaders() {
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        String token = com.app.myapplication.data.local.SessionManager.getToken(this);
+        if (token != null && !token.isEmpty()) {
+            headers.put("Authorization", "Bearer " + token);
+        }
+        return headers;
+    }
+
     private void loadProjects() {
         swipeRefresh.setRefreshing(true);
         String search = etSearch.getText().toString().trim();
         if (search.isEmpty()) search = null;
 
         ApiClient.get(this).create(ManagementApi.class)
-                .getProjects(search, null)
-                .enqueue(new Callback<List<ProjectItem>>() {
+                .getProjects(getAuthHeaders())
+                .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                     @Override
-                    public void onResponse(Call<List<ProjectItem>> call, Response<List<ProjectItem>> response) {
+                    public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                         swipeRefresh.setRefreshing(false);
                         if (response.isSuccessful() && response.body() != null) {
-                            projectList = response.body();
+                            projectList = parseProjectList(response.body());
                             adapter.notifyDataSetChanged();
                             tvEmpty.setVisibility(projectList.isEmpty() ? View.VISIBLE : View.GONE);
                         } else {
@@ -82,11 +91,27 @@ public class ProjectManagementActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onFailure(Call<List<ProjectItem>> call, Throwable t) {
+                    public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                         swipeRefresh.setRefreshing(false);
                         Toast.makeText(ProjectManagementActivity.this, "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
                     }
                 });
+    }
+
+    private List<ProjectItem> parseProjectList(List<com.google.gson.JsonObject> jsonList) {
+        List<ProjectItem> list = new ArrayList<>();
+        for (com.google.gson.JsonObject json : jsonList) {
+            ProjectItem item = new ProjectItem();
+            item.setId(json.has("id") ? json.get("id").getAsInt() : 0);
+            item.setName(json.has("name") ? json.get("name").getAsString() : "");
+            item.setCode(json.has("code") ? json.get("code").getAsString() : "");
+            item.setManager(json.has("manager") ? json.get("manager").getAsString() : "");
+            item.setManagerName(json.has("manager_name") ? json.get("manager_name").getAsString() : "");
+            item.setLocation(json.has("location") ? json.get("location").getAsString() : "");
+            item.setStatus(json.has("status") ? json.get("status").getAsString() : "");
+            list.add(item);
+        }
+        return list;
     }
 
     private void deleteProject(int projectId) {
@@ -95,16 +120,16 @@ public class ProjectManagementActivity extends AppCompatActivity {
                 .setMessage("确定要删除此项目吗？")
                 .setPositiveButton("删除", (dialog, which) -> {
                     ApiClient.get(this).create(ManagementApi.class)
-                            .deleteProject(projectId)
-                            .enqueue(new Callback<java.util.Map<String, Object>>() {
+                            .deleteProject(getAuthHeaders(), projectId)
+                            .enqueue(new Callback<Void>() {
                                 @Override
-                                public void onResponse(Call<java.util.Map<String, Object>> call, Response<java.util.Map<String, Object>> response) {
+                                public void onResponse(Call<Void> call, Response<Void> response) {
                                     Toast.makeText(ProjectManagementActivity.this, "删除成功", Toast.LENGTH_SHORT).show();
                                     loadProjects();
                                 }
 
                                 @Override
-                                public void onFailure(Call<java.util.Map<String, Object>> call, Throwable t) {
+                                public void onFailure(Call<Void> call, Throwable t) {
                                     Toast.makeText(ProjectManagementActivity.this, "删除失败", Toast.LENGTH_SHORT).show();
                                 }
                             });

@@ -159,6 +159,20 @@ public interface ManagementApi {
         @HeaderMap Map<String, String> headers
     );
 
+    // ==================== 删除操作 ====================
+    
+    @DELETE("api/devices/{id}")
+    Call<Void> deleteDevice(@HeaderMap Map<String, String> headers, @Path("id") String id);
+    
+    @DELETE("api/personnel/{id}")
+    Call<Void> deletePersonnel(@HeaderMap Map<String, String> headers, @Path("id") String id);
+    
+    @DELETE("projects/{id}")
+    Call<Void> deleteProject(@HeaderMap Map<String, String> headers, @Path("id") int id);
+    
+    @DELETE("api/grids/{id}")
+    Call<Void> deleteGrid(@HeaderMap Map<String, String> headers, @Path("id") String id);
+    
     // ==================== 辅助数据 ====================
     
     /**
@@ -167,5 +181,14 @@ public interface ManagementApi {
     @GET("api/dashboard/branches")
     Call<List<JsonObject>> getBranches(
         @HeaderMap Map<String, String> headers
+    );
+    
+    /**
+     * 获取网格人员
+     */
+    @GET("api/grids/{id}/personnel")
+    Call<List<JsonObject>> getGridPersonnel(
+        @HeaderMap Map<String, String> headers,
+        @Path("id") String id
     );
 }

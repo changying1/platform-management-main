@@ -66,6 +66,15 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/tv_holder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="持有者: 张伟"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
             android:id="@+id/tv_bind_person"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

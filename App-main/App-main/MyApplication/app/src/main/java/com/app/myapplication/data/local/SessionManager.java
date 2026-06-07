@@ -26,6 +26,14 @@ public class SessionManager {
         sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE);
     }
 
+    /**
+     * 静态方法获取 token
+     */
+    public static String getToken(Context ctx) {
+        SharedPreferences prefs = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE);
+        return prefs.getString(K_TOKEN, "");
+    }
+
     public boolean hasToken() {
         String t = sp.getString(K_TOKEN, "");
         return t != null && !t.isEmpty();

@@ -1,5 +1,6 @@
 package com.app.myapplication.ui.management.fragment;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Toast;
@@ -30,8 +31,13 @@ public abstract class BaseManagementFragment extends Fragment {
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        managementApi = ApiClient.get(requireContext()).create(ManagementApi.class);
-        sessionManager = new SessionManager(requireContext());
+    }
+    
+    @Override
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
+        managementApi = ApiClient.get(context).create(ManagementApi.class);
+        sessionManager = new SessionManager(context);
     }
 
     /**

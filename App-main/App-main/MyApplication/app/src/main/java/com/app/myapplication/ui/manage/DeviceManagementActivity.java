@@ -229,16 +229,25 @@ public class DeviceManagementActivity extends AppCompatActivity {
             return root;
         }
 
+        private java.util.Map<String, String> getAuthHeaders() {
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            String token = com.app.myapplication.data.local.SessionManager.getToken(requireContext());
+            if (token != null && !token.isEmpty()) {
+                headers.put("Authorization", "Bearer " + token);
+            }
+            return headers;
+        }
+
         private void loadDevices() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(ManagementApi.class)
-                    .getLocationDevices()
-                    .enqueue(new Callback<List<LocationDevice>>() {
+                    .getLocationDevices(getAuthHeaders())
+                    .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                         @Override
-                        public void onResponse(Call<List<LocationDevice>> call, Response<List<LocationDevice>> response) {
+                        public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
-                                deviceList = response.body();
+                                deviceList = parseDeviceList(response.body());
                                 adapter.setData(deviceList);
                                 tvEmpty.setVisibility(deviceList.isEmpty() ? View.VISIBLE : View.GONE);
                             } else {
@@ -247,11 +256,25 @@ public class DeviceManagementActivity extends AppCompatActivity {
                         }
 
                         @Override
-                        public void onFailure(Call<List<LocationDevice>> call, Throwable t) {
+                        public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
                             Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
                         }
                     });
+        }
+
+        private List<LocationDevice> parseDeviceList(List<com.google.gson.JsonObject> jsonList) {
+            List<LocationDevice> list = new ArrayList<>();
+            for (com.google.gson.JsonObject json : jsonList) {
+                LocationDevice item = new LocationDevice();
+                item.setDeviceId(json.has("device_id") ? json.get("device_id").getAsString() : "");
+                item.setName(json.has("name") ? json.get("name").getAsString() : "");
+                item.setType(json.has("type") ? json.get("type").getAsString() : "");
+                item.setHolder(json.has("holder") ? json.get("holder").getAsString() : "");
+                item.setStatus(json.has("status") ? json.get("status").getAsString() : "offline");
+                list.add(item);
+            }
+            return list;
         }
 
         private void filterDevices() {
@@ -278,16 +301,16 @@ public class DeviceManagementActivity extends AppCompatActivity {
                     .setMessage("确定要删除此定位装置吗？")
                     .setPositiveButton("删除", (dialog, which) -> {
                         ApiClient.get(requireContext()).create(ManagementApi.class)
-                                .deleteLocationDevice(deviceId)
-                                .enqueue(new Callback<java.util.Map<String, Object>>() {
+                                .deleteDevice(getAuthHeaders(), deviceId)
+                                .enqueue(new Callback<Void>() {
                                     @Override
-                                    public void onResponse(Call<java.util.Map<String, Object>> call, Response<java.util.Map<String, Object>> response) {
+                                    public void onResponse(Call<Void> call, Response<Void> response) {
                                         Toast.makeText(requireContext(), "删除成功", Toast.LENGTH_SHORT).show();
                                         loadDevices();
                                     }
 
                                     @Override
-                                    public void onFailure(Call<java.util.Map<String, Object>> call, Throwable t) {
+                                    public void onFailure(Call<Void> call, Throwable t) {
                                         Toast.makeText(requireContext(), "删除失败", Toast.LENGTH_SHORT).show();
                                     }
                                 });
