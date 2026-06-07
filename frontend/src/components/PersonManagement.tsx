@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿import React, { useEffect, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Save, Loader, Users, Camera, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { getAuthHeaders, withAuthTokenParam } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
 
 interface Person {
@@ -15,21 +16,129 @@ interface Person {
   team?: string;
   phone: string;
   entryDate?: string;
-  status: 'active' | 'inactive';
+  status: 'employed' | 'on_leave' | 'resigned' | 'active' | 'inactive';
   emergencyContact?: string;
   company?: string;
+  branchId?: string;
+  projectId?: string;
+  gridId?: string;
+  teamId?: string;
+  isResponsibilityPerson?: boolean;
+  responsibilityLevel?: string;
   project?: string;
+  role?: string;
+  loginUsername?: string;
+  loginPassword?: string;
+  permissionLevel?: string;
+  gridRole?: string;
+  gridIds?: string[];
+  responsibilityUnitId?: string;
 }
 
-// 详情信息展示组件
+const workerRoles = new Set(['Worker', 'worker', '工人', '作业人员', '普通员工']);
+
+const roleOptions = [
+  { value: 'Worker', label: '工人' },
+  { value: 'HQ Manager', label: '总部管理员' },
+  { value: 'Branch Admin', label: '分公司管理员' },
+  { value: 'Project Manager', label: '项目管理员' },
+  { value: 'Grid Admin', label: '网格管理员' },
+  { value: 'Safety Officer', label: '安全员' },
+  { value: 'Team Admin', label: '工队管理员' },
+];
+
+const permissionOptions = [
+  { value: 'headquarters_admin', label: '总部管理员' },
+  { value: 'branch_admin', label: '分公司管理员' },
+  { value: 'project_safety_admin', label: '项目管理员' },
+  { value: 'grid_admin', label: '网格管理员' },
+  { value: 'team_admin', label: '工队管理员' },
+];
+
+const defaultPermissionByRole: Record<string, string> = {
+  'HQ Manager': 'headquarters_admin',
+  'Branch Admin': 'branch_admin',
+  'Project Manager': 'project_safety_admin',
+  'Grid Admin': 'grid_admin',
+  'Safety Officer': 'project_safety_admin',
+  'Team Admin': 'team_admin',
+};
+
+const validateManagementScope = (item: Person): string | null => {
+  if (workerRoles.has(item.role || 'Worker')) return null;
+  const level = item.permissionLevel || defaultPermissionByRole[item.role || ''] || 'project_safety_admin';
+  const company = (item.company || '').trim();
+  const project = (item.project || '').trim();
+  const workTeam = (item.workTeam || '').trim();
+  const team = (item.team || '').trim();
+
+  if (level === 'headquarters_admin') return null;
+  if (level === 'branch_admin' && !company) {
+    return '分公司管理员必须绑定分公司';
+  }
+  if (level === 'project_safety_admin') {
+    if (!company) return '项目级管理员必须绑定分公司';
+    if (!project) return '项目级管理员必须绑定项目';
+  }
+  if (level === 'grid_admin') {
+    if (!company) return '网格管理员必须绑定分公司';
+    if (!project) return '网格管理员必须绑定项目';
+    if (!item.gridId) return '网格管理员必须绑定网格';
+  }
+  if (level === 'team_admin') {
+    if (!company) return '工队管理员必须绑定分公司';
+    if (!project) return '工队管理员必须绑定项目';
+    if (!workTeam && !team) return '工队管理员必须绑定工队或班组';
+  }
+  return null;
+};
+
+const permissionRank: Record<string, number> = {
+  team_admin: 1,
+  grid_admin: 2,
+  project_safety_admin: 3,
+  branch_admin: 4,
+  headquarters_admin: 5,
+};
+
+const getCurrentPermissionLevel = () => {
+  const level = localStorage.getItem('permission_level');
+  if (level && permissionRank[level]) return level;
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+    if (auth?.permission_level && permissionRank[auth.permission_level]) {
+      return auth.permission_level;
+    }
+  } catch {
+    // Ignore invalid stored auth.
+  }
+  return 'headquarters_admin';
+};
+
+const canAssignPermission = (level: string) =>
+  permissionRank[level] <= permissionRank[getCurrentPermissionLevel()];
+
+const buildAuthHeaders = (json = true) => {
+  const headers: Record<string, string> = {
+    ...getAuthHeaders(),
+    'X-Role': localStorage.getItem('role') || '',
+    'X-Department-Id': localStorage.getItem('department_id') || '',
+    'X-Username': localStorage.getItem('username') || '',
+    'X-Permission-Level': localStorage.getItem('permission_level') || getCurrentPermissionLevel(),
+  };
+  if (json) headers['Content-Type'] = 'application/json';
+  return headers;
+};
+
+// 璇︽儏淇℃伅灞曠ず缁勪欢
 const InfoItem = ({ label, value }: { label: string; value?: string }) => (
   <div>
     <p className="text-xs text-slate-400 mb-1">{label}</p>
-    <p className="text-sm text-slate-200">{value || '—'}</p>
+    <p className="text-sm text-slate-200">{value || '-'}</p>
   </div>
 );
 
-// ✅ 内网穿透智能适配！
+// 鉁?鍐呯綉绌块€忔櫤鑳介€傞厤锛?
 const detectBackendUrl = (): string => {
   if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
   if (window.location.port === '3000') return '';
@@ -37,13 +146,33 @@ const detectBackendUrl = (): string => {
 };
 const API_BASE = detectBackendUrl();
 
+interface BranchOption { id: number | string; name: string }
+interface ProjectOption { id: number | string; name: string; branch_id?: number | string; branch_name?: string }
+interface GridOption { id?: string; grid_id: string; name: string; project_id?: string | number }
+interface TeamOption { team_id: string; name: string; project_id?: string; project?: string; grid_id?: string; company?: string }
+
 const DEFAULT_AVATAR = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI1MCIgZmlsbD0iIzBmYTdhYyIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iMzUiIHI9IjE4IiBmaWxsPSIjZmZmZmZmIi8+PGNpcmNsZSBjeD0iNTAiIGN5PSI4NSIgcj0iMzAiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=';
+const personStatusOptions = [
+  { value: 'employed', label: '在职' },
+  { value: 'on_leave', label: '休假' },
+  { value: 'resigned', label: '离职' },
+] as const;
+const normalizePersonStatus = (status?: string) => {
+  if (status === 'active') return 'employed';
+  if (status === 'inactive') return 'resigned';
+  if (status === 'on_leave' || status === 'resigned') return status;
+  return 'employed';
+};
+const personStatusLabel = (status?: string) => {
+  const normalized = normalizePersonStatus(status);
+  return personStatusOptions.find(option => option.value === normalized)?.label || '在职';
+};
 
 const getImageUrl = (url: string | undefined | null): string => {
   if (!url || url === '') return DEFAULT_AVATAR;
   if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:')) return url;
-  if (url.startsWith('/')) return `${API_BASE}${url}`;
-  return `${API_BASE}/static/faces/${url}`;
+  if (url.startsWith('/')) return withAuthTokenParam(`${API_BASE}${url}`);
+  return withAuthTokenParam(`${API_BASE}/static/faces/${url}`);
 };
 
 const mapApiToPerson = (item: any): Person => ({
@@ -56,15 +185,27 @@ const mapApiToPerson = (item: any): Person => ({
   team: item.team || '',
   phone: item.phone || '',
   entryDate: item.entryDate || item.addedDate || '',
-  status: item.status || 'active',
+  status: normalizePersonStatus(item.status),
   emergencyContact: item.emergencyContact || '',
   company: item.company || '',
+  branchId: item.branchId || item.branch_id || '',
+  projectId: item.projectId || item.project_id || '',
+  gridId: item.gridId || item.grid_id || '',
+  teamId: item.teamId || item.team_id || '',
+  isResponsibilityPerson: Boolean(item.isResponsibilityPerson || item.is_responsibility_person),
+  responsibilityLevel: item.responsibilityLevel || item.responsibility_level || '',
   project: item.project || '',
   avatar: item.faceImage || item.avatar || '',
+  role: item.role || 'Worker',
+  loginUsername: item.loginUsername || '',
+  permissionLevel: item.permissionLevel || '',
+  gridRole: item.gridRole || '',
+  gridIds: Array.isArray(item.gridIds) ? item.gridIds : [],
+  responsibilityUnitId: item.responsibilityUnitId || '',
 });
 
 export default function PersonManagement() {
-  const [showDetailModal, setShowDetailModal] = useState(false);  // 详情弹窗显示
+  const [showDetailModal, setShowDetailModal] = useState(false);  // 璇︽儏寮圭獥鏄剧ず
 const SQL_PERSONNEL: Person[] = [
   { id: '1', name: '张建国', employeeId: 'HQ-ADMIN-001', phone: '13900000001', workType: '管理人员', workTeam: '总公司', company: '总公司', project: '总部', status: 'active', entryDate: '2024-01-01' },
   { id: '2', name: '王振国', employeeId: 'BR-ADMIN-001', phone: '13900001001', workType: '管理人员', workTeam: '第一分公司', company: '第一分公司', project: '西安东站', status: 'active', entryDate: '2024-01-01' },
@@ -96,9 +237,6 @@ const SQL_PERSONNEL: Person[] = [
 
 const [viewingPerson, setViewingPerson] = useState<Person | null>(null);
 const [persons, setPersons] = useState<Person[]>(SQL_PERSONNEL);
-const canCreatePersonnel = hasStoredPermission('personnel.create');
-const canEditPersonnel = hasStoredPermission('personnel.edit');
-const canDeletePersonnel = hasStoredPermission('personnel.delete');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCompany, setFilterCompany] = useState<string>('all');
@@ -112,11 +250,20 @@ const [filterTeam, setFilterTeam] = useState<string>('all');
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadData, setUploadData] = useState<any[]>([]);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
+const canCreatePersonnel = hasStoredPermission('personnel.create');
+const canEditPersonnel = hasStoredPermission('personnel.edit');
+const canDeletePersonnel = hasStoredPermission('personnel.delete');
+const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
+const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+const [gridOptions, setGridOptions] = useState<GridOption[]>([]);
+const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
 
 const fetchPersons = async () => {
   try {
     setLoading(true);
-    const res = await fetch(`${API_BASE}/api/personnel/`);
+    const res = await fetch(`${API_BASE}/api/personnel/`, {
+      headers: buildAuthHeaders(false),
+    });
     if (res.ok) {
       const data = await res.json();
       const apiData = Array.isArray(data) ? data : data.value || data.data || [];
@@ -133,23 +280,70 @@ const fetchPersons = async () => {
 
 useEffect(() => {
   fetchPersons();
+  const loadOrgOptions = async () => {
+    try {
+      const [branchRes, projectRes, gridRes, teamRes] = await Promise.all([
+        fetch(`${API_BASE}/api/dashboard/branches`, { headers: buildAuthHeaders(false) }),
+        fetch(`${API_BASE}/projects/`, { headers: buildAuthHeaders(false) }),
+        fetch(`${API_BASE}/api/grids/`, { headers: buildAuthHeaders(false) }),
+        fetch(`${API_BASE}/team/list`, { headers: buildAuthHeaders(false) }),
+      ]);
+      const branches = branchRes.ok ? await branchRes.json() : [];
+      const projectsData = projectRes.ok ? await projectRes.json() : [];
+      const gridsData = gridRes.ok ? await gridRes.json() : [];
+      const teamsData = teamRes.ok ? await teamRes.json() : [];
+      setBranchOptions(Array.isArray(branches) ? branches : []);
+      setProjectOptions(Array.isArray(projectsData) ? projectsData : []);
+      setGridOptions(Array.isArray(gridsData) ? gridsData : []);
+      setTeamOptions(Array.isArray(teamsData) ? teamsData : []);
+    } catch (error) {
+      console.error('鍔犺浇缁勭粐褰掑睘閫夐」澶辫触:', error);
+    }
+  };
+  loadOrgOptions();
 }, []);
 
 
-// 获取所有唯一的分公司
+// 鑾峰彇鎵€鏈夊敮涓€鐨勫垎鍏徃
 const companies = ['all', ...new Set(persons.map(p => p.company).filter(Boolean))];
-// 获取所有唯一的项目
+// 鑾峰彇鎵€鏈夊敮涓€鐨勯」鐩?
 const projects = ['all', ...new Set(persons.map(p => p.project).filter(Boolean))];
-// 获取所有唯一的工队
+// 鑾峰彇鎵€鏈夊敮涓€鐨勫伐闃?
 const workTeams = ['all', ...new Set(persons.map(p => p.workTeam).filter(Boolean))];
-// 获取所有唯一的工种
+// 鑾峰彇鎵€鏈夊敮涓€鐨勫伐绉?
 const workTypes = ['all', ...new Set(persons.map(p => p.workType).filter(Boolean))];
-// 获取所有唯一的班组
+// 鑾峰彇鎵€鏈夊敮涓€鐨勭彮缁?
 const teams = ['all', ...new Set(persons.map(p => p.team).filter(Boolean))];
 
-// 筛选数据
+const selectedProjectOptions = projectOptions.filter(project =>
+  !editingItem?.branchId || String(project.branch_id || '') === String(editingItem.branchId)
+);
+const selectedGridOptions = gridOptions.filter(grid =>
+  !editingItem?.projectId || String(grid.project_id || '') === String(editingItem.projectId)
+);
+const selectedTeamOptions = teamOptions.filter(team =>
+  (!editingItem?.projectId || String(team.project_id || '') === String(editingItem.projectId) || team.project === editingItem.project) &&
+  (!editingItem?.gridId || String(team.grid_id || '') === String(editingItem.gridId))
+);
+const responsibilityTargetLevel = editingItem?.teamId
+  ? 'team'
+  : editingItem?.gridId
+    ? 'grid'
+    : editingItem?.projectId
+      ? 'project'
+      : editingItem?.branchId
+        ? 'branch'
+        : '';
+const responsibilityTargetName = {
+  branch: '分公司',
+  project: '项目',
+  grid: '网格',
+  team: '工队',
+}[responsibilityTargetLevel] || '';
+
+// 绛涢€夋暟鎹?
 const filteredData = persons.filter(p => {
-  // 模糊搜索（姓名、工号、身份证号、电话）
+  // 妯＄硦鎼滅储锛堝鍚嶃€佸伐鍙枫€佽韩浠借瘉鍙枫€佺數璇濓級
   const matchesSearch = searchTerm === '' || 
     p.name.includes(searchTerm) || 
     p.employeeId.includes(searchTerm) ||
@@ -157,7 +351,7 @@ const filteredData = persons.filter(p => {
     p.idCard?.includes(searchTerm) ||
     p.phone.includes(searchTerm);
   
-  // 分类筛选
+  // 鍒嗙被绛涢€?
   const matchesCompany = filterCompany === 'all' || p.company === filterCompany;
   const matchesProject = filterProject === 'all' || p.project === filterProject;
   const matchesWorkTeam = filterWorkTeam === 'all' || p.workTeam === filterWorkTeam;
@@ -167,7 +361,7 @@ const filteredData = persons.filter(p => {
   return matchesSearch && matchesCompany && matchesProject && matchesWorkTeam && matchesWorkType && matchesTeam;
 });
 
-// 下载Excel模板
+// 涓嬭浇Excel妯℃澘
 const downloadTemplate = () => {
   const template = [
     ['姓名', '工号', '身份证号', '分公司', '项目', '工种', '班组', '电话', '进场日期', '紧急联系人'],
@@ -180,7 +374,7 @@ const downloadTemplate = () => {
   XLSX.utils.book_append_sheet(wb, ws, '工人信息模板');
   XLSX.writeFile(wb, '工人信息导入模板.xlsx');
 };
-// 解析Excel文件
+// 瑙ｆ瀽Excel鏂囦欢
 const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -192,7 +386,7 @@ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
     
-    // 跳过表头，从第2行开始
+    // 璺宠繃琛ㄥご锛屼粠绗?琛屽紑濮?
     const dataRows = rows.slice(1).filter((row: any) => row[0] && row[0].toString().trim());
     
 const parsedData = dataRows.map((row: any, index: number) => ({
@@ -207,12 +401,12 @@ const parsedData = dataRows.map((row: any, index: number) => ({
   phone: row[7]?.toString().trim() || '',
   entryDate: row[8]?.toString().trim() || '',
   emergencyContact: row[9]?.toString().trim() || '',
-  status: 'active' as const,
+  status: 'employed' as const,
   isValid: true,
   errorMsg: ''
 }));
     
-    // 验证数据
+    // 楠岃瘉鏁版嵁
     const validatedData = parsedData.map((item: any) => {
       const errors = [];
       if (!item.name) errors.push('姓名不能为空');
@@ -232,7 +426,7 @@ const parsedData = dataRows.map((row: any, index: number) => ({
   reader.readAsArrayBuffer(file);
 };
 
-// 确认导入
+// 纭瀵煎叆
 const confirmImport = () => {
   const validData = uploadPreview.filter(item => item.isValid);
   const newPersons = validData.map((item: any, index: number) => ({
@@ -259,9 +453,9 @@ const confirmImport = () => {
   return (
     <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-4 h-full overflow-auto">
     
-{/* 操作栏 */}
+{/* 鎿嶄綔鏍?*/}
 <div className="flex items-center gap-3 mb-4 flex-wrap">
-  {/* 搜索框 */}
+  {/* 鎼滅储妗?*/}
   <div className="relative flex-1 min-w-[180px]">
     <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
     <input
@@ -273,7 +467,7 @@ const confirmImport = () => {
     />
   </div>
   
-  {/* 筛选下拉框 */}
+  {/* 绛涢€変笅鎷夋 */}
   <select
     value={filterCompany}
     onChange={(e) => setFilterCompany(e.target.value)}
@@ -334,7 +528,7 @@ const confirmImport = () => {
     ))}
   </select>
   
-  {/* 重置按钮 */}
+  {/* 重置鎸夐挳 */}
   <button
     onClick={() => {
       setFilterCompany('all');
@@ -349,7 +543,7 @@ const confirmImport = () => {
     重置
   </button>
   
-  {/* 按钮组 */}
+  {/* 鎸夐挳缁?*/}
   <div className="flex gap-2">
     {canCreatePersonnel && (
     <button
@@ -376,16 +570,29 @@ const confirmImport = () => {
           employeeId: '',
           idCard: '',
           company: '',
+          branchId: '',
+          projectId: '',
+          gridId: '',
+          teamId: '',
+          isResponsibilityPerson: false,
+          responsibilityLevel: '',
           project: '',
           workType: '',
           workTeam: '',
           team: '',
           phone: '',
           entryDate: '',
-          status: 'active',
+          status: 'employed',
           emergencyContact: '',
           avatar: '',
           faceFile: null,
+          role: 'Worker',
+          loginUsername: '',
+          loginPassword: '',
+          permissionLevel: '',
+          gridRole: '',
+          gridIds: [],
+          responsibilityUnitId: '',
         });
         setShowModal(true);
       }}
@@ -398,12 +605,12 @@ const confirmImport = () => {
   </div>
 </div>
 
-{/* 筛选结果统计 */}
+{/* 筛选结果统计*/}
 <div className="flex justify-between items-center mb-3">
   <p className="text-sm text-slate-400">
     共 <span className="text-cyan-400 font-bold">{filteredData.length}</span> 条记录
     {(filterCompany !== 'all' || filterProject !== 'all' || filterWorkTeam !== 'all' || filterWorkType !== 'all' || filterTeam !== 'all' || searchTerm) && (
-      <span className="ml-2 text-xs">(已筛选)</span>
+      <span className="ml-2 text-xs">（已筛选）</span>
     )}
   </p>
 </div>
@@ -443,20 +650,23 @@ const confirmImport = () => {
       </td>
       <td className="px-4 py-3 text-slate-300">{person.name}</td>
       <td className="px-4 py-3 text-slate-300">{person.employeeId}</td>
-      <td className="px-4 py-3 text-slate-300">{person.company || '—'}</td>
-      <td className="px-4 py-3 text-slate-300">{person.project || '—'}</td>
-      <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{person.workTeam || '—'}</span></td>
-      <td className="px-4 py-3 text-slate-300">{person.workType || '—'}</td>
-      <td className="px-4 py-3 text-slate-300">{person.team || '—'}</td>
-      <td className="px-4 py-3 text-slate-300">{person.entryDate || '—'}</td>
+      <td className="px-4 py-3 text-slate-300">{person.company || '-'}</td>
+      <td className="px-4 py-3 text-slate-300">{person.project || '-'}</td>
+      <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{person.workTeam || '-'}</span></td>
+      <td className="px-4 py-3 text-slate-300">{person.workType || '-'}</td>
+      <td className="px-4 py-3 text-slate-300">{person.team || '-'}</td>
+      <td className="px-4 py-3 text-slate-300">{person.entryDate || '-'}</td>
       <td className="px-4 py-3 text-slate-300">{person.phone}</td>
       <td className="px-4 py-3">
-        <span className={`px-2 py-0.5 text-xs rounded-full border ${
-          person.status === 'active' 
-            ? 'bg-green-500/20 text-green-400 border-green-500/30' 
-            : 'bg-slate-500/20 text-slate-400 border-slate-500/30'
-        }`}>
-          {person.status === 'active' ? '在场' : '退场'}
+        <span
+          className={
+            'px-2 py-0.5 text-xs rounded-full border ' +
+            (normalizePersonStatus(person.status) === 'employed'
+              ? 'bg-green-500/20 text-green-400 border-green-500/30'
+              : 'bg-slate-500/20 text-slate-400 border-slate-500/30')
+          }
+        >
+          {personStatusLabel(person.status)}
         </span>
       </td>
       <td className="px-4 py-3 text-right">
@@ -478,8 +688,9 @@ const confirmImport = () => {
               if (!confirm('确定删除该人员吗？')) return;
 
               try {
-                const res = await fetch(`${API_BASE}/personnel/${person.id}`, {
+                const res = await fetch(API_BASE + '/api/personnel/' + person.id, {
                   method: 'DELETE',
+                  headers: buildAuthHeaders(false),
                 });
 
                 if (!res.ok) {
@@ -511,7 +722,7 @@ const confirmImport = () => {
     <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[700px] p-6 shadow-2xl max-h-[90vh] overflow-auto">
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-lg font-bold text-slate-100">
-          {editingItem?.id ? '编辑工人信息' : '添加人员'}
+          {editingItem?.id ? '编辑人员信息' : '添加人员'}
         </h3>
         <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-200">
           <X size={20} />
@@ -550,8 +761,7 @@ const confirmImport = () => {
           </div>
         </div>
 
-        {/* 基本信息 - 每行3列 */}
-{/* 基本信息 - 每行3列 */}
+        {/* 基本信息*/}
 <div className="grid grid-cols-3 gap-4">
   <div>
     <label className="block text-sm text-slate-400 mb-1">姓名 <span className="text-red-400">*</span></label>
@@ -585,7 +795,160 @@ const confirmImport = () => {
   </div>
 </div>
 
-<div className="grid grid-cols-3 gap-4">
+<div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-4">
+  <div className="mb-3 text-sm font-semibold text-cyan-200">穿透式组织归属</div>
+  <div className="grid grid-cols-4 gap-4">
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">分公司</label>
+      <select
+        value={editingItem?.branchId || ''}
+        onChange={(e) => {
+          const branch = branchOptions.find(item => String(item.id) === e.target.value);
+          setEditingItem({ ...editingItem!, branchId: e.target.value, company: branch?.name || '', projectId: '', project: '', gridId: '', teamId: '', workTeam: '', isResponsibilityPerson: false, responsibilityLevel: '' });
+        }}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      >
+        <option value="">请选择分公司</option>
+        {branchOptions.map(branch => <option key={String(branch.id)} value={String(branch.id)}>{branch.name}</option>)}
+      </select>
+    </div>
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">项目</label>
+      <select
+        value={editingItem?.projectId || ''}
+        onChange={(e) => {
+          const project = projectOptions.find(item => String(item.id) === e.target.value);
+          setEditingItem({ ...editingItem!, projectId: e.target.value, project: project?.name || '', gridId: '', teamId: '', workTeam: '', isResponsibilityPerson: false, responsibilityLevel: '' });
+        }}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      >
+        <option value="">请选择项目</option>
+        {selectedProjectOptions.map(project => <option key={String(project.id)} value={String(project.id)}>{project.name}</option>)}
+      </select>
+    </div>
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">网格</label>
+      <select
+        value={editingItem?.gridId || ''}
+        onChange={(e) => setEditingItem({ ...editingItem!, gridId: e.target.value, teamId: '', workTeam: '', isResponsibilityPerson: false, responsibilityLevel: '' })}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      >
+        <option value="">不选择网格</option>
+        {selectedGridOptions.map(grid => <option key={grid.grid_id || grid.id} value={grid.grid_id || grid.id}>{grid.name}</option>)}
+      </select>
+    </div>
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">工队</label>
+      <select
+        value={editingItem?.teamId || ''}
+        onChange={(e) => {
+          const team = teamOptions.find(item => item.team_id === e.target.value);
+          setEditingItem({ ...editingItem!, teamId: e.target.value, workTeam: team?.name || '', isResponsibilityPerson: false, responsibilityLevel: '' });
+        }}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      >
+        <option value="">不属于工队</option>
+        {selectedTeamOptions.map(team => <option key={team.team_id} value={team.team_id}>{team.name}</option>)}
+      </select>
+    </div>
+  </div>
+  <div className="mt-3 grid grid-cols-2 gap-4">
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">工种</label>
+      <input
+        type="text"
+        value={editingItem?.workType || ''}
+        onChange={(e) => setEditingItem({ ...editingItem!, workType: e.target.value })}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+        placeholder="如：木工/钢筋工/电工"
+      />
+    </div>
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">班组</label>
+      <input
+        type="text"
+        value={editingItem?.team || ''}
+        onChange={(e) => setEditingItem({ ...editingItem!, team: e.target.value })}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+        placeholder="所属班组"
+      />
+    </div>
+  </div>
+  {responsibilityTargetLevel && !editingItem?.teamId && (
+    <label className="mt-3 flex items-center gap-2 text-sm text-cyan-100">
+      <input
+        type="checkbox"
+        checked={Boolean(editingItem?.isResponsibilityPerson)}
+        onChange={(e) => setEditingItem({ ...editingItem!, isResponsibilityPerson: e.target.checked, responsibilityLevel: e.target.checked ? responsibilityTargetLevel : '' })}
+        className="h-4 w-4 accent-cyan-500"
+      />
+      是否为{responsibilityTargetName}责任人员
+    </label>
+  )}
+  <div className="mt-3 grid grid-cols-4 gap-4">
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">身份</label>
+      <select
+        value={editingItem?.role || 'Worker'}
+        onChange={(e) => {
+          const nextRole = e.target.value;
+          setEditingItem({
+            ...editingItem!,
+            role: nextRole,
+            permissionLevel: workerRoles.has(nextRole) ? '' : defaultPermissionByRole[nextRole] || 'project_safety_admin',
+          });
+        }}
+        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+      >
+        {roleOptions
+          .filter(option => option.value === 'Worker' || canAssignPermission(defaultPermissionByRole[option.value] || 'team_admin'))
+          .map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+      </select>
+    </div>
+    <div>
+      <label className="block text-sm text-slate-400 mb-1">权限等级</label>
+      <div className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 min-h-[38px]">
+        {editingItem?.isResponsibilityPerson
+          ? responsibilityTargetLevel === 'branch'
+            ? '分公司管理员'
+            : responsibilityTargetLevel === 'grid'
+              ? '网格管理员'
+            : responsibilityTargetLevel === 'team'
+              ? '工队管理员'
+              : '项目安全管理员'
+          : '作业人员'}
+      </div>
+    </div>
+    {(!workerRoles.has(editingItem?.role || 'Worker') || Boolean(editingItem?.isResponsibilityPerson)) && (
+      <>
+        <div>
+          <label className="block text-sm text-slate-400 mb-1">登录账号 <span className="text-red-400">*</span></label>
+          <input
+            type="text"
+            value={editingItem?.loginUsername || ''}
+            onChange={(e) => setEditingItem({ ...editingItem!, loginUsername: e.target.value })}
+            className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+            placeholder="用于系统登录"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400 mb-1">登录密码 <span className="text-red-400">*</span></label>
+          <input
+            type="password"
+            value={editingItem?.loginPassword || ''}
+            onChange={(e) => setEditingItem({ ...editingItem!, loginPassword: e.target.value })}
+            className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+            placeholder={editingItem?.id ? '留空则不修改' : '请输入登录密码'}
+          />
+        </div>
+      </>
+    )}
+  </div>
+</div>
+
+<div className="hidden">
   <div>
     <label className="block text-sm text-slate-400 mb-1">分公司</label>
     <input
@@ -664,16 +1027,17 @@ const confirmImport = () => {
   <div>
     <label className="block text-sm text-slate-400 mb-1">状态</label>
     <select
-      value={editingItem?.status || 'active'}
-      onChange={(e) => setEditingItem({ ...editingItem!, status: e.target.value as 'active' | 'inactive' })}
+      value={normalizePersonStatus(editingItem?.status)}
+      onChange={(e) => setEditingItem({ ...editingItem!, status: e.target.value as Person['status'] })}
       className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
     >
-      <option value="active">在场</option>
-      <option value="inactive">退场</option>
+      {personStatusOptions.map(option => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
     </select>
   </div>
   <div>
-    <label className="block text-sm text-slate-400 mb-1">紧急联系人</label>
+    <label className="block text-sm text-slate-400 mb-1">绱ф€ヨ仈绯讳汉</label>
     <input
       type="text"
       value={editingItem?.emergencyContact || ''}
@@ -683,6 +1047,7 @@ const confirmImport = () => {
     />
   </div>
 </div>
+
       </div>
       
       <div className="flex gap-3 mt-8">
@@ -690,6 +1055,34 @@ const confirmImport = () => {
           onClick={async () => {
             if (!editingItem?.name || !editingItem?.employeeId) {
               alert('请填写姓名和工号');
+              return;
+            }
+            if (!editingItem.branchId || !editingItem.projectId) {
+              alert('请选择该人员所属的分公司和项目');
+              return;
+            }
+            if (!editingItem.teamId && !editingItem.isResponsibilityPerson) {
+              alert('未选择工队时，必须勾选对应层级责任人员');
+              return;
+            }
+            const responsibilityPermission = editingItem.isResponsibilityPerson
+              ? responsibilityTargetLevel === 'branch'
+                ? 'branch_admin'
+                : responsibilityTargetLevel === 'grid'
+                  ? 'grid_admin'
+                : responsibilityTargetLevel === 'team'
+                  ? 'team_admin'
+                  : 'project_safety_admin'
+              : '';
+            const createsLoginAccount = !workerRoles.has(editingItem.role || 'Worker') || Boolean(editingItem.isResponsibilityPerson);
+            if (createsLoginAccount && (!editingItem.loginUsername || (!editingItem.id && !editingItem.loginPassword))) {
+              alert('管理/责任人员必须填写登录账号和登录密码');
+              return;
+            }
+
+            const scopeError = validateManagementScope(editingItem);
+            if (scopeError) {
+              alert(scopeError);
               return;
             }
 
@@ -700,29 +1093,39 @@ const confirmImport = () => {
                 username: editingItem.name,
                 dept: editingItem.workTeam || editingItem.company || '',
                 phone: editingItem.phone || '',
-                role: 'Worker',
+                role: editingItem.isResponsibilityPerson && workerRoles.has(editingItem.role || 'Worker') ? 'Safety Officer' : (editingItem.role || 'Worker'),
                 parentId: null,
+                loginUsername: editingItem.loginUsername || '',
+                loginPassword: editingItem.loginPassword || '',
+                permissionLevel: responsibilityPermission || editingItem.permissionLevel || defaultPermissionByRole[editingItem.role || ''] || '',
 
                 employeeId: editingItem.employeeId,
                 idCard: editingItem.idCard || '',
                 company: editingItem.company || '',
+                branchId: editingItem.branchId || '',
+                projectId: editingItem.projectId || '',
+                gridId: editingItem.gridId || '',
+                teamId: editingItem.teamId || '',
+                isResponsibilityPerson: Boolean(editingItem.isResponsibilityPerson),
+                responsibilityLevel: editingItem.isResponsibilityPerson ? (editingItem.responsibilityLevel || responsibilityTargetLevel) : '',
                 project: editingItem.project || '',
                 workType: editingItem.workType || '',
                 workTeam: editingItem.workTeam || '',
                 team: editingItem.team || '',
+                gridRole: editingItem.gridRole || '',
+                gridIds: editingItem.gridIds || [],
+                responsibilityUnitId: editingItem.responsibilityUnitId || '',
                 entryDate: editingItem.entryDate || '',
-                status: editingItem.status || 'active',
+                status: normalizePersonStatus(editingItem.status),
                 emergencyContact: editingItem.emergencyContact || '',
               };
 
               let saved: any;
 
               if (editingItem.id) {
-                const res = await fetch(`${API_BASE}/personnel/${editingItem.id}`, {
+                const res = await fetch(API_BASE + '/api/personnel/' + editingItem.id, {
                   method: 'PUT',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
+                  headers: buildAuthHeaders(),
                   body: JSON.stringify(payload),
                 });
 
@@ -732,11 +1135,9 @@ const confirmImport = () => {
 
                 saved = await res.json();
               } else {
-                const res = await fetch(`${API_BASE}/personnel/`, {
+                const res = await fetch(API_BASE + '/api/personnel/', {
                   method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
+                  headers: buildAuthHeaders(),
                   body: JSON.stringify(payload),
                 });
 
@@ -751,8 +1152,9 @@ const confirmImport = () => {
                 const formData = new FormData();
                 formData.append('file', editingItem.faceFile);
 
-                const uploadRes = await fetch(`${API_BASE}/personnel/${saved.id}/face`, {
+                const uploadRes = await fetch(API_BASE + '/api/personnel/' + saved.id + '/face', {
                   method: 'POST',
+                  headers: buildAuthHeaders(false),
                   body: formData,
                 });
 
@@ -777,7 +1179,7 @@ const confirmImport = () => {
               setEditingItem(null);
             } catch (error) {
               console.error(error);
-              alert(error instanceof Error ? error.message : '保存失败');
+              alert(error instanceof Error ? error.message : '保存澶辫触');
             } finally {
               setLoading(false);
             }
@@ -794,14 +1196,14 @@ const confirmImport = () => {
           }} 
           className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100"
         >
-          取消
+          鍙栨秷
         </button>
         )}
       </div>
     </div>
   </div>
 )}
-      {/* 人员详情弹窗 */}
+      {/* 人员详情寮圭獥 */}
 {showDetailModal && viewingPerson && (
   <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
     <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[600px] p-6 shadow-2xl">
@@ -812,7 +1214,7 @@ const confirmImport = () => {
         </button>
       </div>
       
-      {/* 头像大图 */}
+      {/* 头像澶у浘 */}
       <div className="flex justify-center mb-6">
         <div className="relative">
           <img 
@@ -856,7 +1258,7 @@ const confirmImport = () => {
   <InfoItem label="班组" value={viewingPerson.team} />
   <InfoItem label="电话" value={viewingPerson.phone} />
   <InfoItem label="进场日期" value={viewingPerson.entryDate} />
-  <InfoItem label="状态" value={viewingPerson.status === 'active' ? '在场' : '退场'} />
+  <InfoItem label="状态" value={personStatusLabel(viewingPerson.status)} />
   <InfoItem label="紧急联系人" value={viewingPerson.emergencyContact} />
 </div>
       
@@ -878,12 +1280,12 @@ const confirmImport = () => {
     </div>
   </div>
 )}
-{/* 批量导入弹窗 */}
+{/* 批量导入寮圭獥 */}
 {showUploadModal && (
   <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
     <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[900px] p-6 shadow-2xl max-h-[90vh] flex flex-col">
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-bold text-slate-100">批量导入工人</h3>
+        <h3 className="text-lg font-bold text-slate-100">批量导入人员</h3>
         <button onClick={() => setShowUploadModal(false)} className="text-slate-400 hover:text-slate-200">
           <X size={20} />
         </button>
@@ -891,8 +1293,8 @@ const confirmImport = () => {
       
       <div className="border border-dashed border-cyan-400/50 rounded-lg p-6 text-center mb-4">
         <Upload size={32} className="mx-auto text-cyan-400 mb-2" />
-        <p className="text-sm text-slate-400 mb-2">点击或拖拽上传Excel文件</p>
-        <p className="text-xs text-slate-500">支持 .xlsx, .xls 格式</p>
+        <p className="text-sm text-slate-400 mb-2">点击或拖拽上传 Excel 文件</p>
+        <p className="text-xs text-slate-500">支持 .xlsx、.xls 格式</p>
         <input
           type="file"
           accept=".xlsx,.xls"
@@ -911,7 +1313,7 @@ const confirmImport = () => {
               onClick={confirmImport}
               className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 rounded text-sm font-bold text-slate-900"
             >
-              确认导入
+              纭瀵煎叆
             </button>
           </div>
           
@@ -932,19 +1334,19 @@ const confirmImport = () => {
               <tbody className="divide-y divide-slate-700">
                 {uploadPreview.map((item, idx) => (
                   <tr key={idx} className={!item.isValid ? 'bg-red-500/10' : ''}>
-                    <td className="px-2 py-1 text-slate-300">{item.name || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.employeeId || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.idCard || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.workType || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.team || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.phone || '—'}</td>
-                    <td className="px-2 py-1 text-slate-300">{item.entryDate || '—'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.name || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.employeeId || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.idCard || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.workType || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.team || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.phone || '-'}</td>
+                    <td className="px-2 py-1 text-slate-300">{item.entryDate || '-'}</td>
                     <td className="px-2 py-1">
                       {!item.isValid && (
                         <span className="text-xs text-red-400">{item.errorMsg}</span>
                       )}
                       {item.isValid && (
-                        <span className="text-xs text-green-400">✓ 有效</span>
+                        <span className="text-xs text-green-400">鉁?鏈夋晥</span>
                       )}
                     </td>
                   </tr>
@@ -960,3 +1362,6 @@ const confirmImport = () => {
     </div>
   );
 }
+
+
+

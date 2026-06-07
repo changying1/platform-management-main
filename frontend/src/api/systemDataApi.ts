@@ -3,12 +3,12 @@ import { alarmApi } from './alarmApi';
 import { gridApiClient } from './gridApi';
 import { getAllVideos } from './videoApi';
 import axios from 'axios';
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, attachAuthInterceptor } from './config';
 
-const apiClient = axios.create({
+const apiClient = attachAuthInterceptor(axios.create({
   baseURL: API_BASE_URL,
   timeout: 5000,
-});
+}));
 
 export interface SystemData {
   timestamp: string;

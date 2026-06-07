@@ -26,8 +26,61 @@ const detectBackendBaseUrl = (): string => {
 
 export const API_BASE_URL = detectBackendBaseUrl();
 
+export const getAuthHeaders = () => {
+  const token = localStorage.getItem('auth_token') || '';
+  const username = localStorage.getItem('username') || '';
+  const role = localStorage.getItem('role') || '';
+  const departmentId = localStorage.getItem('department_id') || '';
+  const permissionLevel = localStorage.getItem('permission_level') || '';
+
+  return {
+    ...(token ? { 'X-Auth-Token': token, Authorization: `Bearer ${token}` } : {}),
+    ...(username ? { 'X-Username': username } : {}),
+    ...(role ? { 'X-Role': role } : {}),
+    ...(departmentId ? { 'X-Department-Id': departmentId } : {}),
+    ...(permissionLevel ? { 'X-Permission-Level': permissionLevel } : {}),
+  };
+};
+
+export const attachAuthInterceptor = (client: any) => {
+  client.interceptors.request.use((config: any) => ({
+    ...config,
+    headers: {
+      ...(config.headers || {}),
+      ...getAuthHeaders(),
+    },
+    withCredentials: true,
+  }));
+  return client;
+};
+
 export const getApiUrl = (path: string) => {
   const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
   const p = path.startsWith('/') ? path : `/${path}`;
   return `${base}${p}`;
+};
+
+export const withAuthTokenParam = (url: string) => {
+  const token = localStorage.getItem('auth_token') || '';
+  if (!token || url.startsWith('data:') || url.startsWith('blob:')) return url;
+
+  try {
+    const isAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(url);
+    const currentOrigin = window.location.origin;
+    const parsed = new URL(url, currentOrigin);
+    const apiBase = API_BASE_URL ? new URL(API_BASE_URL, currentOrigin) : new URL(currentOrigin);
+    const isAllowedHost =
+      !isAbsolute ||
+      parsed.host === window.location.host ||
+      parsed.host === apiBase.host ||
+      (parsed.hostname === window.location.hostname && parsed.port === '9000');
+
+    if (!isAllowedHost) return url;
+
+    parsed.searchParams.set('token', token);
+    return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}token=${encodeURIComponent(token)}`;
+  }
 };

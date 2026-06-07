@@ -864,15 +864,15 @@ export default function GroupCall() {
   const failedRecordCount = sendRecords.filter((record) => getRecordStatus(record.result) === 'failed').length;
 
   return (
-    <div className="h-full overflow-hidden flex flex-col p-6">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-8">
+    <div className="h-full overflow-hidden flex flex-col px-4 pb-4 pt-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-5">
             <div>
-              <h1 className="flex items-center gap-3 text-3xl font-bold text-white">
-                <Phone size={36} className="text-cyan-400" />
+              <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
+                <Phone size={28} className="text-cyan-400" />
                 群组通话
               </h1>
-              <p className="mt-1 text-base text-slate-400">
+              <p className="mt-0.5 text-sm text-slate-400">
                 支持发起群组通话会话，并向终端设备下发 JT808 文本播报。
               </p>
             </div>
@@ -880,56 +880,56 @@ export default function GroupCall() {
             <div className="flex gap-2">
               <button
                 onClick={() => setActiveTab('tts')}
-                className={`rounded-lg px-6 py-3 text-lg font-medium transition-all ${
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
                   activeTab === 'tts'
                     ? 'border border-cyan-400/50 bg-cyan-500/30 text-cyan-300'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Volume2 size={20} className="mr-2 inline" />
+                <Volume2 size={16} className="mr-1.5 inline" />
                 信息播报
               </button>
               <button
                 onClick={() => setActiveTab('records')}
-                className={`rounded-lg px-6 py-3 text-lg font-medium transition-all ${
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
                   activeTab === 'records'
                     ? 'border border-cyan-400/50 bg-cyan-500/30 text-cyan-300'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <FileText size={20} className="mr-2 inline" />
+                <FileText size={16} className="mr-1.5 inline" />
                 发送记录
               </button>
             </div>
           </div>
 
-        <div className="flex gap-3 text-sm">
-          <div className="rounded-xl border border-cyan-400/30 bg-slate-900/50 px-4 py-3 text-slate-200">
-            <div className="text-slate-400">终端设备</div>
-            <div className="mt-1 text-xl font-semibold text-white">{devices.length}</div>
+        <div className="flex gap-2 text-sm">
+          <div className="rounded-lg border border-cyan-400/30 bg-slate-900/50 px-3 py-2 text-slate-200">
+            <div className="text-xs text-slate-400">终端设备</div>
+            <div className="mt-0.5 text-lg font-semibold text-white">{devices.length}</div>
           </div>
-          <div className="rounded-xl border border-emerald-400/30 bg-slate-900/50 px-4 py-3 text-slate-200">
-            <div className="text-slate-400">在线设备</div>
-            <div className="mt-1 text-xl font-semibold text-emerald-300">{onlineDevices.length}</div>
+          <div className="rounded-lg border border-emerald-400/30 bg-slate-900/50 px-3 py-2 text-slate-200">
+            <div className="text-xs text-slate-400">在线设备</div>
+            <div className="mt-0.5 text-lg font-semibold text-emerald-300">{onlineDevices.length}</div>
           </div>
-          <div className="rounded-xl border border-amber-400/30 bg-slate-900/50 px-4 py-3 text-slate-200">
-            <div className="text-slate-400">已选设备</div>
-            <div className="mt-1 text-xl font-semibold text-amber-300">{selectedDevices.length}</div>
+          <div className="rounded-lg border border-amber-400/30 bg-slate-900/50 px-3 py-2 text-slate-200">
+            <div className="text-xs text-slate-400">已选设备</div>
+            <div className="mt-0.5 text-lg font-semibold text-amber-300">{selectedDevices.length}</div>
           </div>
-          <div className="rounded-xl border border-rose-400/30 bg-slate-900/50 px-4 py-3 text-slate-200">
-            <div className="text-slate-400">活动通话</div>
-            <div className="mt-1 text-xl font-semibold text-rose-300">{activeGroupCalls.length}</div>
+          <div className="rounded-lg border border-rose-400/30 bg-slate-900/50 px-3 py-2 text-slate-200">
+            <div className="text-xs text-slate-400">活动通话</div>
+            <div className="mt-0.5 text-lg font-semibold text-rose-300">{activeGroupCalls.length}</div>
           </div>
         </div>
       </div>
 
       {activeTab === 'tts' ? (
-        <div className="flex-1 flex gap-6 overflow-hidden">
-          <section className="w-80 flex-shrink-0 flex flex-col rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 backdrop-blur-sm shadow-xl">
-            <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex-1 flex gap-4 overflow-hidden">
+          <section className="w-72 flex-shrink-0 flex flex-col rounded-xl border border-cyan-400/25 bg-slate-900/50 p-4 backdrop-blur-sm shadow-xl">
+            <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-semibold text-white">终端设备选择</h2>
-                  <p className="text-sm text-slate-400">从设备列表中选择要播报的终端。</p>
+                  <h2 className="text-base font-semibold text-white">终端设备选择</h2>
+                  <p className="text-xs text-slate-400">选择要播报的终端。</p>
                 </div>
                 <button
                   onClick={loadDevices}
@@ -943,7 +943,7 @@ export default function GroupCall() {
                 </button>
               </div>
 
-              <div className="mb-4 relative">
+              <div className="mb-3 relative">
                 <div className="flex gap-2 items-center">
                   <div className="relative">
                     <button
@@ -1044,22 +1044,22 @@ export default function GroupCall() {
               </div>
 
               {loadingError ? (
-                <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-base text-red-200">
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
                   <AlertCircle size={18} className="mt-0.5 shrink-0" />
                   <span>{loadingError}</span>
                 </div>
               ) : null}
 
-              <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+              <div className="flex-1 space-y-2 overflow-y-auto pr-1">
               {loadingDevices && devices.length === 0 ? (
-                <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-8 text-base text-slate-400">
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-5 text-sm text-slate-400">
                   <LoaderCircle size={18} className="animate-spin" />
                   正在加载设备...
                 </div>
               ) : null}
 
               {!loadingDevices && filteredDevices.length === 0 ? (
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-8 text-center text-base text-slate-400">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-5 text-center text-sm text-slate-400">
                   当前没有匹配的终端设备
                 </div>
               ) : null}
@@ -1071,19 +1071,19 @@ export default function GroupCall() {
                     key={device.phone}
                     type="button"
                     onClick={() => togglePhoneSelection(device.phone)}
-                    className={`w-full rounded-xl border p-4 text-left transition-all ${
+                    className={`w-full rounded-lg border p-3 text-left transition-all ${
                       selected
                         ? 'border-cyan-400/60 bg-cyan-500/15'
                         : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-900/80'
                     }`}
                   >
-                    <div className="mb-2 flex items-start justify-between gap-3">
+                    <div className="mb-1.5 flex items-start justify-between gap-3">
                       <div>
-                        <div className="flex items-center gap-2 text-base font-semibold text-white">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
                           <Users size={15} className="text-cyan-300" />
                           {device.device_name || device.phone}
                         </div>
-                        <div className="mt-1 text-sm text-slate-400">终端号: {device.phone}</div>
+                        <div className="mt-0.5 text-xs text-slate-400">终端号: {device.phone}</div>
                       </div>
                       <span
                         className={`rounded-full px-2 py-1 text-xs ${
@@ -1096,7 +1096,7 @@ export default function GroupCall() {
                       </span>
                     </div>
 
-                    <div className="space-y-1 text-sm text-slate-400">
+                    <div className="space-y-0.5 text-xs text-slate-400">
                       <div>ID: {device.id}</div>
                       <div>类型: {device.device_type || 'JT808'}</div>
                       {typeof device.last_longitude === 'number' && typeof device.last_latitude === 'number' ? (
@@ -1108,7 +1108,7 @@ export default function GroupCall() {
                     </div>
 
                     {selected ? (
-                      <div className="mt-3 flex items-center gap-2 text-sm text-cyan-300">
+                      <div className="mt-2 flex items-center gap-2 text-xs text-cyan-300">
                         <CheckCircle2 size={14} />
                         已加入本次播报
                       </div>
@@ -1119,18 +1119,18 @@ export default function GroupCall() {
             </div>
           </section>
 
-           <section className="flex-1 flex flex-col rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 backdrop-blur-sm shadow-xl overflow-hidden">
-            <div className="mb-4 rounded-2xl border border-rose-400/20 bg-slate-950/50 p-4">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+           <section className="flex-1 flex flex-col rounded-xl border border-cyan-400/25 bg-slate-900/50 p-4 backdrop-blur-sm shadow-xl overflow-hidden">
+            <div className="mb-3 rounded-xl border border-rose-400/20 bg-slate-950/50 p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-semibold text-white">群组通话会话</h2>
-                  <p className="text-sm text-slate-400">基于当前已选终端创建会话，方便追踪发起时间和结束状态。</p>
+                  <h2 className="text-base font-semibold text-white">群组通话会话</h2>
+                  <p className="text-xs text-slate-400">创建会话并追踪状态。</p>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => loadGroupCalls()}
                     disabled={loadingGroupCalls}
-                    className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2 text-sm text-slate-200 transition-all hover:border-cyan-400/40 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs text-slate-200 transition-all hover:border-cyan-400/40 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="flex items-center gap-2">
                       <RefreshCw size={14} className={loadingGroupCalls ? 'animate-spin' : ''} />
@@ -1140,7 +1140,7 @@ export default function GroupCall() {
                   <button
                     onClick={startGroupCall}
                     disabled={startingCall || selectedDevices.length === 0}
-                    className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-semibold text-white transition-all hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="flex items-center gap-2">
                       {startingCall ? <LoaderCircle size={14} className="animate-spin" /> : <Phone size={14} />}
@@ -1151,38 +1151,38 @@ export default function GroupCall() {
               </div>
 
               {groupCallError ? (
-                <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
                   <AlertCircle size={16} className="mt-0.5 shrink-0" />
                   <span>{groupCallError}</span>
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                 {groupCalls.length === 0 ? (
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-8 text-sm text-slate-400 md:col-span-2 xl:col-span-3">
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-4 text-xs text-slate-400 md:col-span-2 xl:col-span-3">
                     暂时还没有群组通话会话，选择设备后可以直接发起。
                   </div>
                 ) : (
                   groupCalls.map((call) => {
                     const statusMeta = getGroupCallStatusMeta(call.status);
                     return (
-                      <div key={call.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                        <div className="mb-3 flex items-start justify-between gap-3">
+                      <div key={call.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="mb-2 flex items-start justify-between gap-3">
                           <div>
-                            <div className="text-base font-semibold text-white">房间 {call.room_id}</div>
-                            <div className="mt-1 text-xs text-slate-400">会话 #{call.id}</div>
+                            <div className="text-sm font-semibold text-white">房间 {call.room_id}</div>
+                            <div className="mt-0.5 text-xs text-slate-400">会话 #{call.id}</div>
                           </div>
                           <span className={`rounded-full px-2 py-1 text-xs ${statusMeta.className}`}>
                             {statusMeta.label}
                           </span>
                         </div>
-                        <div className="space-y-1 text-sm text-slate-300">
+                        <div className="space-y-0.5 text-xs text-slate-300">
                           <div>发起时间: {formatDateTime(call.start_time)}</div>
                           <div>成员数量: {call.member_ids.length}</div>
                           <div>发起人 ID: {call.initiator_id}</div>
                           {call.end_time ? <div>结束时间: {formatDateTime(call.end_time)}</div> : null}
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2 flex flex-wrap gap-1.5">
                           {call.member_ids.slice(0, 6).map((memberId) => (
                             <span
                               key={`${call.id}-${memberId}`}
@@ -1201,7 +1201,7 @@ export default function GroupCall() {
                           <button
                             onClick={() => endGroupCall(call.id)}
                             disabled={endingCallId === call.id}
-                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-200 transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {endingCallId === call.id ? <LoaderCircle size={14} className="animate-spin" /> : <Phone size={14} />}
                             {endingCallId === call.id ? '结束中...' : '结束通话'}
@@ -1214,43 +1214,43 @@ export default function GroupCall() {
               </div>
             </div>
 
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-4 flex-shrink-0">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
               <div>
-                <h2 className="text-xl font-semibold text-white">播报控制台</h2>
-                <p className="mb-0 text-base text-slate-400">支持向选定终端设备定向播报，或对当前所有在线设备进行广播。</p>
+                <h2 className="text-base font-semibold text-white">播报控制台</h2>
+                <p className="mb-0 text-xs text-slate-400">定向播报或全体广播。</p>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 <button
                   onClick={() => setSendMode('group')}
-                  className={`rounded-xl border px-4 py-3 text-base transition-all ${
+                  className={`rounded-lg border px-3 py-2 text-sm transition-all ${
                     sendMode === 'group'
                       ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-300'
                       : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600'
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    <Users size={18} />
+                    <Users size={15} />
                     定向播报
                   </span>
                 </button>
                 <button
                   onClick={() => setSendMode('broadcast')}
-                  className={`rounded-xl border px-4 py-3 text-base transition-all ${
+                  className={`rounded-lg border px-3 py-2 text-sm transition-all ${
                     sendMode === 'broadcast'
                       ? 'border-blue-400/60 bg-blue-500/20 text-blue-300'
                       : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600'
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    <Radio size={18} />
+                    <Radio size={15} />
                     全体广播
                   </span>
                 </button>
               </div>
             </div>
 
-              <div className="relative mb-4 flex flex-1">
+              <div className="relative mb-3 flex flex-1">
                 <div className="flex flex-col gap-0.5">
                   <button
                     onClick={() => {
@@ -1286,11 +1286,11 @@ export default function GroupCall() {
                       onChange={(event) => setTtsText(event.target.value)}
                           rows={8}
                       placeholder="请输入要下发到设备端播报的文本，例如：请前往 2 号通道进行集合点检。"
-                      className="h-full min-h-[160px] max-h-[160px] w-full rounded-2xl rounded-l-none border border-slate-700 bg-slate-950/70 px-4 py-3 pr-44 pb-14 text-base text-slate-100 outline-none transition-all focus:border-cyan-400/50 resize-none overflow-y-auto"
+                      className="h-full min-h-[160px] max-h-[160px] w-full rounded-xl rounded-l-none border border-slate-700 bg-slate-950/70 px-4 py-3 pr-44 pb-14 text-sm text-slate-100 outline-none transition-all focus:border-cyan-400/50 resize-none overflow-y-auto"
                     />
                   ) : (
-                    <div className="h-full min-h-[160px] max-h-[160px] rounded-2xl rounded-l-none border border-slate-700 bg-slate-950/70 p-4 pr-44 relative">
-                      <div className="h-24 mb-3 text-base text-slate-100 overflow-y-auto whitespace-pre-wrap">
+                    <div className="h-full min-h-[160px] max-h-[160px] rounded-xl rounded-l-none border border-slate-700 bg-slate-950/70 p-4 pr-44 relative">
+                      <div className="h-24 mb-3 text-sm text-slate-100 overflow-y-auto whitespace-pre-wrap">
                         {ttsText || '点击下方按钮开始语音识别，识别结果会显示在这里。'}
                       </div>
 
@@ -1335,8 +1335,8 @@ export default function GroupCall() {
                 </div>
               </div>
 
-              <div className="mb-2 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                <div className="mb-2 text-base font-medium text-slate-200">已选择播报目标</div>
+              <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                <div className="mb-1.5 text-sm font-medium text-slate-200">已选择播报目标</div>
                 {targetDevices.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     {targetDevices.map((device) => (
@@ -1349,12 +1349,12 @@ export default function GroupCall() {
                     ))}
                   </div>
                 ) : (
-                  <div className="text-base text-slate-400">当前还没有可发送的目标设备。</div>
+                  <div className="text-xs text-slate-400">当前还没有可发送的目标设备。</div>
                 )}
               </div>
 
               {sendError ? (
-                <div className="mb-2 flex items-start gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-base text-red-200">
+                <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
                   <AlertCircle size={18} className="mt-0.5 shrink-0" />
                   <span>{sendError}</span>
                 </div>
@@ -1363,45 +1363,45 @@ export default function GroupCall() {
 
             <hr className="my-2 border-slate-700/50" />
 
-            <div className="flex flex-col">
+            <div className="flex min-h-0 flex-col">
               <div className="mb-2 flex items-center justify-between gap-3 flex-shrink-0">
                 <div>
-                  <h2 className="text-xl font-semibold text-white">接收回执</h2>
+                  <h2 className="text-base font-semibold text-white">接收回执</h2>
                 </div>
                 {latestResult ? (
-                  <span className="rounded-full bg-cyan-500/15 px-3 py-1 text-sm text-cyan-300">
+                  <span className="rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-xs text-cyan-300">
                     请求 {latestResult.requested_count} 台
                   </span>
                 ) : null}
               </div>
 
-              <div className="pr-1">
+              <div className="min-h-0 overflow-y-auto pr-1">
                 {!latestResult ? (
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-10 text-center text-base text-slate-400">
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-5 text-center text-sm text-slate-400">
                     发送后，这里会显示设备接收结果。
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                        <div className="text-sm text-slate-400">请求设备</div>
-                        <div className="mt-2 text-2xl font-semibold text-white">{latestResult.requested_count}</div>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="text-xs text-slate-400">请求设备</div>
+                        <div className="mt-1 text-xl font-semibold text-white">{latestResult.requested_count}</div>
                       </div>
-                      <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
-                        <div className="text-sm text-slate-300">待处理</div>
-                        <div className="mt-2 text-2xl font-semibold text-slate-100">{getPendingCount(latestResult)}</div>
+                      <div className="rounded-lg border border-slate-700 bg-slate-950/60 p-3">
+                        <div className="text-xs text-slate-300">待处理</div>
+                        <div className="mt-1 text-xl font-semibold text-slate-100">{getPendingCount(latestResult)}</div>
                       </div>
-                      <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-4">
-                        <div className="text-sm text-emerald-200">已确认</div>
-                        <div className="mt-2 text-2xl font-semibold text-emerald-300">{latestResult.acked_count}</div>
+                      <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-3">
+                        <div className="text-xs text-emerald-200">已确认</div>
+                        <div className="mt-1 text-xl font-semibold text-emerald-300">{latestResult.acked_count}</div>
                       </div>
-                      <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4">
-                        <div className="text-sm text-red-200">失败</div>
-                        <div className="mt-2 text-2xl font-semibold text-red-300">{latestResult.failed_count}</div>
+                      <div className="rounded-lg border border-red-400/20 bg-red-500/10 p-3">
+                        <div className="text-xs text-red-200">失败</div>
+                        <div className="mt-1 text-xl font-semibold text-red-300">{latestResult.failed_count}</div>
                       </div>
-                      <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 p-4">
-                        <div className="text-sm text-amber-200">重试中</div>
-                        <div className="mt-2 text-2xl font-semibold text-amber-300">{latestResult.retry_wait_count}</div>
+                      <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3">
+                        <div className="text-xs text-amber-200">重试中</div>
+                        <div className="mt-1 text-xl font-semibold text-amber-300">{latestResult.retry_wait_count}</div>
                       </div>
                     </div>
 

@@ -1,4 +1,18 @@
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, getAuthHeaders } from './config';
+
+const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+  const headers = new Headers(init.headers || {});
+  Object.entries(getAuthHeaders()).forEach(([key, value]) => {
+    if (value && !headers.has(key)) {
+      headers.set(key, value);
+    }
+  });
+  return fetch(input, {
+    ...init,
+    headers,
+    credentials: init.credentials || 'include',
+  });
+};
 
 // ✅ 🔥 内网穿透终极解决方案！每次调用都实时检测！
 // 不管本地开发还是远程内网穿透，100% 正确！
@@ -32,7 +46,27 @@ export interface Video {
   id: number;
   name: string;
   company?: string;
+  branch_id?: string;
   project?: string;
+  project_id?: string;
+  grid?: string;
+  grid_id?: string;
+  grid_name?: string;
+  team?: string;
+  team_id?: string;
+  team_name?: string;
+  workTeam?: string;
+  work_team?: string;
+  device_type?: string;
+  type?: string;
+  holder?: string;
+  holder_id?: string;
+  holder_name?: string;
+  responsible_person?: string;
+  responsiblePerson?: string;
+  responsible_person_name?: string;
+  manager?: string;
+  manager_name?: string;
   ip_address?: string;
   port?: number;
   username?: string; // 补全：用于编辑回显
@@ -123,6 +157,14 @@ export interface VideoCreate {
   weak_signal?: boolean;
   status?: 'online' | 'offline';
   remark?: string;
+  company?: string;
+  branch_id?: string;
+  project?: string;
+  project_id?: string;
+  grid?: string;
+  grid_id?: string;
+  team?: string;
+  team_id?: string;
 }
 
 // 对应后端的 VideoUpdate schema (更新时提交的数据)
@@ -154,6 +196,14 @@ export interface VideoUpdate {
   status?: 'online' | 'offline';
   remark?: string;
   is_active?: number;
+  company?: string;
+  branch_id?: string;
+  project?: string;
+  project_id?: string;
+  grid?: string;
+  grid_id?: string;
+  team?: string;
+  team_id?: string;
 }
 
 export interface StreamUrl {
@@ -263,7 +313,7 @@ export async function getAllVideos(): Promise<Video[]> {
   const url = `${base}/video/?limit=5000`;
   console.log('📡 请求视频设备列表:', url, '当前域名:', window.location.host, 'port:', window.location.port);
   
-  const response = await fetch(url);
+  const response = await authFetch(url);
   if (!response.ok) throw new Error(`Failed to fetch videos: ${response.status}`);
   
   const videos = await response.json();
@@ -279,7 +329,7 @@ export async function getAllVideos(): Promise<Video[]> {
 
 /** 创建新的视频设备 */
 export async function createVideo(videoData: VideoCreate): Promise<Video> {
-  const response = await fetch(`${API_BASE_URL}/video/`, {
+  const response = await authFetch(`${API_BASE_URL}/video/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(videoData),
@@ -293,7 +343,7 @@ export async function createVideo(videoData: VideoCreate): Promise<Video> {
 
 /** 更新视频设备信息 (补充缺失的方法) */
 export async function updateVideo(id: number, videoData: VideoUpdate): Promise<Video> {
-  const response = await fetch(`${API_BASE_URL}/video/${id}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(videoData),
@@ -312,7 +362,7 @@ export async function ptzControl(
   speed: number = 0.5,
   duration: number = 0.5
 ): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ direction, speed, duration }),
@@ -330,7 +380,7 @@ export async function ptzControl(
 
 /** 删除指定的视频设备 */
 export async function deleteVideo(videoId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}`, {
     method: 'DELETE',
   });
   if (!response.ok) {
@@ -341,13 +391,13 @@ export async function deleteVideo(videoId: number): Promise<{ status: string }> 
 }
 
 export async function getVideoMonitoringSummaries(): Promise<VideoMonitoringSummary[]> {
-  const response = await fetch(`${API_BASE_URL}/video/monitoring`, { cache: 'no-store' });
+  const response = await authFetch(`${API_BASE_URL}/video/monitoring`, { cache: 'no-store' });
   if (!response.ok) throw new Error('Failed to fetch video monitoring summaries');
   return response.json();
 }
 
 export async function getVideoMonitoringSummary(videoId: number): Promise<VideoMonitoringSummary> {
-  const response = await fetch(`${API_BASE_URL}/video/monitoring/${videoId}`, { cache: 'no-store' });
+  const response = await authFetch(`${API_BASE_URL}/video/monitoring/${videoId}`, { cache: 'no-store' });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch video monitoring summary');
@@ -415,7 +465,7 @@ export async function getVideoStreamUrl(videoId: number, options: GetVideoStream
   // 3. 发起新请求并使用锁防止并发
   const requestPromise = (async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/video/stream/${videoId}`, { cache: 'no-store' });
+      const response = await authFetch(`${API_BASE_URL}/video/stream/${videoId}`, { cache: 'no-store' });
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.detail || 'Failed to get stream URL');
@@ -447,7 +497,7 @@ export async function getVideoStreamUrl(videoId: number, options: GetVideoStream
 
 /** 同步设备列表 (补充缺失的方法) */
 export async function syncDevices(): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/sync`, {
+  const response = await authFetch(`${API_BASE_URL}/video/sync`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -481,7 +531,7 @@ export async function addCameraViaRTSP(cameraData: {
   low_battery?: boolean;
   weak_signal?: boolean;
 }): Promise<Video> {
-  const response = await fetch(`${API_BASE_URL}/video/add_camera`, {
+  const response = await authFetch(`${API_BASE_URL}/video/add_camera`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cameraData),
@@ -498,7 +548,7 @@ export async function ptzStartControl(
   direction: PTZDirection,
   speed: number = 0.5,
 ): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/start`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ direction, speed, duration: 1 }),
@@ -516,7 +566,7 @@ export async function ptzStartControl(
 
 /** 持续云台移动-停止（松开时调用） */
 export async function ptzStopControl(videoId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/stop`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/stop`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -537,7 +587,7 @@ export async function zoomControl(
   speed: number = 0.5,
   duration: number = 0.5
 ): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/zoom/${videoId}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ direction, speed, duration }),
@@ -559,7 +609,7 @@ export async function zoomStartControl(
   direction: ZoomDirection,
   speed: number = 0.5,
 ): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/zoom/${videoId}/start`, {
+  const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ direction, speed, duration: 1 }),
@@ -577,7 +627,7 @@ export async function zoomStartControl(
 
 /** 变焦停止（松开时调用） */
 export async function zoomStopControl(videoId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/zoom/${videoId}/stop`, {
+  const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}/stop`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -592,7 +642,7 @@ export async function zoomStopControl(videoId: number): Promise<{ status: string
 }
 
 export async function getPresets(videoId: number): Promise<PTZPresetItem[]> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/presets`);
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets`);
   if (!response.ok) {
     let msg = 'Failed to fetch presets';
     try {
@@ -605,7 +655,7 @@ export async function getPresets(videoId: number): Promise<PTZPresetItem[]> {
 }
 
 export async function createPreset(videoId: number, payload: { name?: string; token?: string }): Promise<PTZPresetItem> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/presets`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -622,7 +672,7 @@ export async function createPreset(videoId: number, payload: { name?: string; to
 }
 
 export async function gotoPreset(videoId: number, presetToken: string, speed: number = 0.5): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/${encodeURIComponent(presetToken)}/goto`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/${encodeURIComponent(presetToken)}/goto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ speed }),
@@ -639,7 +689,7 @@ export async function gotoPreset(videoId: number, presetToken: string, speed: nu
 }
 
 export async function deletePreset(videoId: number, presetToken: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/${encodeURIComponent(presetToken)}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/${encodeURIComponent(presetToken)}`, {
     method: 'DELETE',
   });
   if (!response.ok) {
@@ -654,7 +704,7 @@ export async function deletePreset(videoId: number, presetToken: string): Promis
 }
 
 export async function deletePresetsBulk(videoId: number, presetTokens: string[]): Promise<PresetBulkDeleteResponse> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/bulk-delete`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/bulk-delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ preset_tokens: presetTokens }),
@@ -675,7 +725,7 @@ export async function startCruise(videoId: number, payload: {
   dwell_seconds?: number;
   rounds?: number | null;
 }): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -692,7 +742,7 @@ export async function startCruise(videoId: number, payload: {
 }
 
 export async function stopCruise(videoId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/stop`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/stop`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -707,7 +757,7 @@ export async function stopCruise(videoId: number): Promise<{ status: string }> {
 }
 
 export async function getCruiseStatus(videoId: number): Promise<CruiseStatus> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/status`);
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/status`);
   if (!response.ok) {
     let msg = 'Failed to fetch cruise status';
     try {
@@ -727,7 +777,7 @@ export interface CruiseConfig {
 }
 
 export async function getCurrentCruiseConfig(videoId: number): Promise<CruiseConfig> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/current`);
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/current`);
   if (!response.ok) {
     let msg = 'Failed to fetch cruise config';
     try {
@@ -747,7 +797,7 @@ export async function saveCurrentCruiseConfig(
     rounds: number | null;
   }
 ): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/current`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/current`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
@@ -764,7 +814,7 @@ export async function saveCurrentCruiseConfig(
 }
 
 export async function startCurrentCruise(videoId: number): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start-current`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start-current`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -785,7 +835,7 @@ export async function savePlaybackClip(
   videoId: number,
   payload: PlaybackSavePayload
 ): Promise<PlaybackSaveResponse> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/playback/save`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/playback/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -810,7 +860,7 @@ export async function getRecordingSegments(
   videoId: number,
   limit: number = 72
 ): Promise<RecordingSegment[]> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/recordings?limit=${limit}`);
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/recordings?limit=${limit}`);
   if (!response.ok) {
     let msg = 'Failed to get recording segments';
     try {
@@ -823,7 +873,7 @@ export async function getRecordingSegments(
 }
 
 export async function triggerTempPlaybackCache(videoId: number): Promise<TempCacheSaveResponse> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/playback/temp-cache`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/playback/temp-cache`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ force: true }),
@@ -845,7 +895,7 @@ export async function getSavedPlaybackVideos(
   videoId: number,
   limit: number = 120
 ): Promise<SavedPlaybackVideo[]> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/playback/videos?limit=${limit}`);
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/playback/videos?limit=${limit}`);
   if (!response.ok) {
     let msg = 'Failed to get saved playback videos';
     try {
@@ -861,7 +911,7 @@ export async function getTempPlaybackVideos(
   videoId: number,
   limit: number = 30
 ): Promise<SavedPlaybackVideo[]> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/playback/temp/videos?limit=${limit}`);
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/playback/temp/videos?limit=${limit}`);
   if (!response.ok) {
     let msg = 'Failed to get temp playback videos';
     try {
@@ -877,7 +927,7 @@ export async function getAlarmPlaybackVideos(
   videoId: number,
   limit: number = 120
 ): Promise<SavedPlaybackVideo[]> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/alarm/videos?limit=${limit}`);
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/alarm/videos?limit=${limit}`);
   if (!response.ok) {
     let msg = 'Failed to get alarm videos';
     try {
@@ -896,7 +946,7 @@ export async function getAlarmPlaybackVideos(
 
 // 1. 开启 AI 监控
 export const startAIMonitoring = async (deviceId: string, rtspUrl: string, algoType: string = "helmet,smoking") => {
-  const response = await fetch(`${API_BASE_URL}/video/ai/start`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ai/start`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -922,7 +972,7 @@ export const startAIMonitoring = async (deviceId: string, rtspUrl: string, algoT
 
 // 2. 停止 AI 监控
 export const stopAIMonitoring = async (deviceId: string) => {
-  const response = await fetch(`${API_BASE_URL}/video/ai/stop?device_id=${encodeURIComponent(deviceId)}`, {
+  const response = await authFetch(`${API_BASE_URL}/video/ai/stop?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'POST',
   });
 
@@ -943,7 +993,7 @@ export const stopAIMonitoring = async (deviceId: string) => {
 };
 
 export const getDeviceRules = async (deviceId: number): Promise<string[]> => {
-  const response = await fetch(`${API_BASE_URL}/video/${deviceId}/rules`);
+  const response = await authFetch(`${API_BASE_URL}/video/${deviceId}/rules`);
   if (!response.ok) {
     let msg = 'Failed to get device rules';
     try {
@@ -958,7 +1008,7 @@ export const getDeviceRules = async (deviceId: number): Promise<string[]> => {
 };
 
 export const updateDeviceRules = async (deviceId: number, rules: string[]): Promise<string[]> => {
-  const response = await fetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -987,7 +1037,7 @@ export const getAIRules = async (): Promise<AIRule[]> => {
 
   for (const url of urls) {
     try {
-      const response = await fetch(url);
+      const response = await authFetch(url);
       if (!response.ok) {
         try {
           const err = await response.json();
@@ -1025,7 +1075,7 @@ export async function getAlarmVideosList(
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
   const base = getApiBase();
-  const response = await fetch(
+  const response = await authFetch(
     `${base}/video/${videoId}/alarms/videos?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {
@@ -1059,7 +1109,7 @@ export async function getRecordingVideos(
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
   const base = getApiBase();
-  const response = await fetch(
+  const response = await authFetch(
     `${base}/video/${videoId}/recordings/direct?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {
@@ -1093,7 +1143,7 @@ export async function getAlarmScreenshots(
   sort: string = "desc"
 ): Promise<SavedPlaybackVideo[]> {
   const base = getApiBase();
-  const response = await fetch(
+  const response = await authFetch(
     `${base}/video/${videoId}/alarms/screenshots?limit=${limit}&sort=${sort}`
   );
   if (!response.ok) {

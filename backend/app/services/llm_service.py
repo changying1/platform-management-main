@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 
 try:
@@ -72,10 +73,23 @@ def create_llm_chain(chat_history=None, kb_name="default", enable_rag=False, sys
         raise Exception("Ollama 中没有可用模型，请先拉取: ollama pull qwen:7b")
 
     system_prompt = """你是一个专业的工地管理智能助手，熟悉公司的各项业务数据。
+你已经具备查询当前系统业务数据的能力；后端会按当前登录用户权限把可查询数据放在【按问题查询结果】里。
 请直接、自然地回答用户的问题，就像与人对话一样。
-回答要简洁明了，不需要说明数据来源或提及"根据数据"、"数据库"等字样。
+禁止回答“我没有访问内部数据的能力”“我无法查看系统数据”之类的话，除非【按问题查询结果】明确为空。
+回答要简洁明了。
 如果数据不足无法回答，请礼貌地说明。
 请用中文回答。"""
+
+    if system_context and system_context.get("query_context"):
+        query_context = system_context["query_context"]
+        system_prompt += """
+
+【按问题查询结果】
+下面这段 JSON 是后端按当前用户权限、根据本次问题动态查询到的系统数据。
+回答业务问题时必须优先依据这里的数据；如果没有命中相关记录，请明确说明系统中未查询到相关记录，不要编造。
+回答末尾请简短写出依据，例如：依据：alarms 模块命中 12 条记录。
+"""
+        system_prompt += json.dumps(query_context, ensure_ascii=False, default=str)[:12000]
 
     if system_context and system_context.get('system_data'):
         system_data = system_context['system_data']

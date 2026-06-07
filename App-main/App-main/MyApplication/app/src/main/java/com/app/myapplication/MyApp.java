@@ -17,11 +17,7 @@ public class MyApp extends Application {
         MapsInitializer.updatePrivacyAgree(this, true);
         Log.d("ABI", Arrays.toString(Build.SUPPORTED_ABIS));
         if (!BuildConfig.USE_HLS_DEBUG_STREAM) {
-            try {
-                EzvizSdkBridge.init(this);
-            } catch (UnsatisfiedLinkError e) {
-                Log.e("MyApp", "EZVIZ SDK init failed: " + e.getMessage());
-            }
+            EzvizSdkBridge.init(this);
         }
 
     }

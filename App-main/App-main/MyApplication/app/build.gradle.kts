@@ -34,9 +34,6 @@ android {
         buildConfigField("String", "EZVIZ_APP_KEY", "\"${ezvizAppKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("boolean", "USE_HLS_DEBUG_STREAM", useHlsDebugStream.toString())
         manifestPlaceholders["EZVIZ_APP_KEY"] = ezvizAppKey
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-        }
     }
 
     buildFeatures {
@@ -58,8 +55,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    // splits 配置与 ndk.abiFilters 冲突，已移除
-    // 只使用 ndk.abiFilters 控制 ABI 过滤
+    splits {
+        abi {
+            isEnable = !useHlsDebugStream
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = false
+        }
+    }
 
     packaging {
         jniLibs {
@@ -82,7 +85,6 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
 
     implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.8.7")
     implementation("androidx.lifecycle:lifecycle-livedata:2.8.7")
     implementation("androidx.preference:preference:1.2.1")

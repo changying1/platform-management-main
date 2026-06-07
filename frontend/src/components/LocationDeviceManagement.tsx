@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { deviceApi, type LocationDevice } from '../api/deviceApi';
+import { getAuthHeaders } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
 
 type DeviceStatus = 'online' | 'offline' | 'fault';
@@ -60,7 +61,7 @@ export default function LocationDeviceManagement() {
 
   const loadUnitMaps = async () => {
     try {
-      const res = await fetch('/api/dashboard/overview', { cache: 'no-store' });
+      const res = await fetch('/api/dashboard/overview', { cache: 'no-store', headers: getAuthHeaders() });
       if (!res.ok) return;
       const data = await res.json();
       const branches: Record<string, string> = {};

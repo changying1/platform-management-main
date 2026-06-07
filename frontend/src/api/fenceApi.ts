@@ -1,14 +1,14 @@
 import axios from 'axios';
 
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, attachAuthInterceptor } from './config';
 
-const apiClient = axios.create({
+const apiClient = attachAuthInterceptor(axios.create({
   baseURL: API_BASE_URL,
   timeout: 5000,
   headers: {
     'Content-Type': 'application/json',
   }
-});
+}));
 
 export interface ProjectRegionCreatePayload {
   name: string;

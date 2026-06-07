@@ -1,4 +1,6 @@
-_face_service = None
+from app.utils.config_manager import get_face_recognition_enabled
+
+_face_service = None
 
 
 def get_face_service():
@@ -65,7 +67,10 @@ def attach_faces_to_boxes(frame, boxes):
         return boxes
 
     # 默认先给所有报警框填一个模拟人员,避免后续任何失败导致“未知”
-    for box in boxes:
+    if not get_face_recognition_enabled():
+        return boxes
+
+    for box in boxes:
         _set_mock_person(box)
 
     if frame is None:

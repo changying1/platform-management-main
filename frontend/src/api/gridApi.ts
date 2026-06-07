@@ -1,14 +1,14 @@
 import axios from 'axios';
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, attachAuthInterceptor } from './config';
 import type { Grid, GridDetail, GridStats, GridPersonnel } from '../../types';
 
-const gridApi = axios.create({
+const gridApi = attachAuthInterceptor(axios.create({
   baseURL: `${API_BASE_URL}/api/grids`,
-});
+}));
 
-const gridPersonnelApi = axios.create({
+const gridPersonnelApi = attachAuthInterceptor(axios.create({
   baseURL: `${API_BASE_URL}/api/grid-personnel`,
-});
+}));
 
 const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? value : []);
 

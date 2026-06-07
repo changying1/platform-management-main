@@ -13,9 +13,10 @@
   "alarmRepeatInterval": 5,
   "alarmAutoResolve": false,
   "alarmRetentionDays": 30,
+  "safetyProductionDays": 10,
+  "safetyProductionUpdatedDate": "2026-06-04",
   "alarmSevereFlash": true,
   "alarmSevereUpgrade": "sound",
-  "alarmVolume": 30,
   "alarmSosEnabled": true,
   "alarmFenceEnabled": true,
   "alarmLowBatteryEnabled": true,
@@ -30,6 +31,11 @@
   "alarmVideoRetentionDays": 90,
   "alarmVideoSurroundMinutes": 0.5,
   "alarmScreenshotRetentionDays": 90,
+  "storageMaxSizeGB": 500,
+  "storageWarningThreshold": 80,
+  "storageCriticalThreshold": 95,
+  "storageAutoCleanup": true,
+  "storageCleanupStrategy": "both",
   "fenceDetectionInterval": 3,
   "fenceDefaultRadius": 50,
   "fenceRetentionDays": 365,
@@ -110,6 +116,14 @@
     "device.view",
     "personnel.view",
     "alarm"
+  ],
+  "gridAdminPermissions": [
+    "dashboard",
+    "monitor",
+    "fence",
+    "device.view",
+    "personnel.view",
+    "alarm.view"
   ],
   "teamAdminPermissions": [
     "dashboard",
@@ -244,6 +258,7 @@
       "description": "不同岗位安全帽颜色规范检查"
     }
   ],
+  "alarmVolume": 30,
   "trackSimplifyPrecision": 2,
   "trackRecordInterval": 0
 }

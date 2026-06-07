@@ -370,7 +370,49 @@ interface DashboardProps {
   setActiveMenu: (key: MenuKey) => void;
   setManagementTab: (tab: 'project' | 'person' | 'camera' | 'location' | 'alarm' | 'attendance' | 'device') => void;
 }
+
+const getStoredAuth = () => {
+  try {
+    return JSON.parse(localStorage.getItem('auth') || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const getDashboardScope = () => {
+  const auth = getStoredAuth();
+  const role = String(localStorage.getItem('role') || auth.role || '').toUpperCase();
+  const permissionLevel = String(localStorage.getItem('permission_level') || auth.permission_level || '');
+  const departmentId = Number(localStorage.getItem('department_id') || auth.department_id || 0);
+  const departmentName = String(localStorage.getItem('company') || auth.company || auth.department || '');
+  const rawProjectId = localStorage.getItem('project_id') || auth.project_id || '';
+  const projectName = String(localStorage.getItem('project') || auth.project || '');
+  const parsedProjectId = Number(rawProjectId);
+  const projectId = rawProjectId !== '' && Number.isFinite(parsedProjectId) ? parsedProjectId : null;
+  const isProjectScope = permissionLevel === 'project_safety_admin';
+  const isNationalScope = permissionLevel
+    ? permissionLevel === 'headquarters_admin'
+    : role === 'HQ';
+  return {
+    isNationalScope,
+    isProjectScope,
+    forcedBranchId: isNationalScope || !departmentId ? "" : departmentId,
+    forcedBranchName: !isNationalScope ? departmentName : '',
+    forcedProjectId: isProjectScope ? projectId : null,
+    forcedProjectName: isProjectScope ? projectName : '',
+  };
+};
+
+const getDashboardHeaders = () => ({
+  'X-Role': localStorage.getItem('role') || '',
+  'X-Department-Id': localStorage.getItem('department_id') || '',
+  'X-Username': localStorage.getItem('username') || '',
+  'X-Permission-Level': localStorage.getItem('permission_level') || '',
+  'X-Auth-Token': localStorage.getItem('auth_token') || '',
+});
+
 export default function Dashboard({ setActiveMenu, setManagementTab }: DashboardProps) {
+    const dashboardScope = getDashboardScope();
     const [showPersonnelModal, setShowPersonnelModal] = useState(false);
     const [workTypeStats, setWorkTypeStats] = useState([]);
     const [mapOffset, setMapOffset] = useState({ top: -30, left: 0 }); // 地图偏移量
@@ -378,11 +420,11 @@ export default function Dashboard({ setActiveMenu, setManagementTab }: Dashboard
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const [projects, setProjects] = useState<ProjectSummary[]>([]);
     const [selectedProjectId, setSelectedProjectId] = useState<number | null>(
-      null
+      dashboardScope.forcedProjectId
     );
     const [selectedFilterBranchId, setSelectedFilterBranchId] = useState<
       number | ""
-    >("");
+    >(dashboardScope.forcedBranchId);
     const [branches, setBranches] = useState<Branch[]>([]);
     const [alarms, setAlarms] = useState<any[]>([]);
     const [dbDevices, setDbDevices] = useState<any[]>([]);
@@ -419,6 +461,45 @@ const [globalSafetyDays, setGlobalSafetyDays] = useState(0);
 const [avgDuration, setAvgDuration] = useState(0);
   // 原有的固定的默认中心
   const selectedCenter = useMemo(() => [105, 35] as [number, number], []);
+  const visibleBranches = useMemo(() => {
+    if (dashboardScope.isNationalScope || dashboardScope.forcedBranchId === "") return branches;
+    const forcedBranch = branches.find((branch) => String(branch.id) === String(dashboardScope.forcedBranchId));
+    if (dashboardScope.forcedBranchName) {
+      return [
+        {
+          ...(forcedBranch || { province: '', name: dashboardScope.forcedBranchName }),
+          id: Number(dashboardScope.forcedBranchId),
+          name: dashboardScope.forcedBranchName,
+        },
+      ];
+    }
+    return forcedBranch ? [forcedBranch] : [];
+  }, [
+    branches,
+    dashboardScope.forcedBranchId,
+    dashboardScope.forcedBranchName,
+    dashboardScope.isNationalScope,
+  ]);
+
+  useEffect(() => {
+    if (dashboardScope.isProjectScope) {
+      setSelectedFilterBranchId(dashboardScope.forcedBranchId);
+      if (dashboardScope.forcedProjectId) {
+        setSelectedProjectId(dashboardScope.forcedProjectId);
+      }
+      return;
+    }
+    if (!dashboardScope.isNationalScope && dashboardScope.forcedBranchId !== "") {
+      setSelectedFilterBranchId(dashboardScope.forcedBranchId);
+      setSelectedProjectId(null);
+    }
+  }, [
+    dashboardScope.forcedBranchId,
+    dashboardScope.forcedProjectId,
+    dashboardScope.forcedProjectName,
+    dashboardScope.isNationalScope,
+    dashboardScope.isProjectScope,
+  ]);
 
   // ✅ ✅ ✅ 100% 完全复现 yaokong-main 的显示效果！
   // ✅ 所有数据硬编码 - 分公司、项目、定位点、统计值 完全一致！
@@ -438,18 +519,18 @@ const [avgDuration, setAvgDuration] = useState(0);
     workTypeCount: 8,
     avgDuration: 186,
     projectsList: [
-      { id: 1, name: "西安东站项目", branch: "总公司", branch_id: 0, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 },
-      { id: 2, name: "北京地铁17号线", branch: "北京分公司", branch_id: 1, progress: 45, manager: "张立军", deviceCount: 45, userCount: 320, status: "active", longitude: 116.4074, latitude: 39.9042, teamCount: 8, workTypeCount: 5, fenceCount: 12, safetyDays: 86 },
-      { id: 3, name: "上海浦东机场联络线", branch: "上海分公司", branch_id: 2, progress: 60, manager: "陈明", deviceCount: 38, userCount: 295, status: "active", longitude: 121.4737, latitude: 31.2304, teamCount: 7, workTypeCount: 5, fenceCount: 10, safetyDays: 112 },
-      { id: 4, name: "广州白云站", branch: "广州分公司", branch_id: 3, progress: 30, manager: "李华", deviceCount: 52, userCount: 380, status: "warning", longitude: 113.2644, latitude: 23.1291, teamCount: 10, workTypeCount: 6, fenceCount: 14, safetyDays: 45 },
-      { id: 5, name: "成都地铁18号线", branch: "成都分公司", branch_id: 4, progress: 20, manager: "刘强", deviceCount: 27, userCount: 210, status: "active", longitude: 104.0668, latitude: 30.5728, teamCount: 6, workTypeCount: 4, fenceCount: 8, safetyDays: 68 },
-      { id: 6, name: "深圳前海枢纽", branch: "广州分公司", branch_id: 3, progress: 55, manager: "王芳", deviceCount: 41, userCount: 310, status: "offline", longitude: 113.9500, latitude: 22.5500, teamCount: 8, workTypeCount: 5, fenceCount: 11, safetyDays: 95 },
-      { id: 7, name: "武汉光谷综合体", branch: "成都分公司", branch_id: 4, progress: 40, manager: "赵刚", deviceCount: 35, userCount: 275, status: "active", longitude: 114.3055, latitude: 30.5931, teamCount: 7, workTypeCount: 5, fenceCount: 9, safetyDays: 72 },
-      { id: 8, name: "杭州西站", branch: "上海分公司", branch_id: 2, progress: 70, manager: "孙丽", deviceCount: 48, userCount: 345, status: "active", longitude: 120.1551, latitude: 30.2741, teamCount: 9, workTypeCount: 6, fenceCount: 12, safetyDays: 136 },
-      { id: 9, name: "重庆东站", branch: "成都分公司", branch_id: 4, progress: 25, manager: "周强", deviceCount: 32, userCount: 240, status: "warning", longitude: 106.5516, latitude: 29.5630, teamCount: 6, workTypeCount: 4, fenceCount: 8, safetyDays: 52 },
-      { id: 10, name: "南京北站", branch: "上海分公司", branch_id: 2, progress: 35, manager: "吴敏", deviceCount: 28, userCount: 215, status: "active", longitude: 118.7969, latitude: 32.0603, teamCount: 5, workTypeCount: 4, fenceCount: 7, safetyDays: 66 },
-      { id: 11, name: "天津西站", branch: "北京分公司", branch_id: 1, progress: 50, manager: "郑涛", deviceCount: 30, userCount: 225, status: "active", longitude: 117.1902, latitude: 39.1256, teamCount: 6, workTypeCount: 4, fenceCount: 9, safetyDays: 98 },
-      { id: 12, name: "青岛胶东机场", branch: "北京分公司", branch_id: 1, progress: 65, manager: "王磊", deviceCount: 22, userCount: 245, status: "active", longitude: 120.3826, latitude: 36.2661, teamCount: 7, workTypeCount: 5, fenceCount: 10, safetyDays: 124 }
+      { id: 1, name: "西安东站项目", branch: "集团有限公司", branch_id: 1, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 },
+      { id: 2, name: "北京地铁17号线", branch: "北京分公司", branch_id: 2, progress: 45, manager: "张立军", deviceCount: 45, userCount: 320, status: "active", longitude: 116.4074, latitude: 39.9042, teamCount: 8, workTypeCount: 5, fenceCount: 12, safetyDays: 86 },
+      { id: 3, name: "上海浦东机场联络线", branch: "上海分公司", branch_id: 3, progress: 60, manager: "陈明", deviceCount: 38, userCount: 295, status: "active", longitude: 121.4737, latitude: 31.2304, teamCount: 7, workTypeCount: 5, fenceCount: 10, safetyDays: 112 },
+      { id: 4, name: "广州白云站", branch: "广州分公司", branch_id: 4, progress: 30, manager: "李华", deviceCount: 52, userCount: 380, status: "warning", longitude: 113.2644, latitude: 23.1291, teamCount: 10, workTypeCount: 6, fenceCount: 14, safetyDays: 45 },
+      { id: 5, name: "成都地铁18号线", branch: "成都分公司", branch_id: 5, progress: 20, manager: "刘强", deviceCount: 27, userCount: 210, status: "active", longitude: 104.0668, latitude: 30.5728, teamCount: 6, workTypeCount: 4, fenceCount: 8, safetyDays: 68 },
+      { id: 6, name: "深圳前海枢纽", branch: "广州分公司", branch_id: 4, progress: 55, manager: "王芳", deviceCount: 41, userCount: 310, status: "offline", longitude: 113.9500, latitude: 22.5500, teamCount: 8, workTypeCount: 5, fenceCount: 11, safetyDays: 95 },
+      { id: 7, name: "武汉光谷综合体", branch: "成都分公司", branch_id: 5, progress: 40, manager: "赵刚", deviceCount: 35, userCount: 275, status: "active", longitude: 114.3055, latitude: 30.5931, teamCount: 7, workTypeCount: 5, fenceCount: 9, safetyDays: 72 },
+      { id: 8, name: "杭州西站", branch: "上海分公司", branch_id: 3, progress: 70, manager: "孙丽", deviceCount: 48, userCount: 345, status: "active", longitude: 120.1551, latitude: 30.2741, teamCount: 9, workTypeCount: 6, fenceCount: 12, safetyDays: 136 },
+      { id: 9, name: "重庆东站", branch: "成都分公司", branch_id: 5, progress: 25, manager: "周强", deviceCount: 32, userCount: 240, status: "warning", longitude: 106.5516, latitude: 29.5630, teamCount: 6, workTypeCount: 4, fenceCount: 8, safetyDays: 52 },
+      { id: 10, name: "南京北站", branch: "上海分公司", branch_id: 3, progress: 35, manager: "吴敏", deviceCount: 28, userCount: 215, status: "active", longitude: 118.7969, latitude: 32.0603, teamCount: 5, workTypeCount: 4, fenceCount: 7, safetyDays: 66 },
+      { id: 11, name: "天津西站", branch: "北京分公司", branch_id: 2, progress: 50, manager: "郑涛", deviceCount: 30, userCount: 225, status: "active", longitude: 117.1902, latitude: 39.1256, teamCount: 6, workTypeCount: 4, fenceCount: 9, safetyDays: 98 },
+      { id: 12, name: "青岛胶东机场", branch: "北京分公司", branch_id: 2, progress: 65, manager: "王磊", deviceCount: 22, userCount: 245, status: "active", longitude: 120.3826, latitude: 36.2661, teamCount: 7, workTypeCount: 5, fenceCount: 10, safetyDays: 124 }
     ],
     alarms: { 
       total: 18, 
@@ -481,9 +562,9 @@ const [avgDuration, setAvgDuration] = useState(0);
     workTypeCount: 7,
     avgDuration: 215,
     projectsList: [
-      { id: 1, name: "西安东站项目", branch: "总公司", branch_id: 0, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 },
-      { id: 13, name: "西安地铁8号线", branch: "总公司", branch_id: 0, progress: 45, manager: "李明", deviceCount: 42, userCount: 236, status: "active", longitude: 108.9400, latitude: 34.3400, teamCount: 8, workTypeCount: 5, fenceCount: 10, safetyDays: 96 },
-      { id: 14, name: "咸阳机场T5航站楼", branch: "总公司", branch_id: 0, progress: 30, manager: "张伟", deviceCount: 26, userCount: 200, status: "active", longitude: 108.7600, latitude: 34.4400, teamCount: 8, workTypeCount: 5, fenceCount: 8, safetyDays: 72 }
+      { id: 1, name: "西安东站项目", branch: "集团有限公司", branch_id: 1, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 },
+      { id: 13, name: "西安地铁8号线", branch: "集团有限公司", branch_id: 1, progress: 45, manager: "李明", deviceCount: 42, userCount: 236, status: "active", longitude: 108.9400, latitude: 34.3400, teamCount: 8, workTypeCount: 5, fenceCount: 10, safetyDays: 96 },
+      { id: 14, name: "咸阳机场T5航站楼", branch: "集团有限公司", branch_id: 1, progress: 30, manager: "张伟", deviceCount: 26, userCount: 200, status: "active", longitude: 108.7600, latitude: 34.4400, teamCount: 8, workTypeCount: 5, fenceCount: 8, safetyDays: 72 }
     ],
     alarms: { 
       total: 5, 
@@ -518,7 +599,7 @@ const [avgDuration, setAvgDuration] = useState(0);
     teamCount: 12,
     workTypeCount: 6,
     projectsList: [
-      { id: 1, name: "西安东站项目", branch: "总公司", branch_id: 0, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 }
+      { id: 1, name: "西安东站项目", branch: "集团有限公司", branch_id: 1, progress: 75, manager: "王建国", deviceCount: 88, userCount: 420, status: "active", longitude: 108.9398, latitude: 34.3416, teamCount: 12, workTypeCount: 6, fenceCount: 15, safetyDays: 128 }
     ],
     alarms: { 
       total: 3, 
@@ -551,7 +632,7 @@ const [avgDuration, setAvgDuration] = useState(0);
   };
 
   // ========== 北京分公司项目 ==========
-  const beijingProjects = nationalData.projectsList.filter(p => p.branch_id === 1);
+  const beijingProjects = nationalData.projectsList.filter(p => p.branch_id === 2);
   const beijingData = {
     name: "北京分公司·信息总览",
     level: 'headquarters',
@@ -574,7 +655,7 @@ const [avgDuration, setAvgDuration] = useState(0);
   };
 
   // ========== 上海分公司项目 ==========
-  const shanghaiProjects = nationalData.projectsList.filter(p => p.branch_id === 2);
+  const shanghaiProjects = nationalData.projectsList.filter(p => p.branch_id === 3);
   const shanghaiData = {
     name: "上海分公司·信息总览",
     level: 'headquarters',
@@ -597,7 +678,7 @@ const [avgDuration, setAvgDuration] = useState(0);
   };
 
   // ========== 广州分公司项目 ==========
-  const guangzhouProjects = nationalData.projectsList.filter(p => p.branch_id === 3);
+  const guangzhouProjects = nationalData.projectsList.filter(p => p.branch_id === 4);
   const guangzhouData = {
     name: "广州分公司·信息总览",
     level: 'headquarters',
@@ -620,7 +701,7 @@ const [avgDuration, setAvgDuration] = useState(0);
   };
 
   // ========== 成都分公司项目 ==========
-  const chengduProjects = nationalData.projectsList.filter(p => p.branch_id === 4);
+  const chengduProjects = nationalData.projectsList.filter(p => p.branch_id === 5);
   const chengduData = {
     name: "成都分公司·信息总览",
     level: 'headquarters',
@@ -644,12 +725,17 @@ const [avgDuration, setAvgDuration] = useState(0);
 
   // ✅ 初始化分公司和项目（地图12个定位点！）
   useEffect(() => {
-    if (dashboardOverview) return;
-    (async () => {
+    let stopped = false;
+
+    const fetchDashboardOverview = async () => {
       try {
-        const res = await fetch("/api/dashboard/overview");
+        const res = await fetch("/api/dashboard/overview", {
+          cache: "no-store",
+          headers: getDashboardHeaders(),
+        });
         if (!res.ok) return;
         const data = await res.json();
+        if (stopped) return;
         setDashboardOverview(data);
         if (Array.isArray(data.branches)) {
           setBranches(data.branches);
@@ -663,17 +749,39 @@ const [avgDuration, setAvgDuration] = useState(0);
       } catch (e) {
         console.error("fetch dashboard overview failed:", e);
       }
+    };
+
+    fetchDashboardOverview();
+    const timer = window.setInterval(fetchDashboardOverview, 30000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/dashboard/safety-days", {
+          headers: getDashboardHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setGlobalSafetyDays(Number(data.safetyDays) || 0);
+      } catch (e) {
+        console.error("fetch safety days failed:", e);
+      }
     })();
   }, []);
 
   useEffect(() => {
     if (dashboardOverview) return;
     setBranches([
-      { id: 0, name: "总公司", province: "陕西省", coord: [108.9398, 34.3416] },
-      { id: 1, name: "北京分公司", province: "北京市", coord: [116.4074, 39.9042] },
-      { id: 2, name: "上海分公司", province: "上海市", coord: [121.4737, 31.2304] },
-      { id: 3, name: "广州分公司", province: "广东省", coord: [113.2644, 23.1291] },
-      { id: 4, name: "成都分公司", province: "四川省", coord: [104.0668, 30.5728] }
+      { id: 1, name: "集团有限公司", province: "陕西省", coord: [108.9398, 34.3416] },
+      { id: 2, name: "北京分公司", province: "北京市", coord: [116.4074, 39.9042] },
+      { id: 3, name: "上海分公司", province: "上海市", coord: [121.4737, 31.2304] },
+      { id: 4, name: "广州分公司", province: "广东省", coord: [113.2644, 23.1291] },
+      { id: 5, name: "成都分公司", province: "四川省", coord: [104.0668, 30.5728] }
     ]);
     setProjects(nationalData.projectsList);
   }, [dashboardOverview]);
@@ -690,11 +798,12 @@ const [avgDuration, setAvgDuration] = useState(0);
       }
       return {
         ...baseData,
+        safetyDays: globalSafetyDays || Number(baseData?.safetyDays) || 0,
         alarms: {
           ...(baseData?.alarms || {}),
           list: todayAlarms.length ? todayAlarms : (baseData?.alarms?.list || [])
         },
-        personnelStats: baseData?.personnelStats || { total: 0, todayIn: 0, todayOut: 0 }
+        personnelStats: baseData?.personnelStats || { total: 0, todayIn: 0, todayOut: 0, onSite: 0 }
       };
     }
 
@@ -749,28 +858,28 @@ const [avgDuration, setAvgDuration] = useState(0);
         baseData = projectData;
       }
     }
-    // 总公司模式
-    else if (selectedFilterBranchId === 0) {
+    // 集团/总公司模式
+    else if (selectedFilterBranchId === 0 || selectedFilterBranchId === 1) {
       baseData = headquartersData;
       setProjects(headquartersData.projectsList);
     }
     // 北京分公司
-    else if (selectedFilterBranchId === 1) {
+    else if (selectedFilterBranchId === 2) {
       baseData = beijingData;
       setProjects(beijingProjects);
     }
     // 上海分公司
-    else if (selectedFilterBranchId === 2) {
+    else if (selectedFilterBranchId === 3) {
       baseData = shanghaiData;
       setProjects(shanghaiProjects);
     }
     // 广州分公司
-    else if (selectedFilterBranchId === 3) {
+    else if (selectedFilterBranchId === 4) {
       baseData = guangzhouData;
       setProjects(guangzhouProjects);
     }
     // 成都分公司
-    else if (selectedFilterBranchId === 4) {
+    else if (selectedFilterBranchId === 5) {
       baseData = chengduData;
       setProjects(chengduProjects);
     }
@@ -788,7 +897,7 @@ const [avgDuration, setAvgDuration] = useState(0);
         list: todayAlarms
       }
     };
-  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId, todayAlarms]);
+  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId, todayAlarms, globalSafetyDays]);
     
 
     // ==================================================================
@@ -804,7 +913,9 @@ const [avgDuration, setAvgDuration] = useState(0);
       }
 
       // 获取当前选择的分支
-      const currentBranch = branches.find((b) => b.id === selectedFilterBranchId);
+      const currentBranch =
+        visibleBranches.find((b) => String(b.id) === String(selectedFilterBranchId)) ||
+        branches.find((b) => String(b.id) === String(selectedFilterBranchId));
       if (!currentBranch || !currentBranch.province) {
         setCurrentMapName("china");
         return;
@@ -843,7 +954,7 @@ const [avgDuration, setAvgDuration] = useState(0);
       // 切换当前地图使用注册好的省份名
       setCurrentMapName(provName);
     })();
-  }, [selectedFilterBranchId, branches]);
+  }, [selectedFilterBranchId, branches, visibleBranches]);
 
   // ✅ 只获取实时告警列表！其他全部硬编码！
   useEffect(() => {
@@ -859,7 +970,9 @@ const [avgDuration, setAvgDuration] = useState(0);
         } else if (selectedFilterBranchId) {
           alarmsUrl = `${baseUrl}/api/dashboard/alarms/today?branch_id=${selectedFilterBranchId}`;
         }
-        const resTodayAlarms = await fetch(alarmsUrl);
+        const resTodayAlarms = await fetch(alarmsUrl, {
+          headers: getDashboardHeaders(),
+        });
         if (resTodayAlarms.ok) {
           const todayAlarmsData = await resTodayAlarms.json();
           setTodayAlarms(todayAlarmsData);
@@ -885,11 +998,33 @@ const [avgDuration, setAvgDuration] = useState(0);
     }, []); 
 
     const filteredProjects = useMemo(() => {
+      if (dashboardScope.isProjectScope) {
+        if (dashboardScope.forcedProjectId) {
+          return projects.filter((p) => String(p.id) === String(dashboardScope.forcedProjectId));
+        }
+        if (dashboardScope.forcedProjectName) {
+          return projects.filter((p) => p.name === dashboardScope.forcedProjectName);
+        }
+        return projects.length === 1 ? projects : [];
+      }
       if (!selectedFilterBranchId) return [];
-      return projects.filter((p) => p.branch_id === selectedFilterBranchId);
-    }, [projects, selectedFilterBranchId]);
+      return projects.filter((p) => String(p.branch_id) === String(selectedFilterBranchId));
+    }, [
+      dashboardScope.forcedProjectId,
+      dashboardScope.forcedProjectName,
+      dashboardScope.isProjectScope,
+      projects,
+      selectedFilterBranchId,
+    ]);
 
     useEffect(() => {
+      if (dashboardScope.isProjectScope) {
+        const projectId = dashboardScope.forcedProjectId || filteredProjects[0]?.id || null;
+        if (projectId && selectedProjectId !== projectId) {
+          setSelectedProjectId(projectId);
+        }
+        return;
+      }
       if (filteredProjects.length > 0) {
         if (!filteredProjects.find((p) => p.id === selectedProjectId)) {
           setSelectedProjectId(null); 
@@ -900,9 +1035,66 @@ const [avgDuration, setAvgDuration] = useState(0);
       } else {
         setSelectedProjectId(null);
       }
-    }, [filteredProjects, selectedProjectId]);
+    }, [
+      dashboardScope.forcedProjectId,
+      dashboardScope.forcedProjectName,
+      dashboardScope.isProjectScope,
+      filteredProjects,
+      selectedProjectId,
+    ]);
 
-    const currentProject = projects.find((p) => p.id === selectedProjectId);
+    const currentProject = useMemo(() => {
+      if (selectedProjectId === null || selectedProjectId === undefined || selectedProjectId === "") {
+        return null;
+      }
+      const projectId = String(selectedProjectId);
+      return (
+        dashboardOverview?.projectsById?.[projectId] ||
+        projects.find((p) => String(p.id) === projectId) ||
+        currentData.projectsList?.find((p) => String(p.id) === projectId) ||
+        null
+      );
+    }, [currentData.projectsList, dashboardOverview, projects, selectedProjectId]);
+
+    const projectMapData = useMemo(() => {
+      if (!currentProject) return null;
+      const parsePoint = (value: any): [number, number] => {
+        if (Array.isArray(value)) return [Number(value[0]), Number(value[1])];
+        if (typeof value === "string" && value.trim()) {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return [Number(parsed[0]), Number(parsed[1])];
+          } catch {
+            // Fall back to longitude/latitude below.
+          }
+        }
+        return [Number(currentProject.longitude), Number(currentProject.latitude)];
+      };
+      const parseBoundary = (value: any): Array<[number, number]> => {
+        if (!value) return [];
+        const raw = Array.isArray(value) ? value : (() => {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return [];
+          }
+        })();
+        return Array.isArray(raw)
+          ? raw
+              .map((point: any) => [Number(point?.[0]), Number(point?.[1])] as [number, number])
+              .filter((point: [number, number]) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+          : [];
+      };
+      return {
+        id: Number(currentProject.id || currentProject.projectId),
+        name: currentProject.name || currentProject.projectName || "",
+        center: parsePoint(currentProject.center),
+        zoom_level: Number(currentProject.zoom_level || 17),
+        area_boundary: parseBoundary(currentProject.area_boundary),
+        devices: currentProject.devices || [],
+        deviceCount: currentProject.deviceCount || currentProject.devices?.length || 0,
+      };
+    }, [currentProject]);
       const isHQ = !selectedFilterBranchId;
       const isBranch = selectedFilterBranchId && !selectedProjectId;
       const isAllProjects = selectedFilterBranchId && selectedProjectId === null;
@@ -1038,9 +1230,12 @@ const [avgDuration, setAvgDuration] = useState(0);
   const mapOption = useMemo(() => {
 const projectPoints = projects
   .filter((p) => {
+    if (selectedProjectId) {
+      return String(p.id) === String(selectedProjectId) && p.longitude && p.latitude;
+    }
     // 如果选择了分公司，只显示该分公司的项目
     if (selectedFilterBranchId) {
-      return p.branch_id === selectedFilterBranchId && p.longitude && p.latitude;
+      return String(p.branch_id) === String(selectedFilterBranchId) && p.longitude && p.latitude;
     }
     return p.longitude && p.latitude;
   })
@@ -1055,7 +1250,6 @@ const projectPoints = projects
     const isProvince = currentMapName !== "china";
 
     const provinceConfig = getProvinceMapConfig(currentMapName);
-
     return {
       backgroundColor: "transparent",
   tooltip: {
@@ -1132,7 +1326,7 @@ const projectPoints = projects
         },
       ],
     };
-  }, [branches, selectedCenter, currentMapName, projects, selectedFilterBranchId]);
+  }, [branches, selectedCenter, currentMapName, projects, selectedFilterBranchId, selectedProjectId]);
 
     const deviceOption = useMemo(() => {
       const total = currentProject
@@ -1384,15 +1578,17 @@ const projectPoints = projects
                   style={S.selectBox}
                   value={selectedFilterBranchId || ""}
                   onChange={(e) => {
+                    if (!dashboardScope.isNationalScope) return;
                     const newBranchId = e.target.value ? Number(e.target.value) : "";
                     setSelectedFilterBranchId(newBranchId);
                     setSelectedProjectId(null);  // ← 添加这行，切换到所有项目
                   }}
+                  disabled={!dashboardScope.isNationalScope}
                 >
-                  {branches.length !== 1 && (
+                  {dashboardScope.isNationalScope && branches.length !== 1 && (
                     <option value="">-- 全景模式 --</option>
                   )}
-                  {branches.map((b) => (
+                  {visibleBranches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -1408,8 +1604,11 @@ const projectPoints = projects
                   className="cyber-select"
                   style={S.selectBox}
                   value={selectedProjectId || ""}
-                  onChange={(e) => setSelectedProjectId(Number(e.target.value))}
-                  disabled={!selectedFilterBranchId}
+                  onChange={(e) => {
+                    if (dashboardScope.isProjectScope) return;
+                    setSelectedProjectId(e.target.value ? Number(e.target.value) : null);
+                  }}
+                  disabled={!selectedFilterBranchId || dashboardScope.isProjectScope}
                 >
                   {!selectedFilterBranchId ? (
                     <option value="">请先选择分公司</option>
@@ -1444,7 +1643,7 @@ const projectPoints = projects
       <div style={S.safetyCardInner}>
         <div style={S.safetyLabel}>安全生产第</div>
         <div style={S.safetyNumber}>
-    <span style={S.safetyNumberValue}>{currentData.safetyDays || globalSafetyDays || 0}</span>
+    <span style={S.safetyNumberValue}>{globalSafetyDays || currentData.safetyDays || 0}</span>
           <span style={S.safetyNumberUnit}>天</span>
         </div>
       </div>
@@ -1486,15 +1685,15 @@ const projectPoints = projects
     <div style={S.coreStatItem}>
       <div style={S.coreStatIcon}><Smartphone size={28} strokeWidth={1.5} color="#60a5fa" /></div>
       <div style={S.coreStatInfo}>
-        <div style={S.coreStatValue}>{currentData.devices}</div>
-        <div style={S.coreStatLabel}>设备</div>
+        <div style={S.coreStatValue}>{currentData.gridCount || 0}</div>
+        <div style={S.coreStatLabel}>网格</div>
       </div>
     </div>
     <div style={S.coreStatItem}>
       <div style={S.coreStatIcon}><Users size={28} strokeWidth={1.5} color="#60a5fa" /></div>
       <div style={S.coreStatInfo}>
-        <div style={S.coreStatValue}>{currentData.personnel}</div>
-        <div style={S.coreStatLabel}>人员</div>
+        <div style={S.coreStatValue}>{currentData.teamCount || 0}</div>
+        <div style={S.coreStatLabel}>工队</div>
       </div>
     </div>
   </div>
@@ -1530,7 +1729,7 @@ const projectPoints = projects
                   <div style={S.personItem}>
                     <div style={S.personLabel}>总在场</div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-                      <div style={S.personValue}>{(currentData.personnelStats.onSite || currentData.personnelStats.total || 0).toLocaleString()}</div>
+                      <div style={S.personValue}>{(currentData.personnelStats.onSite ?? 0).toLocaleString()}</div>
                       <div style={S.personTrend}>人</div>
                     </div>
                   </div>
@@ -1980,9 +2179,9 @@ devices: currentProject.devices || [],
     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Bell size={22} strokeWidth={1.5} color="#ef4444" />
-        <span>今日告警态势</span>
+        <span>近七日告警态势</span>
       </div>
-      {/* 今日新增徽章 - 紧贴在标题后面 */}
+      {/* 近七日新增徽章 - 紧贴在标题后面 */}
       <span style={{ 
         background: "rgba(239,68,68,0.2)",
         color: "#ef4444",
@@ -2003,12 +2202,12 @@ devices: currentProject.devices || [],
           background: "#ef4444",
           animation: "status-dot 2s infinite"
         }} />
-        今日新增：{currentData.alarms.total}
+        近七日新增：{currentData.alarms.todayNew || 0}
       </span>
     </div>
     {/* 详情查看链接 - 放在最右侧 */}
     <span 
-      onClick={() => window.open('/alarms', '_blank')}
+      onClick={() => setActiveMenu(MenuKey.ALARM)}
       style={{ 
         fontSize: "12px",
         padding: "2px 8px",
@@ -2094,7 +2293,7 @@ devices: currentProject.devices || [],
         <Activity size={22} strokeWidth={1.5} color="#60a5fa" />
         <span>设备状况总览</span>
       </div>
-  <span style={{ ...S.sectionBadge, display: "flex", alignItems: "center", gap: 4 }}>
+  <span style={{ ...S.sectionBadge, display: "flex", alignItems: "center", gap: 4, cursor: 'pointer' }} onClick={() => { setActiveMenu(MenuKey.MANAGEMENT); setManagementTab('device'); }}>
     设备管理
     <ArrowRight size={12} strokeWidth={2} />
   </span>
@@ -2107,7 +2306,7 @@ devices: currentProject.devices || [],
       <div style={{ textAlign: "center", flex: 1 }}>
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           摄像头在线
-          <span onClick={() => window.open('/monitor/camera', '_blank')} 
+          <span onClick={() => setActiveMenu(MenuKey.VIDEO)} 
           style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", opacity: 0.7, transition: "opacity 0.2s", position: "relative" }}
           
             onMouseEnter={(e) => {
@@ -2172,7 +2371,7 @@ devices: currentProject.devices || [],
         <div style={{ ...S.alarmLabel, display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           定位设备在线
   <span 
-    onClick={() => window.open('/monitor/camera', '_blank')}
+    onClick={() => setActiveMenu(MenuKey.FENCE)}
     style={{ 
       cursor: "pointer",
       display: "inline-flex",
@@ -2186,7 +2385,7 @@ devices: currentProject.devices || [],
       // 创建并显示tooltip
       const tooltip = document.createElement('div');
       tooltip.className = 'custom-tooltip';
-      tooltip.textContent = '查看实时监控';
+      tooltip.textContent = '查看电子围栏';
       tooltip.style.cssText = `
         position: absolute;
         bottom: 120%;

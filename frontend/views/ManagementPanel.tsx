@@ -1,42 +1,74 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Users,
   Camera,
-  MapPin,
-  FolderTree,
-  Grid3X3,
-  // Fence,
-  Shield,
   ChevronRight,
-  Settings,
-  Search,
-  Plus,
-  Edit2,
-  Trash2,
-  X,
-  Save,
-  Loader,
+  FolderTree,
+  GitBranch,
+  Grid3X3,
   HardDrive,
+  MapPin,
+  Shield,
+  Users,
+  UsersRound,
 } from 'lucide-react';
 
-// 导入各个管理子组件
-import PersonManagement from '../src/components/PersonManagement';
 import CameraManagement from '../src/components/CameraManagement';
 import LocationDeviceManagement from '../src/components/LocationDeviceManagement';
-import ProjectManagement from './Project';
 import PermissionManagement from '../src/components/PermissionManagement';
+import PersonManagement from '../src/components/PersonManagement';
 import GridManagement from './GridManagement';
-// import FenceManagement from '../src/components/FenceManagement';
+import ProjectManagement from './Project';
+import ResponsibilityManagement from './ResponsibilityManagement';
+import TeamManagement from './TeamManagement';
 
-// type ManagementTab = 'person' | 'camera' | 'location' | 'project' | 'fence';
-type ManagementTab = 'project' | 'grid' | 'person' | 'device' | 'camera' | 'location' | 'permission';
+type ManagementTab = 'project' | 'responsibility' | 'grid' | 'team' | 'person' | 'device' | 'camera' | 'location' | 'permission';
 type DeviceSubTab = 'camera' | 'location';
 
 interface ManagementPanelProps {
   defaultTab?: ManagementTab;
 }
 
-export default function ManagementPanel({ defaultTab = 'project' }: ManagementPanelProps) {
+const readPermissions = () => {
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+    if (Array.isArray(auth.permissions)) return auth.permissions as string[];
+  } catch {
+    // Ignore invalid stored auth.
+  }
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '[]') as string[];
+  } catch {
+    return [];
+  }
+};
+
+const canUsePermission = (permissions: string[], code: string) => {
+  return permissions.includes(code);
+};
+
+const readPermissionLevel = () => {
+  const stored = localStorage.getItem('permission_level') || '';
+  if (stored) return stored;
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+    return auth?.permission_level || '';
+  } catch {
+    return '';
+  }
+};
+
+const canUseManagementTab = (level: string, tab: ManagementTab) => {
+  const isHq = level === 'headquarters_admin' || !level;
+  if (isHq) return true;
+  if (tab === 'responsibility') return level === 'branch_admin' || level === 'project_safety_admin';
+  if (tab === 'permission') return level === 'branch_admin';
+  if (tab === 'project') return level === 'branch_admin';
+  if (tab === 'grid') return level === 'branch_admin' || level === 'project_safety_admin';
+  if (tab === 'team') return level !== 'team_admin';
+  return true;
+};
+
+export default function ManagementPanel({ defaultTab = 'responsibility' }: ManagementPanelProps) {
   const normalizeTab = (tab: ManagementTab): ManagementTab => (tab === 'camera' || tab === 'location' ? 'device' : tab);
   const initialDeviceSubTab = (tab: ManagementTab): DeviceSubTab => (tab === 'location' ? 'location' : 'camera');
   const [activeTab, setActiveTab] = useState<ManagementTab>(normalizeTab(defaultTab));
@@ -49,17 +81,49 @@ export default function ManagementPanel({ defaultTab = 'project' }: ManagementPa
     }
   }, [defaultTab]);
 
+  const permissions = readPermissions();
+  const permissionLevel = readPermissionLevel();
+  const permissionByTab: Record<ManagementTab, string> = {
+    project: 'personnel.view',
+    responsibility: 'personnel.view',
+    grid: 'personnel.view',
+    team: 'personnel.view',
+    person: 'personnel.view',
+    device: 'device.view',
+    camera: 'device.view',
+    location: 'device.view',
+    permission: 'system.role',
+  };
+
   const tabs = [
-    { id: 'project' as ManagementTab, label: '项目管理', icon: FolderTree, description: '项目、工队、参建单位' },
-    { id: 'grid' as ManagementTab, label: '网格管理', icon: Grid3X3, description: '网格划分、责任单元' },
-    { id: 'person' as ManagementTab, label: '人员管理', icon: Users, description: '人员信息、岗位管理' },
-    { id: 'device' as ManagementTab, label: '设备管理', icon: HardDrive, description: '摄像头、定位装置' },
-    { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield, description: '角色权限配置' },
-    // { id: 'fence' as ManagementTab, label: '电子围栏管理', icon: Fence, description: '围栏配置、报警规则' },
+    { id: 'responsibility' as ManagementTab, label: '穿透式责任管理', icon: GitBranch },
+    { id: 'project' as ManagementTab, label: '项目管理', icon: FolderTree },
+    { id: 'grid' as ManagementTab, label: '网格管理', icon: Grid3X3 },
+    { id: 'team' as ManagementTab, label: '工队管理', icon: UsersRound },
+    { id: 'person' as ManagementTab, label: '人员管理', icon: Users },
+    { id: 'device' as ManagementTab, label: '设备管理', icon: HardDrive },
+    { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield },
   ];
+  const visibleTabs = tabs.filter(tab =>
+    canUsePermission(permissions, permissionByTab[tab.id]) && canUseManagementTab(permissionLevel, tab.id)
+  );
+
+  useEffect(() => {
+    if (!visibleTabs.find(tab => tab.id === activeTab)) {
+      setActiveTab(visibleTabs[0]?.id || 'person');
+    }
+  }, [activeTab, visibleTabs]);
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'project':
+        return <ProjectManagement />;
+      case 'responsibility':
+        return <ResponsibilityManagement />;
+      case 'grid':
+        return <GridManagement />;
+      case 'team':
+        return <TeamManagement />;
       case 'person':
         return <PersonManagement />;
       case 'device':
@@ -94,15 +158,8 @@ export default function ManagementPanel({ defaultTab = 'project' }: ManagementPa
             </div>
           </div>
         );
-      case 'project':
-        return <ProjectManagement />;
-      case 'grid':
-        return <GridManagement />;
       case 'permission':
         return <PermissionManagement />;
-        
-      // case 'fence':
-      //   return <FenceManagement />;
       default:
         return <PersonManagement />;
     }
@@ -110,8 +167,6 @@ export default function ManagementPanel({ defaultTab = 'project' }: ManagementPa
 
   return (
     <div className="h-full flex flex-col gap-4 p-4 text-slate-100 bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)]">
-      
-      {/* 页面标题和 Tab 切换栏 */}
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-cyan-500/20 rounded-lg">
@@ -119,14 +174,13 @@ export default function ManagementPanel({ defaultTab = 'project' }: ManagementPa
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-100">管理中心</h1>
-            <p className="text-sm text-slate-400">人员、设备、项目、围栏统一管理</p>
+            <p className="text-sm text-slate-400">人员、设备、项目、网格统一管理</p>
           </div>
         </div>
 
-        {/* Tab 切换栏 */}
         <div className="flex-1">
           <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-2 flex gap-2">
-            {tabs.map(tab => (
+            {visibleTabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -145,7 +199,6 @@ export default function ManagementPanel({ defaultTab = 'project' }: ManagementPa
         </div>
       </div>
 
-      {/* 内容区域 */}
       <div className="flex-1 overflow-hidden">
         {renderContent()}
       </div>

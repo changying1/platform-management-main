@@ -41,6 +41,14 @@ class UserUpdate(BaseModel):
 
     department_id: Optional[int] = None
 
+    team: Optional[str] = None
+
+    work_team: Optional[str] = None
+
+    company: Optional[str] = None
+
+    project: Optional[str] = None
+
 
 
 class UserOut(BaseModel):

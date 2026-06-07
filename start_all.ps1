@@ -1,5 +1,5 @@
 param(
-    [switch]$FullBackend
+    [switch]$StableApiOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +30,50 @@ function Wait-LocalPort {
         Start-Sleep -Seconds 1
     }
     return $false
+}
+
+function Stop-LocalPort {
+    param(
+        [int]$Port,
+        [string]$Name
+    )
+
+    $connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -eq $Port }
+    $processIds = $connections |
+        Select-Object -ExpandProperty OwningProcess -Unique |
+        Where-Object { $_ -and $_ -gt 0 }
+
+    foreach ($processId in $processIds) {
+        try {
+            $process = Get-Process -Id $processId -ErrorAction Stop
+            Write-Host "[..] Stopping existing $Name on port $Port (PID $processId, $($process.ProcessName))..."
+            Stop-Process -Id $processId -Force
+        } catch {
+            Write-Host "[WARN] Could not stop $Name PID ${processId}: $($_.Exception.Message)"
+        }
+    }
+
+    for ($i = 0; $i -lt 10; $i++) {
+        if (-not (Test-LocalPort -Port $Port)) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if (Test-LocalPort -Port $Port) {
+        throw "$Name is still listening on port $Port after stop attempt."
+    }
+}
+
+function Stop-FrontendPorts {
+    $ports = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -ge 3000 -and $_.LocalPort -le 3010 } |
+        Select-Object -ExpandProperty LocalPort -Unique
+
+    foreach ($port in $ports) {
+        Stop-LocalPort -Port $port -Name "frontend"
+    }
 }
 
 function Find-Mongod {
@@ -106,15 +150,14 @@ function Start-Mongo {
 
 function Start-Backend {
     if (Test-LocalPort -Port 9000) {
-        Write-Host "[OK] Backend already listening on 9000"
-        return
+        Stop-LocalPort -Port 9000 -Name "backend"
     }
 
     $python = Find-Python
     $backendOut = Join-Path $LogDir "backend.out.log"
     $backendErr = Join-Path $LogDir "backend.err.log"
     $args = @("-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000")
-    if (-not $FullBackend) {
+    if ($StableApiOnly) {
         $args += @("--lifespan", "off")
     }
 
@@ -167,10 +210,7 @@ function Start-Ollama {
 
 function Start-Frontend {
     $frontendPort = 3000
-    if (Test-LocalPort -Port $frontendPort) {
-        Write-Host "[OK] Frontend already listening on $frontendPort"
-        return
-    }
+    Stop-FrontendPorts
 
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if (-not $npm) {
@@ -206,7 +246,7 @@ Write-Host "============================================================"
 Write-Host "Starting platform services"
 Write-Host "Root: $Root"
 Write-Host "Logs: $LogDir"
-Write-Host "Backend mode: $(if ($FullBackend) { 'full lifespan, includes JT808 8989' } else { 'stable API only' })"
+Write-Host "Backend mode: $(if ($StableApiOnly) { 'stable API only' } else { 'full lifespan, includes fence polling and JT808 8989' })"
 Write-Host "============================================================"
 
 Start-Mongo

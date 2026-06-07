@@ -1,7 +1,7 @@
 import os
 import shutil
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from app.services.llm_service import (
@@ -10,6 +10,9 @@ from app.services.llm_service import (
     create_llm_chain,
     select_best_model
 )
+from app.core.database import get_mongo_db
+from app.core.security import get_current_user
+from app.services.ai_data_query_service import build_ai_query_context
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "LargeLanguageModel")
 DOCUMENTS_DIR = os.path.join(BASE_DIR, "Documents")
@@ -78,7 +81,11 @@ def health_check():
 
 
 @router.post("/chat")
-def chat_handler(request: ChatRequest):
+def chat_handler(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+    mongo_db=Depends(get_mongo_db),
+):
     if not check_ollama_connection():
         return {
             "status": "warning",
@@ -114,7 +121,20 @@ def chat_handler(request: ChatRequest):
             for turn in request.chat_data.history
         ]
 
-        system_context = request.chat_data.system_context
+        system_context = dict(request.chat_data.system_context or {})
+        query_context = build_ai_query_context(
+            request.chat_data.prompt,
+            current_user,
+            mongo_db,
+        )
+        if query_context.get("direct_answer"):
+            return {
+                "status": "success",
+                "response": query_context["direct_answer"],
+                "history": request.chat_data.history,
+                "query_context": query_context,
+            }
+        system_context["query_context"] = query_context
         chain = create_llm_chain(
             history_dicts,
             kb_name=request.kb_config.kb_name,

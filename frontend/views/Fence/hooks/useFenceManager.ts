@@ -1,7 +1,8 @@
 // hooks/useFenceManager.ts
 // 围栏 + 设备 数据管理 —— 全部从后端获取，前端不再持有任何模拟数据
-import { useState, useEffect, useCallback } from "react";
-import { FenceData, FenceDevice, ProjectRegionData, FenceFilter, WorkTeamData } from "../types";
+import { useMemo, useState, useEffect, useCallback } from "react";
+import { FenceData, FenceDevice, ProjectRegionData, FenceFilter, WorkTeamData, OrganizationTreeNode } from "../types";
+import { getAuthHeaders } from "../../../src/api/config";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
 
@@ -20,6 +21,7 @@ export const getFenceColor = (severity: string): string => {
 export const useFenceManager = () => {
   const [fences, setFences] = useState<FenceData[]>([]);
   const [teams, setTeams] = useState<WorkTeamData[]>([]);
+  const [organizationTree, setOrganizationTree] = useState<OrganizationTreeNode[]>([]);
   const [devices, setDevices] = useState<FenceDevice[]>([]);
   const [regions, setRegions] = useState<ProjectRegionData[]>([]);
   const [filter, setFilter] = useState<FenceFilter>({});
@@ -30,12 +32,50 @@ export const useFenceManager = () => {
   const [debugMode, setDebugMode] = useState(false);
   const [manualPositions, setManualPositions] = useState<Record<string, { lat: number; lng: number; originalLat: number; originalLng: number }>>({});
 
+  const text = (value: any) => String(value ?? "").trim();
+  const normalize = (value: any) => text(value).toLowerCase();
+
+  const gridNameById = useMemo(() => {
+    const map = new Map<string, string>();
+
+    const visit = (nodes: OrganizationTreeNode[]) => {
+      nodes.forEach(node => {
+        const nodeType = normalize(node.type);
+        if (nodeType === "grid" || nodeType === "safety_office") {
+          [node.unit_id, node.grid_id, node.id].forEach(id => {
+            const key = text(id);
+            if (key) map.set(key, node.name);
+          });
+        }
+        visit(node.children || []);
+      });
+    };
+
+    visit(organizationTree);
+    return map;
+  }, [organizationTree]);
+
+  const getGridName = useCallback((item: { grid?: string; grid_name?: string; grid_id?: string | number | null }) => {
+    return text(item.grid_name || item.grid || gridNameById.get(text(item.grid_id)) || item.grid_id);
+  }, [gridNameById]);
+
+  const sameGrid = useCallback((item: { grid?: string; grid_name?: string; grid_id?: string | number | null }, selectedGrid: string) => {
+    const selected = text(selectedGrid);
+    if (!selected) return true;
+    return text(item.grid_id) === selected || getGridName(item) === selected;
+  }, [getGridName]);
+
+  const matchesKeyword = useCallback((fields: any[], keyword: string) => {
+    const normalizedKeyword = normalize(keyword);
+    return fields.some(field => normalize(field).includes(normalizedKeyword));
+  }, []);
+
   // ============================
   //  初始化：从后端拉取围栏 + 区域
   // ============================
   const fetchFences = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/fence/list`);
+      const res = await fetch(`${API_BASE}/fence/list`, { headers: getAuthHeaders(), credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setFences(data);
@@ -46,7 +86,7 @@ export const useFenceManager = () => {
 
   const fetchRegions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/fence/regions`);
+      const res = await fetch(`${API_BASE}/fence/regions`, { headers: getAuthHeaders(), credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setRegions(data);
@@ -57,7 +97,7 @@ export const useFenceManager = () => {
 
   const fetchTeams = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/fence/teams`);
+      const res = await fetch(`${API_BASE}/fence/teams`, { headers: getAuthHeaders(), credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setTeams(data);
@@ -66,12 +106,24 @@ export const useFenceManager = () => {
     }
   }, []);
 
+  const fetchOrganizationTree = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/responsibility-units/tree`, { headers: getAuthHeaders(), credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setOrganizationTree(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("拉取责任组织树失败:", err);
+    }
+  }, []);
+
   // 首次加载围栏和区域
   useEffect(() => {
     fetchFences();
     fetchRegions();
     fetchTeams();
-  }, [fetchFences, fetchRegions, fetchTeams]);
+    fetchOrganizationTree();
+  }, [fetchFences, fetchRegions, fetchTeams, fetchOrganizationTree]);
 
   // ============================
   //  轮询：从后端拉取设备列表（含实时坐标）
@@ -79,7 +131,7 @@ export const useFenceManager = () => {
   useEffect(() => {
     const fetchDevices = async () => {
       try {
-        const res = await fetch(`${API_BASE}/device/devices`);
+        const res = await fetch(`${API_BASE}/device/devices`, { headers: getAuthHeaders(), credentials: "include" });
         if (!res.ok) return;
         const data: FenceDevice[] = await res.json();
 
@@ -117,12 +169,20 @@ export const useFenceManager = () => {
   const filteredFences = fences.filter(fence => {
     if (filter.company && fence.company !== filter.company) return false;
     if (filter.project && fence.project !== filter.project) return false;
+    if (filter.grid && !sameGrid(fence, filter.grid)) return false;
     if (filter.severity && fence.severity !== filter.severity) return false;
     if (filter.keyword) {
-      const keyword = filter.keyword.toLowerCase();
-      return fence.name.toLowerCase().includes(keyword) ||
-             fence.company.toLowerCase().includes(keyword) ||
-             fence.project.toLowerCase().includes(keyword);
+      const relatedDevices = devices.filter(device =>
+        (fence.grid_id && text(device.grid_id) === text(fence.grid_id)) ||
+        (fence.company && device.company === fence.company && fence.project && device.project === fence.project)
+      );
+      return matchesKeyword([
+        fence.company,
+        fence.project,
+        getGridName(fence),
+        fence.name,
+        ...relatedDevices.flatMap(device => [device.name, device.device_id]),
+      ], filter.keyword);
     }
     return true;
   });
@@ -136,12 +196,16 @@ export const useFenceManager = () => {
   }).filter(device => {
     if (filter.company && device.company !== filter.company) return false;
     if (filter.project && device.project !== filter.project) return false;
+    if (filter.grid && !sameGrid(device, filter.grid)) return false;
     if (filter.keyword) {
-      const keyword = filter.keyword.toLowerCase();
-      return device.name.toLowerCase().includes(keyword) ||
-             device.holder.toLowerCase().includes(keyword) ||
-             device.company.toLowerCase().includes(keyword) ||
-             device.project.toLowerCase().includes(keyword);
+      return matchesKeyword([
+        device.company,
+        device.project,
+        getGridName(device),
+        device.name,
+        device.device_id,
+        device.holder,
+      ], filter.keyword);
     }
     return true;
   });
@@ -166,7 +230,8 @@ export const useFenceManager = () => {
     try {
       const res = await fetch(`${API_BASE}/device/update-position`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
         body: JSON.stringify({ device_id: deviceId, lat, lng }),
       });
 
@@ -205,6 +270,12 @@ export const useFenceManager = () => {
         name: fenceData.name,
         company: fenceData.company,
         project: fenceData.project,
+        grid: fenceData.grid,
+        team: fenceData.team,
+        branch_id: fenceData.branch_id,
+        project_id: fenceData.project_id,
+        grid_id: fenceData.grid_id,
+        team_id: fenceData.team_id,
         shape: fenceData.shape || (fenceData.type === "Circle" ? "circle" : "polygon"),
         behavior: fenceData.behavior,
         severity: fenceData.severity,
@@ -219,7 +290,8 @@ export const useFenceManager = () => {
 
       const res = await fetch(`${API_BASE}/fence/add`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
@@ -238,19 +310,35 @@ export const useFenceManager = () => {
     }
   }, [fetchFences]);
 
-  const updateFence = useCallback((id: string, updates: Partial<FenceData>) => {
-    // 暂时在前端本地更新（后端可以后续补 PUT 接口）
-    setFences(prev => prev.map(fence =>
-      fence.id === id
-        ? { ...fence, ...updates, updatedAt: new Date().toISOString() }
-        : fence
-    ));
-  }, []);
+  const updateFence = useCallback(async (id: string, updates: Partial<FenceData>) => {
+    try {
+      const res = await fetch(`${API_BASE}/fence/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify(updates),
+      });
+
+      if (!res.ok) {
+        console.error("Update fence failed:", await res.text());
+        return null;
+      }
+
+      const updatedFence = await res.json();
+      await fetchFences();
+      return updatedFence;
+    } catch (err) {
+      console.error("Update fence error:", err);
+      return null;
+    }
+  }, [fetchFences]);
 
   const deleteFence = useCallback(async (id: string) => {
     try {
       const res = await fetch(`${API_BASE}/fence/delete/${id}`, {
         method: "DELETE",
+        headers: getAuthHeaders(),
+        credentials: "include",
       });
       if (!res.ok) {
         console.error("删除围栏失败:", await res.text());
@@ -277,7 +365,9 @@ export const useFenceManager = () => {
 
   return {
     fences,
+    filteredFences,
     teams,
+    organizationTree,
     devices,
     filteredDevices,
     regions,

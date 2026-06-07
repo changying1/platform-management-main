@@ -34,6 +34,21 @@ class PersonnelCreate(BaseModel):
     faceImage: Optional[str] = ""
 
 
+    loginUsername: Optional[str] = ""
+
+
+    loginPassword: Optional[str] = ""
+
+
+    permissionLevel: Optional[str] = ""
+
+    gridRole: Optional[str] = ""
+
+    gridIds: Optional[list[str]] = []
+
+    responsibilityUnitId: Optional[str] = ""
+
+
 
 
 
@@ -44,6 +59,12 @@ class PersonnelCreate(BaseModel):
 
 
     company: Optional[str] = ""
+    branchId: Optional[str] = ""
+    projectId: Optional[str] = ""
+    gridId: Optional[str] = ""
+    teamId: Optional[str] = ""
+    isResponsibilityPerson: Optional[bool] = False
+    responsibilityLevel: Optional[str] = ""
 
 
     project: Optional[str] = ""
@@ -97,6 +118,21 @@ class PersonnelUpdate(BaseModel):
     faceImage: Optional[str] = None
 
 
+    loginUsername: Optional[str] = None
+
+
+    loginPassword: Optional[str] = None
+
+
+    permissionLevel: Optional[str] = None
+
+    gridRole: Optional[str] = None
+
+    gridIds: Optional[list[str]] = None
+
+    responsibilityUnitId: Optional[str] = None
+
+
 
 
 
@@ -107,6 +143,12 @@ class PersonnelUpdate(BaseModel):
 
 
     company: Optional[str] = None
+    branchId: Optional[str] = None
+    projectId: Optional[str] = None
+    gridId: Optional[str] = None
+    teamId: Optional[str] = None
+    isResponsibilityPerson: Optional[bool] = None
+    responsibilityLevel: Optional[str] = None
 
 
     project: Optional[str] = None
@@ -163,6 +205,18 @@ class PersonnelOut(BaseModel):
     faceImage: Optional[str] = ""
 
 
+    loginUsername: Optional[str] = ""
+
+
+    permissionLevel: Optional[str] = ""
+
+    gridRole: Optional[str] = ""
+
+    gridIds: Optional[list[str]] = []
+
+    responsibilityUnitId: Optional[str] = ""
+
+
 
 
 
@@ -173,6 +227,12 @@ class PersonnelOut(BaseModel):
 
 
     company: Optional[str] = ""
+    branchId: Optional[str] = ""
+    projectId: Optional[str] = ""
+    gridId: Optional[str] = ""
+    teamId: Optional[str] = ""
+    isResponsibilityPerson: Optional[bool] = False
+    responsibilityLevel: Optional[str] = ""
 
 
     project: Optional[str] = ""

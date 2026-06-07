@@ -8,8 +8,10 @@ class LogCreate(BaseModel):
     target_type: str
     target_name: str
     details: Optional[str] = None
+    level: Optional[str] = "info"
     company: Optional[str] = None
     project: Optional[str] = None
+    grid: Optional[str] = None
     team: Optional[str] = None
     extra: Optional[dict[str, Any]] = None
 
@@ -20,8 +22,10 @@ class LogOut(BaseModel):
     target_type: str
     target_name: str
     details: Optional[str] = None
+    level: Optional[str] = "info"
     company: Optional[str] = None
     project: Optional[str] = None
+    grid: Optional[str] = None
     team: Optional[str] = None
     extra: Optional[dict[str, Any]] = None
     time: datetime

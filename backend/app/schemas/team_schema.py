@@ -7,7 +7,9 @@ class TeamBase(BaseModel):
     name: str
     color: str
     company: Optional[str] = ""
-    project: Optional[str] = ""
+    project: Optional[str] = ""
+    project_id: Optional[str] = ""
+    grid_id: Optional[str] = ""
 
 
 class TeamCreate(TeamBase):
@@ -18,13 +20,15 @@ class TeamUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
     company: Optional[str] = None
-    project: Optional[str] = None
+    project: Optional[str] = None
+    project_id: Optional[str] = None
+    grid_id: Optional[str] = None
     fence_ids: Optional[List[str]] = None
 
 
 class TeamItem(TeamBase):
     team_id: str
-    fence_ids: List[str] = []
+    fence_ids: List[str] = []
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 

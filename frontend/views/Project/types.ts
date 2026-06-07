@@ -12,10 +12,18 @@ export interface Device {
 }
 
 export interface Region {
-  id: number;
+  id: number | string;
   name: string;
   coordinates_json: string;
   remark?: string;
+}
+
+export interface Branch {
+  id: number;
+  name: string;
+  province?: string;
+  city?: string;
+  status?: string;
 }
 
 export interface ProjectListItem {
@@ -66,3 +74,7 @@ export interface ProjectFormData {
   status: string;
   remark: string;
   branch_id?: number;
+  user_ids: number[];
+  device_ids: string[];
+  region_ids: number[];
+}

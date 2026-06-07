@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { X, MapPin, Clock, AlertTriangle, Check, Circle, Hexagon, Move, Users, ChevronDown, ChevronRight, X as XIcon } from "lucide-react";
+import { OrganizationTreeNode } from "../types";
 
 interface OrgNode {
   id: string;
   name: string;
-  type: "company" | "project" | "team";
+  type: "company" | "project" | "grid" | "team";
+  unit_id?: string;
+  sourceType?: string;
   children?: OrgNode[];
 }
 
@@ -19,40 +22,11 @@ interface FenceAddModalProps {
   editingFenceId?: string | null;
   companies?: string[];
   projects?: string[];
+  organizationTree?: OrganizationTreeNode[];
   collectedPoints?: any[];
   onStartCollectMode?: () => void;
   onEnterDrawMode?: () => void;
 }
-
-const mockOrgData: OrgNode[] = [
-  {
-    id: "company-1",
-    name: "第一分公司",
-    type: "company",
-    children: [
-      { id: "proj-1-1", name: "西安地铁15号线", type: "project", children: [
-        { id: "team-1-1-1", name: "土方作业队", type: "team" },
-        { id: "team-1-1-2", name: "钢筋班组", type: "team" },
-        { id: "team-1-1-3", name: "起重作业队", type: "team" },
-      ]},
-      { id: "proj-1-2", name: "曲江智慧园区", type: "project", children: [
-        { id: "team-1-2-1", name: "机电安装队", type: "team" },
-        { id: "team-1-2-2", name: "消防班组", type: "team" },
-      ]},
-    ]
-  },
-  {
-    id: "company-2",
-    name: "第二分公司",
-    type: "company",
-    children: [
-      { id: "proj-2-1", name: "成都天府机场", type: "project", children: [
-        { id: "team-2-1-1", name: "航站楼作业队", type: "team" },
-        { id: "team-2-1-2", name: "跑道施工队", type: "team" },
-      ]},
-    ]
-  },
-];
 
 export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   isOpen,
@@ -65,6 +39,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   editingFenceId,
   companies = [],
   projects = [],
+  organizationTree = [],
   collectedPoints = [],
   onStartCollectMode,
   onEnterDrawMode,
@@ -88,7 +63,40 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   // 🏢 组织架构多选
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
   const [selectedOrgs, setSelectedOrgs] = useState<OrgNode[]>([]);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(["company-1", "company-2"]));
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+
+  const orgTreeData = useMemo<OrgNode[]>(() => {
+    const toOrgType = (type: string): OrgNode["type"] | null => {
+      const normalized = String(type || "").toLowerCase();
+      if (normalized === "branch") return "company";
+      if (normalized === "project") return "project";
+      if (normalized === "grid" || normalized === "safety_office") return "grid";
+      if (normalized === "team") return "team";
+      return null;
+    };
+
+    const convert = (node: OrganizationTreeNode): OrgNode | null => {
+      const children = (node.children || []).map(convert).filter(Boolean) as OrgNode[];
+      const type = toOrgType(node.type);
+      if (!type) return null;
+      return {
+        id: String(node.unit_id || node.id),
+        unit_id: String(node.unit_id || node.id),
+        name: node.name,
+        type,
+        sourceType: String(node.type || ""),
+        children,
+      };
+    };
+
+    return organizationTree.map(convert).filter(Boolean) as OrgNode[];
+  }, [organizationTree]);
+
+  useEffect(() => {
+    if (isOpen && orgTreeData.length > 0) {
+      setExpandedNodes(new Set(orgTreeData.map(node => node.id)));
+    }
+  }, [isOpen, orgTreeData]);
   
   const toggleNode = (id: string) => {
     setExpandedNodes(prev => {
@@ -142,9 +150,10 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full ml-auto ${
             node.type === 'company' ? 'bg-blue-500/20 text-blue-400' :
             node.type === 'project' ? 'bg-purple-500/20 text-purple-400' :
+            node.type === 'grid' ? 'bg-cyan-500/20 text-cyan-400' :
             'bg-green-500/20 text-green-400'
           }`}>
-            {node.type === 'company' ? '分公司' : node.type === 'project' ? '项目' : '作业队'}
+            {node.type === 'company' ? '分公司' : node.type === 'project' ? '项目' : node.type === 'grid' ? '网格' : '工队'}
           </span>
         </div>
         {hasChildren && isExpanded && node.children!.map(child => renderOrgNode(child, level + 1))}
@@ -163,6 +172,25 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
     severity: "medium" as "low" | "medium" | "high" | "severe",
     selectedDeviceIds: [] as string[],
   });
+
+  const getSelectedOrgPayload = () => {
+    const first = (type: OrgNode["type"]) => selectedOrgs.find(org => org.type === type);
+    const company = first("company");
+    const project = first("project");
+    const grid = first("grid");
+    const team = first("team");
+    return {
+      company: company?.name || "",
+      project: project?.name || "",
+      grid: grid?.name || "",
+      team: team?.name || "",
+      branch_id: company?.unit_id || company?.id || null,
+      project_id: project?.unit_id || project?.id || null,
+      grid_id: grid?.unit_id || grid?.id || null,
+      team_id: team?.unit_id || team?.id || null,
+      orgs: selectedOrgs,
+    };
+  };
 
   // 重置表单
   useEffect(() => {
@@ -274,7 +302,7 @@ const showTopTip = (message: string) => {
       shape: shape,
       center: tempCenter,
       points: tempPoints,
-      orgs: selectedOrgs,
+      ...getSelectedOrgPayload(),
     });
     onClose();
   };
@@ -478,7 +506,7 @@ const showTopTip = (message: string) => {
                   className="w-full px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg cursor-pointer hover:border-cyan-400 transition-colors min-h-[48px]"
                 >
                   {selectedOrgs.length === 0 ? (
-                    <span className="text-slate-300">点击选择 分公司 / 项目 / 作业队</span>
+                    <span className="text-slate-300">点击选择 分公司 / 项目 / 网格 / 工队</span>
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {selectedOrgs.slice(0, 3).map(org => (
@@ -497,80 +525,13 @@ const showTopTip = (message: string) => {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setOrgDropdownOpen(false)} />
                     <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-cyan-400/30 rounded-lg shadow-2xl z-20 max-h-[320px] overflow-y-auto py-1">
-                      {/* 分公司 */}
-                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-                        ─── 分公司 ───
-                      </div>
-                      {["第一分公司", "第二分公司", "第三分公司"].map(name => {
-                        const isSel = selectedOrgs.some(o => o.name === name);
-                        return (
-                          <div 
-                            key={name}
-                            onClick={() => {
-                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'company' }]);
-                            }}
-                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-                            }`}
-                          >
-                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
-                              {isSel && '✓'}
-                            </span>
-                            {name}
-                          </div>
-                        );
-                      })}
-                      
-                      {/* 项目 */}
-                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-                        ─── 项目 ───
-                      </div>
-                      {["西安地铁15号线", "曲江智慧园区", "成都天府机场"].map(name => {
-                        const isSel = selectedOrgs.some(o => o.name === name);
-                        return (
-                          <div 
-                            key={name}
-                            onClick={() => {
-                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'project' }]);
-                            }}
-                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-                            }`}
-                          >
-                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
-                              {isSel && '✓'}
-                            </span>
-                            {name}
-                          </div>
-                        );
-                      })}
-                      
-                      {/* 作业队 */}
-                      <div className="px-2 py-1.5 text-[10px] text-slate-500 font-bold bg-slate-800/50 sticky top-0 uppercase tracking-wider">
-                        ─── 作业队 ───
-                      </div>
-                      {["土方作业队", "钢筋班组", "起重作业队", "机电安装队", "消防班组"].map(name => {
-                        const isSel = selectedOrgs.some(o => o.name === name);
-                        return (
-                          <div 
-                            key={name}
-                            onClick={() => {
-                              if (isSel) setSelectedOrgs(selectedOrgs.filter(o => o.name !== name));
-                              else setSelectedOrgs([...selectedOrgs, { id: name, name, type: 'team' }]);
-                            }}
-                            className={`px-3 py-1.5 text-sm cursor-pointer flex items-center gap-2 ${
-                              isSel ? 'bg-cyan-500/20 text-cyan-300' : 'hover:bg-slate-800'
-                            }`}
-                          >
-                            <span className="w-4 h-4 rounded border flex items-center justify-center text-xs">
-                              {isSel && '✓'}
-                            </span>
-                            {name}
-                          </div>
-                        );
-                      })}
+                      {orgTreeData.length > 0 ? (
+                        orgTreeData.map(node => renderOrgNode(node))
+                      ) : (
+                        <div className="px-3 py-6 text-sm text-slate-500 text-center">
+                          暂无组织数据
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -699,7 +660,7 @@ const showTopTip = (message: string) => {
                         ...formData,
                         center: null,
                         points: collectedPoints.map((point) => [point.lat, point.lng]),
-                        orgs: selectedOrgs,
+                        ...getSelectedOrgPayload(),
                       });
                       return;
                     }
@@ -707,6 +668,7 @@ const showTopTip = (message: string) => {
                     setStep("draw");
                     onNext({
                       ...formData,
+                      ...getSelectedOrgPayload(),
                       center: null,
                       points: [],
                     });

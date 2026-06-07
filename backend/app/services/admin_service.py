@@ -1,5 +1,9 @@
+from datetime import datetime
+
 from app.core.database import get_mongo_collection, get_next_sequence
+from app.core.data_scope import in_scope
 from app.schemas.admin_schema import UserCreate, UserUpdate
+from app.utils.config_manager import get_force_initial_password_change
 from app.utils.logger import get_logger
 
 logger = get_logger("AdminService")
@@ -28,6 +32,23 @@ class AdminService:
     def _find_by_id(self, user_id: int):
         return self.collection.find_one({"$or": [{"id": int(user_id)}, {"id": str(user_id)}]})
 
+    def _visible_to_user(self, doc: dict | None, current_user: dict | None) -> bool:
+        if current_user is None:
+            return True
+        if str((doc or {}).get("username") or "") == str(current_user.get("username") or ""):
+            return True
+        return in_scope(
+            doc,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id", "grid_ids"),
+            team_fields=("team_id",),
+            branch_fields=("branch_id", "department_id"),
+            company_fields=("company", "department"),
+            project_name_fields=("project",),
+            team_name_fields=("team", "work_team"),
+        )
+
     def create_user(self, mongo_db, user_data: UserCreate):
         logger.info(f"Creating new user: {user_data.username} with role {user_data.role}")
         next_id = get_next_sequence("user_id")
@@ -36,7 +57,22 @@ class AdminService:
             "username": user_data.username,
             "hashed_password": user_data.password,
             "password": user_data.password,
+            "password_changed_at": None,
+            "must_change_password": get_force_initial_password_change(),
             "role": user_data.role,
+            "permission_level": {
+                "HQ": "headquarters_admin",
+                "ADMIN": "headquarters_admin",
+                "headquarters_admin": "headquarters_admin",
+                "BRANCH": "branch_admin",
+                "branch_admin": "branch_admin",
+                "PROJECT": "project_safety_admin",
+                "project_safety_admin": "project_safety_admin",
+                "GRID": "grid_admin",
+                "grid_admin": "grid_admin",
+                "TEAM": "team_admin",
+                "team_admin": "team_admin",
+            }.get(str(user_data.role), None),
             "phone": user_data.phone,
             "department": user_data.department,
             "department_id": user_data.department_id,
@@ -56,30 +92,52 @@ class AdminService:
         self.collection.insert_one(doc)
         return self._to_out(doc)
 
-    def update_user(self, mongo_db, user_id: int, user_data: UserUpdate):
+    def update_user(self, mongo_db, user_id: int, user_data: UserUpdate, current_user: dict | None = None):
         logger.info(f"Updating user {user_id}")
-        if not self._find_by_id(user_id):
+        existing = self._find_by_id(user_id)
+        if not existing or not self._visible_to_user(existing, current_user):
             return None
 
         updates = {}
-        for field in ["username", "full_name", "role", "phone", "department", "parent_id", "department_id"]:
+        for field in ["username", "full_name", "role", "phone", "department", "parent_id", "department_id", "team", "work_team", "company", "project"]:
             value = getattr(user_data, field, None)
             if value is not None:
                 updates[field] = value
+        if "role" in updates:
+            updates["permission_level"] = {
+                "HQ": "headquarters_admin",
+                "ADMIN": "headquarters_admin",
+                "headquarters_admin": "headquarters_admin",
+                "BRANCH": "branch_admin",
+                "branch_admin": "branch_admin",
+                "PROJECT": "project_safety_admin",
+                "project_safety_admin": "project_safety_admin",
+                "GRID": "grid_admin",
+                "grid_admin": "grid_admin",
+                "TEAM": "team_admin",
+                "team_admin": "team_admin",
+            }.get(str(updates["role"]), None)
         if user_data.password:
             updates["hashed_password"] = user_data.password
             updates["password"] = user_data.password
+            updates["password_changed_at"] = datetime.now()
+            updates["must_change_password"] = get_force_initial_password_change()
 
         if updates:
+            updates["updated_at"] = datetime.now()
             self.collection.update_one({"$or": [{"id": int(user_id)}, {"id": str(user_id)}]}, {"$set": updates})
         return self._to_out(self._find_by_id(user_id))
 
-    def get_users_by_hierarchy(self, mongo_db, user_id: int):
+    def get_users_by_hierarchy(self, mongo_db, user_id: int, current_user: dict | None = None):
         logger.info(f"Fetching users (hierarchy context for {user_id})")
-        return [self._to_out(doc) for doc in self.collection.find({}, {"_id": 0}).sort("id", 1)]
+        docs = self.collection.find({}, {"_id": 0}).sort("id", 1)
+        return [self._to_out(doc) for doc in docs if self._visible_to_user(doc, current_user)]
 
-    def delete_user(self, mongo_db, user_id: int):
+    def delete_user(self, mongo_db, user_id: int, current_user: dict | None = None):
         logger.info(f"Deleting user {user_id}")
+        existing = self._find_by_id(user_id)
+        if not self._visible_to_user(existing, current_user):
+            return False
         result = self.collection.delete_one({"$or": [{"id": int(user_id)}, {"id": str(user_id)}]})
         return result.deleted_count > 0
 

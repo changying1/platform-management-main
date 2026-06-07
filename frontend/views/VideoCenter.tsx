@@ -21,7 +21,6 @@
     Edit2,
     Play, 
     // --- ✅ 新增图标（已合并，无重复）---
-    Shield,
     ShieldAlert,
     ShieldCheck,
     PanelRightOpen,
@@ -30,7 +29,6 @@
 
   import VideoPlayer from "../src/components/VideoPlayer";
   import PTZControlPanel from "../src/components/PTZControlPanel";
-  import SmartMonitoringConfig from "../src/components/SmartMonitoringConfig"; 
   import {
     getAllVideos,
     deleteVideo,
@@ -52,7 +50,7 @@
     acknowledgeKeyboardSwitchRequest,
     setKeyboardTarget,
   } from "../src/api/videoApi";
-  import { API_BASE_URL } from "../src/api/config";
+  import { API_BASE_URL, getAuthHeaders } from "../src/api/config";
 
   const CHINA_RAILWAY_LOGO = "/images/%E5%85%AC%E5%8F%B8logo.jpeg";
   const isOfflineVideoError = (message?: string | null) => {
@@ -135,6 +133,87 @@
 
     return undefined;
   };
+
+  const textOf = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    if (Array.isArray(value)) {
+      return value.map(textOf).filter(Boolean).join(" ");
+    }
+    return String(value).trim();
+  };
+
+  const firstText = (source: unknown, keys: string[]): string => {
+    const record = source as Record<string, unknown>;
+    for (const key of keys) {
+      const value = textOf(record?.[key]);
+      if (value) return value;
+    }
+    return "";
+  };
+
+  const normalizeText = (value: unknown): string => textOf(value).toLowerCase();
+
+  const getVideoCompany = (video: Video) =>
+    firstText(video, ["company", "department", "dept", "branch_name", "branchName"]);
+
+  const getVideoProject = (video: Video) =>
+    firstText(video, ["project", "project_name", "projectName"]);
+
+  const getVideoGrid = (video: Video) =>
+    firstText(video, ["grid", "grid_name", "gridName", "grid_id", "gridId"]);
+
+  const getVideoTeam = (video: Video) =>
+    firstText(video, ["team", "team_name", "teamName", "workTeam", "work_team", "team_id", "teamId"]);
+
+  const getVideoDeviceType = (video: Video) =>
+    firstText(video, ["device_type", "deviceType", "type"]);
+
+  const getVideoResponsible = (video: Video) =>
+    firstText(video, [
+      "responsible_person_name",
+      "responsiblePersonName",
+      "responsible_person",
+      "responsiblePerson",
+      "holder_name",
+      "holderName",
+      "holder",
+      "holder_id",
+      "holderId",
+      "manager_name",
+      "managerName",
+      "manager",
+      "owner_name",
+      "ownerName",
+      "owner_id",
+      "ownerId",
+      "person_name",
+      "personName",
+    ]);
+
+  const buildOptions = (values: unknown[]) => {
+    const unique = Array.from(
+      new Set(values.map(textOf).filter((value) => value && value !== "all"))
+    );
+    return ["all", ...unique];
+  };
+
+  const getVideoSearchText = (video: Video) =>
+    [
+      video.id,
+      video.name,
+      getVideoCompany(video),
+      getVideoProject(video),
+      getVideoGrid(video),
+      getVideoTeam(video),
+      getVideoResponsible(video),
+      getVideoDeviceType(video),
+      video.ip_address,
+      video.device_serial,
+      video.remark,
+    ]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(" ");
 
   const loadWorkDurationMap = (): Record<number, number> => {
     if (typeof window === "undefined") return {};
@@ -284,7 +363,10 @@
   };
 
   const getDeviceRules = async (deviceId: number) => {
-      const res = await fetch(`${API_BASE_URL}/video/${deviceId}/rules`);
+      const res = await fetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      });
       if (!res.ok) {
         let msg = '获取设备算法配置失败';
         try {
@@ -300,7 +382,8 @@
   const updateDeviceRules = async (deviceId: number, rules: string[]) => {
       const res = await fetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          credentials: 'include',
           body: JSON.stringify({ rules })
       });
 
@@ -326,8 +409,6 @@
     };
 
     // --- 状态管理 ---
-    const [showSmartConfig, setShowSmartConfig] = useState(false);
-    
     const [activeAlgos, setActiveAlgos] = useState<string[]>([]); 
     const [algos, setAlgos] = useState<Array<{ id: string; name: string }>>([
       { id: "helmet", name: "安全帽类" },
@@ -390,7 +471,9 @@
     const [showDeviceSelector, setShowDeviceSelector] = useState(false);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [selectedProject, setSelectedProject] = useState<string>('all');
-  const [selectedDeviceType, setSelectedDeviceType] = useState('all');
+    const [selectedGrid, setSelectedGrid] = useState<string>('all');
+    const [selectedTeam, setSelectedTeam] = useState<string>('all');
+    const [selectedDeviceType, setSelectedDeviceType] = useState('all');
 
     // --- 弹窗与表单状态 ---
     const [showAddModal, setShowAddModal] = useState(false);
@@ -407,49 +490,57 @@
     const alarmBoxesClearTimerRef = useRef<number | null>(null);
     const aiCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const lastKeyboardSwitchRequestIdRef = useRef(0);
-  // const [companies, setCompanies] = useState<string[]>(['all']);
-  // const [projects, setProjects] = useState<string[]>(['all']);
-  // ✅ 硬编码公司列表（仅用于下拉菜单筛选）
-  const hardcodedCompanies = [
-      '集团有限公司',
-      '北京分公司',
-      '上海分公司',
-      '广州分公司',
-      '成都分公司',
-      '武汉分公司',
-      '沈阳分公司',
-      '南京分公司',
-      '深圳分公司',
-      '重庆分公司'
-  ];
+  const companies = useMemo(
+    () => buildOptions(devices.map(getVideoCompany)),
+    [devices]
+  );
+  const projects = useMemo(() => {
+    const scopedDevices = devices.filter((device) =>
+      selectedCompany === 'all' || getVideoCompany(device) === selectedCompany
+    );
+    return buildOptions(scopedDevices.map(getVideoProject));
+  }, [devices, selectedCompany]);
+  const grids = useMemo(() => {
+    const scopedDevices = devices.filter((device) => {
+      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
+      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
+      return true;
+    });
+    return buildOptions(scopedDevices.map(getVideoGrid));
+  }, [devices, selectedCompany, selectedProject]);
+  const teams = useMemo(() => {
+    const scopedDevices = devices.filter((device) => {
+      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
+      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
+      if (selectedGrid !== 'all' && getVideoGrid(device) !== selectedGrid) return false;
+      return true;
+    });
+    return buildOptions(scopedDevices.map(getVideoTeam));
+  }, [devices, selectedCompany, selectedProject, selectedGrid]);
 
-  // ✅ 硬编码项目列表（仅用于下拉菜单筛选）
-  const hardcodedProjects = [
-      '西安东站项目',
-      '西安地铁8号线',
-      '咸阳机场T5航站楼',
-      '北京地铁17号线',
-      '北京丰台站改造',
-      '上海浦东机场联络线',
-      '上海轨道交通市域线',
-      '广州白云站',
-      '广湛高铁广州段',
-      '成都地铁18号线',
-      '天府站综合交通枢纽',
-      '武汉光谷综合体',
-      '武汉地铁12号线',
-      '沈阳地铁4号线',
-      '沈阳北站改造',
-      '南京北站',
-      '南京地铁11号线',
-      '深圳前海枢纽',
-      '深圳地铁13号线',
-      '重庆东站',
-      '重庆轨道交通27号线'
-  ];
+  useEffect(() => {
+    if (selectedCompany !== 'all' && !companies.includes(selectedCompany)) {
+      setSelectedCompany('all');
+    }
+  }, [companies, selectedCompany]);
 
-  const [companies, setCompanies] = useState<string[]>(['all', ...hardcodedCompanies]);
-  const [projects, setProjects] = useState<string[]>(['all', ...hardcodedProjects]);
+  useEffect(() => {
+    if (selectedProject !== 'all' && !projects.includes(selectedProject)) {
+      setSelectedProject('all');
+    }
+  }, [projects, selectedProject]);
+
+  useEffect(() => {
+    if (selectedGrid !== 'all' && !grids.includes(selectedGrid)) {
+      setSelectedGrid('all');
+    }
+  }, [grids, selectedGrid]);
+
+  useEffect(() => {
+    if (selectedTeam !== 'all' && !teams.includes(selectedTeam)) {
+      setSelectedTeam('all');
+    }
+  }, [teams, selectedTeam]);
 
     const [newDeviceForm, setNewDeviceForm] = useState<VideoCreate>({
       name: "",
@@ -1169,8 +1260,8 @@ useEffect(() => {
               
               return {
                   ...device,
-                  company: company,
-                  project: project
+                  company: getVideoCompany(device) || company,
+                  project: getVideoProject(device) || project
               };
           });
           
@@ -1233,43 +1324,55 @@ useEffect(() => {
       setCurrentPage(1);
     };
 
-    // 获取所有公司列表
-    // const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
-
-    // 根据选中的公司获取项目列表
-    const getProjectsByCompany = () => {
-      if (selectedCompany === 'all') {
-        return ['all', ...new Set(devices.map(d => d.project).filter(Boolean))];
-      }
-      const projects = devices
-        .filter(d => d.company === selectedCompany)
-        .map(d => d.project)
-        .filter(Boolean);
-      return ['all', ...new Set(projects)];
+    const handleCompanyChange = (value: string) => {
+      setSelectedCompany(value);
+      setSelectedProject('all');
+      setSelectedGrid('all');
+      setSelectedTeam('all');
+      setCurrentPage(1);
     };
-    // const projects = getProjectsByCompany();
+
+    const handleProjectChange = (value: string) => {
+      setSelectedProject(value);
+      setSelectedGrid('all');
+      setSelectedTeam('all');
+      setCurrentPage(1);
+    };
+
+    const handleGridChange = (value: string) => {
+      setSelectedGrid(value);
+      setSelectedTeam('all');
+      setCurrentPage(1);
+    };
+
+    const handleTeamChange = (value: string) => {
+      setSelectedTeam(value);
+      setCurrentPage(1);
+    };
+
+    const handleDeviceTypeChange = (value: string) => {
+      setSelectedDeviceType(value);
+      setCurrentPage(1);
+    };
 
     // 过滤后的设备列表（用于网格显示）
   const filteredDevicesForGrid = useMemo(() => {
     return devices.filter((device) => {
       if (selectedDevices.length > 0 && !selectedDevices.includes(device.id)) return false;
-      if (selectedCompany !== 'all' && device.company !== selectedCompany) return false;
-      if (selectedProject !== 'all' && device.project !== selectedProject) return false;
+      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
+      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
+      if (selectedGrid !== 'all' && getVideoGrid(device) !== selectedGrid) return false;
+      if (selectedTeam !== 'all' && getVideoTeam(device) !== selectedTeam) return false;
+      if (selectedDeviceType !== 'all' && getVideoDeviceType(device) !== selectedDeviceType) return false;
 
       if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        return device.name.toLowerCase().includes(term) ||
-              device.company?.toLowerCase().includes(term) ||
-              device.project?.toLowerCase().includes(term) ||
-              device.ip_address?.includes(searchTerm) ||
-              device.device_serial?.toLowerCase().includes(term) ||
-              device.remark?.toLowerCase().includes(term) ||
-              String(device.id).includes(searchTerm);
+        const term = normalizeText(searchTerm);
+        return getVideoSearchText(device).includes(term);
       }
 
       return true;
     });
-  }, [devices, searchTerm, selectedCompany, selectedDevices, selectedProject]);
+  }, [devices, searchTerm, selectedCompany, selectedDeviceType, selectedDevices, selectedGrid, selectedProject, selectedTeam]);
 
   const totalPages = Math.ceil(filteredDevicesForGrid.length / itemsPerPage);
   const paginatedDevices = useMemo(() => {
@@ -1746,7 +1849,7 @@ useEffect(() => {
                 <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-cyan-400" />
                 <input
                   type="text"
-                  placeholder="搜索设备..."
+                  placeholder="搜索设备、公司、项目、网格、工队或责任人..."
                   value={searchTerm}
                   onChange={(e) => handleSearch(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-700 rounded-md pl-7 pr-7 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
@@ -1757,8 +1860,8 @@ useEffect(() => {
   {/* 公司筛选 */}
   <select
       value={selectedCompany}
-      onChange={(e) => setSelectedCompany(e.target.value)}
-      className="w-32 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+      onChange={(e) => handleCompanyChange(e.target.value)}
+      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
   >
       {companies.map(c => (
           <option key={c} value={c}>
@@ -1770,8 +1873,8 @@ useEffect(() => {
   {/* 项目筛选 */}
   <select
       value={selectedProject}
-      onChange={(e) => setSelectedProject(e.target.value)}
-      className="w-32 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+      onChange={(e) => handleProjectChange(e.target.value)}
+      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
   >
       {projects.map(p => (
       <option key={p} value={p}>
@@ -1780,10 +1883,36 @@ useEffect(() => {
   ))}
   </select>
 
+  {/* 网格筛选 */}
+  <select
+      value={selectedGrid}
+      onChange={(e) => handleGridChange(e.target.value)}
+      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+  >
+      {grids.map(g => (
+          <option key={g} value={g}>
+              {g === 'all' ? '所有网格' : g}
+          </option>
+      ))}
+  </select>
+
+  {/* 工队筛选 */}
+  <select
+      value={selectedTeam}
+      onChange={(e) => handleTeamChange(e.target.value)}
+      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+  >
+      {teams.map(t => (
+          <option key={t} value={t}>
+              {t === 'all' ? '所有工队' : t}
+          </option>
+      ))}
+  </select>
+
   {/* 设备类型筛选 */}
   <select
       value={selectedDeviceType}
-      onChange={(e) => setSelectedDeviceType(e.target.value)}
+      onChange={(e) => handleDeviceTypeChange(e.target.value)}
       className="w-32 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
   >
       <option value="all">所有设备类型</option>
@@ -1859,28 +1988,18 @@ useEffect(() => {
       document.body
   )}
 
-            {/* ✅ 智能监控配置按钮 - 放在这里 */}
-            <button
-              onClick={async () => {
-                if (maximizedVideo) {
-                  await refreshDeviceRules(maximizedVideo.id);
-                }
-                setShowSmartConfig(true);
-              }}
-              className="px-3 py-1.5 text-sm bg-purple-500/20 text-purple-300 rounded-md hover:bg-purple-500/30 flex items-center gap-2"
-            >
-              <Shield size={14} />
-              智能监控配置
-            </button>
-
             {/* 重置筛选 */}
-            {(selectedCompany !== 'all' || selectedProject !== 'all' || selectedDevices.length > 0 || searchTerm) && (
+            {(selectedCompany !== 'all' || selectedProject !== 'all' || selectedGrid !== 'all' || selectedTeam !== 'all' || selectedDeviceType !== 'all' || selectedDevices.length > 0 || searchTerm) && (
               <button
                 onClick={() => {
                   setSelectedCompany('all');
                   setSelectedProject('all');
+                  setSelectedGrid('all');
+                  setSelectedTeam('all');
+                  setSelectedDeviceType('all');
                   setSelectedDevices([]);
                   setSearchTerm('');
+                  setCurrentPage(1);
                 }}
                 className="px-2 py-1.5 text-sm text-cyan-400 hover:text-cyan-300"
               >
@@ -2148,21 +2267,6 @@ useEffect(() => {
             </div>
           </div>
         )}
-
-{showSmartConfig && (
-  <SmartMonitoringConfig
-    devices={devices}
-    onClose={() => setShowSmartConfig(false)}
-    onSuccess={() => {
-      if (maximizedVideo) {
-        refreshDeviceRules(maximizedVideo.id);
-      }
-      setShowSmartConfig(false);
-    }}
-    initialSelectedDeviceIds={maximizedVideo ? [maximizedVideo.id] : []}
-    initialSelectedAlgoIds={activeAlgos}  // ✅ 传入当前已配置的算法
-  />
-)}
 
         {/* 原有的全屏播放弹窗 - 完整保留 */}
         {maximizedVideo && (

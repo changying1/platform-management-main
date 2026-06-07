@@ -44,7 +44,7 @@ import {
   getAlarmScreenshots,
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
-import { API_BASE_URL, getApiUrl } from "../src/api/config";
+import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from "../src/api/config";
 
 // ✅ 轨迹API配置（从TrackPlayback.tsx迁移）
 const TRACK_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
@@ -233,9 +233,67 @@ interface ExtendedAlarmInfo {
 // 扩展 SavedPlayback 类型（覆盖 alarmInfo）
 interface ExtendedSavedPlayback extends SavedPlayback {
   alarmInfo?: ExtendedAlarmInfo;
+  grid?: string;
+  grid_id?: string;
+  grid_name?: string;
   team?: string;
+  team_id?: string;
+  team_name?: string;
   holder?: string;
+  deviceKey?: string;
+  companyKey?: string;
+  projectKey?: string;
+  gridKey?: string;
+  teamKey?: string;
+  companyName?: string;
+  projectName?: string;
+  gridName?: string;
+  teamName?: string;
+  branch_id?: string;
+  project_id?: string;
+  alarmSecond?: number;
 }
+
+const asText = (value: unknown) => String(value ?? '').trim();
+
+const firstText = (source: Record<string, any> | undefined | null, keys: string[]) => {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = asText(source[key]);
+    if (value) return value;
+  }
+  return '';
+};
+
+const normalizeSearch = (value: unknown) => asText(value).toLowerCase();
+
+const getDeviceCompany = (device: Partial<Device> | Record<string, any>) =>
+  firstText(device as Record<string, any>, ['company', 'companyName', 'branch_name', 'branch_id']);
+
+const getDeviceProject = (device: Partial<Device> | Record<string, any>) =>
+  firstText(device as Record<string, any>, ['project', 'projectName', 'project_name', 'project_id']);
+
+const getDeviceGrid = (device: Partial<Device> | Record<string, any>) =>
+  firstText(device as Record<string, any>, ['grid', 'grid_name', 'gridName', 'grid_id']);
+
+const getDeviceTeam = (device: Partial<Device> | Record<string, any>) =>
+  firstText(device as Record<string, any>, ['team', 'team_name', 'teamName', 'workTeam', 'work_team', 'team_id']);
+
+const playbackMatchesSearch = (playback: ExtendedSavedPlayback, keyword: string) => {
+  const normalizedKeyword = normalizeSearch(keyword);
+  if (!normalizedKeyword) return true;
+  return [
+    playback.deviceName,
+    playback.holder,
+    playback.companyName || playback.company,
+    playback.projectName || playback.project,
+    playback.gridName || playback.grid,
+    playback.teamName || playback.team,
+    playback.alarmInfo?.msg,
+    playback.alarmInfo?.type,
+    playback.alarmInfo?.personnel,
+  ].some(field => normalizeSearch(field).includes(normalizedKeyword));
+};
 
   const selectStyle = `
     select {
@@ -1859,9 +1917,9 @@ const VoicePlaybackContent = ({
   const toVideoUrl = (webPath: string) => {
     if (!webPath) return '';
     if (webPath.startsWith('http://') || webPath.startsWith('https://')) {
-      return webPath;
+      return withAuthTokenParam(webPath);
     }
-    return `${API_BASE_URL}${webPath.startsWith('/') ? '' : '/'}${webPath}`;
+    return withAuthTokenParam(`${API_BASE_URL}${webPath.startsWith('/') ? '' : '/'}${webPath}`);
   };
 
   // ==============================================
@@ -1916,7 +1974,7 @@ const VoicePlaybackContent = ({
       : 10;
 
     return {
-      screenshotUrl: bestMatch ? `${API_BASE_URL}/static/alarms/${bestMatch}` : '',
+      screenshotUrl: bestMatch ? withAuthTokenParam(`${API_BASE_URL}/static/alarms/${bestMatch}`) : '',
       alarmSecond,
     };
   };
@@ -1951,6 +2009,7 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
     const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
     const [showProjectDropdown, setShowProjectDropdown] = useState(false);
     const [showGridDropdown, setShowGridDropdown] = useState(false);
+    const [showTeamDropdown, setShowTeamDropdown] = useState(false);
     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
     const [selectedPlayback, setSelectedPlayback] = useState<ExtendedSavedPlayback | null>(null);
     const videoPlayerRef = useRef<VideoPlayerRef>(null);
@@ -2046,7 +2105,7 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
     
     // 根据选中的公司获取项目列表
-const getProjectsByCompany = () => {
+  const getProjectsByCompany = () => {
   if (selectedCompany === 'all') {
     return ['all', ...new Set(devices.map(d => d.project).filter(Boolean))];
   }
@@ -2058,6 +2117,24 @@ const getProjectsByCompany = () => {
 };
     
     const projects = getProjectsByCompany();
+    const playbackFilterSources = [...devices, ...filteredPlaybacks];
+    const companiesForFilter = ['all', ...new Set(playbackFilterSources.map(getDeviceCompany).filter(Boolean))];
+    const projectsForFilter = ['all', ...new Set(playbackFilterSources
+      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+      .map(getDeviceProject)
+      .filter(Boolean))];
+    const gridsForFilter = ['all', ...new Set(playbackFilterSources
+      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+      .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject)
+      .map(getDeviceGrid)
+      .filter(Boolean))];
+    const teamsForFilter = ['all', ...new Set(playbackFilterSources
+      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+      .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject)
+      .filter(item => selectedGrid === 'all' || getDeviceGrid(item) === selectedGrid)
+      .map(getDeviceTeam)
+      .filter(Boolean))];
+    const selectedGridLabel = selectedGrid === 'all' ? '' : gridsForFilter.find(grid => grid === selectedGrid) || selectedGrid;
 
     // 初始化模拟数据
     // useEffect(() => {
@@ -2080,8 +2157,14 @@ const getProjectsByCompany = () => {
           name: v.name,
           ip_address: v.ip_address || '',
           status: v.status,
-          company: v.company || '',
-          project: v.project || '',
+          company: getDeviceCompany(v),
+          project: getDeviceProject(v),
+          grid: getDeviceGrid(v),
+          grid_id: v.grid_id || '',
+          grid_name: v.grid_name || v.grid || '',
+          team: getDeviceTeam(v),
+          team_id: v.team_id || '',
+          team_name: v.team_name || v.team || v.workTeam || v.work_team || '',
         }));
         setDevices(deviceList);
         // ✅ 不默认选设备，一进来就是"全部设备"
@@ -2097,10 +2180,11 @@ const getProjectsByCompany = () => {
   // ✅ 加载视频：两个API独立加载，互不影响！
 useEffect(() => {
   // ✅ 全部设备时，用第一个设备加载视频
-  const deviceToLoad = selectedDevice || devices[0];
-  if (!deviceToLoad) {
+  const devicesToLoad = selectedDevice ? [selectedDevice] : devices;
+  if (devicesToLoad.length === 0) {
     setRecordingVideos([]);
     setAlarmVideos([]);
+    setAlarmScreenshots([]);
     return;
   }
   
@@ -2108,15 +2192,27 @@ useEffect(() => {
     setLoadingVideos(true);
     try {
       // ✅ 等两个API都回来才一起更新状态！解决竞态！
-      const [recordings, alarms, screenshots] = await Promise.all([
-        getRecordingVideos(deviceToLoad.id, 500),
-        getAlarmVideosList(deviceToLoad.id, 120),
-        getAlarmScreenshots(deviceToLoad.id, 120),
-      ]);
+      const results = await Promise.all(devicesToLoad.map(async (device) => {
+        try {
+          const [recordings, alarms, screenshots] = await Promise.all([
+            getRecordingVideos(device.id, selectedDevice ? 500 : 120),
+            getAlarmVideosList(device.id, selectedDevice ? 120 : 80),
+            getAlarmScreenshots(device.id, selectedDevice ? 120 : 80),
+          ]);
+          const attachDevice = (item: SavedPlaybackVideo) => ({ ...item, __device: device });
+          return {
+            recordings: Array.isArray(recordings) ? recordings.map(attachDevice) : [],
+            alarms: Array.isArray(alarms) ? alarms.map(attachDevice) : [],
+            screenshots: Array.isArray(screenshots) ? screenshots.map(attachDevice) : [],
+          };
+        } catch {
+          return { recordings: [], alarms: [], screenshots: [] };
+        }
+      }));
 
-      setRecordingVideos(Array.isArray(recordings) ? recordings : []);
-      setAlarmVideos(Array.isArray(alarms) ? alarms : []);
-      setAlarmScreenshots(Array.isArray(screenshots) ? screenshots : []);
+      setRecordingVideos(results.flatMap(result => result.recordings) as SavedPlaybackVideo[]);
+      setAlarmVideos(results.flatMap(result => result.alarms) as SavedPlaybackVideo[]);
+      setAlarmScreenshots(results.flatMap(result => result.screenshots) as SavedPlaybackVideo[]);
     } catch (err) {
       setRecordingVideos([]);
       setAlarmVideos([]);
@@ -2126,14 +2222,17 @@ useEffect(() => {
     }
   };
   loadVideos();
-}, [selectedDevice?.id, devices.length]);
+}, [selectedDevice?.id, devices]);
 
 // ✅ 轨迹API调用（从TrackPlayback.tsx迁移）
 // 获取轨迹设备列表
 useEffect(() => {
   const fetchTrackDevices = async () => {
     try {
-      const res = await fetch(`${TRACK_API_BASE_URL}/device/devices`);
+      const res = await fetch(`${TRACK_API_BASE_URL}/device/devices`, {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      });
       const data = await res.json();
       const deviceList: TrackDevice[] = Array.isArray(data) ? data : (data.devices || []);
       setTrackDevices(deviceList);
@@ -2158,7 +2257,10 @@ const fetchAllTrajectories = async (hours: number = 24) => {
     
     for (const device of trackDevices) {
       // 向后端发起API请求获取单个设备的轨迹数据
-      const res = await fetch(`${TRACK_API_BASE_URL}/device/${device.device_id}?hours=${hours}`);
+      const res = await fetch(`${TRACK_API_BASE_URL}/device/${device.device_id}?hours=${hours}`, {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      });
       const deviceData: TrackDevice = await res.json();
       
       if (deviceData && deviceData.trajectory && deviceData.trajectory.length > 0) {
@@ -2237,18 +2339,48 @@ useEffect(() => {
       const list: ExtendedSavedPlayback[] = [];
       
       // ✅ 用第一个设备当默认（全部设备时也显示内容）
-      const baseDevice = selectedDevice || devices[0];
-      if (!baseDevice) return list;
+      const getPlaybackDevice = (video: SavedPlaybackVideo) => {
+        const attached = (video as any).__device as Device | undefined;
+        return attached || selectedDevice || devices.find(device => device.id === Number((video as any).video_id)) || devices[0];
+      };
+
+      const createBasePlayback = (video: SavedPlaybackVideo) => {
+        const baseDevice = getPlaybackDevice(video);
+        const companyName = getDeviceCompany(baseDevice);
+        const projectName = getDeviceProject(baseDevice);
+        const gridName = getDeviceGrid(baseDevice);
+        const teamName = getDeviceTeam(baseDevice);
+
+        return {
+          deviceId: baseDevice?.id || 0,
+          deviceName: baseDevice?.name || video.name || '未知设备',
+          company: companyName,
+          project: projectName,
+          grid: gridName,
+          grid_id: baseDevice?.grid_id || '',
+          grid_name: baseDevice?.grid_name || gridName,
+          team: teamName,
+          team_id: baseDevice?.team_id || '',
+          team_name: baseDevice?.team_name || teamName,
+          companyName,
+          projectName,
+          gridName,
+          teamName,
+          companyKey: companyName,
+          projectKey: projectName,
+          gridKey: gridName,
+          teamKey: teamName,
+          deviceKey: String(baseDevice?.id || ''),
+        };
+      };
       
       // 📹 优先用真实常规视频（可播放）
       recordingVideos.forEach(video => {
         const duration = video.duration_seconds || 300;
+        const basePlayback = createBasePlayback(video);
         list.push({
           id: `rec_${video.name}`,
-          deviceId: baseDevice.id,
-          deviceName: baseDevice.name,
-          company: baseDevice.company,
-          project: baseDevice.project,
+          ...basePlayback,
           type: 'manual',
           startTime: video.updated_at,
           endTime: video.updated_at,
@@ -2263,6 +2395,7 @@ useEffect(() => {
             
       alarmVideos.forEach(video => {
         const duration = video.duration_seconds || 60;
+        const basePlayback = createBasePlayback(video);
         // ✅ 通过文件名计算：报警在视频里的第几秒
         const matchedScreenshot = (() => {
           const screenshots = alarmScreenshots as any[];
@@ -2322,10 +2455,7 @@ useEffect(() => {
         })();
         list.push({
           id: `alarm_${video.name}`,
-          deviceId: baseDevice.id,
-          deviceName: baseDevice.name,
-          company: baseDevice.company,
-          project: baseDevice.project,
+          ...basePlayback,
           type: 'alarm',
           startTime: video.updated_at,
           endTime: video.updated_at,
@@ -2370,7 +2500,10 @@ useEffect(() => {
         list = list.filter(p => p.project === selectedProject);
       }
       if (selectedTeam !== 'all') {
-        list = list.filter(p => p.team === selectedTeam);
+        list = list.filter(p => p.teamKey === selectedTeam || p.team === selectedTeam);
+      }
+      if (selectedGrid !== 'all') {
+        list = list.filter(p => p.gridKey === selectedGrid || p.grid === selectedGrid || p.grid_id === selectedGrid);
       }
     }
     
@@ -2383,24 +2516,14 @@ useEffect(() => {
     
     // 按关键词搜索（支持多条件模糊搜索）
     if (searchKeyword) {
-      const keyword = searchKeyword.toLowerCase();
-      list = list.filter(p =>
-        p.deviceName.toLowerCase().includes(keyword) ||
-        p.company?.toLowerCase().includes(keyword) ||
-        p.project?.toLowerCase().includes(keyword) ||
-        p.team?.toLowerCase().includes(keyword) ||
-        p.holder?.toLowerCase().includes(keyword) ||
-        p.alarmInfo?.msg?.toLowerCase().includes(keyword) ||
-        p.alarmInfo?.type?.toLowerCase().includes(keyword) ||
-        p.alarmInfo?.personnel?.toLowerCase().includes(keyword)
-      );
+      list = list.filter(p => playbackMatchesSearch(p, searchKeyword));
     }
     
     // ✅ 最终按时间倒序排列（新的在前）
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, devices]);
+  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, selectedGrid, selectedTeam, devices]);
  
 
 // ✅ 分页计算 - 放在 useEffect 外面
@@ -2413,7 +2536,7 @@ const currentPagePlaybacks = filteredPlaybacks.slice(
 // 筛选变化时重置页码
 useEffect(() => {
   setCurrentPage(1);
-}, [filteredPlaybacks.length, activeTab, selectedCompany, selectedProject, selectedDevice, searchKeyword]);
+}, [filteredPlaybacks.length, activeTab, selectedCompany, selectedProject, selectedGrid, selectedTeam, selectedDevice, searchKeyword]);
    
 
     // 播放选中的回放
@@ -2543,11 +2666,11 @@ return (
                 {/* 固定筛选栏：树状结构（公司 -> 项目/网格 -> 作业队/设备） */}
                 <div className="flex items-center gap-2 flex-1 ml-4">
                   {/* 搜索框 */}
-                  <div className="relative w-[280px]">
+                  <div className="relative w-[320px]">
                     <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
                     <input
                       type="text"
-                      placeholder="搜索设备/人员/事件/公司/项目等"
+                      placeholder="搜索设备/人员/事件/公司/项目/网格/工队"
                       value={searchKeyword}
                       onChange={(e) => setSearchKeyword(e.target.value)}
                       className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
@@ -2562,7 +2685,7 @@ return (
                   {/* 公司选择 */}
                   <div className="relative">
                     <button
-                      onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); }}
+                      onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
                         selectedCompany !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                       }`}
@@ -2574,37 +2697,22 @@ return (
                     {showCompanyDropdown && (
                       <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
                         <button
-                          onClick={() => { setSelectedCompany('all'); setSelectedProject('all'); setSelectedTeam('all'); setShowCompanyDropdown(false); }}
+                          onClick={() => { setSelectedCompany('all'); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowCompanyDropdown(false); }}
                           className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedCompany === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
                         >
                           全部公司
                         </button>
-                        {companyTree.map((company: any) => (
-                          <div key={company.id}>
+                        {companiesForFilter.filter(company => company !== 'all').map((company: string) => (
+                          <div key={company}>
                             <button
-                              onClick={() => { setSelectedCompany(selectedCompany === company.id ? 'all' : company.id); setSelectedProject('all'); setSelectedTeam('all'); }}
+                              onClick={() => { setSelectedCompany(selectedCompany === company ? 'all' : company); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); }}
                               className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
-                                selectedCompany === company.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                                selectedCompany === company ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
                               }`}
                             >
-                              <span>📁 {company.name}</span>
-                              {company.grids && company.grids.length > 0 && (
-                                <span className="text-xs text-slate-500">({company.grids.length}个网格)</span>
-                              )}
+                              <span>{company}</span>
+                              <span className="text-xs text-slate-500">{playbackFilterSources.filter(item => getDeviceCompany(item) === company).length}条</span>
                             </button>
-                            {/* 公司下的网格 */}
-                            {selectedCompany === company.id && company.grids?.map((grid: any) => (
-                              <button
-                                key={grid.id}
-                                onClick={() => { setSelectedGrid(grid.id); setShowCompanyDropdown(false); }}
-                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs flex items-center justify-between ${
-                                  selectedGrid === grid.id ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400 hover:bg-slate-700'
-                                }`}
-                              >
-                                <span>📍 {grid.name}</span>
-                                <span className={`text-[10px] ${getGridStatusInfo(grid.status).color}`}>● {getGridStatusInfo(grid.status).text}</span>
-                              </button>
-                            ))}
                           </div>
                         ))}
                       </div>
@@ -2614,7 +2722,7 @@ return (
                   {/* 项目选择 */}
                   <div className="relative">
                     <button
-                      onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); }}
+                      onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
                         selectedProject !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                       }`}
@@ -2626,73 +2734,79 @@ return (
                     {showProjectDropdown && (
                       <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
                         <button
-                          onClick={() => { setSelectedProject('all'); setSelectedTeam('all'); setShowProjectDropdown(false); }}
+                          onClick={() => { setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowProjectDropdown(false); }}
                           className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedProject === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
                         >
                           全部项目
                         </button>
-                        {selectedCompany !== 'all' && companyTree.find((c: any) => c.id === selectedCompany)?.projects.map((project: any) => (
-                          <div key={project.id}>
+                        {projectsForFilter.filter(project => project !== 'all').map((project: string) => (
+                          <div key={project}>
                             <button
-                              onClick={() => { setSelectedProject(selectedProject === project.id ? 'all' : project.id); setSelectedTeam('all'); }}
+                              onClick={() => { setSelectedProject(selectedProject === project ? 'all' : project); setSelectedGrid('all'); setSelectedTeam('all'); }}
                               className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
-                                selectedProject === project.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                                selectedProject === project ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
                               }`}
                             >
-                              <span>📁 {project.name}</span>
+                              <span>{project}</span>
                             </button>
-                            {/* 项目下的网格 */}
-                            {selectedProject === project.id && project.grids?.map((grid: any) => (
-                              <button
-                                key={grid.id}
-                                onClick={() => { setSelectedGrid(grid.id); setShowProjectDropdown(false); }}
-                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs flex items-center justify-between ${
-                                  selectedGrid === grid.id ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400 hover:bg-slate-700'
-                                }`}
-                              >
-                                <span>📍 {grid.name}</span>
-                                <span className={`text-[10px] ${getGridStatusInfo(grid.status).color}`}>● {getGridStatusInfo(grid.status).text}</span>
-                              </button>
-                            ))}
-                            {/* 项目下的作业队 */}
-                            {selectedProject === project.id && project.teams?.map((team: string) => (
-                              <button
-                                key={team}
-                                onClick={() => { setSelectedTeam(team); setShowProjectDropdown(false); }}
-                                className={`w-full text-left px-6 py-1.5 rounded-lg text-xs ${
-                                  selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-slate-700'
-                                }`}
-                              >
-                                👥 {team}
-                              </button>
-                            ))}
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  {/* 网格筛选 */}
-                  {selectedGrid !== 'all' && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-blue-500/20 rounded-lg text-blue-300 text-xs">
-                      <MapPin size={12} />
-                      <span>{companyTree.flatMap((c: any) => c.grids || []).find((g: any) => g.id === selectedGrid)?.name || '网格'}</span>
-                      <button onClick={() => setSelectedGrid('all')} className="ml-1 hover:text-white">
-                        <X size={12} />
-                      </button>
-                    </div>
-                  )}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowGridDropdown(!showGridDropdown); setShowCompanyDropdown(false); setShowProjectDropdown(false); setShowTeamDropdown(false); }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                        selectedGrid !== 'all' ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      <MapPin size={14} />
+                      <span>{selectedGrid === 'all' ? '全部网格' : selectedGrid}</span>
+                      <ChevronDown size={12} />
+                    </button>
+                    {showGridDropdown && (
+                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[220px] max-h-[300px] overflow-y-auto">
+                        {gridsForFilter.map((grid: string) => (
+                          <button
+                            key={grid}
+                            onClick={() => { setSelectedGrid(grid); setSelectedTeam('all'); setShowGridDropdown(false); }}
+                            className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedGrid === grid ? 'bg-blue-500/20 text-blue-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                          >
+                            {grid === 'all' ? '全部网格' : grid}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                  {/* 作业队标签 */}
-                  {selectedTeam !== 'all' && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-cyan-500/20 rounded-lg text-cyan-300 text-xs">
-                      <Users size={12} />
-                      <span>{selectedTeam}</span>
-                      <button onClick={() => setSelectedTeam('all')} className="ml-1 hover:text-white">
-                        <X size={12} />
-                      </button>
-                    </div>
-                  )}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowTeamDropdown(!showTeamDropdown); setShowCompanyDropdown(false); setShowProjectDropdown(false); setShowGridDropdown(false); }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                        selectedTeam !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      <Users size={14} />
+                      <span>{selectedTeam === 'all' ? '全部工队' : selectedTeam}</span>
+                      <ChevronDown size={12} />
+                    </button>
+                    {showTeamDropdown && (
+                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[220px] max-h-[300px] overflow-y-auto">
+                        {teamsForFilter.map((team: string) => (
+                          <button
+                            key={team}
+                            onClick={() => { setSelectedTeam(team); setShowTeamDropdown(false); }}
+                            className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                          >
+                            {team === 'all' ? '全部工队' : team}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                 </div>
               </div>
 

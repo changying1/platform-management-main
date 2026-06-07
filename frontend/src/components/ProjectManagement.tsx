@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, X, FolderTree, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { getAuthHeaders } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
 
 interface Project {
@@ -58,7 +59,7 @@ const [loading, setLoading] = useState(false);
 const fetchProjects = async () => {
   try {
     setLoading(true);
-    const res = await fetch(`${API_BASE}/projects/`);
+    const res = await fetch(`${API_BASE}/projects/`, { headers: getAuthHeaders() });
     if (res.ok) {
       const data = await res.json();
       const apiData = Array.isArray(data) ? data : data.value || data.data || [];

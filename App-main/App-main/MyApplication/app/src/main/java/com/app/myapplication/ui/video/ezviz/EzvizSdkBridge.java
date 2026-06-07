@@ -161,6 +161,10 @@ public final class EzvizSdkBridge {
             try {
                 return Class.forName(className);
             } catch (ClassNotFoundException ignored) {
+            } catch (UnsatisfiedLinkError error) {
+                initStatus = "EZVIZ SDK native library missing: " + rootMessage(error);
+                Log.e(TAG, initStatus, error);
+                return null;
             }
         }
         return null;

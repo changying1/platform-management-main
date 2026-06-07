@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MenuKey } from '../types';
 import { alarmApi, LogResponse } from '../src/api/alarmApi';
+import { API_BASE_URL, getAuthHeaders } from '../src/api/config';
 import { 
   FileText, 
   Search, 
@@ -20,6 +21,7 @@ import {
   Filter,
   Clock,
   Calendar,
+  Download,
   ExternalLink
 } from 'lucide-react';
 
@@ -27,15 +29,23 @@ interface SystemLog {
   id: string | number;
   operator: string;
   action: string;
-  targetType: 'fence' | 'project' | 'device' | 'person' | 'alarm' | 'permission' | 'system' | 'login';
+  targetType: 'fence' | 'project' | 'grid' | 'team' | 'device' | 'person' | 'alarm' | 'permission' | 'system' | 'login';
   targetName: string;
   details?: string;
   time: string;
   company?: string;
   project?: string;
+  grid?: string;
   team?: string;
   extra?: Record<string, any>;
 }
+
+type OrgScopeOptions = {
+  companies: string[];
+  projects: string[];
+  grids: string[];
+  teams: string[];
+};
 
 // 转换后端返回的数据格式
 const transformLogResponse = (log: LogResponse): SystemLog => ({
@@ -48,6 +58,7 @@ const transformLogResponse = (log: LogResponse): SystemLog => ({
   time: log.time,
   company: log.company,
   project: log.project,
+  grid: log.grid,
   team: log.team,
   extra: log.extra
 });
@@ -55,6 +66,8 @@ const transformLogResponse = (log: LogResponse): SystemLog => ({
 const actionIcons = {
   fence: <MapPin size={18} />,
   project: <FileText size={18} />,
+  grid: <MapPin size={18} />,
+  team: <Users size={18} />,
   device: <Video size={18} />,
   person: <User size={18} />,
   alarm: <AlertTriangle size={18} />,
@@ -66,6 +79,8 @@ const actionIcons = {
 const actionColors = {
   fence: 'bg-blue-500/20 text-blue-400',
   project: 'bg-cyan-500/20 text-cyan-400',
+  grid: 'bg-teal-500/20 text-teal-400',
+  team: 'bg-indigo-500/20 text-indigo-400',
   device: 'bg-green-500/20 text-green-400',
   person: 'bg-purple-500/20 text-purple-400',
   alarm: 'bg-orange-500/20 text-orange-400',
@@ -83,12 +98,80 @@ const typeLabels: Record<string, string> = {
   alarm: '告警',
   login: '登录',
   project: '项目',
+  grid: '网格',
+  team: '工队',
   person: '人员',
   permission: '权限',
   system: '系统',
 };
 
+const HISTORICAL_FENCE_STORAGE_KEY = 'fence:historical-map-view';
+
+const formatAuditValue = (value: any): string => {
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
+const formatAuditChanges = (changes: any): string => {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return '';
+  return Object.entries(changes)
+    .map(([field, change]: [string, any]) => `${field}: ${formatAuditValue(change?.old)} -> ${formatAuditValue(change?.new)}`)
+    .join('；');
+};
+
+const firstText = (...values: any[]): string => {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+};
+
+const changedText = (changes: any, ...fields: string[]): string => {
+  if (!changes || typeof changes !== 'object') return '';
+  for (const field of fields) {
+    const item = changes[field];
+    const text = firstText(item?.new, item?.old);
+    if (text) return text;
+  }
+  return '';
+};
+
+const getLogScope = (log: SystemLog) => {
+  const after = log.extra?.after || {};
+  const before = log.extra?.before || {};
+  const changes = log.extra?.changes || {};
+  return {
+    company: firstText(log.company, after.company, after.branch_name, after.department, before.company, before.branch_name, before.department, changedText(changes, 'company', 'branch_name', 'department')),
+    project: firstText(log.project, after.project, after.project_name, before.project, before.project_name, changedText(changes, 'project', 'project_name')),
+    grid: firstText(log.grid, after.grid, after.grid_name, after.gridName, after.grid_id, before.grid, before.grid_name, before.gridName, before.grid_id, changedText(changes, 'grid', 'grid_name', 'gridName', 'grid_id')),
+    team: firstText(log.team, after.team, after.workTeam, after.work_team, before.team, before.workTeam, before.work_team, changedText(changes, 'team', 'workTeam', 'work_team')),
+  };
+};
+
+const collectOrgScopeOptions = (nodes: any[]): OrgScopeOptions => {
+  const result: OrgScopeOptions = { companies: [], projects: [], grids: [], teams: [] };
+  const add = (key: keyof OrgScopeOptions, value: any) => {
+    const text = firstText(value);
+    if (text && !result[key].includes(text)) result[key].push(text);
+  };
+  const visit = (node: any) => {
+    const type = String(node?.type || '').toLowerCase();
+    if (type === 'branch' || type === 'company') add('companies', node.name);
+    if (type === 'project') add('projects', node.name);
+    if (type === 'grid' || type === 'safety_office') add('grids', node.name);
+    if (type === 'team') add('teams', node.name);
+    (node?.children || []).forEach(visit);
+  };
+  (Array.isArray(nodes) ? nodes : []).forEach(visit);
+  return result;
+};
+
 const generateLogDetails = (log: SystemLog): string => {
+  const auditSummary = formatAuditChanges(log.extra?.changes);
+  if (auditSummary) return auditSummary;
+
   const parts: string[] = [];
   
   switch (log.targetType) {
@@ -102,8 +185,9 @@ const generateLogDetails = (log: SystemLog): string => {
         if (log.extra?.scheduleStart && log.extra?.scheduleEnd) {
           parts.push(`生效: ${log.extra.scheduleStart.slice(0, 10)} ~ ${log.extra.scheduleEnd.slice(0, 10)}`);
         }
-      } else if (log.action.includes('删除')) {
+      } else if (log.action.includes('删除') || getDeletedFenceBackup(log)) {
         parts.push('移除电子围栏');
+        if (getDeletedFenceBackup(log)) parts.push('已保存删除前围栏备份');
         parts.push(`所有关联规则已清除`);
       } else if (log.action.includes('修改') || log.action.includes('编辑')) {
         parts.push('更新围栏配置');
@@ -164,12 +248,85 @@ const generateLogDetails = (log: SystemLog): string => {
   return parts.length > 0 ? parts.join('，') : `${log.action} - ${log.targetName}`;
 };
 
+const getDeletedFenceBackup = (log: SystemLog): Record<string, any> | null => {
+  const backup = log.extra?.deleted_fence_backup;
+  return backup && typeof backup === 'object' && !Array.isArray(backup) ? backup : null;
+};
+
+const parsePossibleJson = (value: any) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const hasFenceGeometry = (snapshot: Record<string, any> | null) => {
+  if (!snapshot) return false;
+  const geometry = snapshot.geometry || {};
+  const coordinates = parsePossibleJson(snapshot.coordinates_json);
+  return Boolean(
+    snapshot.center ||
+    (Array.isArray(snapshot.points) && snapshot.points.length > 0) ||
+    geometry.center ||
+    (Array.isArray(geometry.points) && geometry.points.length > 0) ||
+    (Array.isArray(coordinates) && coordinates.length > 0)
+  );
+};
+
+const getFenceSnapshotForMap = (log: SystemLog): { snapshot: Record<string, any>; versionLabel: string } | null => {
+  if (log.targetType !== 'fence' || !log.extra) return null;
+
+  const candidates = [
+    { snapshot: log.extra.deleted_fence_backup, versionLabel: '删除前备份' },
+    { snapshot: log.extra.before, versionLabel: '变更前版本' },
+    { snapshot: log.extra.after, versionLabel: '变更后版本' },
+    { snapshot: log.extra, versionLabel: '日志记录版本' },
+  ];
+
+  for (const item of candidates) {
+    if (item.snapshot && typeof item.snapshot === 'object' && !Array.isArray(item.snapshot) && hasFenceGeometry(item.snapshot)) {
+      return item as { snapshot: Record<string, any>; versionLabel: string };
+    }
+  }
+
+  return null;
+};
+
+const formatFenceShape = (shape?: string) => {
+  if (shape === 'circle') return '圆形';
+  if (shape === 'polygon') return '多边形';
+  return shape || '-';
+};
+
+const formatFenceBehavior = (behavior?: string) => {
+  if (behavior === 'No Entry') return '禁止进入';
+  if (behavior === 'No Exit') return '禁止离开';
+  return behavior || '-';
+};
+
+const formatFenceSeverity = (severity?: string) => {
+  if (severity === 'severe') return '严重';
+  if (severity === 'risk') return '风险';
+  if (severity === 'medium') return '中等';
+  return severity || '-';
+};
+
+const stringifyBackupValue = (value: any) => {
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+};
+
 const getNavigateTarget = (targetType: string): MenuKey | null => {
   const map: Record<string, MenuKey> = {
     fence: MenuKey.FENCE,
     device: MenuKey.DASHBOARD,
     alarm: MenuKey.ALARM,
     project: MenuKey.MANAGEMENT,
+    grid: MenuKey.MANAGEMENT,
+    team: MenuKey.MANAGEMENT,
     person: MenuKey.MANAGEMENT,
     video: MenuKey.VIDEO,
   };
@@ -182,6 +339,8 @@ const getTargetLabel = (targetType: string): string => {
     device: '查看设备',
     alarm: '查看告警',
     project: '查看项目',
+    grid: '查看网格',
+    team: '查看工队',
     person: '人员管理',
   };
   return map[targetType] || '';
@@ -193,18 +352,37 @@ interface SystemLogProps {
 
 export default function SystemLog({ onNavigate }: SystemLogProps) {
   const [logs, setLogs] = useState<SystemLog[]>([]);
+  const [orgScopeOptions, setOrgScopeOptions] = useState<OrgScopeOptions>({ companies: [], projects: [], grids: [], teams: [] });
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<SystemLog | null>(null);
+  const selectedFenceBackup = selectedLog ? getDeletedFenceBackup(selectedLog) : null;
   
   const [showTreeFilter, setShowTreeFilter] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [selectedProject, setSelectedProject] = useState<string>('all');
+  const [selectedGrid, setSelectedGrid] = useState<string>('all');
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [showSearchHint, setShowSearchHint] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const treeFilterRef = useRef<HTMLDivElement>(null);
+
+  const viewHistoricalFenceOnMap = (log: SystemLog) => {
+    const mapSnapshot = getFenceSnapshotForMap(log);
+    if (!mapSnapshot || !onNavigate) return;
+
+    localStorage.setItem(HISTORICAL_FENCE_STORAGE_KEY, JSON.stringify({
+      logId: log.id,
+      logTime: log.time,
+      action: log.action,
+      targetName: log.targetName,
+      versionLabel: mapSnapshot.versionLabel,
+      snapshot: mapSnapshot.snapshot,
+    }));
+    setSelectedLog(null);
+    onNavigate(MenuKey.FENCE);
+  };
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -218,10 +396,26 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
         setLogs([]);
       }
     };
+
+    const fetchOrgScopeOptions = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/responsibility-units/tree`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setOrgScopeOptions(collectOrgScopeOptions(data));
+      } catch (error) {
+        console.error('Failed to fetch organization scope options:', error);
+      }
+    };
     
     fetchLogs();
+    fetchOrgScopeOptions();
     setSelectedCompany('all');
     setSelectedProject('all');
+    setSelectedGrid('all');
     setSelectedTeam('all');
     setFilterType('all');
     setStartDate('');
@@ -238,18 +432,25 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const companies = ['all', ...new Set(logs.map(l => l.company).filter(Boolean))];
+  const logScope = (log: SystemLog) => getLogScope(log);
+  const mergeOptions = (orgValues: string[], logValues: string[]) => ['all', ...new Set([...orgValues, ...logValues].filter(Boolean))];
+  const companies = mergeOptions(orgScopeOptions.companies, logs.map(l => logScope(l).company));
   const projects = selectedCompany === 'all' 
-    ? ['all', ...new Set(logs.map(l => l.project).filter(Boolean))]
-    : ['all', ...new Set(logs.filter(l => l.company === selectedCompany).map(l => l.project).filter(Boolean))];
+    ? mergeOptions(orgScopeOptions.projects, logs.map(l => logScope(l).project))
+    : mergeOptions(orgScopeOptions.projects, logs.filter(l => logScope(l).company === selectedCompany).map(l => logScope(l).project));
   const teams = selectedProject === 'all'
-    ? ['all', ...new Set(logs.map(l => l.team).filter(Boolean))]
-    : ['all', ...new Set(logs.filter(l => l.project === selectedProject).map(l => l.team).filter(Boolean))];
+    ? mergeOptions(orgScopeOptions.teams, logs.filter(l => selectedGrid === 'all' || logScope(l).grid === selectedGrid).map(l => logScope(l).team))
+    : mergeOptions(orgScopeOptions.teams, logs.filter(l => logScope(l).project === selectedProject && (selectedGrid === 'all' || logScope(l).grid === selectedGrid)).map(l => logScope(l).team));
+  const grids = selectedProject === 'all'
+    ? mergeOptions(orgScopeOptions.grids, logs.filter(l => selectedCompany === 'all' || logScope(l).company === selectedCompany).map(l => logScope(l).grid))
+    : mergeOptions(orgScopeOptions.grids, logs.filter(l => logScope(l).project === selectedProject).map(l => logScope(l).grid));
 
   const rangeFilteredLogs = logs.filter(log => {
-    if (selectedCompany !== 'all' && log.company !== selectedCompany) return false;
-    if (selectedProject !== 'all' && log.project !== selectedProject) return false;
-    if (selectedTeam !== 'all' && log.team !== selectedTeam) return false;
+    const scope = logScope(log);
+    if (selectedCompany !== 'all' && scope.company !== selectedCompany) return false;
+    if (selectedProject !== 'all' && scope.project !== selectedProject) return false;
+    if (selectedGrid !== 'all' && scope.grid !== selectedGrid) return false;
+    if (selectedTeam !== 'all' && scope.team !== selectedTeam) return false;
     return true;
   });
 
@@ -267,6 +468,8 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
     alarm: dateRangeFilteredLogs.filter(l => l.targetType === 'alarm').length,
     login: dateRangeFilteredLogs.filter(l => l.targetType === 'login').length,
     project: dateRangeFilteredLogs.filter(l => l.targetType === 'project').length,
+    grid: dateRangeFilteredLogs.filter(l => l.targetType === 'grid').length,
+    team: dateRangeFilteredLogs.filter(l => l.targetType === 'team').length,
     person: dateRangeFilteredLogs.filter(l => l.targetType === 'person').length,
     permission: dateRangeFilteredLogs.filter(l => l.targetType === 'permission').length,
     system: dateRangeFilteredLogs.filter(l => l.targetType === 'system').length,
@@ -300,6 +503,8 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
     alarm: 'bg-orange-500/20 text-orange-400 border border-orange-400/30',
     login: 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/30',
     project: 'bg-cyan-600/20 text-cyan-500 border border-cyan-500/30',
+    grid: 'bg-teal-500/20 text-teal-400 border border-teal-400/30',
+    team: 'bg-indigo-500/20 text-indigo-400 border border-indigo-400/30',
     person: 'bg-purple-500/20 text-purple-400 border border-purple-400/30',
     permission: 'bg-red-500/20 text-red-400 border border-red-400/30',
     system: 'bg-slate-500/20 text-slate-400 border border-slate-400/30',
@@ -313,6 +518,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
     const parts = [];
     if (selectedCompany !== 'all') parts.push(selectedCompany);
     if (selectedProject !== 'all') parts.push(selectedProject);
+    if (selectedGrid !== 'all') parts.push(selectedGrid);
     if (selectedTeam !== 'all') parts.push(selectedTeam);
     return parts.length > 0 ? parts.join(' / ') : '全部范围';
   };
@@ -378,6 +584,13 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
 
         {/* 右侧：树形筛选 + 搜索框 */}
         <div className="flex items-center gap-4">
+          <a
+            href={alarmApi.exportLogsUrl()}
+            className="flex items-center gap-2 px-5 py-3 bg-slate-800/80 border border-slate-700 rounded-lg text-base text-slate-200 hover:bg-slate-700/80 transition-all"
+          >
+            <Download size={18} className="text-cyan-400" />
+            <span>导出日志</span>
+          </a>
           {/* 树形筛选下拉 */}
           <div className="relative" ref={treeFilterRef}>
             <button
@@ -390,7 +603,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
             </button>
 
             {showTreeFilter && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-2 w-[380px] max-h-[calc(100vh-180px)] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-y-auto">
                 <div className="p-4 border-b border-slate-700">
                   <div className="text-base text-slate-400">选择筛选范围</div>
                 </div>
@@ -399,10 +612,11 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   <div className="flex items-center gap-2 px-3 py-2 text-base text-slate-400">
                     <Building2 size={16} /> 所属公司
                   </div>
+                  <div className="max-h-52 overflow-y-auto pr-1">
                   {companies.map(c => (
                     <button
                       key={c}
-                      onClick={() => { setSelectedCompany(c); setSelectedProject('all'); setSelectedTeam('all'); }}
+                      onClick={() => { setSelectedCompany(c); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); }}
                       className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-base transition-all ${
                         selectedCompany === c 
                           ? 'bg-cyan-500/20 text-cyan-400' 
@@ -413,16 +627,18 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                       {selectedCompany === c && <Check size={16} />}
                     </button>
                   ))}
+                  </div>
                 </div>
 
                 <div className="p-2 border-t border-slate-700/50">
                   <div className="flex items-center gap-2 px-3 py-2 text-base text-slate-400">
                     <FileText size={16} /> 所属项目
                   </div>
+                  <div className="max-h-52 overflow-y-auto pr-1">
                   {projects.map(p => (
                     <button
                       key={p}
-                      onClick={() => { setSelectedProject(p); setSelectedTeam('all'); }}
+                      onClick={() => { setSelectedProject(p); setSelectedGrid('all'); setSelectedTeam('all'); }}
                       className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-base transition-all pl-8 ${
                         selectedProject === p 
                           ? 'bg-cyan-500/20 text-cyan-400' 
@@ -433,12 +649,36 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                       {selectedProject === p && <Check size={16} />}
                     </button>
                   ))}
+                  </div>
                 </div>
+
+                <div className="p-2 border-t border-slate-700/50">
+                  <div className="flex items-center gap-2 px-3 py-2 text-base text-slate-400">
+                    <MapPin size={16} /> 所属网格
+                  </div>
+                  <div className="max-h-52 overflow-y-auto pr-1">
+                  {grids.map(g => (
+                    <button
+                      key={g}
+                      onClick={() => { setSelectedGrid(g); setSelectedTeam('all'); }}
+                      className={`w-full flex items-center justify-between px-4 py-2.5 rounded text-base transition-all pl-10 ${
+                        selectedGrid === g 
+                          ? 'bg-cyan-500/20 text-cyan-400' 
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>{g === 'all' ? '全部网格' : g}</span>
+                      {selectedGrid === g && <Check size={16} />}
+                    </button>
+                  ))}
+                  </div>
+                  </div>
 
                 <div className="p-2 border-t border-slate-700/50">
                   <div className="flex items-center gap-2 px-3 py-2 text-base text-slate-400">
                     <Users size={16} /> 所属工队
                   </div>
+                  <div className="max-h-52 overflow-y-auto pr-1">
                   {teams.map(t => (
                     <button
                       key={t}
@@ -453,6 +693,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                       {selectedTeam === t && <Check size={16} />}
                     </button>
                   ))}
+                  </div>
                 </div>
 
                 <div className="p-4 border-t border-slate-700 flex gap-2">
@@ -460,6 +701,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                     onClick={() => {
                       setSelectedCompany('all');
                       setSelectedProject('all');
+                      setSelectedGrid('all');
                       setSelectedTeam('all');
                     }}
                     className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-base transition-all"
@@ -564,6 +806,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 <td className="px-4 py-3">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-sm text-slate-300">{log.company}</span>
+                    {log.grid && <span className="text-xs text-slate-500">网格：{log.grid}</span>}
                     <span className="text-xs text-slate-500">{log.project} · {log.team}</span>
                   </div>
                 </td>
@@ -572,6 +815,18 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                     <span className="text-sm text-slate-500 max-w-sm truncate flex-1" title={generateLogDetails(log)}>
                       {generateLogDetails(log)}
                     </span>
+                    {onNavigate && getFenceSnapshotForMap(log) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewHistoricalFenceOnMap(log);
+                        }}
+                        className="flex-shrink-0 p-1 hover:bg-amber-500/20 rounded text-amber-300 hover:text-amber-200 transition-all"
+                        title="在地图上查看历史围栏"
+                      >
+                        <MapPin size={14} />
+                      </button>
+                    )}
                     {onNavigate && getNavigateTarget(log.targetType) && (
                       <button
                         onClick={(e) => {
@@ -608,7 +863,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
       {/* 详情弹窗 */}
       {selectedLog && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSelectedLog(null)}>
-          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[600px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[760px] max-w-[90vw] max-h-[86vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-5">
               <div className="flex items-center gap-3">
                 <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${actionColors[selectedLog.targetType]}`}>
@@ -651,14 +906,84 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                     <span className="text-slate-200">{selectedLog.project}</span>
                   </div>
                 )}
+                {selectedLog.grid && (
+                  <div>
+                    <span className="text-slate-400">所属网格：</span>
+                    <span className="text-slate-200">{selectedLog.grid}</span>
+                  </div>
+                )}
+                {selectedLog.team && (
+                  <div>
+                    <span className="text-slate-400">所属工队：</span>
+                    <span className="text-slate-200">{selectedLog.team}</span>
+                  </div>
+                )}
                 <div className="col-span-2">
                   <span className="text-slate-400">详细信息：</span>
                   <p className="text-slate-200 mt-1">{generateLogDetails(selectedLog)}</p>
                 </div>
+                {selectedFenceBackup && (
+                  <div className="col-span-2 mt-2 rounded-lg border border-cyan-400/20 bg-slate-950/40 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-cyan-300">删除前围栏备份</span>
+                      <span className="text-xs text-slate-500">日志留存</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <div>
+                        <span className="text-slate-500">围栏名称：</span>
+                        <span className="text-slate-200">{stringifyBackupValue(selectedFenceBackup.name)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">围栏ID：</span>
+                        <span className="text-slate-200">{stringifyBackupValue(selectedFenceBackup.fence_id || selectedFenceBackup.id)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">形状：</span>
+                        <span className="text-slate-200">{formatFenceShape(selectedFenceBackup.shape)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">规则：</span>
+                        <span className="text-slate-200">{formatFenceBehavior(selectedFenceBackup.behavior)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">等级：</span>
+                        <span className="text-slate-200">{formatFenceSeverity(selectedFenceBackup.severity || selectedFenceBackup.alarm_type)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">状态：</span>
+                        <span className="text-slate-200">{selectedFenceBackup.is_active === false ? '停用' : '启用'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">所属公司：</span>
+                        <span className="text-slate-200">{stringifyBackupValue(selectedFenceBackup.company)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">所属项目：</span>
+                        <span className="text-slate-200">{stringifyBackupValue(selectedFenceBackup.project)}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-slate-500">生效时间：</span>
+                        <span className="text-slate-200">{stringifyBackupValue(selectedFenceBackup.schedule?.start)} 至 {stringifyBackupValue(selectedFenceBackup.schedule?.end)}</span>
+                      </div>
+                    </div>
+                    <pre className="mt-3 max-h-44 overflow-auto rounded border border-slate-700/70 bg-slate-950/70 p-3 text-xs leading-relaxed text-slate-300">
+                      {stringifyBackupValue(selectedFenceBackup.geometry || selectedFenceBackup.coordinates_json || selectedFenceBackup)}
+                    </pre>
+                  </div>
+                )}
               </div>
             </div>
             
             <div className="flex gap-3 mt-6">
+              {onNavigate && selectedLog && getFenceSnapshotForMap(selectedLog) && (
+                <button
+                  onClick={() => viewHistoricalFenceOnMap(selectedLog)}
+                  className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 rounded-lg text-lg font-medium text-slate-950 transition-all flex items-center justify-center gap-2"
+                >
+                  <MapPin size={18} />
+                  查看历史围栏
+                </button>
+              )}
               {onNavigate && selectedLog && getNavigateTarget(selectedLog.targetType) && (
                 <button
                   onClick={() => {

@@ -1,7 +1,7 @@
 from app.schemas.device_schema import DeviceCreate, DeviceUpdate, TrajectoryPoint
 
 
-from app.core.database import get_mongo_collection
+from app.core.database import get_compatible_mongo_db, get_mongo_collection, get_next_sequence
 
 
 from app.utils.logger import get_logger
@@ -13,13 +13,24 @@ from datetime import datetime
 from typing import List, Optional
 
 
+from app.core.ws_manager import push_alarm_threadsafe
+from app.services.alarm_service import AlarmService
 from app.services.track_simplify_service import track_simplify_service
+from app.utils.config_manager import (
+    get_stationary_reminder_enabled,
+    get_stationary_reminder_minutes,
+    get_track_simplify_precision,
+)
 
 
 
 
 
 devices_collection = get_mongo_collection("device")
+alarm_db = get_compatible_mongo_db("alarm_record")
+alarms_collection = alarm_db["alarm_record"]
+_stationary_state = {}
+_stationary_alarm_cache = {}
 
 
 
@@ -35,6 +46,92 @@ logger = get_logger("DeviceService")
 
 
 class DeviceService:
+    def _get_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        return track_simplify_service._get_distance(lat1, lon1, lat2, lon2)
+
+    def _point_timestamp(self, timestamp_value) -> float:
+        import time
+
+        if timestamp_value:
+            try:
+                if isinstance(timestamp_value, str):
+                    return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00')).timestamp()
+                return float(timestamp_value)
+            except Exception:
+                pass
+        return time.time()
+
+    def _check_stationary_reminder(self, device_id: str, point: TrajectoryPoint, device: dict | None = None):
+        if not get_stationary_reminder_enabled():
+            _stationary_state.pop(device_id, None)
+            _stationary_alarm_cache.pop(device_id, None)
+            return
+
+        now_ts = self._point_timestamp(point.timestamp)
+        precision = max(get_track_simplify_precision(), 1.0)
+        threshold_seconds = get_stationary_reminder_minutes() * 60
+        state = _stationary_state.get(device_id)
+
+        if not state:
+            _stationary_state[device_id] = {"lat": point.lat, "lng": point.lng, "since": now_ts}
+            return
+
+        distance = self._get_distance(state["lat"], state["lng"], point.lat, point.lng)
+        if distance > precision:
+            _stationary_state[device_id] = {"lat": point.lat, "lng": point.lng, "since": now_ts}
+            _stationary_alarm_cache.pop(device_id, None)
+            return
+
+        stationary_seconds = now_ts - state["since"]
+        last_alarm_ts = _stationary_alarm_cache.get(device_id, 0)
+        if stationary_seconds < threshold_seconds or now_ts - last_alarm_ts < threshold_seconds:
+            return
+
+        device_doc = device or devices_collection.find_one({"device_id": device_id}) or {}
+        device_name = device_doc.get("name") or device_doc.get("device_name") or device_id
+        location = f"{point.lat},{point.lng}"
+        minutes = int(stationary_seconds // 60)
+        description = f"定位设备 {device_name} 已连续 {minutes} 分钟未移动"
+        next_id = int(get_next_sequence("alarm_record_id", db=alarm_db))
+        alarm_time = datetime.utcnow()
+        payload = {
+            "id": next_id,
+            "device_id": device_id,
+            "project_id": device_doc.get("project_id"),
+            "alarm_source": "device",
+            "source_type": "stationary",
+            "alarm_type": "STATIONARY_REMINDER",
+            "severity": "low",
+            "timestamp": alarm_time,
+            "description": description,
+            "status": "pending",
+            "handled_at": None,
+            "location": location,
+            "recording_path": "",
+            "recording_status": "not_required",
+            "recording_error": "",
+            "alarm_image_path": "",
+            "personnel_id": device_doc.get("holderPhone") or "",
+            "person_name": device_doc.get("holder") or device_name,
+            "person": {"username": device_doc.get("holder") or device_name},
+        }
+        payload = AlarmService()._apply_org_snapshot_to_payload(payload)
+        alarms_collection.insert_one(payload)
+        _stationary_alarm_cache[device_id] = now_ts
+        push_alarm_threadsafe({
+            "id": next_id,
+            "device_id": device_id,
+            "alarm_type": "STATIONARY_REMINDER",
+            "type": "STATIONARY_REMINDER",
+            "severity": "low",
+            "timestamp": alarm_time.isoformat(),
+            "description": description,
+            "location": location,
+            "person_name": payload["person_name"],
+            "msg": description,
+            "is_alarm": True,
+        })
+
     def _serialize_device(self, device: dict) -> dict:
         """将MongoDB文档转换为JSON可序列化格式"""
         if device is None:
@@ -110,15 +207,22 @@ class DeviceService:
 
 
             "company": device_data.company,
+            "branch_id": device_data.branch_id or "",
 
 
             "project": device_data.project,
+            "project_id": device_data.project_id or "",
+            "grid": device_data.grid or "",
+            "grid_id": device_data.grid_id or "",
 
 
             "type": device_data.type or "",
+            "install_location": device_data.install_location or "",
 
 
             "team": device_data.team or "",
+            "team_id": device_data.team_id or "",
+            "personnel_id": device_data.personnel_id or "",
 
 
             "status": device_data.status,
@@ -128,6 +232,7 @@ class DeviceService:
 
 
             "holderPhone": device_data.holderPhone or "",
+            "phone_num": device_data.phone_num or "",
 
 
             "remark": device_data.remark or "",
@@ -202,10 +307,34 @@ class DeviceService:
             update_data["company"] = device_data.company
 
 
+        if device_data.branch_id is not None:
+
+
+            update_data["branch_id"] = device_data.branch_id
+
+
         if device_data.project is not None:
 
 
             update_data["project"] = device_data.project
+
+
+        if device_data.project_id is not None:
+
+
+            update_data["project_id"] = device_data.project_id
+
+
+        if device_data.grid is not None:
+
+
+            update_data["grid"] = device_data.grid
+
+
+        if device_data.grid_id is not None:
+
+
+            update_data["grid_id"] = device_data.grid_id
 
 
         if device_data.type is not None:
@@ -214,10 +343,28 @@ class DeviceService:
             update_data["type"] = device_data.type
 
 
+        if device_data.install_location is not None:
+
+
+            update_data["install_location"] = device_data.install_location
+
+
         if device_data.team is not None:
 
 
             update_data["team"] = device_data.team
+
+
+        if device_data.team_id is not None:
+
+
+            update_data["team_id"] = device_data.team_id
+
+
+        if device_data.personnel_id is not None:
+
+
+            update_data["personnel_id"] = device_data.personnel_id
 
 
         if device_data.status is not None:
@@ -236,6 +383,12 @@ class DeviceService:
 
 
             update_data["holderPhone"] = device_data.holderPhone
+
+
+        if device_data.phone_num is not None:
+
+
+            update_data["phone_num"] = device_data.phone_num
 
 
         if device_data.remark is not None:
@@ -410,6 +563,7 @@ class DeviceService:
 
 
             self._check_fence_status(device_id, point.lat, point.lng)
+            self._check_stationary_reminder(device_id, point)
 
 
             return None
@@ -476,6 +630,7 @@ class DeviceService:
 
 
         self._check_fence_status(device_id, point.lat, point.lng)
+        self._check_stationary_reminder(device_id, point, updated_device)
 
 
         return updated_device

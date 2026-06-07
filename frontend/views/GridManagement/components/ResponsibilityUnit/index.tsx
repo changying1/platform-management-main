@@ -10,21 +10,27 @@ import {
 } from '../../../../src/api/responsibilityUnitApi';
 import { hasStoredPermission } from '../../../../src/utils/permissions';
 
+const flattenUnits = (nodes: UnitTreeNode[]): ResponsibilityUnit[] =>
+  nodes.flatMap((node) => [node, ...flattenUnits(node.children || [])]);
+
+const includesKeyword = (value: unknown, keyword: string) =>
+  String(value || '').toLowerCase().includes(keyword);
+
 export const ResponsibilityUnitView: React.FC = () => {
   const [units, setUnits] = useState<UnitTreeNode[]>([]);
   const [allUnits, setAllUnits] = useState<ResponsibilityUnit[]>([]);
-  const canCreatePersonnel = hasStoredPermission('personnel.create');
-  const canEditPersonnel = hasStoredPermission('personnel.edit');
-  const canDeletePersonnel = hasStoredPermission('personnel.delete');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState<ResponsibilityUnit | null>(null);
-  const [parentUnit, setParentUnit] = useState<{ unit_id: string; name: string } | null>(null);
+  const [parentUnit, setParentUnit] = useState<{ unit_id: string; name: string; type: string; project_id?: string } | null>(null);
 
   const [isChangeParentOpen, setIsChangeParentOpen] = useState(false);
   const [changingUnit, setChangingUnit] = useState<ResponsibilityUnit | null>(null);
+  const canCreatePersonnel = hasStoredPermission('personnel.create');
+  const canEditPersonnel = hasStoredPermission('personnel.edit');
+  const canDeletePersonnel = hasStoredPermission('personnel.delete');
 
   // 加载树形数据
   const loadTree = async () => {
@@ -56,11 +62,13 @@ export const ResponsibilityUnitView: React.FC = () => {
 
   // 过滤
   const filterUnits = (nodes: UnitTreeNode[]): UnitTreeNode[] => {
-    if (!searchTerm) return nodes;
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return nodes;
     return nodes
       .map((node) => {
         const match =
-          node.name.includes(searchTerm) || node.unit_id.includes(searchTerm);
+          includesKeyword(node.name, keyword) ||
+          includesKeyword(node.unit_id, keyword);
         const filteredChildren = node.children ? filterUnits(node.children) : [];
         if (match || filteredChildren.length > 0) {
           return { ...node, children: filteredChildren };
@@ -71,6 +79,12 @@ export const ResponsibilityUnitView: React.FC = () => {
   };
 
   const filteredUnits = filterUnits(units);
+  const modalUnits = [...flattenUnits(units), ...allUnits].reduce<ResponsibilityUnit[]>((result, unit) => {
+    const key = unit.unit_id || unit.id;
+    if (!key || result.some((item) => (item.unit_id || item.id) === key)) return result;
+    result.push(unit);
+    return result;
+  }, []);
 
   // 新建一级
   const handleCreateTop = () => {
@@ -82,7 +96,7 @@ export const ResponsibilityUnitView: React.FC = () => {
   // 新建下级
   const handleCreateChild = (unit: UnitTreeNode) => {
     setEditingUnit(null);
-    setParentUnit({ unit_id: unit.unit_id, name: unit.name });
+    setParentUnit({ unit_id: unit.unit_id || unit.id, name: unit.name, type: unit.type, project_id: unit.project_id });
     setIsFormOpen(true);
   };
 
@@ -94,12 +108,40 @@ export const ResponsibilityUnitView: React.FC = () => {
   };
 
   // 删除
-  const handleDelete = async (unitId: string) => {
+  const deleteIdCandidates = (unit: UnitTreeNode) => {
+    const values = [
+      unit.unit_id,
+      unit.id,
+      unit.grid_id,
+      unit.team_id,
+      unit.personnel_id,
+      unit.project_id,
+      unit.name,
+    ];
+    return values
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .filter((value, index, array) => array.indexOf(value) === index);
+  };
+
+  const handleDelete = async (unit: UnitTreeNode) => {
     if (window.confirm('确定要删除这个责任单元吗？')) {
+      let lastError: any = null;
       try {
-        await unitApiClient.deleteUnit(unitId);
-        await loadTree();
-        await loadAllUnits();
+        for (const unitId of deleteIdCandidates(unit)) {
+          try {
+            await unitApiClient.deleteUnit(unitId);
+            await loadTree();
+            await loadAllUnits();
+            return;
+          } catch (error: any) {
+            lastError = error;
+            if (error.response?.status && error.response.status !== 404) {
+              throw error;
+            }
+          }
+        }
+        throw lastError || new Error('delete failed');
       } catch (error: any) {
         console.error('删除失败:', error);
         alert(error.response?.data?.detail || '删除失败');
@@ -166,9 +208,9 @@ export const ResponsibilityUnitView: React.FC = () => {
   };
 
   return (
-    <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-6">
+    <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 p-4">
       {/* 工具栏 */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
           <div className="relative">
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" />
@@ -209,6 +251,7 @@ export const ResponsibilityUnitView: React.FC = () => {
             onMoveUp={handleMoveUp}
             onMoveDown={handleMoveDown}
             onChangeParent={handleChangeParent}
+            onCreateChild={handleCreateChild}
             canCreate={canCreatePersonnel}
             canEdit={canEditPersonnel}
             canDelete={canDeletePersonnel}
@@ -227,6 +270,7 @@ export const ResponsibilityUnitView: React.FC = () => {
         onSubmit={handleFormSubmit}
         editUnit={editingUnit}
         parentUnit={parentUnit}
+        allUnits={allUnits}
       />
 
       <ChangeParentModal
@@ -237,7 +281,7 @@ export const ResponsibilityUnitView: React.FC = () => {
         }}
         onSubmit={handleChangeParentSubmit}
         unit={changingUnit}
-        allUnits={allUnits}
+        allUnits={modalUnits}
       />
     </div>
   );
