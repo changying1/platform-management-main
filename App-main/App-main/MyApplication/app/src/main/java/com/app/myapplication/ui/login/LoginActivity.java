@@ -21,6 +21,7 @@ public class LoginActivity extends AppCompatActivity {
     private LoginViewModel vm;
 
     private EditText etUsername;
+    private EditText etPassword;
     private Button btnLogin;
 
     // 你布局里旧的 progress（在 card 内，会挤布局）
@@ -48,6 +49,7 @@ public class LoginActivity extends AppCompatActivity {
         setContentView(R.layout.activity_login);
 
         etUsername = findViewById(R.id.et_username);
+        etPassword = findViewById(R.id.et_password);
         btnLogin = findViewById(R.id.btn_login);
         progress = findViewById(R.id.progress);
         tvError = findViewById(R.id.tv_error);
@@ -75,9 +77,19 @@ public class LoginActivity extends AppCompatActivity {
             if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) return;
 
             String username = etUsername.getText().toString().trim();
-            if (TextUtils.isEmpty(username)) username = "游客";
+            String password = etPassword.getText().toString().trim();
+            if (TextUtils.isEmpty(username)) {
+                tvError.setText("请输入用户名");
+                tvError.setVisibility(View.VISIBLE);
+                return;
+            }
+            if (TextUtils.isEmpty(password)) {
+                tvError.setText("请输入密码");
+                tvError.setVisibility(View.VISIBLE);
+                return;
+            }
 
-            vm.loginNoPassword(username);
+            vm.login(username, password);
         });
     }
 
@@ -98,6 +110,7 @@ public class LoginActivity extends AppCompatActivity {
         // ✅ loading 时禁用输入/按钮
         btnLogin.setEnabled(!loading);
         etUsername.setEnabled(!loading);
+        if (etPassword != null) etPassword.setEnabled(!loading);
     }
 
     private void goHome() {

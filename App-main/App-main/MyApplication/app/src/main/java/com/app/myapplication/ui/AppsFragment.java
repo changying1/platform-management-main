@@ -15,7 +15,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.app.myapplication.R;
 import com.app.myapplication.ui.track.TrackPlaybackActivity;
 import com.app.myapplication.ui.call.GroupCallActivity;
-import com.app.myapplication.ui.user.UserManagementActivity;
+import com.app.myapplication.ui.management.ManagementActivity;
 import com.app.myapplication.ui.video.VideoCenterActivity;
 import com.app.myapplication.ui.alarm.AlarmRecordsActivity;
 import com.app.myapplication.ui.fence.FenceCenterActivity;
@@ -105,7 +105,7 @@ public class AppsFragment extends Fragment {
                             startActivity(new Intent(requireContext(), GroupCallActivity.class));
                             break;
                         case "管理":
-                            startActivity(new Intent(requireContext(), UserManagementActivity.class));
+                            startActivity(new Intent(requireContext(), ManagementActivity.class));
                             break;
                     }
                 });

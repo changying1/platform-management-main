@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -17,6 +18,9 @@ from app.utils.config_manager import (
     get_password_min_length,
     get_password_require_complexity,
 )
+
+# 账号锁定功能开关
+ACCOUNT_LOCK_ENABLED = os.getenv("ACCOUNT_LOCK_ENABLED", "true").lower() == "true"
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -300,6 +304,8 @@ def _locked_until(username: str) -> datetime | None:
 
 
 def _assert_not_locked(username: str):
+    if not ACCOUNT_LOCK_ENABLED:
+        return
     locked_until = _locked_until(username)
     if locked_until and locked_until > datetime.now():
         minutes = max(1, int((locked_until - datetime.now()).total_seconds() // 60) + 1)
@@ -308,6 +314,11 @@ def _assert_not_locked(username: str):
 
 def _record_login_failed(username: str, reason: str):
     key = username or "unknown"
+    # 如果锁定功能禁用，只记录日志，不锁定账号
+    if not ACCOUNT_LOCK_ENABLED:
+        _write_login_log(key, False, reason)
+        return
+
     state = _get_login_state(key)
     count = int(state.get("failed_count") or 0) + 1
     update = {

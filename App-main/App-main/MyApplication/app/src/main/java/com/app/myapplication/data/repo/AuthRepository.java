@@ -29,10 +29,11 @@ public class AuthRepository {
         return session.hasToken();
     }
 
-    public void loginNoPassword(String username, Callback cb) {
-        String account = username == null || username.trim().isEmpty() ? "admin" : username.trim();
+    public void login(String username, String password, Callback cb) {
+        String account = username == null || username.trim().isEmpty() ? "" : username.trim();
+        String pwd = password == null ? "" : password;
         AuthApi api = ApiClient.get(context).create(AuthApi.class);
-        api.login(new AuthApi.LoginRequest(account, account)).enqueue(new retrofit2.Callback<LoginResult>() {
+        api.login(new AuthApi.LoginRequest(account, pwd)).enqueue(new retrofit2.Callback<LoginResult>() {
             @Override
             public void onResponse(Call<LoginResult> call, Response<LoginResult> response) {
                 LoginResult result = response.body();
