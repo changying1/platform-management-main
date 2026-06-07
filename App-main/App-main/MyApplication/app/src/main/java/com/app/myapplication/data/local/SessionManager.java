@@ -42,12 +42,12 @@ public class SessionManager {
 
     public void saveSession(LoginResult r) {
         sp.edit()
-                .putString(K_TOKEN, r.token == null ? "" : r.token)
-                .putString(K_REFRESH, r.refreshToken == null ? "" : r.refreshToken)
+                .putString(K_TOKEN, r.token)
+                .putString(K_REFRESH, r.refreshToken)
                 .putLong(K_EXPIRES, r.expiresAt)
-                .putString(K_USER_ID, r.userId == null ? "" : r.userId)
-                .putString(K_NICK, r.nickname == null ? "" : r.nickname)
-                .putString(K_AVATAR, r.avatarUrl == null ? "" : r.avatarUrl)
+                .putString(K_USER_ID, r.userId)
+                .putString(K_NICK, r.nickname)
+                .putString(K_AVATAR, r.avatarUrl)
                 .apply();
     }
 
