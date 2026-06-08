@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- 录像保存设置 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="录像保存设置"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <!-- 常规录像保存天数 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="常规录像保存天数"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderVideoRetention"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="1"
+                    android:valueTo="90"
+                    android:stepSize="1"/>
+
+                <TextView
+                    android:id="@+id/tvVideoRetentionValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="15天"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 录像质量 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="录像质量"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <Spinner
+                    android:id="@+id/spinnerVideoQuality"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 录像分段时长 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="录像分段时长（分钟）"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderVideoSegment"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="5"
+                    android:valueTo="60"
+                    android:stepSize="5"/>
+
+                <TextView
+                    android:id="@+id/tvVideoSegmentValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="30分钟"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 存储方式 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="存储方式"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <Spinner
+                    android:id="@+id/spinnerStorageType"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"/>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 告警录像设置 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="告警录像设置"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <!-- 告警录像保存天数 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="告警录像保存天数"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderAlarmVideoRetention"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="7"
+                    android:valueTo="365"
+                    android:stepSize="1"/>
+
+                <TextView
+                    android:id="@+id/tvAlarmVideoRetentionValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="90天"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 告警时刻前后录制时长 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="告警时刻前后录制时长（分钟）"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderAlarmSurround"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="0.5"
+                    android:valueTo="10"
+                    android:stepSize="0.5"/>
+
+                <TextView
+                    android:id="@+id/tvAlarmSurroundValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="1分钟"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 告警截图保存天数 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="告警截图保存天数"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderScreenshotRetention"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="7"
+                    android:valueTo="365"
+                    android:stepSize="1"/>
+
+                <TextView
+                    android:id="@+id/tvScreenshotRetentionValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="90天"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 存储空间管理 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="存储空间管理"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <!-- 最大存储空间 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="最大存储空间（GB）"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etStorageMaxSize"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="number"
+                        android:hint="输入最大存储空间"/>
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 警告阈值 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="警告阈值（%）"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderWarningThreshold"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:valueFrom="50"
+                    android:valueTo="95"
+                    android:stepSize="5"/>
+
+                <TextView
+                    android:id="@+id/tvWarningThresholdValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="80%"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="12dp" android:background="#E0E0E0"/>
+
+                <!-- 自动清理 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="自动清理"
+                        android:textSize="15sp"/>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchAutoCleanup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginVertical="8dp" android:background="#E0E0E0"/>
+
+                <!-- 清理策略 -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="清理策略"
+                    android:textSize="14sp"
+                    android:textColor="#666666"/>
+
+                <Spinner
+                    android:id="@+id/spinnerCleanupStrategy"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"/>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

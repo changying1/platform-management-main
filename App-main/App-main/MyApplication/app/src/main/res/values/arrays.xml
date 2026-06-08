@@ -5,4 +5,59 @@
         <item>警告</item>
         <item>提示</item>
     </string-array>
+
+    <!-- 语言选项 -->
+    <string-array name="language_options">
+        <item>中文</item>
+        <item>English</item>
+    </string-array>
+
+    <!-- 分页大小选项 -->
+    <string-array name="page_size_options">
+        <item>10</item>
+        <item>20</item>
+        <item>50</item>
+        <item>100</item>
+    </string-array>
+
+    <!-- 告警声音类型 -->
+    <string-array name="alarm_sound_type_options">
+        <item>无</item>
+        <item>标准</item>
+        <item>紧急</item>
+    </string-array>
+
+    <!-- 视频质量选项 -->
+    <string-array name="video_quality_options">
+        <item>高清 (H.264, 4Mbps)</item>
+        <item>标清 (H.264, 2Mbps)</item>
+        <item>流畅 (H.265, 1Mbps)</item>
+    </string-array>
+
+    <!-- 存储方式选项 -->
+    <string-array name="storage_type_options">
+        <item>本地存储</item>
+        <item>云存储</item>
+        <item>混合存储</item>
+    </string-array>
+
+    <!-- 清理策略选项 -->
+    <string-array name="cleanup_strategy_options">
+        <item>按时间</item>
+        <item>按空间</item>
+        <item>时间和空间</item>
+    </string-array>
+
+    <!-- 围栏默认行为 -->
+    <string-array name="fence_behavior_options">
+        <item>禁入</item>
+        <item>禁出</item>
+    </string-array>
+
+    <!-- 围栏严重级别 -->
+    <string-array name="fence_severity_options">
+        <item>普通</item>
+        <item>风险</item>
+        <item>严重</item>
+    </string-array>
 </resources>

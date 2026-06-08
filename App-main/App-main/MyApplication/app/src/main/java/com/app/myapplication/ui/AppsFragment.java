@@ -20,6 +20,7 @@ import com.app.myapplication.ui.video.VideoCenterActivity;
 import com.app.myapplication.ui.alarm.AlarmRecordsActivity;
 import com.app.myapplication.ui.fence.FenceCenterActivity;
 import com.app.myapplication.ui.playback.PlaybackCenterActivity;
+import com.app.myapplication.ui.settings.SettingsActivity;
 import androidx.viewpager2.widget.ViewPager2;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
@@ -85,6 +86,7 @@ public class AppsFragment extends Fragment {
         quick.add(new com.app.myapplication.ui.adapter.QuickActionsAdapter.Item("报警", R.drawable.ic_alarm));
         quick.add(new com.app.myapplication.ui.adapter.QuickActionsAdapter.Item("语音", android.R.drawable.ic_btn_speak_now));
         quick.add(new com.app.myapplication.ui.adapter.QuickActionsAdapter.Item("管理", R.drawable.ic_administrator));
+        quick.add(new com.app.myapplication.ui.adapter.QuickActionsAdapter.Item("设置", android.R.drawable.ic_menu_preferences));
 
         com.app.myapplication.ui.adapter.QuickActionsAdapter quickAdapter =
                 new com.app.myapplication.ui.adapter.QuickActionsAdapter(quick, item -> {
@@ -106,6 +108,9 @@ public class AppsFragment extends Fragment {
                             break;
                         case "管理":
                             startActivity(new Intent(requireContext(), ManagementActivity.class));
+                            break;
+                        case "设置":
+                            startActivity(new Intent(requireContext(), SettingsActivity.class));
                             break;
                     }
                 });

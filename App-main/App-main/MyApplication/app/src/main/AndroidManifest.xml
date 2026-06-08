@@ -106,6 +106,12 @@
             android:exported="false"
             android:label="管理中心" />
 
+        <!-- 全局设置 -->
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:label="全局设置" />
+
     </application>
 
 </manifest>
