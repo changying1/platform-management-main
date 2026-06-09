@@ -1,8 +1,7 @@
-# backend/app/services/ai_features/registry.py
-
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple, Any
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import importlib
 import os
@@ -23,33 +22,14 @@ _LOADED = False
 
 
 def ai_rule(key: str, desc: str = ""):
-    """
-    AI规则注册装饰器
-    """
-
     def decorator(fn: DetectFn) -> DetectFn:
-
-        if key in _RULES:
-            print(f"⚠️ AI规则重复注册: {key}，将被覆盖")
-
-        _RULES[key] = RuleSpec(
-            key=key,
-            fn=fn,
-            desc=desc,
-        )
-
-        print(f"[AI] Registered rule: {key}")
-
+        _RULES[key] = RuleSpec(key=key, fn=fn, desc=desc)
         return fn
 
     return decorator
 
 
 def ensure_loaded():
-    """
-    自动扫描 ai_features 目录
-    """
-
     global _LOADED
     if _LOADED:
         return
@@ -58,35 +38,18 @@ def ensure_loaded():
     pkg_name = __package__
 
     for mod in pkgutil.iter_modules([pkg_dir]):
-
-        name = mod.name
-
-        if name.startswith("_"):
+        if mod.name.startswith("_") or mod.name in {"registry", "__init__"}:
             continue
-
-        if name in ("registry", "__init__"):
-            continue
-
-        importlib.import_module(f"{pkg_name}.{name}")
+        importlib.import_module(f"{pkg_name}.{mod.name}")
 
     _LOADED = True
 
 
 def list_rules() -> Dict[str, RuleSpec]:
-
     ensure_loaded()
-
     return dict(_RULES)
 
 
 def get_algo_handlers(service):
-
     ensure_loaded()
-
-    handlers = {}
-
-    for key, spec in _RULES.items():
-
-        handlers[key] = lambda frame, _fn=spec.fn: _fn(service, frame)
-
-    return handlers
+    return {key: (lambda frame, _fn=spec.fn: _fn(service, frame)) for key, spec in _RULES.items()}

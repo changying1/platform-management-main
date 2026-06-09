@@ -110,18 +110,7 @@ export default function SmartMonitoringConfig({
   // ✅ 删除重复的 useEffect（第 86 行附近的那个）
 
   const fetchAIRules = async () => {
-    const defaultAlgos = [
-      { id: "helmet", name: "安全帽检测", desc: "检测安全帽佩戴情况" },
-      { id: "smoking", name: "抽烟检测", desc: "检测人员抽烟行为" },
-      { id: "face_recognition", name: "人脸识别", desc: "识别并比对人员身份" },
-      { id: "signage", name: "现场标识类", desc: "识别现场安全标识" },
-      { id: "supervisor_count", name: "现场监督人数统计", desc: "统计监督人员数量" },
-      { id: "ladder_angle", name: "梯子角度类", desc: "检测梯子使用角度" },
-      { id: "hole_curb", name: "孔口挡坎违规类", desc: "检测孔口挡坎合规性" },
-      { id: "unauthorized_person", name: "围栏入侵管理类", desc: "检测非法入侵" },
-    ];
-    
-    setAlgos(defaultAlgos);
+    setAlgos([]);
     
     try {
       const rules: AIRule[] = await getAIRules();

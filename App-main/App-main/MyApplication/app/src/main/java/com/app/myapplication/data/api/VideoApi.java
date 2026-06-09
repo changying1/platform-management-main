@@ -83,7 +83,7 @@ public interface VideoApi {
     @GET("video/ai/status")
     Call<Map<String, Object>> getAIStatus();
 
-    @GET("video/ai/rules")
+    @GET("api/ai/algorithms")
     Call<Map<String, Object>> getAIRules();
 
     @GET("video/{video_id}/rules")

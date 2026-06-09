@@ -329,14 +329,7 @@
     const [showSmartConfig, setShowSmartConfig] = useState(false);
     
     const [activeAlgos, setActiveAlgos] = useState<string[]>([]); 
-    const [algos, setAlgos] = useState<Array<{ id: string; name: string }>>([
-      { id: "helmet", name: "安全帽类" },
-      { id: "signage", name: "现场标识类" },
-      { id: "supervisor_count", name: "现场监督人数统计" },
-      { id: "ladder_angle", name: "梯子角度类" },
-      { id: "hole_curb", name: "孔口挡坎违规类" },
-      { id: "unauthorized_person", name: "围栏入侵管理类" },
-    ]);
+    const [algos, setAlgos] = useState<Array<{ id: string; name: string }>>([]);
     const [devices, setDevices] = useState<Video[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);

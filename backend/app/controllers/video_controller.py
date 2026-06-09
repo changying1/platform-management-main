@@ -28,6 +28,7 @@ from datetime import datetime
 from app.services.ai_manager import ai_manager
 from pydantic import BaseModel
 from app.services.ai_features.registry import list_rules
+from app.services.ai_runtime.algorithm_catalog import list_algorithms
 
 router = APIRouter(prefix="/video", tags=["Video Surveillance"])
 service = VideoService()
@@ -108,12 +109,18 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db)):
 
 @router.get("/ai/rules")
 def get_ai_rules():
+    return {
+        "code": 0,
+        "data": list_algorithms()
+    }
+
     """获取限定的 AI 规则列表"""
     rules = list_rules()
     
     allowed_keys = [
         "helmet",
         "smoking",
+        "phone",
         "person_distance",
         "face_recognition",
         "signage",
@@ -128,6 +135,7 @@ def get_ai_rules():
     display_names = {
         "helmet": "安全帽检测",
         "smoking": "抽烟检测",
+        "phone": "打电话检测",
         "person_distance": "多人作业人员间距检测",
         "face_recognition": "人脸识别",
         "signage": "现场标识类",

@@ -53,6 +53,7 @@ from app.controllers import (
     responsibility_unit_controller,
     log_controller,
     app_voice_call_controller,
+    ai_algorithm_controller,
 )
 from app.utils.logger import get_logger
 from app.core.ws_manager import alarm_clients, set_main_event_loop
@@ -372,6 +373,7 @@ app.include_router(responsibility_unit_controller.router)
 app.include_router(log_controller.router)
 app.include_router(app_voice_call_controller.router)
 app.include_router(app_voice_call_controller.ws_router)
+app.include_router(ai_algorithm_controller.router)
 
 print("=" * 60)
 print("AI 助手服务已集成到主后端")

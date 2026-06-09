@@ -13,6 +13,7 @@ from app.services.ai_service import AIService
 from app.core.database import SessionLocal, get_mongo_db, get_next_sequence
 from app.services import ai_features
 from app.services.video_service import VideoService, RECORD_SEGMENT_SECONDS, RECORD_SEGMENT_SAFE_MARGIN_SECONDS
+from app.services.ai_runtime.model_registry import list_model_configs
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from PIL import Image, ImageDraw, ImageFont
 from app.utils.logger import get_logger
@@ -23,6 +24,36 @@ logger = get_logger("AIManager")
 
 
 class AIManager:
+    CURRENT_AI_ALARM_LEVELS = {
+        "head": "HIGH",
+        "no_helmet": "HIGH",
+        "safehat": "LOW",
+        "helmet": "LOW",
+        "person": "HIGH",
+        "smoking": "HIGH",
+        "fire": "SEVERE",
+        "flame": "SEVERE",
+        "火": "SEVERE",
+        "smoke": "SEVERE",
+        "烟": "SEVERE",
+        "reflection": "LOW",
+        "reflective_vest": "LOW",
+        "clothes": "HIGH",
+        "no_vest": "HIGH",
+        "phone": "HIGH",
+        "call": "HIGH",
+        "calling": "HIGH",
+    }
+
+    CURRENT_AI_BEHAVIOR_ALIASES = {
+        "helmet": ("head", "no_helmet", "safehat", "helmet"),
+        "person": ("person",),
+        "smoking": ("smoking",),
+        "fire": ("fire", "flame", "火", "smoke", "烟"),
+        "vest": ("reflection", "reflective_vest", "clothes", "no_vest"),
+        "phone": ("phone", "call", "calling"),
+    }
+
     def __init__(self):
         self.active_monitors = {}
         self.device_rules = {}
@@ -42,27 +73,37 @@ class AIManager:
 
         # 算法分发表
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
-        print(f"✅ 已加载AI规则: {list(self.algo_handlers.keys())}")
+        print(f"✅ 当前注册算法列表: {list(self.algo_handlers.keys())}")
 
-        # AI检测行为告警等级映射配置（可通过前端系统设置动态调整）
-        self.ai_alarm_level_map = {
-            'helmet': 'HIGH',
-            'helmet_missing': 'HIGH',
-            'safety_harness': 'SEVERE',
-            'safety_harness_missing': 'SEVERE',
-            'smoking': 'HIGH',
-            'fall': 'SEVERE',
-            'person_fall': 'SEVERE',
-            'unauthorized': 'HIGH',
-            'unauthorized_person': 'HIGH',
-            'fire': 'SEVERE',
-            'fire_detected': 'SEVERE',
-            '消防措施不足': 'SEVERE',
-            'no_helmet_area': 'MEDIUM',
-            'crowd': 'MEDIUM',
-            'crowd_detection': 'MEDIUM',
-        }
-        print(f"✅ 已加载AI告警等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
+        # AI检测行为告警等级映射仅从当前 EasyAIoT 7 个算法派生，旧 ai_features_old 行为不进入运行映射。
+        self.ai_alarm_level_map = self._build_current_ai_alarm_level_map()
+        self._log_current_ai_alarm_level_map()
+
+    def _normalize_behavior_key(self, behavior_code):
+        return str(behavior_code or "").strip().lower()
+
+    def _register_ai_alarm_behavior(self, level_map, behavior_code):
+        behavior_code = str(behavior_code or "").strip()
+        if not behavior_code:
+            return
+
+        normalized_code = self._normalize_behavior_key(behavior_code)
+        level_map[normalized_code] = self.CURRENT_AI_ALARM_LEVELS.get(normalized_code, "HIGH")
+
+    def _build_current_ai_alarm_level_map(self):
+        level_map = {}
+
+        for algorithm_code, config in list_model_configs().items():
+            behavior_codes = set(config.alarm_labels or ())
+            behavior_codes.update(self.CURRENT_AI_BEHAVIOR_ALIASES.get(algorithm_code, (algorithm_code,)))
+
+            for behavior_code in sorted(behavior_codes, key=str):
+                self._register_ai_alarm_behavior(level_map, behavior_code)
+
+        return level_map
+
+    def _log_current_ai_alarm_level_map(self):
+        print(f"✅ 当前 AI 等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
 
     def _alarm_collection(self):
         return get_mongo_db()["alarm_record"]

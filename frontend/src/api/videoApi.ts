@@ -168,6 +168,8 @@ export interface StreamUrl {
 export interface AIRule {
   key: string;
   desc: string;
+  enabled?: boolean;
+  reason?: string;
 }
 
 export interface PlaybackSavePayload {
@@ -995,8 +997,8 @@ export const updateDeviceRules = async (deviceId: number, rules: string[]): Prom
 };
 
 export const getAIRules = async (): Promise<AIRule[]> => {
-  // Keep compatibility with existing project setup where backend may run on 9000.
-  const urls = [`${API_BASE_URL}/video/ai/rules`, 'http://127.0.0.1:9000/video/ai/rules'];
+  // Prefer the runtime registry endpoint so UI stays aligned with backend ai_features.
+  const urls = [`${API_BASE_URL}/api/ai/algorithms`, 'http://127.0.0.1:9000/api/ai/algorithms'];
   let result: any = null;
   let lastError = 'Failed to load AI rules';
 
@@ -1024,10 +1026,12 @@ export const getAIRules = async (): Promise<AIRule[]> => {
   const list = Array.isArray(result?.data) ? result.data : [];
 
   return list
-    .filter((item: any) => item?.key)
+    .filter((item: any) => item?.key && item?.enabled === true)
     .map((item: any) => ({
       key: String(item.key),
       desc: String(item.desc || item.key),
+      enabled: Boolean(item.enabled),
+      reason: String(item.reason || ''),
     }));
 };
 /**

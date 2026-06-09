@@ -825,7 +825,6 @@ public class LiveFragment extends Fragment {
 
     private void loadAiRules() {
         if (aiRuleContainer == null) return;
-        renderAiRules(defaultAiRules());
         setAiStatus("状态：正在加载AI规则...");
         api().getAIRules().enqueue(new Callback<Map<String, Object>>() {
             @Override
@@ -853,6 +852,8 @@ public class LiveFragment extends Fragment {
                     Map<?, ?> item = (Map<?, ?>) itemObj;
                     String key = safeObjectString(item.get("key"));
                     String desc = safeObjectString(item.get("desc"));
+                    Object enabledObj = item.get("enabled");
+                    if (enabledObj instanceof Boolean && !((Boolean) enabledObj)) continue;
                     if (key.isEmpty()) continue;
                     if (desc.isEmpty()) desc = key;
                     rules.add(new AiRuleOption(key, desc));
@@ -878,16 +879,12 @@ public class LiveFragment extends Fragment {
     private ArrayList<AiRuleOption> defaultAiRules() {
         ArrayList<AiRuleOption> rules = new ArrayList<>();
         rules.add(new AiRuleOption("helmet", "安全帽检测"));
-        rules.add(new AiRuleOption("smoking", "抽烟检测"));
-        rules.add(new AiRuleOption("person_distance", "多人作业人员间距检测"));
-        rules.add(new AiRuleOption("face_recognition", "人脸识别"));
-        rules.add(new AiRuleOption("signage", "现场标识类"));
-        rules.add(new AiRuleOption("behavior", "作业行为类"));
-        rules.add(new AiRuleOption("supervisor_count", "现场监督人数统计"));
-        rules.add(new AiRuleOption("ladder_angle", "梯子角度类"));
-        rules.add(new AiRuleOption("hole_curb", "孔口挡坎违规类"));
-        rules.add(new AiRuleOption("unauthorized_person", "围栏入侵管理类"));
-        rules.add(new AiRuleOption("firefighting_equipment_v2", "动火消防器材V2"));
+        rules.add(new AiRuleOption("person", "人员检测"));
+        rules.add(new AiRuleOption("smoking", "吸烟检测"));
+        rules.add(new AiRuleOption("fire", "火焰检测"));
+        rules.add(new AiRuleOption("vest", "反光背心检测"));
+        rules.add(new AiRuleOption("face", "人脸检测"));
+        rules.add(new AiRuleOption("phone", "打电话检测"));
         return rules;
     }
 
