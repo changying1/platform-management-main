@@ -1,7 +1,9 @@
 import os
+import logging
 
 from pymongo import MongoClient, ReturnDocument
 from pymongo.database import Database
+from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
 
 try:
     from sqlalchemy.orm import declarative_base
@@ -38,9 +40,30 @@ mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=3000)
 mongo_db: Database = mongo_client[MONGO_DB_NAME]
 MONGO_COMPAT_DB_NAMES = list(dict.fromkeys([MONGO_DB_NAME, "platform", "smart_helmet_mongo"]))
 
+logger = logging.getLogger(__name__)
+
+
+def describe_mongo_connection() -> str:
+    return f"{MONGO_URL}/{MONGO_DB_NAME}"
+
+
+def is_mongo_available(log_error: bool = False) -> bool:
+    try:
+        mongo_client.admin.command("ping")
+        return True
+    except (ServerSelectionTimeoutError, PyMongoError, OSError) as exc:
+        if log_error:
+            logger.warning(
+                "MongoDB is unavailable at %s: %s. Start MongoDB or set MONGO_URL/MONGO_DB_NAME.",
+                describe_mongo_connection(),
+                exc,
+            )
+        return False
+
 
 def ensure_schema_compatibility():
     """MongoDB does not need SQL schema compatibility checks."""
+    is_mongo_available(log_error=True)
     return None
 
 

@@ -76,7 +76,17 @@ def suppress_verbose_logging():
 
 suppress_verbose_logging()
 
-from app.core.database import SessionLocal, get_video_device_collection, get_next_sequence, get_mongo_db, get_mongo_collection
+from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
+
+from app.core.database import (
+    SessionLocal,
+    describe_mongo_connection,
+    get_video_device_collection,
+    get_next_sequence,
+    get_mongo_db,
+    get_mongo_collection,
+    is_mongo_available,
+)
 from app.core.ws_manager import push_alarm_threadsafe
 
 try:
@@ -1891,8 +1901,23 @@ class VideoService:
 
     def _ezviz_status_polling_worker(self):
         time.sleep(3)
+        mongo_warning_logged = False
         while self._ezviz_status_thread_running:
             try:
+                if not is_mongo_available(log_error=False):
+                    if not mongo_warning_logged:
+                        logger.warning(
+                            "EZVIZ status polling paused because MongoDB is unavailable at %s. "
+                            "Start MongoDB or update MONGO_URL/MONGO_DB_NAME.",
+                            describe_mongo_connection(),
+                        )
+                        mongo_warning_logged = True
+                    time.sleep(EZVIZ_STATUS_POLL_INTERVAL_SECONDS)
+                    continue
+                if mongo_warning_logged:
+                    logger.info("MongoDB is available again; EZVIZ status polling resumed")
+                    mongo_warning_logged = False
+
                 query = {
                     "device_serial": {"$exists": True, "$nin": [None, ""]},
                     "$or": [
@@ -1919,7 +1944,7 @@ class VideoService:
                         try:
                             status_summary = self._build_device_status_summary(db, refreshed)
                             self._sync_monitoring_alarms(
-                                db=db,
+                                mongo_db=db,
                                 db_video=refreshed,
                                 status_summary=status_summary,
                                 weekly_quota_bytes=weekly_quota_bytes,
@@ -1930,6 +1955,14 @@ class VideoService:
                             db.close()
                     except Exception as exc:
                         logger.error(f"EZVIZ status polling failed for video_id={doc.get('id')}: {exc}")
+            except (ServerSelectionTimeoutError, PyMongoError, OSError) as exc:
+                if not mongo_warning_logged:
+                    logger.warning(
+                        "EZVIZ status polling paused because MongoDB is unavailable at %s: %s",
+                        describe_mongo_connection(),
+                        exc,
+                    )
+                    mongo_warning_logged = True
             except Exception as exc:
                 logger.error(f"EZVIZ status polling worker loop failed: {exc}")
             time.sleep(EZVIZ_STATUS_POLL_INTERVAL_SECONDS)
@@ -2095,8 +2128,6 @@ class VideoService:
 
         self,
 
-        mongo_db,
-
         db_video,
 
         alarm_type: str,
@@ -2106,6 +2137,10 @@ class VideoService:
         description: str,
 
         active: bool,
+
+        mongo_db=None,
+
+        db=None,
 
     ) -> bool:
 
@@ -2257,7 +2292,7 @@ class VideoService:
 
             changed = self._sync_single_monitoring_alarm(
 
-                db=db,
+                mongo_db=mongo_db,
 
                 db_video=db_video,
 
@@ -2289,7 +2324,7 @@ class VideoService:
 
         changed = self._sync_single_monitoring_alarm(
 
-            db=db,
+            mongo_db=mongo_db,
 
             db_video=db_video,
 
@@ -2396,7 +2431,6 @@ class VideoService:
                 return False
 
         return self._sync_single_monitoring_alarm(
-            db=db,
             db_video=db_video,
             alarm_type="VIDEO_TRAFFIC_LOW",
             severity="medium",
@@ -2487,7 +2521,15 @@ class VideoService:
             traffic_debug["final_used_gb"] = used_for_summary
 
         fields = self._build_traffic_summary_fields(used_for_summary, normalized_ocr_text)
-        self._sync_traffic_ocr_alarm(db, db_video, fields)
+        try:
+            self._sync_traffic_ocr_alarm(db, db_video, fields)
+        except Exception as exc:
+            logger.warning(
+                "Traffic OCR alarm sync failed video_id=%s: %s",
+                video_id,
+                exc,
+                exc_info=True,
+            )
         message = "ok" if is_valid else invalid_reason
         if reset_suspicious_history:
             message = "历史流量统计异常，已使用当前OCR读数重置。"

@@ -532,11 +532,9 @@ app.include_router(app_voice_call_controller.ws_router)
 app.include_router(ai_algorithm_controller.router)
 app.include_router(permission_controller.router)
 
-print("=" * 60)
-print("✅ AI 助手服务已集成到主后端!")
-print("📡 接口地址: http://localhost:9000/api/ai")
-print("🔍 健康检查: http://localhost:9000/api/ai/health")
-print("=" * 60)
+logger.info("AI assistant service integrated into backend")
+logger.info("AI API: http://localhost:9000/api/ai")
+logger.info("AI health check: http://localhost:9000/api/ai/health")
 
 # LLM_SERVICE_URL = "http://localhost:8888"  # 已集成，无需转发
 

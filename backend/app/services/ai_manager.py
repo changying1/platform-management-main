@@ -75,7 +75,7 @@ class AIManager:
 
         # 算法分发表
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
-        print(f"✅ 当前注册算法列表: {list(self.algo_handlers.keys())}")
+        logger.info(f"当前注册算法列表: {list(self.algo_handlers.keys())}")
 
         # AI检测行为告警等级映射：当前模型注册表为主，兼容历史默认项，并允许系统设置覆盖。
         self.ai_alarm_level_map = self._build_current_ai_alarm_level_map()
@@ -123,7 +123,7 @@ class AIManager:
         return level_map
 
     def _log_current_ai_alarm_level_map(self):
-        print(f"✅ 当前 AI 等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
+        logger.info(f"当前 AI 等级映射: {len(self.ai_alarm_level_map)} 种检测行为")
 
     def _alarm_collection(self):
         return get_mongo_db()["alarm_record"]

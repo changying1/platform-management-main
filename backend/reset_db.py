@@ -298,7 +298,7 @@ def reset_database():
             username="admin",
 
 
-            hashed_password="admin",  # 明文密码(当前系统使用明文比较)
+            hashed_password="1",  # 明文密码(当前系统使用明文比较)
 
 
             full_name="系统管理员",
@@ -760,7 +760,7 @@ def reset_database():
         print("Username: admin")
 
 
-        print("Password: admin")
+        print("Password: 1")
 
 
         print("=============================\\n")

