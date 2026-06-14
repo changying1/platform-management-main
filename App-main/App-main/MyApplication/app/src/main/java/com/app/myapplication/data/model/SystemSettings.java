@@ -314,6 +314,84 @@ public class SystemSettings {
     @SerializedName("aiVectorDbPath")
     private String aiVectorDbPath = "./vector_db";
 
+    // AI检测行为告警等级配置
+    @SerializedName("aiAlarmLevelConfigs")
+    private List<AIAlgorithmConfig> aiAlarmLevelConfigs;
+
+    // AI助手额外配置
+    @SerializedName("aiApiUrl")
+    private String aiApiUrl = "";
+
+    @SerializedName("aiApiKey")
+    private String aiApiKey = "";
+
+    @SerializedName("aiTemperature")
+    private float aiTemperature = 0.7f;
+
+    @SerializedName("aiMaxTokens")
+    private int aiMaxTokens = 2048;
+
+    @SerializedName("aiContextRounds")
+    private int aiContextRounds = 10;
+
+    @SerializedName("aiSystemPrompt")
+    private String aiSystemPrompt = "";
+
+    // 日志设置别名（用于兼容性）
+    @SerializedName("logAudit")
+    private boolean logAudit = true;
+
+    @SerializedName("logDiff")
+    private boolean logDiff = false;
+
+    @SerializedName("logEncoding")
+    private String logEncoding = "UTF-8";
+
+    @SerializedName("loginFailedAlertThreshold")
+    private int loginFailedAlertThreshold = 5;
+
+    // 通知设置别名
+    @SerializedName("smsNotificationEnabled")
+    private boolean smsNotificationEnabled = false;
+
+    @SerializedName("callNotificationEnabled")
+    private boolean callNotificationEnabled = false;
+
+    @SerializedName("severeSmsEnabled")
+    private boolean severeSmsEnabled = true;
+
+    @SerializedName("severeCallEnabled")
+    private boolean severeCallEnabled = true;
+
+    @SerializedName("mediumSmsEnabled")
+    private boolean mediumSmsEnabled = false;
+
+    @SerializedName("mediumCallEnabled")
+    private boolean mediumCallEnabled = false;
+
+    @SerializedName("lowSmsEnabled")
+    private boolean lowSmsEnabled = false;
+
+    @SerializedName("lowCallEnabled")
+    private boolean lowCallEnabled = false;
+
+    // 备份设置别名
+    @SerializedName("autoBackupEnabled")
+    private boolean autoBackupEnabled = true;
+
+    @SerializedName("backupRetentionCount")
+    private int backupRetentionCount = 7;
+
+    // 账号安全设置别名
+    @SerializedName("forcePasswordChange")
+    private boolean forcePasswordChange = true;
+
+    @SerializedName("passwordComplexity")
+    private boolean passwordComplexity = true;
+
+    @SerializedName("maxLoginAttempts")
+    private int maxLoginAttempts = 5;
+
     // ==================== 构造函数和 Getter/Setter ====================
 
     public SystemSettings() {
@@ -616,4 +694,82 @@ public class SystemSettings {
 
     public String getAiVectorDbPath() { return aiVectorDbPath; }
     public void setAiVectorDbPath(String aiVectorDbPath) { this.aiVectorDbPath = aiVectorDbPath; }
+
+    // AI算法配置
+    public List<AIAlgorithmConfig> getAiAlarmLevelConfigs() { return aiAlarmLevelConfigs; }
+    public void setAiAlarmLevelConfigs(List<AIAlgorithmConfig> aiAlarmLevelConfigs) { this.aiAlarmLevelConfigs = aiAlarmLevelConfigs; }
+
+    // AI助手额外配置
+    public String getAiApiUrl() { return aiApiUrl; }
+    public void setAiApiUrl(String aiApiUrl) { this.aiApiUrl = aiApiUrl; }
+
+    public String getAiApiKey() { return aiApiKey; }
+    public void setAiApiKey(String aiApiKey) { this.aiApiKey = aiApiKey; }
+
+    public float getAiTemperature() { return aiTemperature; }
+    public void setAiTemperature(float aiTemperature) { this.aiTemperature = aiTemperature; }
+
+    public int getAiMaxTokens() { return aiMaxTokens; }
+    public void setAiMaxTokens(int aiMaxTokens) { this.aiMaxTokens = aiMaxTokens; }
+
+    public int getAiContextRounds() { return aiContextRounds; }
+    public void setAiContextRounds(int aiContextRounds) { this.aiContextRounds = aiContextRounds; }
+
+    public String getAiSystemPrompt() { return aiSystemPrompt; }
+    public void setAiSystemPrompt(String aiSystemPrompt) { this.aiSystemPrompt = aiSystemPrompt; }
+
+    // 日志设置别名
+    public boolean isLogAudit() { return logAudit; }
+    public void setLogAudit(boolean logAudit) { this.logAudit = logAudit; }
+
+    public boolean isLogDiff() { return logDiff; }
+    public void setLogDiff(boolean logDiff) { this.logDiff = logDiff; }
+
+    public String getLogEncoding() { return logEncoding; }
+    public void setLogEncoding(String logEncoding) { this.logEncoding = logEncoding; }
+
+    public int getLoginFailedAlertThreshold() { return loginFailedAlertThreshold; }
+    public void setLoginFailedAlertThreshold(int loginFailedAlertThreshold) { this.loginFailedAlertThreshold = loginFailedAlertThreshold; }
+
+    // 通知设置别名
+    public boolean isSmsNotificationEnabled() { return smsNotificationEnabled; }
+    public void setSmsNotificationEnabled(boolean smsNotificationEnabled) { this.smsNotificationEnabled = smsNotificationEnabled; }
+
+    public boolean isCallNotificationEnabled() { return callNotificationEnabled; }
+    public void setCallNotificationEnabled(boolean callNotificationEnabled) { this.callNotificationEnabled = callNotificationEnabled; }
+
+    public boolean isSevereSmsEnabled() { return severeSmsEnabled; }
+    public void setSevereSmsEnabled(boolean severeSmsEnabled) { this.severeSmsEnabled = severeSmsEnabled; }
+
+    public boolean isSevereCallEnabled() { return severeCallEnabled; }
+    public void setSevereCallEnabled(boolean severeCallEnabled) { this.severeCallEnabled = severeCallEnabled; }
+
+    public boolean isMediumSmsEnabled() { return mediumSmsEnabled; }
+    public void setMediumSmsEnabled(boolean mediumSmsEnabled) { this.mediumSmsEnabled = mediumSmsEnabled; }
+
+    public boolean isMediumCallEnabled() { return mediumCallEnabled; }
+    public void setMediumCallEnabled(boolean mediumCallEnabled) { this.mediumCallEnabled = mediumCallEnabled; }
+
+    public boolean isLowSmsEnabled() { return lowSmsEnabled; }
+    public void setLowSmsEnabled(boolean lowSmsEnabled) { this.lowSmsEnabled = lowSmsEnabled; }
+
+    public boolean isLowCallEnabled() { return lowCallEnabled; }
+    public void setLowCallEnabled(boolean lowCallEnabled) { this.lowCallEnabled = lowCallEnabled; }
+
+    // 备份设置别名
+    public boolean isAutoBackupEnabled() { return autoBackupEnabled; }
+    public void setAutoBackupEnabled(boolean autoBackupEnabled) { this.autoBackupEnabled = autoBackupEnabled; }
+
+    public int getBackupRetentionCount() { return backupRetentionCount; }
+    public void setBackupRetentionCount(int backupRetentionCount) { this.backupRetentionCount = backupRetentionCount; }
+
+    // 账号安全设置别名
+    public boolean isForcePasswordChange() { return forcePasswordChange; }
+    public void setForcePasswordChange(boolean forcePasswordChange) { this.forcePasswordChange = forcePasswordChange; }
+
+    public boolean isPasswordComplexity() { return passwordComplexity; }
+    public void setPasswordComplexity(boolean passwordComplexity) { this.passwordComplexity = passwordComplexity; }
+
+    public int getMaxLoginAttempts() { return maxLoginAttempts; }
+    public void setMaxLoginAttempts(int maxLoginAttempts) { this.maxLoginAttempts = maxLoginAttempts; }
 }

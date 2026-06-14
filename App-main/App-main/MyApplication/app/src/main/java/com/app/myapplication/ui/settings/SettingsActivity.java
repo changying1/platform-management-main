@@ -49,6 +49,12 @@ public class SettingsActivity extends AppCompatActivity {
     private AlarmSettingsFragment alarmFragment;
     private VideoSettingsFragment videoFragment;
     private FenceSettingsFragment fenceFragment;
+    private MonitoringSettingsFragment monitoringFragment;
+    private LogSettingsFragment logFragment;
+    private AccountSettingsFragment accountFragment;
+    private NotificationSettingsFragment notificationFragment;
+    private BackupSettingsFragment backupFragment;
+    private AISettingsFragment aiFragment;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,7 +85,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void setupViewPager() {
-        String[] tabTitles = {"通用", "告警", "视频", "围栏"};
+        String[] tabTitles = {"通用", "告警", "视频", "围栏", "监控", "日志", "账号", "通知", "备份", "AI"};
 
         viewPager.setAdapter(new FragmentStateAdapter(this) {
             @NonNull
@@ -87,19 +93,37 @@ public class SettingsActivity extends AppCompatActivity {
             public Fragment createFragment(int position) {
                 switch (position) {
                     case 0:
-                        generalFragment = new GeneralSettingsFragment();
+                        generalFragment = GeneralSettingsFragment.newInstance(settings);
                         return generalFragment;
                     case 1:
-                        alarmFragment = new AlarmSettingsFragment();
+                        alarmFragment = AlarmSettingsFragment.newInstance(settings);
                         return alarmFragment;
                     case 2:
-                        videoFragment = new VideoSettingsFragment();
+                        videoFragment = VideoSettingsFragment.newInstance(settings);
                         return videoFragment;
                     case 3:
-                        fenceFragment = new FenceSettingsFragment();
+                        fenceFragment = FenceSettingsFragment.newInstance(settings);
                         return fenceFragment;
+                    case 4:
+                        monitoringFragment = MonitoringSettingsFragment.newInstance(settings);
+                        return monitoringFragment;
+                    case 5:
+                        logFragment = LogSettingsFragment.newInstance(settings);
+                        return logFragment;
+                    case 6:
+                        accountFragment = AccountSettingsFragment.newInstance(settings);
+                        return accountFragment;
+                    case 7:
+                        notificationFragment = NotificationSettingsFragment.newInstance(settings);
+                        return notificationFragment;
+                    case 8:
+                        backupFragment = BackupSettingsFragment.newInstance(settings);
+                        return backupFragment;
+                    case 9:
+                        aiFragment = AISettingsFragment.newInstance(settings);
+                        return aiFragment;
                     default:
-                        return new GeneralSettingsFragment();
+                        return GeneralSettingsFragment.newInstance(settings);
                 }
             }
 
@@ -150,10 +174,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void updateFragments() {
-        if (generalFragment != null) generalFragment.updateSettings(settings);
-        if (alarmFragment != null) alarmFragment.updateSettings(settings);
-        if (videoFragment != null) videoFragment.updateSettings(settings);
-        if (fenceFragment != null) fenceFragment.updateSettings(settings);
+        // Fragments are created with settings via newInstance, no need to update separately
     }
 
     private void saveSettings() {
@@ -162,6 +183,12 @@ public class SettingsActivity extends AppCompatActivity {
         if (alarmFragment != null) alarmFragment.collectSettings(settings);
         if (videoFragment != null) videoFragment.collectSettings(settings);
         if (fenceFragment != null) fenceFragment.collectSettings(settings);
+        if (monitoringFragment != null) monitoringFragment.collectSettings(settings);
+        if (logFragment != null) logFragment.collectSettings(settings);
+        if (accountFragment != null) accountFragment.collectSettings(settings);
+        if (notificationFragment != null) notificationFragment.collectSettings(settings);
+        if (backupFragment != null) backupFragment.collectSettings(settings);
+        if (aiFragment != null) aiFragment.collectSettings(settings);
 
         showLoading(true);
 

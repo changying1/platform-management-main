@@ -36,6 +36,12 @@ public class VideoSettingsFragment extends Fragment {
 
     private SystemSettings settings;
 
+    public static VideoSettingsFragment newInstance(SystemSettings settings) {
+        VideoSettingsFragment fragment = new VideoSettingsFragment();
+        fragment.settings = settings;
+        return fragment;
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -48,6 +54,12 @@ public class VideoSettingsFragment extends Fragment {
 
         initViews(view);
         setupListeners();
+        loadSettings();
+    }
+
+    private void loadSettings() {
+        if (settings == null) return;
+        updateSettings(settings);
     }
 
     private void initViews(View view) {
@@ -123,13 +135,19 @@ public class VideoSettingsFragment extends Fragment {
         this.settings = settings;
 
         if (sliderVideoRetention != null) {
-            sliderVideoRetention.setValue(settings.getVideoRetentionDays());
-            tvVideoRetentionValue.setText(settings.getVideoRetentionDays() + "天");
+            int days = settings.getVideoRetentionDays();
+            if (days < 1) days = 1;
+            if (days > 90) days = 90;
+            sliderVideoRetention.setValue(days);
+            tvVideoRetentionValue.setText(days + "天");
         }
 
         if (sliderVideoSegment != null) {
-            sliderVideoSegment.setValue(settings.getVideoSegmentMinutes());
-            tvVideoSegmentValue.setText(settings.getVideoSegmentMinutes() + "分钟");
+            float minutes = settings.getVideoSegmentMinutes();
+            if (minutes < 5) minutes = 5;
+            if (minutes > 60) minutes = 60;
+            sliderVideoSegment.setValue(minutes);
+            tvVideoSegmentValue.setText((int)minutes + "分钟");
         }
 
         if (spinnerVideoQuality != null) {
@@ -157,18 +175,27 @@ public class VideoSettingsFragment extends Fragment {
         }
 
         if (sliderAlarmVideoRetention != null) {
-            sliderAlarmVideoRetention.setValue(settings.getAlarmVideoRetentionDays());
-            tvAlarmVideoRetentionValue.setText(settings.getAlarmVideoRetentionDays() + "天");
+            int days = settings.getAlarmVideoRetentionDays();
+            if (days < 7) days = 7;
+            if (days > 365) days = 365;
+            sliderAlarmVideoRetention.setValue(days);
+            tvAlarmVideoRetentionValue.setText(days + "天");
         }
 
         if (sliderAlarmSurround != null) {
-            sliderAlarmSurround.setValue((float) settings.getAlarmVideoSurroundMinutes());
-            tvAlarmSurroundValue.setText(settings.getAlarmVideoSurroundMinutes() + "分钟");
+            float minutes = (float) settings.getAlarmVideoSurroundMinutes();
+            if (minutes < 0.5f) minutes = 0.5f;
+            if (minutes > 10) minutes = 10;
+            sliderAlarmSurround.setValue(minutes);
+            tvAlarmSurroundValue.setText(minutes + "分钟");
         }
 
         if (sliderScreenshotRetention != null) {
-            sliderScreenshotRetention.setValue(settings.getAlarmScreenshotRetentionDays());
-            tvScreenshotRetentionValue.setText(settings.getAlarmScreenshotRetentionDays() + "天");
+            int days = settings.getAlarmScreenshotRetentionDays();
+            if (days < 7) days = 7;
+            if (days > 365) days = 365;
+            sliderScreenshotRetention.setValue(days);
+            tvScreenshotRetentionValue.setText(days + "天");
         }
 
         if (etStorageMaxSize != null) {
@@ -176,8 +203,11 @@ public class VideoSettingsFragment extends Fragment {
         }
 
         if (sliderWarningThreshold != null) {
-            sliderWarningThreshold.setValue(settings.getStorageWarningThreshold());
-            tvWarningThresholdValue.setText(settings.getStorageWarningThreshold() + "%");
+            int threshold = settings.getStorageWarningThreshold();
+            if (threshold < 50) threshold = 50;
+            if (threshold > 95) threshold = 95;
+            sliderWarningThreshold.setValue(threshold);
+            tvWarningThresholdValue.setText(threshold + "%");
         }
 
         if (switchAutoCleanup != null) {

@@ -32,6 +32,12 @@ public class AlarmSettingsFragment extends Fragment {
 
     private SystemSettings settings;
 
+    public static AlarmSettingsFragment newInstance(SystemSettings settings) {
+        AlarmSettingsFragment fragment = new AlarmSettingsFragment();
+        fragment.settings = settings;
+        return fragment;
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -44,6 +50,12 @@ public class AlarmSettingsFragment extends Fragment {
 
         initViews(view);
         setupListeners();
+        loadSettings();
+    }
+
+    private void loadSettings() {
+        if (settings == null) return;
+        updateSettings(settings);
     }
 
     private void initViews(View view) {
@@ -112,8 +124,12 @@ public class AlarmSettingsFragment extends Fragment {
         }
 
         if (sliderAlarmRetention != null) {
-            sliderAlarmRetention.setValue(settings.getAlarmRetentionDays());
-            tvAlarmRetentionValue.setText(settings.getAlarmRetentionDays() + "天");
+            int retentionDays = settings.getAlarmRetentionDays();
+            // Ensure value is within slider range (7-365)
+            if (retentionDays < 7) retentionDays = 7;
+            if (retentionDays > 365) retentionDays = 365;
+            sliderAlarmRetention.setValue(retentionDays);
+            tvAlarmRetentionValue.setText(retentionDays + "天");
         }
 
         if (etSafetyProductionDays != null) {

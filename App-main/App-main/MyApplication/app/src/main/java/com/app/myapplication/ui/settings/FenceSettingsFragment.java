@@ -35,6 +35,12 @@ public class FenceSettingsFragment extends Fragment {
 
     private SystemSettings settings;
 
+    public static FenceSettingsFragment newInstance(SystemSettings settings) {
+        FenceSettingsFragment fragment = new FenceSettingsFragment();
+        fragment.settings = settings;
+        return fragment;
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -47,6 +53,12 @@ public class FenceSettingsFragment extends Fragment {
 
         initViews(view);
         setupListeners();
+        loadSettings();
+    }
+
+    private void loadSettings() {
+        if (settings == null) return;
+        updateSettings(settings);
     }
 
     private void initViews(View view) {
@@ -113,13 +125,19 @@ public class FenceSettingsFragment extends Fragment {
         this.settings = settings;
 
         if (sliderDetectionInterval != null) {
-            sliderDetectionInterval.setValue(settings.getFenceDetectionInterval());
-            tvDetectionIntervalValue.setText(settings.getFenceDetectionInterval() + "秒");
+            int interval = settings.getFenceDetectionInterval();
+            if (interval < 1) interval = 1;
+            if (interval > 10) interval = 10;
+            sliderDetectionInterval.setValue(interval);
+            tvDetectionIntervalValue.setText(interval + "秒");
         }
 
         if (sliderDefaultRadius != null) {
-            sliderDefaultRadius.setValue(settings.getFenceDefaultRadius());
-            tvDefaultRadiusValue.setText(settings.getFenceDefaultRadius() + "米");
+            int radius = settings.getFenceDefaultRadius();
+            if (radius < 10) radius = 10;
+            if (radius > 500) radius = 500;
+            sliderDefaultRadius.setValue(radius);
+            tvDefaultRadiusValue.setText(radius + "米");
         }
 
         if (spinnerDefaultBehavior != null) {
@@ -140,18 +158,27 @@ public class FenceSettingsFragment extends Fragment {
         }
 
         if (sliderAlarmSilence != null) {
-            sliderAlarmSilence.setValue(settings.getFenceAlarmSilenceMinutes());
-            tvAlarmSilenceValue.setText(settings.getFenceAlarmSilenceMinutes() + "分钟");
+            int minutes = settings.getFenceAlarmSilenceMinutes();
+            if (minutes < 0) minutes = 0;
+            if (minutes > 60) minutes = 60;
+            sliderAlarmSilence.setValue(minutes);
+            tvAlarmSilenceValue.setText(minutes + "分钟");
         }
 
         if (sliderTrackRetention != null) {
-            sliderTrackRetention.setValue(settings.getTrackRetentionDays());
-            tvTrackRetentionValue.setText(settings.getTrackRetentionDays() + "天");
+            int days = settings.getTrackRetentionDays();
+            if (days < 7) days = 7;
+            if (days > 365) days = 365;
+            sliderTrackRetention.setValue(days);
+            tvTrackRetentionValue.setText(days + "天");
         }
 
         if (sliderTrackInterval != null) {
-            sliderTrackInterval.setValue(settings.getTrackRecordInterval());
-            tvTrackIntervalValue.setText(settings.getTrackRecordInterval() + "秒");
+            int interval = settings.getTrackRecordInterval();
+            if (interval < 5) interval = 5;
+            if (interval > 60) interval = 60;
+            sliderTrackInterval.setValue(interval);
+            tvTrackIntervalValue.setText(interval + "秒");
         }
 
         if (switchStationaryReminder != null) {
@@ -159,8 +186,11 @@ public class FenceSettingsFragment extends Fragment {
         }
 
         if (sliderStationaryMinutes != null) {
-            sliderStationaryMinutes.setValue(settings.getStationaryReminderMinutes());
-            tvStationaryMinutesValue.setText(settings.getStationaryReminderMinutes() + "分钟");
+            int minutes = settings.getStationaryReminderMinutes();
+            if (minutes < 5) minutes = 5;
+            if (minutes > 120) minutes = 120;
+            sliderStationaryMinutes.setValue(minutes);
+            tvStationaryMinutesValue.setText(minutes + "分钟");
         }
     }
 

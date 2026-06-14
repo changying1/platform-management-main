@@ -36,6 +36,12 @@ public class GeneralSettingsFragment extends Fragment {
 
     private SystemSettings settings;
 
+    public static GeneralSettingsFragment newInstance(SystemSettings settings) {
+        GeneralSettingsFragment fragment = new GeneralSettingsFragment();
+        fragment.settings = settings;
+        return fragment;
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -48,6 +54,12 @@ public class GeneralSettingsFragment extends Fragment {
 
         initViews(view);
         setupListeners();
+        loadSettings();
+    }
+
+    private void loadSettings() {
+        if (settings == null) return;
+        updateSettings(settings);
     }
 
     private void initViews(View view) {
@@ -114,8 +126,11 @@ public class GeneralSettingsFragment extends Fragment {
         }
 
         if (sliderAutoLogout != null) {
-            sliderAutoLogout.setValue(settings.getAutoLogoutMinutes());
-            tvAutoLogoutValue.setText(settings.getAutoLogoutMinutes() + "分钟");
+            int minutes = settings.getAutoLogoutMinutes();
+            if (minutes < 5) minutes = 5;
+            if (minutes > 120) minutes = 120;
+            sliderAutoLogout.setValue(minutes);
+            tvAutoLogoutValue.setText(minutes + "分钟");
         }
 
         if (switchConfirmDelete != null) {

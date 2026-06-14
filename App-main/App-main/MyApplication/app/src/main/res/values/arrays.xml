@@ -60,4 +60,52 @@
         <item>风险</item>
         <item>严重</item>
     </string-array>
+
+    <!-- AI算法分类 -->
+    <string-array name="algo_category_options">
+        <item>全部分类</item>
+        <item>安全防护</item>
+        <item>作业行为</item>
+        <item>人员安全</item>
+        <item>人员管理</item>
+        <item>消防安全</item>
+        <item>区域管理</item>
+        <item>动火作业</item>
+        <item>临边防护</item>
+        <item>起重作业</item>
+        <item>设备安全</item>
+    </string-array>
+
+    <!-- 日志级别 -->
+    <string-array name="log_level_options">
+        <item>DEBUG</item>
+        <item>INFO</item>
+        <item>WARNING</item>
+        <item>ERROR</item>
+        <item>CRITICAL</item>
+    </string-array>
+
+    <!-- 日志编码 -->
+    <string-array name="log_encoding_options">
+        <item>UTF-8</item>
+        <item>GBK</item>
+        <item>GB2312</item>
+    </string-array>
+
+    <!-- 备份频率 -->
+    <string-array name="backup_frequency_options">
+        <item>每天</item>
+        <item>每周</item>
+        <item>每月</item>
+    </string-array>
+
+    <!-- AI模型选项 -->
+    <string-array name="ai_model_options">
+        <item>DeepSeek-R1-Distill-Qwen-7B-F16</item>
+    </string-array>
+
+    <!-- 知识库选项 -->
+    <string-array name="ai_kb_options">
+        <item>default (默认知识库)</item>
+    </string-array>
 </resources>
