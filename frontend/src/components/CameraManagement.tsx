@@ -4,7 +4,9 @@ import { Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactDOM from 'react-dom';
 import { createVideo, deleteVideo, getAllVideos, updateVideo, type Video } from '../api/videoApi';
+import { unitApiClient, type ResponsibilityUnit, type UnitTreeNode } from '../api/responsibilityUnitApi';
 import { API_BASE_URL } from '../api/config';
+import { hasStoredPermission } from '../utils/permissions';
 
 interface Camera {
   id: number;
@@ -13,7 +15,10 @@ interface Camera {
   channelNo?: number;          // 机器码/设备序列号
   location: string;
   company?: string;          // 所属分公司
-  projectId: number;
+  grid?: string;
+  gridId?: string;
+  companyId?: string;
+  projectId: number | string;
   projectName?: string;
   team?: string;              // 所属工队
   admin?: string;            // 管理员
@@ -45,8 +50,75 @@ const SQL_CAMERAS: Camera[] = [
 
 export default function CameraManagement() {
 const [cameras, setCameras] = useState<Camera[]>([]);
+const [orgUnits, setOrgUnits] = useState<ResponsibilityUnit[]>([]);
 
-const mapVideoToCamera = (video: Video): Camera => {
+const flattenUnitTree = (nodes: UnitTreeNode[]): ResponsibilityUnit[] =>
+  nodes.flatMap(({ children, ...unit }) => [unit, ...flattenUnitTree(children || [])]);
+
+const getUnitId = (unit?: Pick<ResponsibilityUnit, 'unit_id' | 'id'>) => String(unit?.unit_id || unit?.id || '');
+
+const getUnitKeys = (unit?: ResponsibilityUnit) =>
+  [unit?.unit_id, unit?.id].map(value => String(value || '')).filter(Boolean);
+
+const unitMatchesId = (unit: ResponsibilityUnit | undefined, unitId?: string | number) => {
+  const target = String(unitId || '');
+  return !!target && !!unit && getUnitKeys(unit).includes(target);
+};
+
+const findUnitIn = (units: ResponsibilityUnit[], unitId?: string | number) =>
+  units.find(unit => unitMatchesId(unit, unitId));
+
+const findUnit = (unitId?: string | number) => findUnitIn(orgUnits, unitId);
+
+const getAncestor = (unit: ResponsibilityUnit | undefined, type: ResponsibilityUnit['type']) => {
+  let current = unit;
+  while (current) {
+    if (current.type === type) return current;
+    current = findUnit(current.parent_id);
+  }
+  return undefined;
+};
+
+const getAncestorFromUnits = (units: ResponsibilityUnit[], unit: ResponsibilityUnit | undefined, type: ResponsibilityUnit['type']) => {
+  let current = unit;
+  while (current) {
+    if (current.type === type) return current;
+    current = findUnitIn(units, current.parent_id);
+  }
+  return undefined;
+};
+
+const getUnitNameFromId = (units: ResponsibilityUnit[], unitId?: string | number) =>
+  findUnitIn(units, unitId)?.name || '';
+
+const isMeaningfulName = (value?: string | null) => {
+  const text = String(value || '').trim();
+  return !!text && text !== '??' && text !== '-';
+};
+
+const resolveBranchNameForVideo = (video: Video, units: ResponsibilityUnit[]) => {
+  if (isMeaningfulName(video.company)) return video.company || '';
+
+  const branchFromId = getUnitNameFromId(units, (video as any).branch_id);
+  if (branchFromId) return branchFromId;
+
+  const project = findUnitIn(units, (video as any).project_id)
+    || units.find(unit => unit.type === 'project' && unit.name === video.project);
+  return getAncestorFromUnits(units, project, 'branch')?.name || '';
+};
+
+const unitBelongsToParent = (
+  unit: ResponsibilityUnit,
+  parentId: string | number | undefined,
+  parentType: ResponsibilityUnit['type'],
+) => {
+  if (!parentId) return false;
+  if (String(unit.parent_id || '') === String(parentId)) return true;
+  const parent = getAncestorFromUnits(orgUnits, unit, parentType);
+  return unitMatchesId(parent, parentId);
+};
+
+const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
   const name = video.name || '';
   const platform = String(video.platform_type || video.stream_protocol || '').toLowerCase();
   const type: Camera['type'] =
@@ -55,16 +127,23 @@ const mapVideoToCamera = (video: Video): Camera => {
     : name.includes('记录仪') ? 'bodycam'
     : 'bullet';
 
+  const branchName = resolveBranchNameForVideo(video, units);
+  const projectName = isMeaningfulName(video.project) ? video.project || '' : getUnitNameFromId(units, (video as any).project_id);
+  const gridName = isMeaningfulName(video.grid || video.grid_name) ? video.grid || video.grid_name || '' : getUnitNameFromId(units, video.grid_id);
+
   return {
     id: Number(video.id),
     name,
     deviceCode: video.device_serial || String(video.id),
     channelNo: video.channel_no || 1,
     location: video.remark || '',
-    company: video.company || '',
-    projectId: 1,
-    projectName: video.project || '',
-    team: '',
+    company: branchName,
+    companyId: (video as any).branch_id || '',
+    grid: gridName,
+    gridId: video.grid_id || '',
+    projectId: (video as any).project_id || 1,
+    projectName,
+    team: video.team || video.team_name || video.workTeam || video.work_team || '',
     admin: video.username || '',
     adminPhone: '',
     status: video.status === 'online' ? 'online' : 'offline',
@@ -74,10 +153,10 @@ const mapVideoToCamera = (video: Video): Camera => {
   };
 };
 
-const fetchCameras = async () => {
+const fetchCameras = async (units = orgUnits) => {
     try {
       const videos = await getAllVideos();
-      setCameras(videos.map(mapVideoToCamera).filter(camera => Number.isFinite(camera.id)));
+      setCameras(videos.map(video => mapVideoToCamera(video, units)).filter(camera => Number.isFinite(camera.id)));
       return;
 
       const response = await fetch(`${API_BASE_URL}/api/devices`);
@@ -131,7 +210,16 @@ const fetchCameras = async () => {
   };
 
 useEffect(() => {
-  fetchCameras();
+  unitApiClient.getTree()
+    .then((tree) => {
+      const units = flattenUnitTree(tree);
+      setOrgUnits(units);
+      return fetchCameras(units);
+    })
+    .catch(() => {
+      setOrgUnits([]);
+      fetchCameras([]);
+    });
 }, []);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -146,11 +234,25 @@ useEffect(() => {
   const [filterCompany, setFilterCompany] = useState<string>('all');
   const [filterTeam, setFilterTeam] = useState<string>('all');
 
-  const [showUploadModal, setShowUploadModal] = useState(false);
+const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
+const canCreateDevice = hasStoredPermission('device.create');
+const canEditDevice = hasStoredPermission('device.edit');
+const canDeleteDevice = hasStoredPermission('device.delete');
   const types = ['all', ...new Set(cameras.map(c => c.type))];
   const statuses = ['all', 'online', 'offline', 'fault', 'maintaining'];
   const companies = ['all', ...new Set(cameras.map(c => c.company).filter(Boolean))];
+  const branchOptions = orgUnits.filter(unit => unit.type === 'branch');
+  const allProjectOptions = orgUnits.filter(unit => unit.type === 'project');
+  const selectedBranchId = editingItem?.companyId || '';
+  const selectedProjectId = editingItem?.projectId ? String(editingItem.projectId) : '';
+  const projectOptions = selectedBranchId
+    ? allProjectOptions.filter(project => unitBelongsToParent(project, selectedBranchId, 'branch'))
+    : [];
+  const gridOptions = orgUnits.filter(unit => unit.type === 'grid');
+  const filteredGridOptions = selectedProjectId
+    ? gridOptions.filter(grid => String(grid.project_id || '') === selectedProjectId || unitBelongsToParent(grid, selectedProjectId, 'project'))
+    : [];
   const teams = ['all', ...new Set(cameras.map(c => c.team).filter(Boolean))];
 
   const filteredData = cameras.filter(c => {
@@ -360,12 +462,14 @@ const confirmImport = () => {
           重置
         </button>
 
+        {canCreateDevice && (
         <button
   onClick={() => setShowUploadModal(true)}
   className="px-3 py-1.5 bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors flex items-center gap-1 text-sm"
 >
   <Upload size={14} /> 批量导入
 </button>
+        )}
 <button
   onClick={downloadTemplate}
   className="px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors flex items-center gap-1 text-sm"
@@ -373,12 +477,14 @@ const confirmImport = () => {
   <Download size={14} /> 下载模板
 </button>
 
+        {canCreateDevice && (
         <button
           onClick={() => { setEditingItem(null); setShowModal(true); }}
           className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm"
         >
           <Plus size={14} /> 添加摄像头
         </button>
+        )}
       </div>
 
       {/* 筛选结果统计 */}
@@ -436,6 +542,7 @@ const confirmImport = () => {
                 </td>
                 <td className="px-4 py-3 text-center">
                   <div className="flex items-center justify-center gap-2">
+                    {canEditDevice && (
                     <button 
                       onClick={() => { setEditingItem(camera); setShowModal(true); }}
                       className="p-1 hover:bg-cyan-500/20 rounded text-cyan-400"
@@ -443,6 +550,7 @@ const confirmImport = () => {
                     >
                       <Edit2 size={16} />
                     </button>
+                    )}
                     {(camera.status === 'offline' || camera.status === 'fault') && (
                       <button 
                         onClick={() => handleRepair(camera)}
@@ -452,6 +560,7 @@ const confirmImport = () => {
                         <Wrench size={16} />
                       </button>
                     )}
+{canDeleteDevice && (
 <button 
   onClick={async () => {
     if (confirm('确定删除该摄像头吗？')) {
@@ -463,6 +572,7 @@ const confirmImport = () => {
 >
   <Trash2 size={16} />
 </button>
+)}
                   </div>
                 </td>
               </tr>
@@ -550,26 +660,80 @@ const confirmImport = () => {
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">所属分公司</label>
-                  <input
-                    type="text"
-                    value={editingItem?.company || ''}
-                    onChange={(e) => setEditingItem({ ...editingItem!, company: e.target.value })}
+                  <select
+                    value={editingItem?.companyId || ''}
+                    onChange={(e) => {
+                      const branch = findUnit(e.target.value);
+                      setEditingItem({
+                        ...editingItem!,
+                        companyId: branch ? getUnitId(branch) : '',
+                        company: branch?.name || '',
+                        projectId: '',
+                        projectName: '',
+                        gridId: '',
+                        grid: '',
+                      });
+                    }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
-                    placeholder="所属分公司"
-                  />
+                  >
+                    <option value="">请选择分公司</option>
+                    {branchOptions.map(branch => (
+                      <option key={getUnitId(branch)} value={getUnitId(branch)}>{branch.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">所属项目</label>
                   <select
-                    value={editingItem?.projectId || 1}
-                    onChange={(e) => setEditingItem({ ...editingItem!, projectId: parseInt(e.target.value), projectName: e.target.options[e.target.selectedIndex].text })}
+                    value={editingItem?.projectId || ''}
+                    onChange={(e) => {
+                      const project = findUnit(e.target.value);
+                      const branch = getAncestor(project, 'branch');
+                      setEditingItem({
+                        ...editingItem!,
+                        companyId: branch ? getUnitId(branch) : editingItem?.companyId,
+                        company: branch?.name || editingItem?.company || '',
+                        projectId: project ? getUnitId(project) : '',
+                        projectName: project?.name || '',
+                        grid: '',
+                        gridId: '',
+                      });
+                    }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
                   >
-                    <option value={1}>西安地铁8号线</option>
-                    <option value={2}>西安地铁10号线</option>
+                    <option value="">请选择项目</option>
+                    {projectOptions.map(project => (
+                      <option key={getUnitId(project)} value={getUnitId(project)}>{project.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">所属网格</label>
+                  <select
+                    value={editingItem?.gridId || ''}
+                    onChange={(e) => {
+                      const grid = findUnit(e.target.value);
+                      const project = getAncestor(grid, 'project');
+                      const branch = getAncestor(grid, 'branch');
+                      setEditingItem({
+                        ...editingItem!,
+                        companyId: branch ? getUnitId(branch) : editingItem?.companyId,
+                        company: branch?.name || editingItem?.company || '',
+                        projectId: project ? getUnitId(project) : editingItem?.projectId || '',
+                        projectName: project?.name || editingItem?.projectName || '',
+                        gridId: grid ? getUnitId(grid) : '',
+                        grid: grid?.name || '',
+                      });
+                    }}
+                    className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
+                  >
+                    <option value="">请选择网格</option>
+                    {filteredGridOptions.map(grid => (
+                      <option key={getUnitId(grid)} value={getUnitId(grid)}>{grid.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -661,7 +825,12 @@ const confirmImport = () => {
           device_serial: editingItem.deviceCode,
           channel_no: editingItem.channelNo || 1,
           company: editingItem.company,
+          branch_id: editingItem.companyId,
           project: editingItem.projectName,
+          project_id: editingItem.projectId ? String(editingItem.projectId) : undefined,
+          grid: editingItem.grid,
+          grid_id: editingItem.gridId,
+          team: editingItem.team,
           username: editingItem.admin,
           rtsp_url: editingItem.rtspUrl || `rtsp://ezopen://open.ys7.com/${editingItem.deviceCode}/${editingItem.channelNo || 1}`,
           stream_url: editingItem.rtspUrl || undefined,

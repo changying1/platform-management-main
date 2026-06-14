@@ -60,16 +60,25 @@ public class PersonnelManagementActivity extends AppCompatActivity {
         loadPersonnel();
     }
 
+    private java.util.Map<String, String> getAuthHeaders() {
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        String token = com.app.myapplication.data.local.SessionManager.getToken(this);
+        if (token != null && !token.isEmpty()) {
+            headers.put("Authorization", "Bearer " + token);
+        }
+        return headers;
+    }
+
     private void loadPersonnel() {
         swipeRefresh.setRefreshing(true);
         ApiClient.get(this).create(ManagementApi.class)
-                .getPersonnel()
-                .enqueue(new Callback<List<Personnel>>() {
+                .getPersonnel(getAuthHeaders())
+                .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                     @Override
-                    public void onResponse(Call<List<Personnel>> call, Response<List<Personnel>> response) {
+                    public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                         swipeRefresh.setRefreshing(false);
                         if (response.isSuccessful() && response.body() != null) {
-                            personnelList = response.body();
+                            personnelList = parsePersonnelList(response.body());
                             adapter.notifyDataSetChanged();
                             tvEmpty.setVisibility(personnelList.isEmpty() ? View.VISIBLE : View.GONE);
                         } else {
@@ -78,12 +87,28 @@ public class PersonnelManagementActivity extends AppCompatActivity {
                     }
 
                     @Override
-                    public void onFailure(Call<List<Personnel>> call, Throwable t) {
+                    public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                         swipeRefresh.setRefreshing(false);
                         Toast.makeText(PersonnelManagementActivity.this, "网络错误，使用本地数据", Toast.LENGTH_SHORT).show();
                         loadHardcodedPersonnel();
                     }
                 });
+    }
+
+    private List<Personnel> parsePersonnelList(List<com.google.gson.JsonObject> jsonList) {
+        List<Personnel> list = new ArrayList<>();
+        for (com.google.gson.JsonObject json : jsonList) {
+            Personnel item = new Personnel();
+            item.setId(json.has("id") ? json.get("id").getAsString() : "");
+            item.setName(json.has("name") ? json.get("name").getAsString() : "");
+            item.setEmployeeId(json.has("employee_id") ? json.get("employee_id").getAsString() : "");
+            item.setWorkType(json.has("work_type") ? json.get("work_type").getAsString() : "");
+            item.setCompany(json.has("company") ? json.get("company").getAsString() : "");
+            item.setPhone(json.has("phone") ? json.get("phone").getAsString() : "");
+            item.setStatus(json.has("status") ? json.get("status").getAsString() : "");
+            list.add(item);
+        }
+        return list;
     }
 
     private void loadHardcodedPersonnel() {
@@ -168,16 +193,16 @@ public class PersonnelManagementActivity extends AppCompatActivity {
                 .setMessage("确定要删除此人员吗？")
                 .setPositiveButton("删除", (dialog, which) -> {
                     ApiClient.get(this).create(ManagementApi.class)
-                            .deletePersonnel(personnelId)
-                            .enqueue(new Callback<java.util.Map<String, Object>>() {
+                            .deletePersonnel(getAuthHeaders(), personnelId)
+                            .enqueue(new Callback<Void>() {
                                 @Override
-                                public void onResponse(Call<java.util.Map<String, Object>> call, Response<java.util.Map<String, Object>> response) {
+                                public void onResponse(Call<Void> call, Response<Void> response) {
                                     Toast.makeText(PersonnelManagementActivity.this, "删除成功", Toast.LENGTH_SHORT).show();
                                     loadPersonnel();
                                 }
 
                                 @Override
-                                public void onFailure(Call<java.util.Map<String, Object>> call, Throwable t) {
+                                public void onFailure(Call<Void> call, Throwable t) {
                                     Toast.makeText(PersonnelManagementActivity.this, "删除失败", Toast.LENGTH_SHORT).show();
                                 }
                             });

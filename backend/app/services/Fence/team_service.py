@@ -1,4 +1,5 @@
-from app.schemas.team_schema import TeamCreate, TeamUpdate
+from app.schemas.team_schema import TeamCreate, TeamUpdate
+from app.core.data_scope import in_scope, merge_filters, scope_filter
 from app.core.database import get_compatible_mongo_db
 from app.utils.logger import get_logger
 from datetime import datetime
@@ -11,17 +12,42 @@ logger = get_logger("TeamService")
 
 
 class TeamService:
-    def get_teams(self):
+    def get_teams(self, current_user: dict = None):
         """获取所有作业队"""
         teams = []
-        for team in teams_collection.find():
+        filter_query = {}
+        if current_user:
+            filter_query = scope_filter(
+                current_user,
+                project_fields=("project_id",),
+                grid_fields=("grid_id",),
+                team_fields=("team_id", "id"),
+                branch_fields=(),
+                company_fields=("company",),
+                project_name_fields=("project",),
+                team_name_fields=("name",),
+            )
+
+        for team in teams_collection.find(filter_query):
             team["team_id"] = team.pop("id", None) or team.get("team_id")
             teams.append(team)
         return teams
 
-    def get_team_by_id(self, team_id: str):
+    def get_team_by_id(self, team_id: str, current_user: dict = None):
         """根据team_id获取作业队"""
-        team = teams_collection.find_one({"team_id": team_id})
+        team = teams_collection.find_one({"team_id": team_id})
+        if current_user and not in_scope(
+            team,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id",),
+            team_fields=("team_id", "id"),
+            branch_fields=(),
+            company_fields=("company",),
+            project_name_fields=("project",),
+            team_name_fields=("name",),
+        ):
+            return None
         if team:
             team["team_id"] = team.pop("id", None) or team.get("team_id")
         return team
@@ -34,7 +60,9 @@ class TeamService:
             "name": team_data.name,
             "color": team_data.color,
             "company": team_data.company or "",
-            "project": team_data.project or "",
+            "project": team_data.project or "",
+            "project_id": team_data.project_id or "",
+            "grid_id": team_data.grid_id or "",
             "fence_ids": team_data.fence_ids or [],
             "createdAt": datetime.now().isoformat(),
             "updatedAt": datetime.now().isoformat()
@@ -46,9 +74,23 @@ class TeamService:
         logger.info(f"Created team: {new_team['name']} ({team_id})")
         return new_team
 
-    def update_team(self, team_id: str, team_data: TeamUpdate):
+    def update_team(self, team_id: str, team_data: TeamUpdate, current_user: dict = None):
         """更新作业队"""
-        update_data = {}
+        existing = teams_collection.find_one({"team_id": team_id})
+        if current_user and not in_scope(
+            existing,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id",),
+            team_fields=("team_id", "id"),
+            branch_fields=(),
+            company_fields=("company",),
+            project_name_fields=("project",),
+            team_name_fields=("name",),
+        ):
+            return None
+
+        update_data = {}
         if team_data.name is not None:
             update_data["name"] = team_data.name
         if team_data.color is not None:
@@ -56,7 +98,11 @@ class TeamService:
         if team_data.company is not None:
             update_data["company"] = team_data.company
         if team_data.project is not None:
-            update_data["project"] = team_data.project
+            update_data["project"] = team_data.project
+        if team_data.project_id is not None:
+            update_data["project_id"] = team_data.project_id
+        if team_data.grid_id is not None:
+            update_data["grid_id"] = team_data.grid_id
         if team_data.fence_ids is not None:
             update_data["fence_ids"] = team_data.fence_ids
 
@@ -74,15 +120,43 @@ class TeamService:
         logger.info(f"Updated team: {team_id}")
         return updated_team
 
-    def delete_team(self, team_id: str):
+    def delete_team(self, team_id: str, current_user: dict = None):
         """删除作业队"""
-        result = teams_collection.delete_one({"team_id": team_id})
+        existing = teams_collection.find_one({"team_id": team_id})
+        if current_user and not in_scope(
+            existing,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id",),
+            team_fields=("team_id", "id"),
+            branch_fields=(),
+            company_fields=("company",),
+            project_name_fields=("project",),
+            team_name_fields=("name",),
+        ):
+            return False
+
+        result = teams_collection.delete_one({"team_id": team_id})
         logger.info(f"Deleted team: {team_id}")
         return result.deleted_count > 0
 
-    def add_fence_to_team(self, team_id: str, fence_id: str):
+    def add_fence_to_team(self, team_id: str, fence_id: str, current_user: dict = None):
         """添加围栏到作业队"""
-        teams_collection.update_one(
+        existing = teams_collection.find_one({"team_id": team_id})
+        if current_user and not in_scope(
+            existing,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id",),
+            team_fields=("team_id", "id"),
+            branch_fields=(),
+            company_fields=("company",),
+            project_name_fields=("project",),
+            team_name_fields=("name",),
+        ):
+            return None
+
+        teams_collection.update_one(
             {"team_id": team_id},
             {
                 "$addToSet": {"fence_ids": fence_id},
@@ -95,9 +169,23 @@ class TeamService:
         logger.info(f"Added fence {fence_id} to team {team_id}")
         return updated_team
 
-    def remove_fence_from_team(self, team_id: str, fence_id: str):
+    def remove_fence_from_team(self, team_id: str, fence_id: str, current_user: dict = None):
         """从作业队移除围栏"""
-        teams_collection.update_one(
+        existing = teams_collection.find_one({"team_id": team_id})
+        if current_user and not in_scope(
+            existing,
+            current_user,
+            project_fields=("project_id",),
+            grid_fields=("grid_id",),
+            team_fields=("team_id", "id"),
+            branch_fields=(),
+            company_fields=("company",),
+            project_name_fields=("project",),
+            team_name_fields=("name",),
+        ):
+            return None
+
+        teams_collection.update_one(
             {"team_id": team_id},
             {
                 "$pull": {"fence_ids": fence_id},
@@ -110,9 +198,9 @@ class TeamService:
         logger.info(f"Removed fence {fence_id} from team {team_id}")
         return updated_team
 
-    def get_teams_with_fences(self):
+    def get_teams_with_fences(self, current_user: dict = None):
         """获取所有作业队及其关联的围栏详情"""
-        teams = self.get_teams()
+        teams = self.get_teams(current_user=current_user)
         result = []
 
         for team in teams:

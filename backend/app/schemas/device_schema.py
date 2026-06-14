@@ -14,18 +14,26 @@ class DeviceBase(BaseModel):
     name: str
     lat: float
     lng: float
-    company: str
-    project: str
-    type: Optional[str] = None
-    team: Optional[str] = None
+    company: str
+    branch_id: Optional[str] = None
+    project: str
+    project_id: Optional[str] = None
+    grid: Optional[str] = None
+    grid_id: Optional[str] = None
+    type: Optional[str] = None
+    install_location: Optional[str] = None
+    team: Optional[str] = None
+    team_id: Optional[str] = None
+    personnel_id: Optional[str] = None
     status: str
     holder: str
-    holderPhone: Optional[str] = None
+    holderPhone: Optional[str] = None
+    phone_num: Optional[str] = None
     remark: Optional[str] = None
 
 
 class DeviceCreate(DeviceBase):
-    device_id: str
+    device_id: str
     trajectory: Optional[List[TrajectoryPoint]] = []
 
 
@@ -33,20 +41,33 @@ class DeviceUpdate(BaseModel):
     name: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
-    company: Optional[str] = None
-    project: Optional[str] = None
-    type: Optional[str] = None
-    team: Optional[str] = None
+    company: Optional[str] = None
+    branch_id: Optional[str] = None
+    project: Optional[str] = None
+    project_id: Optional[str] = None
+    grid: Optional[str] = None
+    grid_id: Optional[str] = None
+    type: Optional[str] = None
+    install_location: Optional[str] = None
+    team: Optional[str] = None
+    team_id: Optional[str] = None
+    personnel_id: Optional[str] = None
     status: Optional[str] = None
     holder: Optional[str] = None
-    holderPhone: Optional[str] = None
+    holderPhone: Optional[str] = None
+    phone_num: Optional[str] = None
     remark: Optional[str] = None
     trajectory: Optional[List[TrajectoryPoint]] = None
 
 
 class DeviceItem(DeviceBase):
     device_id: str
-    lastUpdate: str
+    device_code: Optional[str] = None
+    device_serial: Optional[str] = None
+    raw_id: Optional[str] = None
+
+
+    lastUpdate: str
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
     trajectory: List[TrajectoryPoint] = []

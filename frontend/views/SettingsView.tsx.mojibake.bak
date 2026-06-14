@@ -1,0 +1,3397 @@
+﻿import React, { useState, useEffect } from 'react';
+import { 
+  Settings, 
+  Bell, 
+  Video, 
+  MapPin, 
+  FileText, 
+  Shield, 
+  Mail, 
+  Database,
+  HardDrive,
+  Moon,
+  Sun,
+  Globe,
+  Clock,
+  Volume2,
+  VolumeX,
+  Save,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  CheckCircle,
+  AlertTriangle,
+  X,
+  Bot,
+  Database as DatabaseIcon,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+  Building2,
+  FolderTree,
+  Users,
+} from 'lucide-react';
+import { getApiUrl, getAuthHeaders } from '../src/api/config';
+
+// 璁剧疆鍒嗙被
+type SettingsTab = 'alarm' | 'video' | 'fence' | 'log' | 'account' | 'notification' | 'backup' | 'ai';
+
+// 璁剧疆鏁版嵁缁撴瀯
+interface SystemSettings {
+  // 閫氱敤璁剧疆
+  systemName: string;
+  theme: 'light' | 'dark';
+  language: 'zh' | 'en';
+  timezone: string;
+  tablePageSize: 10 | 20 | 50 | 100;
+  autoLogoutMinutes: number;
+  confirmBeforeDelete: boolean;
+  coordinatePrecision: 4 | 5 | 6;
+  
+  // 鍛婅璁剧疆
+  alarmPopup: boolean;
+  alarmSound: boolean;
+  alarmSoundType: 'none' | 'standard' | 'emergency';
+  alarmRepeatInterval: number;
+  alarmAutoResolve: boolean;
+  alarmRetentionDays: number;
+  alarmSevereFlash: boolean;
+  alarmSevereUpgrade: 'sound' | 'voice' | 'call' | 'sms';
+  alarmVolume: number;
+  
+  // 告警分级开关
+  alarmSosEnabled: boolean;
+  alarmFenceEnabled: boolean;
+  alarmLowBatteryEnabled: boolean;
+  alarmOfflineEnabled: boolean;
+  
+  // 鍛婅鍗囩骇瑙勫垯
+  alarmEscalationEnabled: boolean;
+  alarmEscalationMinutes: number;
+  
+  // AI检测行为告警等级配置
+  aiAlarmLevelConfigs: {
+    id: string;
+    name: string;
+    category: string;
+    code: string;
+    level: 'low' | 'medium' | 'high';
+    description: string;
+  }[];
+  
+  // 瑙嗛璁剧疆
+  videoRetentionDays: number;
+  videoQuality: 'high' | 'medium' | 'low';
+  videoSegmentMinutes: number;
+  videoStorageType: 'local' | 'cloud' | 'hybrid';
+  videoStoragePath: string;
+  videoStorageFolders: {
+    recordings: string;
+    alarm_videos: string;
+    playback_videos: string;
+    temp_cache: string;
+    alarm_screenshots: string;
+  };
+  alarmVideoRetentionDays: number;
+  alarmVideoSurroundMinutes: number;
+  alarmScreenshotRetentionDays: number;
+  faceRecognitionEnabled: boolean;
+  
+  // 鍥存爮璁剧疆
+  fenceDetectionInterval: number;
+  fenceDefaultRadius: number;
+  fenceRetentionDays: number;
+  fenceGracePeriod: number;
+  fenceAlarmSilenceMinutes: number;
+  fenceDefaultBehavior: 'No Entry' | 'No Exit';
+  fenceDefaultSeverity: 'normal' | 'risk' | 'severe';
+  trackRetentionDays: number;
+  trackSimplifyPrecision: number;
+  trackRecordInterval: number;
+  stationaryReminderEnabled: boolean;
+  stationaryReminderMinutes: number;
+  passwordExpireDays: number;
+  
+  // 鏃ュ織璁剧疆
+  logRetentionDays: number;
+  logAutoClean: boolean;
+  logLevel: 'all' | 'error' | 'warning';
+  logOperation: boolean;
+  logLogin: boolean;
+  logAlarm: boolean;
+  logConfig: boolean;
+  logAuditEnabled: boolean;
+  logDiffEnabled: boolean;
+  logExportEncoding: 'utf8' | 'gb2312';
+  logLoginFailedAlert: number;
+  logErrorReport: boolean;
+  logAutoCompress: boolean;
+  
+  // 閫氱煡璁剧疆
+  smsNotification: boolean;
+  callNotification: boolean;
+  smsApiUrl: string;
+  smsApiKey: string;
+  smsSign: string;
+  smsTemplateId: string;
+  callApiUrl: string;
+  callApiKey: string;
+  notifySevereBySms: boolean;
+  notifySevereByCall: boolean;
+  notifyMediumBySms: boolean;
+  notifyMediumByCall: boolean;
+  notifyLowBySms: boolean;
+  notifyLowByCall: boolean;
+  notificationRecipients: { name: string; phone: string; level: 'all' | 'severe' | 'medium' | 'low'; enabled: boolean }[];
+
+  // 澶囦唤璁剧疆
+  autoBackup: boolean;
+  backupFrequency: 'daily' | 'weekly' | 'monthly';
+  backupTime: string;
+  backupRetention: number;
+  
+  // 璐﹀彿瀹夊叏
+  forceInitialPasswordChange: boolean;
+  passwordMinLength: number;
+  passwordRequireComplexity: boolean;
+  loginAttempts: number;
+  lockoutDuration: number;
+  maxConcurrentSessions: number;
+  
+  // 各级管理员默认权限
+  hqAdminPermissions: string[];
+  branchAdminPermissions: string[];
+  projectAdminPermissions: string[];
+  gridAdminPermissions: string[];
+  teamAdminPermissions: string[];
+  
+  // AI 鍔╂墜璁剧疆
+  aiServiceUrl: string;
+  aiEnableRAG: boolean;
+  aiKbName: string;
+  aiModelName: string;
+  aiVectorDbPath: string;
+}
+
+interface PersonNode {
+  id: string;
+  name: string;
+  phone: string;
+  company: string;
+  project: string;
+  team: string;
+  employeeId: string;
+}
+
+interface OrgNode {
+  id: string;
+  name: string;
+  type: 'company' | 'project' | 'team' | 'person';
+  children?: OrgNode[];
+  data?: PersonNode;
+}
+
+const orgTreeData: OrgNode[] = [
+  {
+    id: 'company-1',
+    name: '中铁一局',
+    type: 'company',
+    children: [
+      {
+        id: 'project-1',
+        name: '西安地铁8号线项目',
+        type: 'project',
+        children: [
+          { id: 'team-1-1', name: '隧道作业一队', type: 'team', children: [
+            { id: 'p1', name: '张安全', type: 'person', data: { id: 'p1', name: '张安全', phone: '13800138001', company: '中铁一局', project: '西安地铁8号线项目', team: '隧道作业一队', employeeId: 'TJ001' } },
+            { id: 'p2', name: '李建国', type: 'person', data: { id: 'p2', name: '李建国', phone: '13800138002', company: '中铁一局', project: '西安地铁8号线项目', team: '隧道作业一队', employeeId: 'TJ002' } },
+          ]},
+          { id: 'team-1-2', name: '钢结构作业队', type: 'team', children: [
+            { id: 'p3', name: '王文明', type: 'person', data: { id: 'p3', name: '王文明', phone: '13800138003', company: '中铁一局', project: '西安地铁8号线项目', team: '钢结构作业队', employeeId: 'TJ003' } },
+          ]},
+        ]
+      },
+      {
+        id: 'project-2',
+        name: '郑州高铁南站项目',
+        type: 'project',
+        children: [
+          { id: 'team-2-1', name: '土建作业队', type: 'team', children: [
+            { id: 'p4', name: '赵工程', type: 'person', data: { id: 'p4', name: '赵工程', phone: '13800138004', company: '中铁一局', project: '郑州高铁南站项目', team: '土建作业队', employeeId: 'TJ004' } },
+          ]},
+        ]
+      },
+    ]
+  },
+  {
+    id: 'company-2',
+    name: '中铁二局',
+    type: 'company',
+    children: [
+      {
+        id: 'project-3',
+        name: '成都天府机场项目',
+        type: 'project',
+        children: [
+          { id: 'team-3-1', name: '安装作业队', type: 'team', children: [
+            { id: 'p5', name: '钱主管', type: 'person', data: { id: 'p5', name: '钱主管', phone: '13800138005', company: '中铁二局', project: '成都天府机场项目', team: '安装作业队', employeeId: 'TJ005' } },
+          ]},
+        ]
+      },
+    ]
+  },
+];
+
+function flattenPersons(nodes: OrgNode[]): PersonNode[] {
+  const persons: PersonNode[] = [];
+  function traverse(nodes: OrgNode[]) {
+    for (const node of nodes) {
+      if (node.type === 'person' && node.data) persons.push(node.data);
+      if (node.children) traverse(node.children);
+    }
+  }
+  traverse(nodes);
+  return persons;
+}
+
+export default function SettingsView() {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('video');
+  const [showCloudModal, setShowCloudModal] = useState(false);
+  const [showLocalModal, setShowLocalModal] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showAddRecipientModal, setShowAddRecipientModal] = useState(false);
+  const [recipientSearch, setRecipientSearch] = useState('');
+  const [expandedOrgNodes, setExpandedOrgNodes] = useState<Set<string>>(new Set(['company-1', 'company-2']));
+  const [selectedPersons, setSelectedPersons] = useState<PersonNode[]>([]);
+  const [localConfig, setLocalConfig] = useState({
+    path: '',
+    name: ''
+  });
+  const [cloudConfig, setCloudConfig] = useState({
+    type: 'oss',
+    name: '',
+    endpoint: 'oss-cn-beijing.aliyuncs.com',
+    bucket: '',
+    access_key: '',
+    secret_key: '',
+    region: ''
+  });
+  const [storagePaths, setStoragePaths] = useState<any[]>([]);
+  const [backupFiles, setBackupFiles] = useState<any[]>([]);
+  
+  useEffect(() => {
+    refreshStoragePaths();
+    refreshBackupFiles();
+  }, []);
+
+  const refreshStoragePaths = () => {
+    fetch('/api/backup/storage/paths')
+      .then(res => res.json())
+      .then(paths => {
+        console.log('鍒锋柊瀛樺偍璺緞:', paths);
+        setStoragePaths(Array.isArray(paths) ? paths : []);
+      });
+  };
+
+  const refreshBackupFiles = () => {
+    fetch('/api/backup/list')
+      .then(res => res.json())
+      .then(files => {
+        console.log('鍔犺浇澶囦唤鏂囦欢:', files);
+        setBackupFiles(Array.isArray(files) ? files : []);
+      })
+      .catch(e => {
+        console.log('鍔犺浇澶囦唤鏂囦欢澶辫触:', e);
+        setBackupFiles([]);
+      });
+  };
+
+  const handleDeleteStoragePath = (index: number) => {
+    fetch(`/api/backup/storage/paths/${index}`, { method: 'DELETE' })
+      .then(r => r.json())
+      .then(r => {
+        console.log('鍒犻櫎缁撴灉:', r);
+        refreshStoragePaths();
+      });
+  };
+
+  const handleSetPrimary = (index: number) => {
+    fetch(`/api/backup/storage/paths/${index}/primary`, { method: 'POST' })
+      .then(r => {
+        if (!r.ok) throw new Error('鍒囨崲澶辫触');
+        return r.json();
+      })
+      .then(r => {
+        console.log('璁剧疆涓诲瓨鍌ㄧ粨鏋?', r);
+        refreshStoragePaths();
+      })
+      .catch(e => {
+        console.log('鍒囨崲涓诲瓨鍌ㄥけ璐?', e);
+      });
+  };
+  
+  const [settings, setSettings] = useState<SystemSettings>({
+    systemName: '涓搧涓€灞€鏅鸿兘瀹夊叏绠＄悊绯荤粺',
+    theme: 'dark',
+    language: 'zh',
+    timezone: 'Asia/Shanghai',
+    tablePageSize: 20,
+    autoLogoutMinutes: 30,
+    confirmBeforeDelete: true,
+    coordinatePrecision: 6,
+    alarmPopup: true,
+    alarmSound: true,
+    alarmSoundType: 'standard',
+    alarmRepeatInterval: 5,
+    alarmAutoResolve: false,
+    alarmRetentionDays: 30,
+    alarmSevereFlash: true,
+    alarmSevereUpgrade: 'sound',
+    alarmVolume: 30,
+    alarmSosEnabled: true,
+    alarmFenceEnabled: true,
+    alarmLowBatteryEnabled: true,
+    alarmOfflineEnabled: true,
+    alarmEscalationEnabled: true,
+    alarmEscalationMinutes: 5,
+    videoRetentionDays: 15,
+    videoQuality: 'high',
+    videoSegmentMinutes: 30,
+    videoStorageType: 'local',
+    videoStoragePath: './backend/static',
+    videoStorageFolders: {
+      recordings: 'recordings',
+      alarm_videos: 'alarm_videos',
+      playback_videos: 'playback_videos',
+      temp_cache: 'temp_cache',
+      alarm_screenshots: 'alarm_screenshots',
+    },
+    alarmVideoRetentionDays: 90,
+    alarmVideoSurroundMinutes: 1,
+    alarmScreenshotRetentionDays: 90,
+    faceRecognitionEnabled: true,
+    fenceDetectionInterval: 3,
+    fenceDefaultRadius: 50,
+    fenceRetentionDays: 365,
+    fenceGracePeriod: 0,
+    fenceAlarmSilenceMinutes: 1,
+    fenceDefaultBehavior: 'No Entry',
+    fenceDefaultSeverity: 'normal',
+    trackRetentionDays: 30,
+    trackSimplifyPrecision: 2,
+    trackRecordInterval: 5,
+    stationaryReminderEnabled: false,
+    stationaryReminderMinutes: 30,
+    passwordExpireDays: 90,
+    logRetentionDays: 90,
+    logAutoClean: true,
+    logLevel: 'all',
+    smsNotification: false,
+    callNotification: false,
+    smsApiUrl: 'https://sms.example.com/api',
+    smsApiKey: '',
+      smsSign: '【安全管理系统】',
+    smsTemplateId: 'SMS_123456',
+    callApiUrl: 'https://call.example.com/api',
+    callApiKey: '',
+    notifySevereBySms: true,
+    notifySevereByCall: true,
+    notifyMediumBySms: false,
+    notifyMediumByCall: false,
+    notifyLowBySms: false,
+    notifyLowByCall: false,
+    notificationRecipients: [
+      { name: '张安全', phone: '13800138001', level: 'severe', enabled: true },
+      { name: '李主管', phone: '13800138002', level: 'all', enabled: true },
+      { name: '王经理', phone: '13800138003', level: 'medium', enabled: false },
+    ],
+    autoBackup: true,
+    backupFrequency: 'daily',
+    backupTime: '02:00',
+    backupRetention: 7,
+    forceInitialPasswordChange: true,
+        passwordMinLength: 8,
+        passwordRequireComplexity: true,
+        loginAttempts: 5,
+        lockoutDuration: 30,
+        maxConcurrentSessions: 3,
+        
+        // 鍚勭骇绠＄悊鍛橀粯璁ゆ潈闄?        hqAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
+        branchAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
+        projectAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
+        gridAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
+        teamAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
+
+    // AI 鍔╂墜璁剧疆
+  aiServiceUrl: '/api/ai',
+  aiEnableRAG: true,
+  aiKbName: 'default',
+  aiModelName: 'DeepSeek-R1-Distill-Qwen-7B-F16',
+  aiVectorDbPath: './vector_db',
+
+    // AI检测行为告警等级配置
+    aiAlarmLevelConfigs: [
+      { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
+      { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
+      { id: '3', name: '吸烟检测', category: '作业行为', code: 'smoking', level: 'high', description: '禁烟区域吸烟行为检测' },
+      { id: '4', name: '人员倒地', category: '人员安全', code: 'person_fall', level: 'high', description: '人员摔倒、倒地异常检测' },
+      { id: '5', name: '陌生人员闯入', category: '人员管理', code: 'unauthorized_person', level: 'high', description: '未授权人员进入管控区域' },
+      { id: '6', name: '明火检测', category: '消防安全', code: 'fire_detected', level: 'high', description: '明火、烟雾、火焰检测' },
+      { id: '7', name: '禁入区无安全帽', category: '区域管理', code: 'no_helmet_area', level: 'medium', description: '危险区域未佩戴安全帽' },
+      { id: '8', name: '人员聚集', category: '人员管理', code: 'crowd_detection', level: 'medium', description: '人员过度聚集检测' },
+      { id: '9', name: '反光衣缺失', category: '安全防护', code: 'reflective_vest_missing', level: 'high', description: '施工现场反光衣佩戴检测' },
+      { id: '10', name: '电气焊作业', category: '动火作业', code: 'welding_detection', level: 'high', description: '违规电气焊作业检测' },
+      { id: '11', name: '洞口防护缺失', category: '临边防护', code: 'hole_protection', level: 'high', description: '洞口、临边防护设施缺失' },
+      { id: '12', name: '起重半径违规', category: '起重作业', code: 'lifting_radius', level: 'high', description: '人员进入起重作业危险半径' },
+      { id: '13', name: '动火监护缺失', category: '动火作业', code: 'hotwork_supervisor', level: 'high', description: '动火作业无现场监护' },
+      { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
+      { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
+    ],
+  });
+  
+  const [saved, setSaved] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState('');
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordData, setPasswordData] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [showOldPassword, setShowOldPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [algoSearchKeyword, setAlgoSearchKeyword] = useState('');
+  const [algoCategoryFilter, setAlgoCategoryFilter] = useState('');
+  const [algoLevelFilter, setAlgoLevelFilter] = useState('');
+  const [newKbName, setNewKbName] = useState('');
+  const [kbDocuments, setKbDocuments] = useState<any[]>([]);
+  const [kbTotalSize, setKbTotalSize] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [showKbManager, setShowKbManager] = useState(false);
+
+  const defaultVideoStorageFolders: SystemSettings['videoStorageFolders'] = {
+    recordings: 'recordings',
+    alarm_videos: 'alarm_videos',
+    playback_videos: 'playback_videos',
+    temp_cache: 'temp_cache',
+    alarm_screenshots: 'alarm_screenshots',
+  };
+
+  const folderNamePattern = /^[^<>:"/\\|?*]+$/;
+  const permissionModules = [
+    { key: 'dashboard', label: 'Dashboard', codes: ['dashboard.view'] },
+    { key: 'monitor', label: 'Video Monitor', codes: ['monitor.playback', 'monitor.track', 'monitor.voice', 'monitor.camera'] },
+    { key: 'fence', label: 'Fence', codes: ['fence.view', 'fence.create', 'fence.edit', 'fence.delete'] },
+    { key: 'device', label: 'Device', codes: ['device.view', 'device.create', 'device.edit', 'device.delete'] },
+    { key: 'personnel', label: 'Personnel', codes: ['personnel.view', 'personnel.create', 'personnel.edit', 'personnel.delete'] },
+    { key: 'alarm', label: 'Alarm', codes: ['alarm.view', 'alarm.handle'] },
+    { key: 'system', label: 'System', codes: ['system.role', 'system.log'] },
+  ];
+  const rolePermissionFields = {
+    headquarters_admin: 'hqAdminPermissions',
+    branch_admin: 'branchAdminPermissions',
+    project_safety_admin: 'projectAdminPermissions',
+    grid_admin: 'gridAdminPermissions',
+    team_admin: 'teamAdminPermissions',
+  } as const;
+  const roleCards = [
+    { level: 'headquarters_admin', field: 'hqAdminPermissions', title: 'HQ Admin', color: 'red', icon: Building2 },
+    { level: 'branch_admin', field: 'branchAdminPermissions', title: 'Branch Admin', color: 'orange', icon: Building2 },
+    { level: 'project_safety_admin', field: 'projectAdminPermissions', title: 'Project Admin', color: 'blue', icon: FolderTree },
+    { level: 'grid_admin', field: 'gridAdminPermissions', title: 'Grid Admin', color: 'cyan', icon: FolderTree },
+    { level: 'team_admin', field: 'teamAdminPermissions', title: 'Team Admin', color: 'green', icon: Users },
+  ] as const;
+  const moduleKeysFromCodes = (codes: string[]) => permissionModules
+    .filter(module => module.codes.every(code => codes.includes(code)))
+    .map(module => module.key);
+  const codesFromModuleKeys = (keys: string[]) => permissionModules
+    .filter(module => keys.includes(module.key))
+    .flatMap(module => module.codes);
+  const permissionCardClass = (color: string) => ({
+    red: 'border-red-500/30',
+    orange: 'border-orange-500/30',
+    blue: 'border-blue-500/30',
+    cyan: 'border-cyan-500/30',
+    green: 'border-green-500/30',
+  }[color] || 'border-slate-500/30');
+  const permissionTextClass = (color: string) => ({
+    red: 'text-red-400',
+    orange: 'text-orange-400',
+    blue: 'text-blue-400',
+    cyan: 'text-cyan-400',
+    green: 'text-green-400',
+  }[color] || 'text-slate-300');
+  const permissionCheckboxClass = (color: string) => ({
+    red: 'text-red-500 focus:ring-red-500',
+    orange: 'text-orange-500 focus:ring-orange-500',
+    blue: 'text-blue-500 focus:ring-blue-500',
+    cyan: 'text-cyan-500 focus:ring-cyan-500',
+    green: 'text-green-500 focus:ring-green-500',
+  }[color] || 'text-slate-500 focus:ring-slate-500');
+
+  const updateVideoStorageFolder = (key: keyof SystemSettings['videoStorageFolders'], value: string) => {
+    const nextValue = value.trim();
+    if (nextValue && !folderNamePattern.test(nextValue)) return;
+    setSettings({
+      ...settings,
+      videoStorageFolders: {
+        ...defaultVideoStorageFolders,
+        ...(settings.videoStorageFolders || defaultVideoStorageFolders),
+        [key]: nextValue,
+      },
+    });
+  };
+
+  const getVideoStorageFolder = (key: keyof SystemSettings['videoStorageFolders']) =>
+    (settings.videoStorageFolders?.[key] || defaultVideoStorageFolders[key]);
+  const [showKbCreator, setShowKbCreator] = useState(false);
+  const [kbList, setKbList] = useState(['default']);
+  const [selectedKb, setSelectedKb] = useState('default');
+
+  // 初始化时从后端加载设置和知识库文档
+  useEffect(() => {
+    fetch('/admin/settings')
+      .then(res => res.json())
+      .then(config => {
+        if (config && Object.keys(config).length > 0) {
+          setSettings(prev => ({ 
+            ...prev, 
+            ...config,
+            videoStorageFolders: {
+              ...defaultVideoStorageFolders,
+              ...(config.videoStorageFolders || {}),
+            },
+            aiAlarmLevelConfigs: config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs,
+          }));
+          if (typeof config.alarmVolume === 'number') {
+            (window as any).alarmVolume = config.alarmVolume / 100;
+          }
+        }
+      })
+      .catch(() => {
+        console.log('浣跨敤鏈湴榛樿璁剧疆');
+      });
+
+    loadKbDocuments();
+  }, []);
+
+  useEffect(() => {
+    fetch(getApiUrl('/api/permissions/roles'), {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`roles http ${res.status}`);
+        return res.json();
+      })
+      .then((roles) => {
+        if (!Array.isArray(roles)) return;
+        setSettings(prev => {
+          const next: SystemSettings = { ...prev };
+          for (const role of roles) {
+            const field = rolePermissionFields[role.level as keyof typeof rolePermissionFields];
+            if (field && Array.isArray(role.permissions)) {
+              next[field] = moduleKeysFromCodes(role.permissions) as any;
+            }
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        console.log('鍔犺浇瑙掕壊鏉冮檺澶辫触锛屼娇鐢ㄩ粯璁ゅ叏鏉冮檺');
+      });
+  }, []);
+
+  const loadKbDocuments = () => {
+    fetch('/api/ai/kb/documents')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          setKbDocuments(data.documents || []);
+          setKbTotalSize(data.total_size_mb || 0);
+        }
+      })
+      .catch(() => {
+        console.log('鍔犺浇鐭ヨ瘑搴撴枃妗ｅけ璐ワ紝浣跨敤婕旂ず鏁版嵁');
+      });
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    let successCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/ai/kb/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        
+        if (res.ok) {
+          successCount++;
+        }
+      } catch (err) {
+        console.error('涓婁紶澶辫触:', err);
+      }
+    }
+
+    setUploading(false);
+    if (successCount > 0) {
+      alert(`鎴愬姛涓婁紶 ${successCount} 涓枃浠讹紒`);
+      loadKbDocuments();
+    } else {
+      alert('涓婁紶澶辫触锛岃妫€鏌?LLM 鏈嶅姟鏄惁鍚姩');
+    }
+
+    e.target.value = '';
+  };
+
+  const handleDeleteDocument = async (filename: string) => {
+    if (!confirm(`确定要删除「${filename}」吗？`)) return;
+
+    try {
+      const res = await fetch(`/api/ai/kb/documents/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+      
+      if (res.ok) {
+        alert('删除成功');
+        loadKbDocuments();
+      } else {
+        alert('鍒犻櫎澶辫触');
+      }
+    } catch (err) {
+      alert('鍒犻櫎澶辫触锛岃妫€鏌?LLM 鏈嶅姟鏄惁鍚姩');
+    }
+  };
+
+  const showSettingsMessage = (message: string) => {
+    setSettingsMessage(message);
+    setTimeout(() => setSettingsMessage(''), 3000);
+  };
+
+  const handleSave = async () => {
+    // 鍚屾椂淇濆瓨鍒?localStorage 鍜屽悗绔?    localStorage.setItem('systemSettings', JSON.stringify(settings));
+    (window as any).alarmVolume = (settings.alarmVolume || 0) / 100;
+    
+    try {
+      const res = await fetch('/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      await Promise.all(roleCards.map(role => {
+        const modules = settings[role.field] || [];
+        return fetch(getApiUrl(`/api/permissions/roles/${role.level}`), {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
+          credentials: 'include',
+          body: JSON.stringify({ permissions: codesFromModuleKeys(modules) }),
+        }).then(permissionRes => {
+          if (!permissionRes.ok) {
+            throw new Error(`permissions ${role.level} HTTP ${permissionRes.status}`);
+          }
+        });
+      }));
+
+    } catch (e) {
+      showSettingsMessage('后端保存失败，已暂存到浏览器本地');
+      return;
+    }
+    
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    showSettingsMessage('设置已保存，并已同步到后端服务');
+    console.log('设置已保存', settings);
+  };
+
+  const handleReset = () => {
+    if (confirm('确定要恢复默认设置吗？所有修改将丢失。')) {
+      const allModules = permissionModules.map(module => module.key);
+      const defaultSettings: SystemSettings = {
+        ...settings,
+        theme: 'dark',
+        language: 'zh',
+        timezone: 'Asia/Shanghai',
+        alarmPopup: true,
+        alarmSound: true,
+        alarmSoundType: 'standard',
+        alarmRepeatInterval: 5,
+        alarmAutoResolve: false,
+        alarmRetentionDays: 30,
+        alarmSevereFlash: false,
+        alarmSevereUpgrade: 'sound',
+        alarmVolume: 30,
+        videoRetentionDays: 15,
+        videoQuality: 'high',
+        videoSegmentMinutes: 30,
+        videoStorageType: 'local',
+        videoStoragePath: './backend/static',
+        videoStorageFolders: defaultVideoStorageFolders,
+        alarmVideoRetentionDays: 90,
+        alarmVideoSurroundMinutes: 1,
+        alarmScreenshotRetentionDays: 90,
+        faceRecognitionEnabled: true,
+        fenceDetectionInterval: 3,
+        fenceDefaultRadius: 50,
+        fenceRetentionDays: 365,
+        fenceGracePeriod: 3,
+        fenceAlarmSilenceMinutes: 5,
+        fenceDefaultBehavior: 'No Entry',
+        fenceDefaultSeverity: 'risk',
+        trackRetentionDays: 30,
+        trackSimplifyPrecision: 2,
+        trackRecordInterval: 5,
+        stationaryReminderEnabled: true,
+        stationaryReminderMinutes: 30,
+        logRetentionDays: 90,
+        logAutoClean: true,
+        logLevel: 'all',
+        logOperation: true,
+        logLogin: true,
+        logAlarm: true,
+        logConfig: true,
+        logAuditEnabled: true,
+        logDiffEnabled: true,
+        logExportEncoding: 'utf8',
+        logLoginFailedAlert: 5,
+        logErrorReport: true,
+        logAutoCompress: true,
+        autoBackup: true,
+        backupFrequency: 'daily',
+        backupTime: '02:00',
+        backupRetention: 7,
+        hqAdminPermissions: [...allModules],
+        branchAdminPermissions: [...allModules],
+        projectAdminPermissions: [...allModules],
+        gridAdminPermissions: [...allModules],
+        teamAdminPermissions: [...allModules],
+      };
+      setSettings(defaultSettings);
+      localStorage.setItem('systemSettings', JSON.stringify(defaultSettings));
+      (window as any).alarmVolume = defaultSettings.alarmVolume / 100;
+      fetch('/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(defaultSettings),
+      })
+        .then(() => showSettingsMessage('已恢复默认设置，并同步到后端'))
+        .catch(() => showSettingsMessage('已恢复默认设置，后端同步失败'));
+    }
+  };
+
+  const validatePassword = (password: string): { valid: boolean; message?: string } => {
+    if (password.length < settings.passwordMinLength) {
+      return { valid: false, message: `密码长度至少${settings.passwordMinLength}位` };
+    }
+    if (settings.passwordRequireComplexity) {
+      const hasUpperCase = /[A-Z]/.test(password);
+      const hasLowerCase = /[a-z]/.test(password);
+      const hasNumber = /[0-9]/.test(password);
+      if (!hasUpperCase || !hasLowerCase || !hasNumber) {
+        return { valid: false, message: '密码必须同时包含大写字母、小写字母和数字' };
+      }
+    }
+    return { valid: true };
+  };
+
+  const handleChangePassword = async () => {
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      alert('两次输入的新密码不一致');
+      return;
+    }
+    const validation = validatePassword(passwordData.newPassword);
+    if (!validation.valid) {
+      alert(validation.message);
+      return;
+    }
+
+    try {
+      const res = await fetch(getApiUrl('/api/auth/change-password'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          old_password: passwordData.oldPassword,
+          new_password: passwordData.newPassword,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || '密码修改失败');
+      }
+
+      setShowPasswordModal(false);
+      setPasswordData({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      localStorage.removeItem('logged_in');
+      localStorage.removeItem('auth_token');
+      alert(data.message || '密码修改成功，请重新登录');
+      window.location.reload();
+    } catch (err: any) {
+      alert(err?.message || '密码修改失败');
+    }
+  };
+
+  const tabs = [
+    { key: 'video', label: '视频设置', icon: Video },
+    { key: 'fence', label: '围栏及定位设置', icon: MapPin },
+    { key: 'alarm', label: '告警设置', icon: Bell },
+    { key: 'ai', label: 'AI 助手设置', icon: Bot },
+    { key: 'log', label: '日志设置', icon: FileText },
+    { key: 'account', label: '账号安全', icon: Shield },
+    { key: 'notification', label: '通知设置', icon: Mail },
+    { key: 'backup', label: '数据备份', icon: Database },
+  ];
+
+  return (
+    <div className="h-full overflow-auto p-6">
+      <div className="flex gap-6">
+        {/* left navigation */}
+        <div className="w-56 shrink-0">
+          {/* title */}
+          <div className="mb-4">
+            <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+              <Settings size={28} className="text-cyan-400" />
+              系统设置
+            </h1>
+            <p className="text-slate-400 text-sm mt-1">配置系统各项参数</p>
+          </div>
+
+          {/* navigation */}
+          <div className="space-y-1">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as SettingsTab)}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all ${
+                activeTab === tab.key
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50'
+                  : 'text-white hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <tab.icon size={16} />
+              {tab.label}
+            </button>
+          ))}
+            
+            <div className="h-px bg-slate-700/50 my-6"></div>
+            
+            <div className="space-y-2 px-1">
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm transition-all bg-slate-700/50 hover:bg-slate-700 text-slate-300 border border-slate-600/50"
+              >
+                <RotateCcw size={14} />
+                鎭㈠榛樿
+              </button>
+              <button
+                onClick={handleSave}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-lg shadow-cyan-500/20"
+              >
+                <Save size={14} />
+                淇濆瓨璁剧疆
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 鍙充晶鍐呭 */}
+        <div className="flex-1 bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-6">
+          {(saved || settingsMessage) && (
+            <div className="mb-4 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
+              {settingsMessage || '设置已保存'}
+            </div>
+          )}
+          {/* AI 鍔╂墜璁剧疆 */}
+          {activeTab === 'ai' && (
+            <div className="space-y-4">
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Bot size={16} className="text-cyan-400" />
+                  <h3 className="text-sm font-semibold text-white">澶ц瑷€妯″瀷鏈嶅姟閰嶇疆</h3>
+                </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">妯″瀷鍚嶇О</label>
+                    <select
+                      value={settings.aiModelName}
+                      onChange={(e) => setSettings({ ...settings, aiModelName: e.target.value })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400/50"
+                    >
+                      <option value="DeepSeek-R1-Distill-Qwen-7B-F16">DeepSeek-R1-Distill-Qwen-7B-F16</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <DatabaseIcon size={16} className="text-emerald-400" />
+                  <h3 className="text-sm font-semibold text-white">鐭ヨ瘑搴?(RAG) 閰嶇疆</h3>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-white">启用检索增强</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.aiEnableRAG}
+                          onChange={(e) => setSettings({ ...settings, aiEnableRAG: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                      </label>
+                    </div>
+                    
+                    <div className="flex-1 max-w-xs">
+                      <label className="block text-xs text-slate-400 mb-1">当前知识库</label>
+                      <select
+                        value={settings.aiKbName}
+                        onChange={(e) => setSettings({ ...settings, aiKbName: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400/50"
+                      >
+                        {kbList.map(kb => (
+                          <option key={kb} value={kb}>{kb} {kb === 'default' ? '(默认知识库)' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <button
+                      onClick={() => setShowKbManager(true)}
+                      className="px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 text-sm rounded-lg transition-colors border border-cyan-500/30"
+                    >
+                      知识库管理
+                    </button>
+                    
+                    <button
+                      onClick={() => setShowKbCreator(true)}
+                      className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 text-sm rounded-lg transition-colors border border-emerald-500/30"
+                    >
+                      新建知识库
+                    </button>
+                  </div>
+                  
+                  <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <HardDrive size={14} className="text-cyan-400" />
+                      <h4 className="text-xs font-semibold text-white">AI 鏁版嵁瀛樺偍缁撴瀯</h4>
+                    </div>
+                    <div className="font-mono text-xs text-slate-400 space-y-0.5">
+                      <div className="text-emerald-400">馃搨 LargeLanguageModel/</div>
+                      <div className="ml-4">鈹溾攢 馃搨 <span className="text-cyan-400">Documents/</span>          <span className="text-slate-500"># 涓婁紶鐨勬簮鏂囨。</span></div>
+                      <div className="ml-4">鈹? 鈹溾攢 馃搫 瀹夊叏绠＄悊鍒跺害.pdf</div>
+                      <div className="ml-4">鈹? 鈹斺攢 馃搫 ...</div>
+                      <div className="ml-4">|- vector_db/          <span className="text-slate-500"># 向量数据库</span></div>
+                      <div className="ml-4">鈹? 鈹溾攢 馃搨 default/</div>
+                      <div className="ml-4">鈹? 鈹斺攢 馃搨 {settings.aiKbName}/</div>
+                      <div className="ml-4">鈹斺攢 馃搨 <span className="text-amber-400">BAAIbge-large-zh-v1.5/</span>  <span className="text-slate-500"># 宓屽叆妯″瀷</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {showKbManager && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                  <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-4xl mx-4 overflow-hidden">
+                    <div className="flex items-center justify-between p-4 border-b border-slate-700">
+                      <h3 className="text-sm font-semibold text-white">知识库管理</h3>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-slate-400">嵌入模型：<span className="text-emerald-400">bge-large-zh-v1.5</span></span>
+                        <button onClick={() => setShowKbManager(false)} className="text-slate-400 hover:text-white">
+                          <X size={18} />
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex">
+                      <div className="w-56 border-r border-slate-700 bg-slate-800/30">
+                        <div className="p-3 border-b border-slate-700">
+                          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">知识库列表</div>
+                        </div>
+                        <div className="p-2 space-y-1 max-h-[400px] overflow-y-auto">
+                          {kbList.map((kb) => (
+                            <div key={kb} className={`group relative`}>
+                              <button
+                                onClick={() => setSelectedKb(kb)}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
+                                  selectedKb === kb 
+                                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' 
+                                    : 'text-slate-300 hover:bg-slate-700/50 border border-transparent'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <DatabaseIcon size={14} />
+                                  <span className="font-mono truncate max-w-[120px]">{kb}</span>
+                                </div>
+                                {kb === settings.aiKbName && (
+                                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">使用中</span>
+                                )}
+                              </button>
+                              {kb !== 'default' && (
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`确定要删除知识库「${kb}」吗？`)) {
+                                      setKbList(kbList.filter(k => k !== kb));
+                                      if (selectedKb === kb) setSelectedKb('default');
+                                    }
+                                  }}
+                                  className="absolute right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-opacity"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="p-3 border-t border-slate-700">
+                          <button
+                            onClick={() => {
+                              setShowKbManager(false);
+                              setShowKbCreator(true);
+                            }}
+                            className="w-full py-2 text-sm text-cyan-400 hover:bg-cyan-500/10 rounded-lg transition-colors border border-dashed border-cyan-500/30"
+                          >
+                            + 新建知识库
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="flex-1 p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-sm text-white">鏂囨。绠＄悊 路 </span>
+                            <span className="text-sm text-cyan-400 font-mono">{selectedKb}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {selectedKb !== settings.aiKbName && (
+                              <button
+                                onClick={() => {
+                                  setSettings({ ...settings, aiKbName: selectedKb });
+                                }}
+                                className="px-3 py-1.5 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition-colors border border-emerald-500/30"
+                              >
+                                璁句负褰撳墠浣跨敤
+                              </button>
+                            )}
+                            <label className={`text-sm transition-colors cursor-pointer px-3 py-1.5 rounded-lg ${uploading ? 'bg-slate-700 text-slate-400' : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 border border-cyan-500/30'}`}>
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept=".pdf,.txt,.docx,.md"
+                                multiple
+                                disabled={uploading}
+                                onChange={handleFileUpload}
+                              />
+                              {uploading ? '涓婁紶涓?..' : '+ 娣诲姞鏂囨。'}
+                            </label>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
+                          <div className="p-3 border-b border-slate-700/50 text-xs text-slate-400 bg-slate-800">
+                            鏀寔鏍煎紡锛歅DF銆乀XT銆丏OCX銆丮D | 鏈€澶?50MB/鏂囦欢
+                          </div>
+                          <div className="max-h-[280px] overflow-y-auto">
+                            {kbDocuments.length === 0 ? (
+                              <div className="text-xs text-slate-500 text-center py-12">
+                                鏆傛棤鏂囨。锛岀偣鍑诲彸涓婅銆屾坊鍔犳枃妗ｃ€嶄笂浼?                              </div>
+                            ) : (
+                              kbDocuments.map((doc, idx) => {
+                                const colors = ['text-cyan-400', 'text-emerald-400', 'text-amber-400', 'text-rose-400', 'text-violet-400'];
+                                return (
+                                  <div key={idx} className="flex items-center justify-between p-3 hover:bg-slate-700/30 transition-colors border-b border-slate-700/30 last:border-b-0">
+                                    <div className="flex items-center gap-3">
+                                      <FileText size={16} className={colors[idx % colors.length]} />
+                                      <div>
+                                        <div className="text-sm text-white">{doc.name}</div>
+                                        <div className="text-xs text-slate-500">{doc.size_mb}MB 路 {doc.upload_time}</div>
+                                      </div>
+                                    </div>
+                                    <button 
+                                      onClick={() => handleDeleteDocument(doc.name)}
+                                      className="px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors"
+                                    >
+                                      鍒犻櫎
+                                    </button>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                          <div className="p-3 text-xs text-slate-500 text-center border-t border-slate-700/50 bg-slate-800">
+                            「{selectedKb}」共 {kbDocuments.length} 个文档，总计 {kbTotalSize}MB
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-end p-4 border-t border-slate-700 bg-slate-800/30">
+                      <button
+                        onClick={() => setShowKbManager(false)}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors"
+                      >
+                        关闭
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {showKbCreator && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                  <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-lg mx-4 overflow-hidden">
+                    <div className="flex items-center justify-between p-4 border-b border-slate-700">
+                      <h3 className="text-sm font-semibold text-white">创建新知识库</h3>
+                      <button onClick={() => setShowKbCreator(false)} className="text-slate-400 hover:text-white">
+                        <X size={18} />
+                      </button>
+                    </div>
+                    
+                    <div className="p-6 space-y-5">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-2">知识库名称</label>
+                        <input
+                          type="text"
+                          placeholder="输入知识库名称，如：安全制度库"
+                          value={newKbName}
+                          onChange={(e) => setNewKbName(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-cyan-400/50"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-2">鏂囨湰宓屽叆妯″瀷</label>
+                        <select className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none focus:border-cyan-400/50 cursor-pointer">
+                          <option>BAAI/bge-large-zh-v1.5</option>
+                        </select>
+                         <p className="text-xs text-slate-500 mt-2">针对中文知识库检索优化，后续将支持更多嵌入模型</p>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-2">涓婁紶鍒濆鏂囨。锛堝彲閫夛級</label>
+                        <label className="block w-full border-2 border-dashed border-slate-600 rounded-lg p-8 text-center cursor-pointer hover:border-cyan-400/50 transition-colors">
+                          <input type="file" className="hidden" accept=".pdf,.txt,.docx,.md" multiple />
+                          <div className="text-4xl mb-2">馃搫</div>
+                          <div className="text-sm text-slate-300">鐐瑰嚮鎴栨嫋鎷芥枃浠跺埌姝ゅ</div>
+                          <div className="text-xs text-slate-500 mt-1">鏀寔 PDF銆乀XT銆丏OCX銆丮D 鏍煎紡</div>
+                        </label>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-end gap-3 p-4 border-t border-slate-700 bg-slate-800/30">
+                      <button
+                        onClick={() => setShowKbCreator(false)}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!newKbName.trim()) {
+                            alert('请输入知识库名称');
+                            return;
+                          }
+                          try {
+                            const res = await fetch(`/api/ai/kb/create?kb_name=${encodeURIComponent(newKbName.trim())}`, { method: 'POST' });
+                            if (res.ok) {
+                              const kbName = newKbName.trim();
+                              setKbList([...kbList, kbName]);
+                              setSelectedKb(kbName);
+                              setSettings({ ...settings, aiKbName: kbName });
+                              alert(`知识库「${kbName}」创建成功！`);
+                              setNewKbName('');
+                              setShowKbCreator(false);
+                              setShowKbManager(true);
+                            } else {
+                              const data = await res.json();
+                              alert(data.detail || '鍒涘缓澶辫触');
+                            }
+                          } catch (err) {
+                            alert('鍒涘缓澶辫触锛岃妫€鏌?LLM 鏈嶅姟鏄惁鍚姩');
+                          }
+                        }}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-sm rounded-lg transition-colors"
+                      >
+                        鍒涘缓鐭ヨ瘑搴?                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="bg-cyan-500/10 rounded-lg p-4 border border-cyan-400/30">
+                <h4 className="text-sm font-semibold text-cyan-300 mb-2">浣跨敤璇存槑</h4>
+                <ul className="text-xs text-slate-300 space-y-1">
+                  <li>启动后端 LLM 服务：进入 backend/LargeLanguageModel 目录运行 python main.py</li>
+                  <li>确保 Ollama 服务已启动并已下载对应模型</li>
+                  <li>知识库向量库会自动生成在 vector_db 目录中</li>
+                  <li>修改配置后点击“保存设置”按钮生效</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* 瑙嗛璁剧疆 */}
+          {activeTab === 'video' && (
+            <div className="space-y-4">
+              {/* 浜鸿劯璇嗗埆璁剧疆 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bot size={16} className="text-cyan-400" />
+                    <h3 className="text-sm font-semibold text-white">浜鸿劯璇嗗埆</h3>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.faceRecognitionEnabled !== undefined ? settings.faceRecognitionEnabled : true}
+                      onChange={(e) => setSettings({ ...settings, faceRecognitionEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                  </label>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">鍚敤鍚庯紝AI鐩戞帶灏嗚嚜鍔ㄨ瘑鍒汉鑴稿苟姣斿浜哄憳韬唤淇℃伅锛岀粨鏋滃疄鏃舵帹閫佽嚦鐩戞帶鐢婚潰鏄剧ず</p>
+              </div>
+
+              {/* 褰曞儚淇濆瓨璁剧疆 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <h3 className="text-sm font-semibold text-white mb-2">褰曞儚淇濆瓨璁剧疆</h3>
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">甯歌褰曞儚淇濆瓨澶╂暟</label>
+                    <input
+                      type="number"
+                      value={settings.videoRetentionDays}
+                      onChange={(e) => setSettings({ ...settings, videoRetentionDays: Number(e.target.value) })}
+                      min={1}
+                      max={90}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">瓒呰繃姝ゅぉ鏁扮殑甯歌褰曞儚灏嗚鑷姩娓呯悊</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">褰曞儚璐ㄩ噺</label>
+                    <select
+                      value={settings.videoQuality}
+                      onChange={(e) => setSettings({ ...settings, videoQuality: e.target.value as 'high' | 'medium' | 'low' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value="high">楂樻竻 (H.264, 4Mbps)</option>
+                      <option value="medium">鏍囨竻 (H.264, 2Mbps)</option>
+                      <option value="low">娴佺晠 (H.265, 1Mbps)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">甯歌褰曞儚鍒嗘鏃堕暱(鍒嗛挓)</label>
+                    <input
+                      type="number"
+                      value={settings.videoSegmentMinutes}
+                      onChange={(e) => setSettings({ ...settings, videoSegmentMinutes: Number(e.target.value) })}
+                      min={0.5}
+                      max={60}
+                      step={0.5}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">当前后端配置: 0.5分钟(30秒)/段</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">瀛樺偍鏂瑰紡</label>
+                    <select
+                      value={settings.videoStorageType}
+                      onChange={(e) => setSettings({ ...settings, videoStorageType: e.target.value as 'local' | 'cloud' | 'hybrid' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value="local">鏈湴瀛樺偍</option>
+                      <option value="cloud">云存储</option>
+                      <option value="hybrid">娣峰悎瀛樺偍</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">鍛婅褰曞儚淇濆瓨澶╂暟</label>
+                    <input
+                      type="number"
+                      value={settings.alarmVideoRetentionDays || 90}
+                      onChange={(e) => setSettings({ ...settings, alarmVideoRetentionDays: Number(e.target.value) })}
+                      min={7}
+                      max={365}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">鍛婅鏃跺埢鍓嶅悗褰曞埗鏃堕暱(鍒嗛挓)</label>
+                    <input
+                      type="number"
+                      value={settings.alarmVideoSurroundMinutes || 1}
+                      onChange={(e) => setSettings({ ...settings, alarmVideoSurroundMinutes: Number(e.target.value) })}
+                      min={0.5}
+                      max={10}
+                      step={0.5}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">鍛婅鍙戠敓鍓嶅悗鍚勫綍鍒舵鏃堕暱</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">鍛婅鎴浘淇濆瓨澶╂暟</label>
+                    <input
+                      type="number"
+                      value={settings.alarmScreenshotRetentionDays || 90}
+                      onChange={(e) => setSettings({ ...settings, alarmScreenshotRetentionDays: Number(e.target.value) })}
+                      min={7}
+                      max={365}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 瑙嗛淇濆瓨璺緞璇存槑 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <div className="flex items-center gap-2 mb-3">
+                  <HardDrive size={16} className="text-cyan-400" />
+                  <h3 className="text-sm font-semibold text-white">瑙嗛淇濆瓨璺緞</h3>
+                </div>
+                
+                <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3 mb-3">
+                  <div className="text-sm text-cyan-300 flex items-center gap-2">
+                    <Database size={16} />
+                    <span>视频存储路径已与“数据备份”中的“当前主存储”路径绑定</span>
+                  </div>
+                </div>
+                
+                {/* 瀛愭枃浠跺す璇存槑 */}
+                <div className="bg-slate-900/50 rounded-lg p-3 space-y-2">
+                  <div className="text-xs text-slate-300 font-medium mb-1">文件存储结构：</div>
+                  <div className="space-y-1.5 text-xs font-mono">
+                    <div className="flex items-start gap-2">
+                      <span className="text-cyan-400 shrink-0">鈹溾攢鈹€</span>
+                      <div>
+                        <span className="text-cyan-300">[当前主存储路径]</span>
+                        <span className="text-slate-500 ml-1">(根目录)</span>
+                      </div>
+                    </div>
+                    {[
+                      { key: 'recordings', branch: '|--', color: 'text-yellow-300', label: '常规录像分段', desc: '每30秒一段，按设备ID分文件夹存储' },
+                      { key: 'alarm_videos', branch: '|--', color: 'text-red-300', label: '告警视频', desc: 'AI检测到异常时自动保存的片段' },
+                      { key: 'playback_videos', branch: '|--', color: 'text-purple-300', label: '常态化回放', desc: '按小时窗口合并的归档视频' },
+                      { key: 'temp_cache', branch: '|--', color: 'text-blue-300', label: '临时缓存', desc: '手动触发的临时录像，自动清理旧文件' },
+                      { key: 'alarm_screenshots', branch: '`--', color: 'text-green-300', label: '告警截图', desc: '告警发生时自动截取的图片' },
+                    ].map(item => (
+                      <div key={item.key} className="flex items-start gap-2">
+                        <span className="text-cyan-400 shrink-0">{item.branch}</span>
+                        <div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              value={getVideoStorageFolder(item.key as keyof SystemSettings['videoStorageFolders'])}
+                              onChange={(e) => updateVideoStorageFolder(item.key as keyof SystemSettings['videoStorageFolders'], e.target.value)}
+                              className={`w-40 bg-transparent border-b border-slate-600/80 px-0.5 py-0 text-xs font-mono outline-none focus:border-cyan-400 ${item.color}`}
+                            />
+                            <span className={item.color}>/</span>
+                            <span className="text-slate-400 ml-1">- {item.label}</span>
+                          </div>
+                          <div className="text-slate-500 ml-4">{item.desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 鍥存爮璁剧疆 */}
+          {activeTab === 'fence' && (
+            <div className="space-y-4">
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-base font-semibold text-white mb-4">围栏与轨迹参数设置</h3>
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">妫€娴嬮棿闅?绉?</label>
+                    <input
+                      type="number"
+                      value={settings.fenceDetectionInterval}
+                      onChange={(e) => setSettings({ ...settings, fenceDetectionInterval: Number(e.target.value) })}
+                      min={1}
+                      max={10}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">姣忕瓒婄晫妫€娴嬬殑棰戠巼</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">瓒婄晫鍒ゅ畾寤惰繜(绉?</label>
+                    <select
+                      value={settings.fenceGracePeriod}
+                      onChange={(e) => setSettings({ ...settings, fenceGracePeriod: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value={0}>绔嬪嵆瑙﹀彂</option>
+                      <option value={1}>1 秒</option>
+                      <option value={2}>2 秒</option>
+                      <option value={3}>3 绉?(鎺ㄨ崘)</option>
+                      <option value={5}>5 秒</option>
+                    </select>
+                    <p className="text-sm text-slate-500 mt-1">瑙ｅ喅鍥存爮杈圭紭璇姤闂</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鍛婅闈欓粯(鍒嗛挓)</label>
+                    <input
+                      type="number"
+                      value={settings.fenceAlarmSilenceMinutes}
+                      onChange={(e) => setSettings({ ...settings, fenceAlarmSilenceMinutes: Number(e.target.value) })}
+                      min={0}
+                      max={60}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">鍚岃澶囦笉閲嶅鍛婅</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">杞ㄨ抗淇濆瓨澶╂暟</label>
+                    <select
+                      value={settings.trackRetentionDays || 30}
+                      onChange={(e) => setSettings({ ...settings, trackRetentionDays: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value={7}>7天</option>
+                      <option value={15}>15天</option>
+                      <option value={30}>30天</option>
+                      <option value={60}>60天</option>
+                      <option value={90}>90天</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">杞ㄨ抗鎶界█绮惧害(绫?</label>
+                    <input
+                      type="number"
+                      value={settings.trackSimplifyPrecision || 2}
+                      onChange={(e) => setSettings({ ...settings, trackSimplifyPrecision: Number(e.target.value) })}
+                      min={1}
+                      max={20}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">超过N米才保留轨迹点</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">杞ㄨ抗璁板綍闂撮殧(绉?</label>
+                    <input
+                      type="number"
+                      value={settings.trackRecordInterval || 5}
+                      onChange={(e) => setSettings({ ...settings, trackRecordInterval: Number(e.target.value) })}
+                      min={1}
+                      max={60}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">瀹氫綅鏁版嵁涓婃姤棰戠巼</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">榛樿鍥存爮鍗婂緞(绫?</label>
+                    <input
+                      type="number"
+                      value={settings.fenceDefaultRadius}
+                      onChange={(e) => setSettings({ ...settings, fenceDefaultRadius: Number(e.target.value) })}
+                      min={10}
+                      max={5000}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鍥存爮鏁版嵁淇濆瓨澶╂暟</label>
+                    <input
+                      type="number"
+                      value={settings.fenceRetentionDays}
+                      onChange={(e) => setSettings({ ...settings, fenceRetentionDays: Number(e.target.value) })}
+                      min={7}
+                      max={365}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">榛樿鍥存爮瑙勫垯</label>
+                    <select
+                      value={settings.fenceDefaultBehavior}
+                      onChange={(e) => setSettings({ ...settings, fenceDefaultBehavior: e.target.value as 'No Entry' | 'No Exit' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value="No Entry">绂佹杩涘叆</option>
+                      <option value="No Exit">绂佹绂诲紑</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">榛樿鍛婅绛夌骇</label>
+                    <select
+                      value={settings.fenceDefaultSeverity}
+                      onChange={(e) => setSettings({ ...settings, fenceDefaultSeverity: e.target.value as 'normal' | 'risk' | 'severe' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value="normal">一般</option>
+                      <option value="risk">椋庨櫓</option>
+                      <option value="severe">涓ラ噸</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">闀挎椂闂存湭绉诲姩鎻愰啋</label>
+                    <label className="relative inline-flex items-center cursor-pointer mt-1.5">
+                      <input
+                        type="checkbox"
+                        checked={settings.stationaryReminderEnabled || false}
+                        onChange={(e) => setSettings({ ...settings, stationaryReminderEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鏈Щ鍔ㄥ垽瀹氭椂闀?鍒嗛挓)</label>
+                    <input
+                      type="number"
+                      value={settings.stationaryReminderMinutes || 30}
+                      onChange={(e) => setSettings({ ...settings, stationaryReminderMinutes: Number(e.target.value) })}
+                      min={5}
+                      max={180}
+                      disabled={!settings.stationaryReminderEnabled}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">静止N分钟后触发提醒</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 鍛婅璁剧疆 */}
+          {activeTab === 'alarm' && (
+            <div className="space-y-4">
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <h3 className="text-sm font-semibold text-white mb-3">鍩虹璁剧疆</h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <div className="text-sm text-white">鍛婅寮圭獥</div>
+                      <div className="text-xs text-slate-400">有新告警时弹出窗口</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={settings.alarmPopup} onChange={(e) => setSettings({ ...settings, alarmPopup: e.target.checked })} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <div className="text-sm text-white">鍛婅澹伴煶</div>
+                      <div className="text-xs text-slate-400">有新告警时播放声音</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={settings.alarmSound} onChange={(e) => setSettings({ ...settings, alarmSound: e.target.checked })} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <div className="text-sm text-white">鑷姩澶勭悊</div>
+                      <div className="text-xs text-slate-400">30秒后自动标记已处理</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={settings.alarmAutoResolve} onChange={(e) => setSettings({ ...settings, alarmAutoResolve: e.target.checked })} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <div className="text-sm text-white">高等级闪烁</div>
+                      <div className="text-xs text-slate-400">涓ラ噸鍛婅鏃剁姸鎬佹爮闂儊</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={settings.alarmSevereFlash || false} onChange={(e) => setSettings({ ...settings, alarmSevereFlash: e.target.checked })} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-700/50">
+                  <div className="grid grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">鍛婅淇濈暀澶╂暟</label>
+                      <input
+                        type="number"
+                        value={settings.alarmRetentionDays}
+                        onChange={(e) => setSettings({ ...settings, alarmRetentionDays: Number(e.target.value) })}
+                        min={7}
+                        max={180}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                      />
+                    </div>
+                    {settings.alarmSound && (
+                      <>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">澹伴煶绫诲瀷</label>
+                          <select
+                            value={settings.alarmSoundType}
+                            onChange={(e) => setSettings({ ...settings, alarmSoundType: e.target.value as 'none' | 'standard' | 'emergency' })}
+                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                          >
+                            <option value="standard">鏍囧噯</option>
+                            <option value="emergency">紧急</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">閲嶅闂撮殧(鍒嗛挓)</label>
+                          <input
+                            type="number"
+                            value={settings.alarmRepeatInterval}
+                            onChange={(e) => setSettings({ ...settings, alarmRepeatInterval: Number(e.target.value) })}
+                            min={1}
+                            max={30}
+                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                          />
+                        </div>
+                      </>
+                    )}
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">涓ラ噸鍛婅鎻愬崌</label>
+                      <select
+                        value={settings.alarmSevereUpgrade || 'sound'}
+                        onChange={(e) => setSettings({ ...settings, alarmSevereUpgrade: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                      >
+                        <option value="sound">仅加强声音</option>
+                        <option value="voice">璇煶鎾姤</option>
+                        <option value="call">鑷姩鎷ㄦ墦鐢佃瘽</option>
+                        <option value="sms">自动发短信</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-700/50">
+                  <div className="mb-4">
+                    <label className="block text-sm text-slate-400 mb-2">鎶ヨ闊抽噺</label>
+                    <div className="flex items-center gap-3">
+                      <span className="text-slate-500 text-sm">馃攬</span>
+                      <input 
+                        id="alarmVolumeSlider"
+                        type="range" 
+                        min="0" 
+                        max="100" 
+                        value={settings.alarmVolume}
+                        onChange={(e) => {
+                          const nextVolume = Number(e.target.value);
+                          setSettings({ ...settings, alarmVolume: nextVolume });
+                          (window as any).alarmVolume = nextVolume / 100;
+                        }}
+                        className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                      />
+                      <span className="text-slate-500 text-sm">馃攰</span>
+                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{settings.alarmVolume}%</span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="block text-sm text-slate-400 mb-2">鍛婅娴嬭瘯</label>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <button
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'low', description: '系统设置页面低等级告警测试' }),
+                        }).then(() => showSettingsMessage('浣庣瓑绾ф祴璇曞憡璀﹀凡鍐欏叆鍚庡彴'));
+                        window.stopAlarmSound && window.stopAlarmSound();
+                        window.playAlarmSound && window.playAlarmSound('low');
+                      }}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 px-4 rounded-lg transition-all text-sm"
+                    >
+                      馃數 浣庣瓑绾?                    </button>
+                    <button
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'medium', description: '系统设置页面中等级告警测试' }),
+                        }).then(() => showSettingsMessage('中等级测试告警已写入后台'));
+                        window.stopAlarmSound && window.stopAlarmSound();
+                        window.playAlarmSound && window.playAlarmSound('medium', true);
+                      }}
+                      className="bg-amber-600 hover:bg-amber-500 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-amber-500/20"
+                    >
+                      馃煛 涓瓑绾?                    </button>
+                    <button
+                      onClick={() => {
+                        fetch('/alarms/test', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ severity: 'high', description: '系统设置页面高等级告警测试' }),
+                        }).then(() => showSettingsMessage('高等级测试告警已写入后台'));
+                        window.showFenceAlarm('娴嬭瘯璁惧', '闈炴硶闂叆', '娴嬭瘯鍖哄煙', 'high');
+                      }}
+                      className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-red-500/30"
+                    >
+                      馃敶 楂樼瓑绾?                    </button>
+                  </div>
+                  
+                  <button
+                    onClick={() => window.stopAlarmSound && window.stopAlarmSound()}
+                    className="w-full bg-slate-600 hover:bg-slate-500 text-white font-medium py-2 px-4 rounded-lg transition-all text-sm"
+                  >
+                    馃攪 鍋滄鎶ヨ澹?                  </button>
+                </div>
+              </div>
+
+              <div className="bg-slate-800/30 rounded-lg border border-slate-700/50 mb-4 overflow-hidden">
+                <div className="p-4 border-b border-slate-700/50">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">AI检测行为告警等级配置中心</h3>
+                      <p className="text-xs text-slate-500 mt-1">支持50+种检测算法，可按类别筛选、模糊搜索快速定位</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400">共 {(settings.aiAlarmLevelConfigs || []).length} 种算法</span>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="relative">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="鎼滅储绠楁硶鍚嶇О銆佹弿杩?.."
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 focus:border-cyan-500 focus:outline-none"
+                        value={algoSearchKeyword}
+                        onChange={(e) => setAlgoSearchKeyword(e.target.value.toLowerCase())}
+                      />
+                    </div>
+                    <select
+                      className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-cyan-500 focus:outline-none"
+                      value={algoCategoryFilter}
+                      onChange={(e) => setAlgoCategoryFilter(e.target.value)}
+                    >
+                      <option value="">鍏ㄩ儴绫诲埆</option>
+                      <option value="瀹夊叏闃叉姢">瀹夊叏闃叉姢</option>
+                      <option value="浣滀笟琛屼负">浣滀笟琛屼负</option>
+                      <option value="浜哄憳瀹夊叏">浜哄憳瀹夊叏</option>
+                      <option value="浜哄憳绠＄悊">浜哄憳绠＄悊</option>
+                      <option value="娑堥槻瀹夊叏">娑堥槻瀹夊叏</option>
+                      <option value="鍖哄煙绠＄悊">鍖哄煙绠＄悊</option>
+                      <option value="鍔ㄧ伀浣滀笟">鍔ㄧ伀浣滀笟</option>
+                      <option value="涓磋竟闃叉姢">涓磋竟闃叉姢</option>
+                      <option value="璧烽噸浣滀笟">璧烽噸浣滀笟</option>
+                      <option value="璁惧瀹夊叏">璁惧瀹夊叏</option>
+                    </select>
+                    <select
+                      className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-cyan-500 focus:outline-none"
+                      value={algoLevelFilter}
+                      onChange={(e) => setAlgoLevelFilter(e.target.value)}
+                    >
+                      <option value="">鍏ㄩ儴绛夌骇</option>
+                      <option value="low">一般</option>
+                      <option value="medium">椋庨櫓</option>
+                      <option value="high">紧急</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="max-h-[500px] overflow-y-auto p-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    {(settings.aiAlarmLevelConfigs || []).filter(c => {
+                      const matchKeyword = !algoSearchKeyword || 
+                        c.name.toLowerCase().includes(algoSearchKeyword) || 
+                        c.description.toLowerCase().includes(algoSearchKeyword);
+                      const matchCategory = !algoCategoryFilter || c.category === algoCategoryFilter;
+                      const matchLevel = !algoLevelFilter || c.level === algoLevelFilter;
+                      return matchKeyword && matchCategory && matchLevel;
+                    }).map((config) => (
+                      <div key={config.id} className="bg-slate-800/50 rounded-lg border border-slate-700/50 p-3 hover:border-slate-600 transition-colors">
+                        <div className="mb-2">
+                          <div className="text-sm font-medium text-white truncate">{config.name}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{config.description}</div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400">
+                            {config.category}
+                          </span>
+                          <select
+                            value={config.level}
+                            onChange={(e) => {
+                              const newConfigs = settings.aiAlarmLevelConfigs.map(c => 
+                                c.id === config.id ? { ...c, level: e.target.value as 'low' | 'medium' | 'high' } : c
+                              );
+                              setSettings({ ...settings, aiAlarmLevelConfigs: newConfigs });
+                            }}
+                            className={`text-xs px-2 py-1 rounded-lg border-0 cursor-pointer font-medium ${
+                              config.level === 'high' ? 'bg-red-500/20 text-red-400' :
+                              config.level === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                              'bg-slate-500/20 text-slate-400'
+                            }`}
+                          >
+                            <option value="low">一般</option>
+                            <option value="medium">椋庨櫓</option>
+                            <option value="high">紧急</option>
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 鏃ュ織璁剧疆 */}
+          {activeTab === 'log' && (
+            <div className="space-y-5">
+              {/* 鍩虹閰嶇疆 - 4鍒?*/}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-base font-semibold text-white mb-4">鍩虹閰嶇疆</h3>
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鏃ュ織淇濈暀澶╂暟</label>
+                    <input
+                      type="number"
+                      value={settings.logRetentionDays}
+                      onChange={(e) => setSettings({ ...settings, logRetentionDays: Number(e.target.value) })}
+                      min={7}
+                      max={365}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鏃ュ織绾у埆</label>
+                    <select
+                      value={settings.logLevel}
+                      onChange={(e) => setSettings({ ...settings, logLevel: e.target.value as 'all' | 'error' | 'warning' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value="all">鍏ㄩ儴</option>
+                      <option value="error">浠呴敊璇?/option>
+                      <option value="warning">浠呰鍛?/option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">瀵煎嚭鏂囦欢缂栫爜</label>
+                    <select
+                      value={settings.logExportEncoding}
+                      onChange={(e) => setSettings({ ...settings, logExportEncoding: e.target.value as 'utf8' | 'gb2312' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    >
+                      <option value="utf8">UTF-8</option>
+                      <option value="gb2312">GB2312</option>
+                    </select>
+                    <p className="text-sm text-slate-500 mt-1">瑙ｅ喅Excel涔辩爜</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">鐧诲綍澶辫触鍛婅闃堝€?/label>
+                    <input
+                      type="number"
+                      value={settings.logLoginFailedAlert || 5}
+                      onChange={(e) => setSettings({ ...settings, logLoginFailedAlert: Number(e.target.value) })}
+                      min={1}
+                      max={20}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+                    />
+                    <p className="text-sm text-slate-500 mt-1">杩炵画N娆¤Е鍙戝憡璀?/p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 鏃ュ織鍒嗙被璁板綍 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-base font-semibold text-white mb-4">鏃ュ織鍒嗙被璁板綍</h3>
+                <div className="grid grid-cols-4 gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-700/50 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.logOperation}
+                      onChange={(e) => setSettings({ ...settings, logOperation: e.target.checked })}
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+                    />
+                    <div>
+                      <div className="text-sm text-white">鎿嶄綔鏃ュ織</div>
+                      <div className="text-xs text-slate-500">鐢ㄦ埛澧炲垹鏀规搷浣?/div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-700/50 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.logLogin}
+                      onChange={(e) => setSettings({ ...settings, logLogin: e.target.checked })}
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+                    />
+                    <div>
+                      <div className="text-sm text-white">鐧诲綍鏃ュ織</div>
+                      <div className="text-xs text-slate-500">鐧诲綍鐧诲嚭璁板綍</div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-700/50 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.logAlarm}
+                      onChange={(e) => setSettings({ ...settings, logAlarm: e.target.checked })}
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+                    />
+                    <div>
+                      <div className="text-sm text-white">鍛婅鏃ュ織</div>
+                      <div className="text-xs text-slate-500">鍛婅澶勭悊璁板綍</div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-700/50 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.logConfig}
+                      onChange={(e) => setSettings({ ...settings, logConfig: e.target.checked })}
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+                    />
+                    <div>
+                      <div className="text-sm text-white">閰嶇疆鍙樻洿</div>
+                      <div className="text-xs text-slate-500">鍙傛暟淇敼鍘嗗彶</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* 楂樼骇寮€鍏?*/}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-base font-semibold text-white mb-4">楂樼骇鍔熻兘</h3>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">鏃ュ織鑷姩娓呯悊</div>
+                      <div className="text-xs text-slate-400">瓒呰繃淇濈暀澶╂暟鐨勬棩蹇楄嚜鍔ㄥ垹闄?/div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.logAutoClean}
+                        onChange={(e) => setSettings({ ...settings, logAutoClean: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">鏁忔劅鎿嶄綔瀹¤</div>
+                      <div className="text-xs text-slate-400">绠＄悊鍛樻搷浣滃己鍒惰褰曪紝涓嶅彈鍒嗙被寮€鍏虫帶鍒?/div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.logAuditEnabled}
+                        onChange={(e) => setSettings({ ...settings, logAuditEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">淇敼鍓嶅悗瀵规瘮</div>
+                      <div className="text-xs text-slate-400">璁板綍閰嶇疆鍙樻洿鍓?鍚庡€?/div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.logDiffEnabled}
+                        onChange={(e) => setSettings({ ...settings, logDiffEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">寮傚父鑷姩涓婃姤</div>
+                      <div className="text-xs text-slate-400">鍓嶇寮傚父鑷姩鏀堕泦</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.logErrorReport}
+                        onChange={(e) => setSettings({ ...settings, logErrorReport: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">鏃ュ織鑷姩鍘嬬缉</div>
+                      <div className="text-xs text-slate-400">瓒呰繃7澶╄嚜鍔╖IP鍘嬬缉</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.logAutoCompress}
+                        onChange={(e) => setSettings({ ...settings, logAutoCompress: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 璐﹀彿瀹夊叏 */}
+          {activeTab === 'account' && (
+            <div className="space-y-4">
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-white">淇敼瀵嗙爜</div>
+                    <div className="text-xs text-slate-400">瀹氭湡鏇存崲瀵嗙爜鎻愰珮瀹夊叏鎬?/div>
+                  </div>
+                  <button
+                    onClick={() => setShowPasswordModal(true)}
+                    className="px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 rounded-lg text-sm transition-all"
+                  >
+                    淇敼瀵嗙爜
+                  </button>
+                </div>
+              </div>
+              
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <h3 className="text-sm font-semibold text-white mb-3">瀵嗙爜寮哄害瑙勫垯</h3>
+                <div className="grid grid-cols-4 gap-4 items-center">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">瀵嗙爜鏈€灏忛暱搴?/label>
+                    <select
+                      value={settings.passwordMinLength}
+                      onChange={(e) => setSettings({ ...settings, passwordMinLength: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value={6}>6 浣?/option>
+                      <option value={8}>8 浣?/option>
+                      <option value={10}>10 浣?/option>
+                      <option value={12}>12 浣?/option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">瀵嗙爜鏈夋晥鏈?澶?</label>
+                    <input
+                      type="number"
+                      value={settings.passwordExpireDays || 90}
+                      onChange={(e) => setSettings({ ...settings, passwordExpireDays: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                      placeholder="90"
+                    />
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.forceInitialPasswordChange}
+                        onChange={(e) => setSettings({ ...settings, forceInitialPasswordChange: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                    <div className="text-sm text-white">鍒濆瀵嗙爜寮哄埗淇敼</div>
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.passwordRequireComplexity}
+                        onChange={(e) => setSettings({ ...settings, passwordRequireComplexity: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                    </label>
+                    <div className="text-sm text-white">瑕佹眰澶嶆潅搴?/div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-sm font-semibold text-white mb-3">鐧诲綍瀹夊叏</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">杩炵画澶辫触閿佸畾娆℃暟</label>
+                    <select
+                      value={settings.loginAttempts}
+                      onChange={(e) => setSettings({ ...settings, loginAttempts: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value={3}>3 娆?/option>
+                      <option value={5}>5 娆?/option>
+                      <option value={10}>10 娆?/option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">閿佸畾鏃堕暱(鍒嗛挓)</label>
+                    <select
+                      value={settings.lockoutDuration}
+                      onChange={(e) => setSettings({ ...settings, lockoutDuration: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value={15}>15 鍒嗛挓</option>
+                      <option value={30}>30 鍒嗛挓</option>
+                      <option value={60}>1 灏忔椂</option>
+                      <option value={1440}>24 灏忔椂</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">鏈€澶у悓鏃跺湪绾挎暟</label>
+                    <select
+                      value={settings.maxConcurrentSessions}
+                      onChange={(e) => setSettings({ ...settings, maxConcurrentSessions: Number(e.target.value) })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value={1}>浠呴檺 1 鍙?/option>
+                      <option value={3}>鏈€澶?3 鍙?/option>
+                      <option value={5}>鏈€澶?5 鍙?/option>
+                      <option value={0}>涓嶉檺鍒?/option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              
+              {/* 各级管理员初始权限 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <h3 className="text-base font-semibold text-white mb-4">各级管理员初始权限</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                  {roleCards.map(role => {
+                    const Icon = role.icon;
+                    const selectedModules = settings[role.field] || [];
+                    return (
+                      <div key={role.level} className={`bg-slate-800/50 rounded-lg p-3 border ${permissionCardClass(role.color)}`}>
+                        <div className={`text-sm font-semibold mb-3 flex items-center gap-2 ${permissionTextClass(role.color)}`}>
+                          <Icon size={14} />
+                          {role.title}
+                        </div>
+                        <div className="space-y-2">
+                          {permissionModules.map(module => (
+                            <label key={module.key} className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedModules.includes(module.key)}
+                                onChange={(e) => {
+                                  const nextModules = e.target.checked
+                                    ? Array.from(new Set([...selectedModules, module.key]))
+                                    : selectedModules.filter(p => p !== module.key);
+                                  setSettings({
+                                    ...settings,
+                                    [role.field]: nextModules,
+                                  });
+                                }}
+                                className={`w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 focus:ring-offset-0 ${permissionCheckboxClass(role.color)}`}
+                              />
+                              <span className="text-xs text-slate-300">{module.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-slate-500 mt-3">
+                  * 保存后会同步到真实角色权限；取消勾选会移除该等级对应模块的权限码。
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 閫氱煡璁剧疆 */}
+          {activeTab === 'notification' && (
+            <div className="space-y-4">
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <h3 className="text-sm font-semibold text-white mb-3">閫氱煡鏂瑰紡鎬诲紑鍏?/h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">鐭俊閫氱煡</div>
+                      <div className="text-xs text-slate-400">鍛婅閫氳繃鐭俊鍙戦€?/div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.smsNotification}
+                        onChange={(e) => setSettings({ ...settings, smsNotification: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <div className="text-sm text-white">鐢佃瘽閫氱煡</div>
+                      <div className="text-xs text-slate-400">鍛婅閫氳繃璇煶鐢佃瘽鎾姤</div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.callNotification}
+                        onChange={(e) => setSettings({ ...settings, callNotification: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                <h3 className="text-sm font-semibold text-white mb-3">鍛婅绛夌骇閫氱煡寮€鍏?/h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-700">
+                        <th className="py-2 text-left text-slate-400 font-normal">鍛婅绛夌骇</th>
+                        <th className="py-2 text-center text-slate-400 font-normal">鐭俊</th>
+                        <th className="py-2 text-center text-slate-400 font-normal">鐢佃瘽</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-700/50">
+                      <tr>
+                        <td className="py-3">
+                          <span className="text-white flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                            楂樼骇鍛婅
+                          </span>
+                          <div className="text-xs text-slate-500 mt-0.5">SOS鍛兼晳銆丄I瀹夊叏杩濊</div>
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifySevereBySms}
+                            onChange={(e) => setSettings({ ...settings, notifySevereBySms: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifySevereByCall}
+                            onChange={(e) => setSettings({ ...settings, notifySevereByCall: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-3">
+                          <span className="text-white flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            涓骇鍛婅
+                          </span>
+                          <div className="text-xs text-slate-500 mt-0.5">鍥存爮瓒婄晫銆侀暱鏃堕棿闈欐</div>
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifyMediumBySms}
+                            onChange={(e) => setSettings({ ...settings, notifyMediumBySms: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifyMediumByCall}
+                            onChange={(e) => setSettings({ ...settings, notifyMediumByCall: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-3">
+                          <span className="text-white flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            浣庣骇鍛婅
+                          </span>
+                          <div className="text-xs text-slate-500 mt-0.5">浣庣數閲忋€佽澶囩绾挎彁閱?/div>
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifyLowBySms}
+                            onChange={(e) => setSettings({ ...settings, notifyLowBySms: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                        <td className="py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={settings.notifyLowByCall}
+                            onChange={(e) => setSettings({ ...settings, notifyLowByCall: e.target.checked })}
+                            className="w-4 h-4 accent-cyan-500"
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              
+              {settings.emailNotification && (
+                <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                  <h3 className="text-sm font-semibold text-white mb-3">閭欢鏈嶅姟鍣ㄩ厤缃?/h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">SMTP鏈嶅姟鍣?/label>
+                      <input
+                        type="text"
+                        value={settings.emailServer}
+                        onChange={(e) => setSettings({ ...settings, emailServer: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">绔彛</label>
+                      <input
+                        type="number"
+                        value={settings.emailPort}
+                        onChange={(e) => setSettings({ ...settings, emailPort: Number(e.target.value) })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">鍙戜欢浜洪偖绠?/label>
+                      <input
+                        type="text"
+                        value={settings.emailFrom || 'alarm@company.com'}
+                        onChange={(e) => setSettings({ ...settings, emailFrom: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">鎺堟潈鐮?/label>
+                      <input
+                        type="password"
+                        value={settings.emailPassword || '******'}
+                        onChange={(e) => setSettings({ ...settings, emailPassword: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {settings.smsNotification && (
+                <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
+                  <h3 className="text-sm font-semibold text-white mb-3">鐭俊缃戝叧閰嶇疆</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">API 鍦板潃</label>
+                      <input
+                        type="text"
+                        value={settings.smsApiUrl || 'https://sms.example.com/api'}
+                        onChange={(e) => setSettings({ ...settings, smsApiUrl: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={settings.smsApiKey || '****************'}
+                        onChange={(e) => setSettings({ ...settings, smsApiKey: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">绛惧悕</label>
+                      <input
+                        type="text"
+                        value={settings.smsSign || '銆愬畨鍏ㄧ鐞嗙郴缁熴€?}
+                        onChange={(e) => setSettings({ ...settings, smsSign: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">妯℃澘ID</label>
+                      <input
+                        type="text"
+                        value={settings.smsTemplateId || 'SMS_123456'}
+                        onChange={(e) => setSettings({ ...settings, smsTemplateId: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-white">閫氱煡鎺ユ敹浜哄垪琛?/h3>
+                  <button
+                    onClick={() => {
+                      setSelectedPersons([]);
+                      setRecipientSearch('');
+                      setShowAddRecipientModal(true);
+                    }}
+                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 rounded-lg text-xs transition-all"
+                  >
+                    + 娣诲姞鎺ユ敹浜?                  </button>
+                </div>
+                {settings.notificationRecipients.length === 0 ? (
+                  <div className="text-center py-6 text-slate-500 text-sm">
+                    鏆傛棤閰嶇疆鎺ユ敹浜猴紝娣诲姞鍚庡憡璀﹀皢鎸夌骇鍒彂閫侀€氱煡
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {settings.notificationRecipients.map((recipient, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg">
+                        <div className="flex-1">
+                          <div className="text-sm text-white font-medium">{recipient.name}</div>
+                          <div className="text-xs text-slate-500 mt-1">{recipient.phone}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            recipient.level === 'severe' ? 'bg-red-500/20 text-red-400' :
+                            recipient.level === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                            recipient.level === 'low' ? 'bg-emerald-500/20 text-emerald-400' :
+                            'bg-cyan-500/20 text-cyan-400'
+                          }`}>
+                            {recipient.level === 'severe' ? '楂樼骇鍛婅' : recipient.level === 'medium' ? '涓骇鍛婅' : recipient.level === 'low' ? '浣庣骇鍛婅' : '鍏ㄩ儴鍛婅'}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${recipient.enabled ? 'bg-green-500/20 text-green-400' : 'bg-slate-500/20 text-slate-400'}`}>
+                            {recipient.enabled ? '宸插惎鐢? : '宸茬鐢?}
+                          </span>
+                          <button
+                            onClick={() => {
+                              const newRecipients = [...settings.notificationRecipients];
+                              newRecipients[idx].enabled = !newRecipients[idx].enabled;
+                              setSettings({ ...settings, notificationRecipients: newRecipients });
+                            }}
+                            className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-all"
+                            title={recipient.enabled ? '绂佺敤' : '鍚敤'}
+                          >
+                            {recipient.enabled ? '鉁? : '鈼?}
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm('纭畾鍒犻櫎姝ゆ帴鏀朵汉锛?)) {
+                                const newRecipients = settings.notificationRecipients.filter((_, i) => i !== idx);
+                                setSettings({ ...settings, notificationRecipients: newRecipients });
+                              }
+                            }}
+                            className="p-1.5 hover:bg-red-500/20 rounded text-slate-400 hover:text-red-400 transition-all"
+                            title="鍒犻櫎"
+                          >
+                            鉁?                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 鏁版嵁澶囦唤 */}
+          {activeTab === 'backup' && (
+            <div className="space-y-6">
+              {/* 鑷姩澶囦唤璁剧疆 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-white">鑷姩澶囦唤璁剧疆</h3>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => {
+                        fetch('/api/backup/create/mysql', { method: 'POST' })
+                          .then(r => r.json())
+                          .then(r => {
+                            console.log('MySQL澶囦唤缁撴灉:', r);
+                            showSettingsMessage(r.success ? '鏁版嵁搴撳浠藉凡鐢熸垚' : (r.detail || '鏁版嵁搴撳浠藉け璐?));
+                            refreshBackupFiles();
+                          });
+                      }}
+                      className="text-sm bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
+                    >
+                      澶囦唤鏁版嵁搴?                    </button>
+                    <button
+                      onClick={() => {
+                        fetch('/api/backup/create/config', { method: 'POST' })
+                          .then(r => r.json())
+                          .then(r => {
+                            console.log('閰嶇疆澶囦唤缁撴灉:', r);
+                            showSettingsMessage(r.success ? '閰嶇疆澶囦唤宸茬敓鎴? : (r.detail || '閰嶇疆澶囦唤澶辫触'));
+                            refreshBackupFiles();
+                          });
+                      }}
+                      className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
+                    >
+                      澶囦唤閰嶇疆
+                    </button>
+                    <button
+                      onClick={() => {
+                        fetch('/api/backup/create/full', { method: 'POST' })
+                          .then(r => r.json())
+                          .then(r => {
+                            console.log('瀹屾暣澶囦唤缁撴灉:', r);
+                            showSettingsMessage(r.success ? '瀹屾暣澶囦唤宸茬敓鎴? : (r.message || '瀹屾暣澶囦唤澶辫触'));
+                            refreshBackupFiles();
+                          });
+                      }}
+                      className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-amber-500/30 transition-all cursor-pointer"
+                    >
+                      瀹屾暣澶囦唤
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center py-2">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <div>
+                          <div className="text-sm text-white">鑷姩澶囦唤</div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settings.autoBackup}
+                            onChange={(e) => setSettings({ ...settings, autoBackup: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                        </label>
+                      </div>
+                      {settings.autoBackup && (
+                        <div className="flex items-center gap-3 ml-2 pl-4 border-l border-slate-700">
+                          <div className="flex items-center gap-2">
+                            <label className="text-sm text-slate-400">棰戠巼</label>
+                            <select
+                              value={settings.backupFrequency}
+                              onChange={(e) => setSettings({ ...settings, backupFrequency: e.target.value as 'daily' | 'weekly' | 'monthly' })}
+                              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200"
+                            >
+                              <option value="daily">姣忓ぉ</option>
+                              <option value="weekly">姣忓懆</option>
+                              <option value="monthly">姣忔湀</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-sm text-slate-400">鏃堕棿</label>
+                            <input
+                              type="time"
+                              value={settings.backupTime}
+                              onChange={(e) => setSettings({ ...settings, backupTime: e.target.value })}
+                              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-24"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-sm text-slate-400">淇濈暀</label>
+                            <input
+                              type="number"
+                              value={settings.backupRetention}
+                              onChange={(e) => setSettings({ ...settings, backupRetention: Number(e.target.value) })}
+                              min={1}
+                              max={30}
+                              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-16"
+                            />
+                            <span className="text-sm text-slate-400">浠?/span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 澶囦唤璺緞璁剧疆锛堟暟鎹敓鎴愭椂鍚屾澶氬啓锛?*/}
+              <div className="bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 rounded-lg p-4 border border-cyan-500/30 mt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">澶囦唤璺緞璁剧疆</h3>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        fetch('/api/backup/storage/open', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ path: './static' })
+                        })
+                          .then(r => r.json())
+                          .then(r => console.log('鎵撳紑鏂囦欢澶?', r));
+                      }}
+                      className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
+                    >
+                      鎵撳紑褰曞儚瀛樺偍
+                    </button>
+                    <button
+                      onClick={() => {
+                        console.log('鐐瑰嚮浜嗘湰鍦扮鐩樻寜閽?);
+                        setShowLocalModal(true);
+                      }}
+                      className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+                    >
+                      娣诲姞鏈湴璺緞
+                    </button>
+                    <button
+                      onClick={() => setShowCloudModal(true)}
+                      className="text-xs bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      娣诲姞浜戝瓨鍌?                    </button>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  {storagePaths.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">
+                      鏆傛棤澶囦唤璺緞锛岃鐐瑰嚮涓婃柟鎸夐挳娣诲姞
+                    </div>
+                  ) : (
+                    storagePaths.map((sp: any, idx: number) => {
+                      const color = (sp.type === 'mirror' || sp.type === 'primary') ? 'cyan' : 'purple';
+                      const isPrimary = idx === 0;
+                      return (
+                        <div key={idx} className={`flex items-center justify-between rounded-lg p-3 transition-all ${isPrimary ? 'bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border-2 border-amber-500/50 shadow-lg shadow-amber-500/20' : 'bg-slate-800/50'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isPrimary ? 'bg-amber-500/30 animate-pulse' : color === 'cyan' ? 'bg-cyan-500/20' : 'bg-purple-500/20'}`}>
+                            <span className={`text-lg font-bold ${isPrimary ? 'text-amber-400' : color === 'cyan' ? 'text-cyan-400' : 'text-purple-400'}`}>{isPrimary ? '涓? : color === 'cyan' ? '鏈? : '浜?}</span>
+                          </div>
+                          <div>
+                            <div className={`font-medium text-sm ${isPrimary ? 'text-amber-300' : 'text-white'}`}>{sp.name}</div>
+                            <div className={`text-xs ${isPrimary ? 'text-amber-400/70' : 'text-slate-400'}`}>{sp.path}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {(sp.type === 'mirror' || sp.type === 'primary') && (
+                            <button 
+                              onClick={() => {
+                                fetch('/api/backup/storage/open', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ path: sp.path })
+                                })
+                                  .then(r => r.json())
+                                  .then(r => console.log('鎵撳紑鏂囦欢澶?', r));
+                              }}
+                              className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
+                            >
+                              鎵撳紑鏂囦欢澶?                            </button>
+                          )}
+                          {isPrimary ? (
+                            <span className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold shadow-lg">褰撳墠涓诲瓨鍌?/span>
+                          ) : (
+                              <>
+                                <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded">宸插惎鐢?/span>
+                                <button 
+                                  onClick={() => handleSetPrimary(idx)}
+                                  className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 cursor-pointer transition-all"
+                                >
+                                  璁句负涓诲瓨鍌?                                </button>
+                              </>
+                            )}
+                            {!isPrimary && (
+                              <button 
+                                onClick={() => handleDeleteStoragePath(idx)}
+                                className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 cursor-pointer transition-all ml-2"
+                              >
+                                鍒犻櫎
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* 鍙仮澶嶅浠藉垪琛?*/}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-white">绯荤粺蹇収鎭㈠</h3>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => {
+                        fetch('/api/backup/storage/open', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ path: './storage/backups' })
+                        })
+                          .then(r => r.json())
+                          .then(r => console.log('鎵撳紑鏂囦欢澶?', r));
+                      }}
+                      className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
+                    >
+                      鎵撳紑澶囦唤鐩綍
+                    </button>
+                    <label className="text-sm text-slate-400">澶囦唤璺緞</label>
+                    <select className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white">
+                      <option value="local">榛樿澶囦唤鐩綍</option>
+                      {storagePaths.map((sp: any, idx: number) => (
+                        <option key={idx} value={idx}>{sp.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {backupFiles.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">
+                      鏆傛棤蹇収锛岃鍏堝幓銆屾暟鎹浠姐€嶉〉闈㈢偣鍑诲彸涓婅銆屽畬鏁村浠姐€嶇敓鎴?                    </div>
+                  ) : (
+                    backupFiles.map((bf: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 rounded-lg p-3 transition-all">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                            <span className="text-cyan-400 font-bold">鍖?/span>
+                          </div>
+                          <div>
+                            <div className="text-sm text-white font-medium">{bf.filename}</div>
+                            <div className="text-xs text-slate-400">
+                              {(bf.date || bf.created_at || '').toString().replace('T', ' ').slice(0, 19)} 路 {typeof bf.size === 'number' ? `${(bf.size / 1024 / 1024).toFixed(1)} MB` : bf.size} 路 {bf.type}
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            if (confirm('纭瑕佹仮澶嶆澶囦唤鍚楋紵杩欏皢瑕嗙洊鎵€鏈夊綋鍓嶉厤缃紒')) {
+                              fetch('/api/backup/restore', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({filename: bf.filename})
+                              }).then(r => r.json()).then(r => {
+                              console.log('鎭㈠缁撴灉:', r);
+                              showSettingsMessage(r.success ? '宸蹭粠澶囦唤鎭㈠锛岃鍒锋柊椤甸潰纭閰嶇疆' : (r.message || '鎭㈠澶辫触'));
+                              refreshStoragePaths();
+                              refreshBackupFiles();
+                            });
+                            }
+                          }}
+                          className="text-sm bg-red-600 hover:bg-red-500 text-white px-5 py-1.5 rounded-lg font-bold shadow-lg shadow-red-500/30 transition-all cursor-pointer"
+                      >
+                        浠庢鑺傜偣鎭㈠
+                      </button>
+                    </div>
+                    ))
+                  )}
+                </div>
+                
+                <div className="mt-3 text-xs text-amber-400/70">
+                  娉ㄦ剰锛氭仮澶嶅皢瑕嗙洊锛氭墍鏈夋憚鍍忓ご閰嶇疆銆佸憡璀﹁鍒欍€佺敤鎴疯缃€佺郴缁熸棩蹇椼€佹挱鏀惧巻鍙?                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* 楂樼骇璁剧疆 */}
+        </div>
+      </div>
+
+      {/* 淇敼瀵嗙爜寮圭獥 */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPasswordModal(false)}>
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[450px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-white">淇敼瀵嗙爜</h3>
+              <button onClick={() => setShowPasswordModal(false)} className="p-1 hover:bg-slate-700 rounded">
+                <X size={18} className="text-slate-400" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">鍘熷瘑鐮?/label>
+                <div className="relative">
+                  <input
+                    type={showOldPassword ? "text" : "password"}
+                    value={passwordData.oldPassword}
+                    onChange={(e) => setPasswordData({ ...passwordData, oldPassword: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOldPassword(!showOldPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    {showOldPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">鏂板瘑鐮?/label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    value={passwordData.newPassword}
+                    onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {passwordData.newPassword && (
+                  <div className="mt-2 space-y-1">
+                    <div className={`text-xs flex items-center gap-1.5 ${passwordData.newPassword.length >= settings.passwordMinLength ? 'text-green-400' : 'text-slate-500'}`}>
+                      <CheckCircle size={12} />
+                      闀垮害鈮settings.passwordMinLength}浣?                    </div>
+                    {settings.passwordRequireComplexity && (
+                      <>
+                        <div className={`text-xs flex items-center gap-1.5 ${/[A-Z]/.test(passwordData.newPassword) ? 'text-green-400' : 'text-slate-500'}`}>
+                          <CheckCircle size={12} />
+                          鍖呭惈澶у啓瀛楁瘝 A-Z
+                        </div>
+                        <div className={`text-xs flex items-center gap-1.5 ${/[a-z]/.test(passwordData.newPassword) ? 'text-green-400' : 'text-slate-500'}`}>
+                          <CheckCircle size={12} />
+                          鍖呭惈灏忓啓瀛楁瘝 a-z
+                        </div>
+                        <div className={`text-xs flex items-center gap-1.5 ${/[0-9]/.test(passwordData.newPassword) ? 'text-green-400' : 'text-slate-500'}`}>
+                          <CheckCircle size={12} />
+                          鍖呭惈鏁板瓧 0-9
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">纭鏂板瘑鐮?/label>
+                <input
+                  type="password"
+                  value={passwordData.confirmPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleChangePassword}
+                className="flex-1 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 rounded-lg text-sm font-medium transition-all"
+              >
+                纭淇敼
+              </button>
+              <button
+                onClick={() => setShowPasswordModal(false)}
+                className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all"
+              >
+                鍙栨秷
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 鎭㈠榛樿纭寮圭獥 */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+          <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 w-full max-w-sm mx-4 shadow-2xl">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-amber-500/20 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle size={28} className="text-amber-400" />
+              </div>
+              <h3 className="text-lg font-bold text-white mb-2">纭鎭㈠榛樿</h3>
+              <p className="text-sm text-slate-400">纭畾瑕佹仮澶嶆墍鏈夎缃负榛樿鍊煎悧锛?/p>
+              <p className="text-sm text-amber-400/80 mt-1">姝ゆ搷浣滀笉鍙挙閿€锛?/p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                鍙栨秷
+              </button>
+              <button 
+                onClick={() => {
+                  handleReset();
+                  setShowResetConfirm(false);
+                }}
+                className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                纭鎭㈠
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 娣诲姞鎺ユ敹浜哄脊绐?*/}
+      {showAddRecipientModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+          <div className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl mx-4 shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-700">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-white">閫夋嫨閫氱煡鎺ユ敹浜?/h3>
+                <button 
+                  onClick={() => setShowAddRecipientModal(false)}
+                  className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all"
+                >
+                  鉁?                </button>
+              </div>
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={recipientSearch}
+                  onChange={(e) => setRecipientSearch(e.target.value)}
+                  placeholder="妯＄硦鎼滅储濮撳悕銆侀」鐩€佸伐闃熴€佹墜鏈哄彿銆佸伐鍙?.."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800/50 py-2.5 pl-10 pr-4 text-sm text-white outline-none transition-all focus:border-cyan-400/50 placeholder-slate-400"
+                />
+              </div>
+            </div>
+            
+            <div className="flex" style={{ height: '400px' }}>
+              <div className="flex-1 overflow-y-auto p-4 border-r border-slate-700">
+                <div className="text-xs text-white mb-3 px-2">鍗曚綅鏋舵瀯</div>
+                {(() => {
+                  const toggleNode = (id: string) => {
+                    setExpandedOrgNodes(prev => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    });
+                  };
+                  
+                  const toggleSelectPerson = (person: PersonNode) => {
+                    const exists = selectedPersons.find(p => p.id === person.id);
+                    if (exists) {
+                      setSelectedPersons(selectedPersons.filter(p => p.id !== person.id));
+                    } else {
+                      setSelectedPersons([...selectedPersons, person]);
+                    }
+                  };
+                  
+                  const renderOrgNode = (node: OrgNode, level: number = 0) => {
+                    if (node.type === 'person' && node.data) {
+                      const matchesSearch = recipientSearch === '' || 
+                        node.data.name.includes(recipientSearch) ||
+                        node.data.phone.includes(recipientSearch) ||
+                        node.data.project.includes(recipientSearch) ||
+                        node.data.team.includes(recipientSearch) ||
+                        node.data.employeeId.includes(recipientSearch);
+                      if (!matchesSearch) return null;
+                    }
+                    
+                    const hasChildren = node.children && node.children.length > 0;
+                    const isExpanded = expandedOrgNodes.has(node.id);
+                    const isSelected = node.type === 'person' && node.data && 
+                      selectedPersons.some(p => p.id === node.data!.id);
+                    
+                    const hasVisibleChildren = hasChildren && node.children!.some(child => {
+                      function hasVisible(node: OrgNode): boolean {
+                        if (node.type === 'person' && node.data) {
+                          return recipientSearch === '' || 
+                            node.data.name.includes(recipientSearch) ||
+                            node.data.phone.includes(recipientSearch) ||
+                            node.data.project.includes(recipientSearch) ||
+                            node.data.team.includes(recipientSearch) ||
+                            node.data.employeeId.includes(recipientSearch);
+                        }
+                        return node.children ? node.children.some(hasVisible) : false;
+                      }
+                      return hasVisible(child);
+                    });
+                    if (!hasVisibleChildren && node.type !== 'person') return null;
+                    
+                    return (
+                      <div key={node.id}>
+                        <div 
+                          className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-slate-700/50 rounded transition-colors text-white ${
+                            isSelected ? 'bg-cyan-500/20 text-cyan-300' : ''
+                          }`}
+                          style={{ paddingLeft: `${level * 18 + 8}px` }}
+                        >
+                          {hasChildren ? (
+                            <button onClick={(e) => { e.stopPropagation(); toggleNode(node.id); }} 
+                              className="p-0.5 hover:bg-slate-600 rounded">
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </button>
+                          ) : (
+                            <span className="w-[22px]" />
+                          )}
+                          {node.type === 'person' && node.data ? (
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={() => toggleSelectPerson(node.data!)}
+                              className="w-4 h-4 accent-cyan-500"
+                            />
+                          ) : (
+                            <span className="w-4" />
+                          )}
+                          <span className="text-sm truncate flex-1">{node.name}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            node.type === 'company' ? 'bg-blue-500/20 text-blue-400' :
+                            node.type === 'project' ? 'bg-purple-500/20 text-purple-400' :
+                            node.type === 'team' ? 'bg-green-500/20 text-green-400' :
+                            'bg-slate-500/20 text-slate-400'
+                          }`}>
+                            {node.type === 'company' ? '鍒嗗叕鍙? : node.type === 'project' ? '椤圭洰' : 
+                             node.type === 'team' ? '浣滀笟闃? : '浜哄憳'}
+                          </span>
+                        </div>
+                        {hasChildren && isExpanded && node.children!.map(child => renderOrgNode(child, level + 1))}
+                      </div>
+                    );
+                  };
+                  
+                  return orgTreeData.map(node => renderOrgNode(node));
+                })()}
+              </div>
+              
+              <div className="w-56 p-4 bg-slate-800/30">
+                <div className="text-xs text-white mb-3">
+                  宸查€夋嫨 <span className="text-cyan-400 font-semibold">{selectedPersons.length}</span> 浜?                </div>
+                <div className="space-y-1.5 max-h-[320px] overflow-y-auto">
+                  {selectedPersons.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 text-xs">
+                      浠庡乏渚ч€夋嫨浜哄憳
+                    </div>
+                  ) : (
+                    selectedPersons.map(person => (
+                      <div key={person.id} className="flex items-center gap-2 p-2 bg-slate-700/50 rounded-lg">
+                        <div className="w-7 h-7 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-xs font-medium">
+                          {person.name.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-white truncate">{person.name}</div>
+                          <div className="text-[10px] text-slate-500 truncate">{person.phone}</div>
+                        </div>
+                        <button
+                          onClick={() => setSelectedPersons(selectedPersons.filter(p => p.id !== person.id))}
+                          className="p-0.5 hover:bg-slate-600 rounded text-slate-500 hover:text-red-400"
+                        >
+                          鉁?                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-slate-700 flex gap-3">
+              <button 
+                onClick={() => setShowAddRecipientModal(false)}
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                鍙栨秷
+              </button>
+              <button 
+                onClick={() => {
+                  const newRecipients = selectedPersons.map(p => ({
+                    name: p.name,
+                    phone: p.phone,
+                    level: 'severe' as const,
+                    enabled: true
+                  }));
+                  const existingPhones = settings.notificationRecipients.map(r => r.phone);
+                  const uniqueNew = newRecipients.filter(r => !existingPhones.includes(r.phone));
+                  setSettings({
+                    ...settings,
+                    notificationRecipients: [...settings.notificationRecipients, ...uniqueNew]
+                  });
+                  setShowAddRecipientModal(false);
+                  setSelectedPersons([]);
+                }}
+                disabled={selectedPersons.length === 0}
+                className="flex-1 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-all text-white"
+              >
+                纭娣诲姞 {selectedPersons.length > 0 && `(${selectedPersons.length}浜?`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 鏈湴纾佺洏閰嶇疆妯℃€佹 */}
+      {showLocalModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+          <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-white">娣诲姞鏈湴澶囦唤璺緞</h3>
+              <button 
+                onClick={() => setShowLocalModal(false)}
+                className="text-slate-400 hover:text-white text-xl"
+              >
+                脳
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">鏄剧ず鍚嶇О</label>
+                <input 
+                  type="text"
+                  placeholder="渚嬪锛欴鐩樺浠藉瓨鍌?
+                  value={localConfig.name}
+                  onChange={(e) => setLocalConfig({...localConfig, name: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">瀛樺偍璺緞</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    placeholder="D:\\backup_storage"
+                    value={localConfig.path}
+                    onChange={(e) => setLocalConfig({...localConfig, path: e.target.value})}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 font-mono"
+                  />
+                  <button 
+                    onClick={() => {
+                      console.log('鐐瑰嚮鏂囦欢澶归€夋嫨');
+                      
+                      fetch('/api/backup/browse/folder')
+                        .then(r => {
+                          if (r.status === 404) {
+                            throw new Error('璇烽噸鍚悗绔姞杞芥柊鎺ュ彛');
+                          }
+                          return r.json();
+                        })
+                        .then(r => {
+                          console.log('鏂囦欢澶归€夋嫨缁撴灉:', r);
+                          if (r.success && r.path) {
+                            setLocalConfig({...localConfig, path: r.path});
+                          }
+                        })
+                        .catch(e => {
+                          console.log('鏂囦欢澶归€夋嫨涓嶅彲鐢?', e.message);
+                        });
+                    }}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm text-white transition-all cursor-pointer"
+                  >
+                    閫夋嫨
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  鐐瑰嚮銆愰€夋嫨銆戝脊鍑虹郴缁熸枃浠跺す瀵硅瘽妗嗭紝鎴栨墜鍔ㄨ緭鍏ヨ矾寰勶細D:\銆丒:\銆乗\NAS\share 绛?                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button 
+                onClick={() => setShowLocalModal(false)}
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                鍙栨秷
+              </button>
+              <button 
+                onClick={() => {
+                  console.log('鐐瑰嚮娣诲姞澶囦唤璺緞锛屽弬鏁帮細', localConfig);
+                  
+                  if (!localConfig.name || !localConfig.path) {
+                    console.log('璇峰～鍐欏畬鏁撮厤缃?);
+                    return;
+                  }
+                  
+                  fetch('/api/backup/storage/paths', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                      ...localConfig,
+                      type: 'mirror'
+                    })
+                  })
+                  .then(r => {
+                    console.log('鍚庣杩斿洖鐘舵€?', r.status, r.statusText);
+                    
+                    if (r.status === 404 || r.status === 502) {
+                      throw new Error('鍚庣鏈嶅姟鏈惎鍔?);
+                    }
+                    if (!r.ok) {
+                      throw new Error('HTTP閿欒: ' + r.status);
+                    }
+                    
+                    return r.text();
+                  })
+                  .then(text => {
+                    console.log('鍝嶅簲鍘熸枃:', text);
+                    try {
+                      const r = JSON.parse(text);
+                      console.log('娣诲姞缁撴灉锛?, r);
+                      setShowLocalModal(false);
+                      setLocalConfig({ path: '', name: '' });
+                      refreshStoragePaths();
+                    } catch (e) {
+                      console.error('鍚庣杩斿洖鏍煎紡閿欒');
+                    }
+                  })
+                  .catch(e => {
+                    console.error('娣诲姞澶辫触:', e);
+                  });
+                }}
+                disabled={!localConfig.name || !localConfig.path}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${localConfig.name && localConfig.path ? 'bg-cyan-600 hover:bg-cyan-500 text-white cursor-pointer' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
+              >
+                鉁?娣诲姞闀滃儚
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 浜戝瓨鍌ㄩ厤缃ā鎬佹 */}
+      {showCloudModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
+          <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-white">娣诲姞浜戝瓨鍌ㄥ浠?/h3>
+              <button 
+                onClick={() => setShowCloudModal(false)}
+                className="text-slate-400 hover:text-white text-xl"
+              >
+                脳
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">浜戝瓨鍌ㄧ被鍨?/label>
+                <select 
+                  value={cloudConfig.type}
+                  onChange={(e) => setCloudConfig({...cloudConfig, type: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white"
+                >
+                  <option value="oss">闃块噷浜?OSS</option>
+                  <option value="cos">鑵捐浜?COS</option>
+                  <option value="s3">Amazon S3 / MinIO</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">鏄剧ず鍚嶇О</label>
+                <input 
+                  type="text"
+                  placeholder="渚嬪锛氶樋閲屼簯鍖椾含瀹圭伨"
+                  value={cloudConfig.name}
+                  onChange={(e) => setCloudConfig({...cloudConfig, name: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">Endpoint 鍦板煙鑺傜偣</label>
+                <input 
+                  type="text"
+                  placeholder="oss-cn-beijing.aliyuncs.com"
+                  value={cloudConfig.endpoint}
+                  onChange={(e) => setCloudConfig({...cloudConfig, endpoint: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">Bucket 鍚嶇О</label>
+                <input 
+                  type="text"
+                  placeholder="my-camera-backup"
+                  value={cloudConfig.bucket}
+                  onChange={(e) => setCloudConfig({...cloudConfig, bucket: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">AccessKey / SecretId</label>
+                <input 
+                  type="text"
+                  placeholder="LTAI5txxxxxxx"
+                  value={cloudConfig.access_key}
+                  onChange={(e) => setCloudConfig({...cloudConfig, access_key: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-300 mb-2">SecretKey</label>
+                <input 
+                  type="password"
+                  placeholder="****************"
+                  value={cloudConfig.secret_key}
+                  onChange={(e) => setCloudConfig({...cloudConfig, secret_key: e.target.value})}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button 
+                onClick={() => setShowCloudModal(false)}
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                鍙栨秷
+              </button>
+              <button 
+                onClick={() => {
+                  console.log('鐐瑰嚮娣诲姞浜戝瓨鍌ㄥ浠斤紝鍙傛暟锛?, cloudConfig);
+                  
+                  if (!cloudConfig.name || !cloudConfig.bucket || !cloudConfig.access_key || !cloudConfig.secret_key) {
+                    console.log('璇峰～鍐欏畬鏁撮厤缃?);
+                    return;
+                  }
+                  
+                  fetch('/api/backup/storage/paths', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                      path: `${cloudConfig.type}://${cloudConfig.bucket}`,
+                      ...cloudConfig
+                    })
+                  })
+                  .then(r => {
+                    console.log('浜戝瓨鍌ㄨ繑鍥炵姸鎬?', r.status, r.statusText);
+                    
+                    if (r.status === 404 || r.status === 502) {
+                      throw new Error('鍚庣鏈嶅姟鏈惎鍔?);
+                    }
+                    if (!r.ok) {
+                      throw new Error('HTTP閿欒: ' + r.status);
+                    }
+                    
+                    return r.text();
+                  })
+                  .then(text => {
+                    console.log('浜戝瓨鍌ㄥ搷搴斿師鏂?', text);
+                    try {
+                      const r = JSON.parse(text);
+                      console.log('浜戝瓨鍌ㄦ坊鍔犵粨鏋滐細', r);
+                      setShowCloudModal(false);
+                      setCloudConfig({
+                        type: 'oss',
+                        name: '',
+                        endpoint: 'oss-cn-beijing.aliyuncs.com',
+                        bucket: '',
+                        access_key: '',
+                        secret_key: '',
+                        region: ''
+                      });
+                      refreshStoragePaths();
+                    } catch (e) {
+                      console.error('鍚庣杩斿洖鏍煎紡閿欒');
+                    }
+                  })
+                  .catch(e => {
+                    console.error('浜戝瓨鍌ㄦ坊鍔犲け璐?', e);
+                  });
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-lg text-sm font-medium transition-all text-white cursor-pointer"
+              >
+                鉁?娣诲姞闀滃儚
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

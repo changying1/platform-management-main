@@ -14,10 +14,12 @@ from app.core.database import SessionLocal, get_mongo_db, get_next_sequence
 from app.services import ai_features
 from app.services.video_service import VideoService, RECORD_SEGMENT_SECONDS, RECORD_SEGMENT_SAFE_MARGIN_SECONDS
 from app.services.ai_runtime.model_registry import list_model_configs
+from app.services.alarm_service import AlarmService
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from PIL import Image, ImageDraw, ImageFont
 from app.utils.logger import get_logger
 from app.core.ws_manager import push_alarm_threadsafe
+from app.utils.config_manager import get_system_settings
 
 
 logger = get_logger("AIManager")
@@ -68,15 +70,33 @@ class AIManager:
         self.base_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
-        self.static_dir = os.path.join(self.base_dir, "static", "alarms")
+        self.static_dir = self.video_service._get_alarm_screenshot_root()
         os.makedirs(self.static_dir, exist_ok=True)
 
         # 算法分发表
         self.algo_handlers = ai_features.get_algo_handlers(self.ai_service)
         print(f"✅ 当前注册算法列表: {list(self.algo_handlers.keys())}")
 
-        # AI检测行为告警等级映射仅从当前 EasyAIoT 7 个算法派生，旧 ai_features_old 行为不进入运行映射。
+        # AI检测行为告警等级映射：当前模型注册表为主，兼容历史默认项，并允许系统设置覆盖。
         self.ai_alarm_level_map = self._build_current_ai_alarm_level_map()
+        self.ai_alarm_level_map.update({
+            'helmet': 'HIGH',
+            'helmet_missing': 'HIGH',
+            'safety_harness': 'SEVERE',
+            'safety_harness_missing': 'SEVERE',
+            'smoking': 'HIGH',
+            'fall': 'SEVERE',
+            'person_fall': 'SEVERE',
+            'unauthorized': 'HIGH',
+            'unauthorized_person': 'HIGH',
+            'fire': 'SEVERE',
+            'fire_detected': 'SEVERE',
+            '消防措施不足': 'SEVERE',
+            'no_helmet_area': 'MEDIUM',
+            'crowd': 'MEDIUM',
+            'crowd_detection': 'MEDIUM',
+        })
+        self._load_ai_alarm_level_map()
         self._log_current_ai_alarm_level_map()
 
     def _normalize_behavior_key(self, behavior_code):
@@ -155,6 +175,65 @@ class AIManager:
         except Exception:
             rendered = f"{message} | args={args}"
         print(rendered)
+
+    def _normalize_alarm_level(self, level) -> str:
+        normalized = str(level or "").strip().lower()
+        return {
+            "severe": "high",
+            "critical": "high",
+            "high": "high",
+            "risk": "medium",
+            "warning": "medium",
+            "medium": "medium",
+            "normal": "low",
+            "info": "low",
+            "low": "low",
+        }.get(normalized, "high")
+
+    def _normalize_alarm_key(self, value) -> str:
+        return re.sub(r"[\s_\-]+", "", str(value or "").strip().lower())
+
+    def _load_ai_alarm_level_map(self):
+        loaded_map = {}
+        for key, level in self.ai_alarm_level_map.items():
+            normalized_level = self._normalize_alarm_level(level)
+            loaded_map[str(key).strip().lower()] = normalized_level
+            loaded_map[self._normalize_alarm_key(key)] = normalized_level
+
+        settings = get_system_settings()
+        for item in settings.get("aiAlarmLevelConfigs") or []:
+            if not isinstance(item, dict):
+                continue
+            level = self._normalize_alarm_level(item.get("level"))
+            for alias in [item.get("code"), item.get("name"), item.get("id")]:
+                if alias in [None, ""]:
+                    continue
+                loaded_map[str(alias).strip().lower()] = level
+                loaded_map[self._normalize_alarm_key(alias)] = level
+
+        self.ai_alarm_level_map = loaded_map
+
+    def _resolve_ai_alarm_severity(self, alarm_type: str, algo_key: str | None = None, details: dict | None = None) -> str:
+        self._load_ai_alarm_level_map()
+        candidates = [algo_key, alarm_type]
+        if isinstance(details, dict):
+            candidates.extend([details.get("code"), details.get("name")])
+            boxes = details.get("boxes")
+            if isinstance(boxes, list):
+                for box in boxes[:3]:
+                    if isinstance(box, dict):
+                        candidates.extend([box.get("code"), box.get("name"), box.get("type")])
+
+        for candidate in candidates:
+            if candidate in [None, ""]:
+                continue
+            raw_key = str(candidate).strip().lower()
+            normalized_key = self._normalize_alarm_key(candidate)
+            if raw_key in self.ai_alarm_level_map:
+                return self.ai_alarm_level_map[raw_key]
+            if normalized_key in self.ai_alarm_level_map:
+                return self.ai_alarm_level_map[normalized_key]
+        return "high"
 
     # =========================
     # 启动监控
@@ -361,7 +440,7 @@ class AIManager:
                             continue
 
                         img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, alarm_trace_id=alarm_trace_id)
+                        self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
             except Exception as logic_error:
                 print(f"⚠️ 抓图检测逻辑异常: {logic_error}")
 
@@ -520,7 +599,7 @@ class AIManager:
                         "type": f"DEBUG-{algo}",
                         "msg": f"{algo} 功能链路测试报警",
                     }
-                    self._save_alarm_to_db(device_id, details, "")
+                    self._save_alarm_to_db(device_id, details, "", algo_key=algo)
                 time.sleep(5)
 
             print(f"--- DEBUG线程已退出: {device_id} ---")
@@ -594,7 +673,7 @@ class AIManager:
                             continue
 
                         img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, alarm_trace_id=alarm_trace_id)
+                        self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
 
             except Exception as logic_error:
                 print(f"⚠️ 逻辑异常: {logic_error}")
@@ -620,10 +699,11 @@ class AIManager:
 
             # 2. 生成文件名并保存图片
             filename = f"{device_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
-            filepath = os.path.join(self.static_dir, filename)
+            screenshot_dir = self.video_service._get_alarm_screenshot_root()
+            filepath = os.path.join(screenshot_dir, filename)
 
             saved = cv2.imwrite(filepath, draw_frame)
-            image_web_path = f"/static/alarms/{filename}"
+            image_web_path = self.video_service._to_backend_static_web_path(filepath)
             if saved:
                 self._emit_alarm_log(
                     "info",
@@ -1089,8 +1169,7 @@ class AIManager:
                 )
                 return
 
-            clip_before_seconds = int(os.getenv("ALARM_VIDEO_CLIP_BEFORE_SECONDS", "30"))
-            clip_after_seconds = int(os.getenv("ALARM_VIDEO_CLIP_AFTER_SECONDS", "30"))
+            clip_before_seconds, clip_after_seconds = self._get_alarm_clip_window_seconds()
             mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
             self._emit_alarm_log(
@@ -1259,6 +1338,21 @@ class AIManager:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _get_alarm_clip_window_seconds(self) -> tuple[int, int]:
+        settings = get_system_settings()
+        minutes = settings.get("alarmVideoSurroundMinutes")
+        if minutes is None:
+            before = int(os.getenv("ALARM_VIDEO_CLIP_BEFORE_SECONDS", "30"))
+            after = int(os.getenv("ALARM_VIDEO_CLIP_AFTER_SECONDS", "30"))
+            return max(1, before), max(1, after)
+
+        try:
+            seconds = int(float(minutes) * 60)
+        except (TypeError, ValueError):
+            seconds = 30
+        seconds = max(1, seconds)
+        return seconds, seconds
+
     def _update_alarm_recording_status(
         self,
         alarm_id: int,
@@ -1301,7 +1395,7 @@ class AIManager:
     # =========================
     # 写数据库
     # =========================
-    def _save_alarm_to_db(self, device_id, details, image_path, alarm_trace_id: str | None = None):
+    def _save_alarm_to_db(self, device_id, details, image_path, algo_key: str | None = None, alarm_trace_id: str | None = None):
         if not details:
             return None
 
@@ -1342,9 +1436,8 @@ class AIManager:
         if not alarm_msg:
             alarm_msg = "检测到异常"
 
-        # 根据检测行为类型获取对应的告警等级
-        severity = self.ai_alarm_level_map.get(alarm_type.lower(), 'HIGH')
-        severity = self.ai_alarm_level_map.get(alarm_type.replace('_', '').lower(), severity)
+        # 根据检测算法 code / 告警类型 / 中文名称获取对应的告警等级
+        severity = self._resolve_ai_alarm_severity(alarm_type, algo_key=algo_key, details=details)
         # 方便排查：描述里附带框数量
         if box_count > 0:
             alarm_msg = f"{alarm_msg}（检测框数量: {box_count}）"
@@ -1358,9 +1451,13 @@ class AIManager:
             payload = {
                 "id": next_id,
                 "device_id": str(device_id),
+                "trigger_device_id": device_id,
                 "fence_id": None,
                 "project_id": project_id,
+                "alarm_source": "video",
+                "source_type": "video",
                 "alarm_type": alarm_type,
+                "behavior_code": algo_key or alarm_type,
                 "severity": severity,
                 "timestamp": now,
                 "description": alarm_msg,
@@ -1378,6 +1475,7 @@ class AIManager:
                 "person_name": person_name or "未知",
                 "person": person_info or {},
             }
+            payload = AlarmService()._apply_org_snapshot_to_payload(payload)
 
             self._alarm_collection().insert_one(payload)
             saved_payload = self._find_alarm_doc_by_id(next_id) or payload

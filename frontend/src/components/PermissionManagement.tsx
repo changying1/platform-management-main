@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Shield, Save, RotateCcw, ChevronRight, ChevronDown, Search, X, Building2, FolderTree, Users } from 'lucide-react';
 
 // ============================================
@@ -8,7 +8,7 @@ interface Role {
   id: string;
   name: string;
   code: string;
-  level: 'headquarters_admin' | 'branch_admin' | 'project_safety_admin' | 'team_admin';
+  level: 'headquarters_admin' | 'branch_admin' | 'project_safety_admin' | 'grid_admin' | 'team_admin';
   company?: string;
   project?: string;
   team?: string;
@@ -31,129 +31,6 @@ interface RoleTreeNode {
   children?: RoleTreeNode[];
   roleId?: string;
 }
-
-// ============================================
-// 静态数据
-// ============================================
-const roles: Role[] = [
-  { id: '1', name: '系统管理员', code: 'headquarters_admin', level: 'headquarters_admin', description: '拥有所有系统权限' },
-  { id: '2', name: '中铁一局管理员', code: 'branch_admin', level: 'branch_admin', company: '中铁一局', description: '中铁一局全权限' },
-  { id: '3', name: '西安地铁8号线管理员', code: 'project_safety_admin', level: 'project_safety_admin', company: '中铁一局', project: '西安地铁8号线', description: '项目管理权限' },
-  { id: '4', name: '土建工队管理员', code: 'team_admin', level: 'team_admin', company: '中铁一局', project: '西安地铁8号线', team: '土建工队', description: '土建工队管理' },
-  { id: '5', name: '机电工队管理员', code: 'team_admin', level: 'team_admin', company: '中铁一局', project: '西安地铁8号线', team: '机电工队', description: '机电工队管理' },
-  { id: '6', name: '安全工队管理员', code: 'team_admin', level: 'team_admin', company: '中铁一局', project: '西安地铁8号线', team: '安全工队', description: '安全工队管理' },
-  { id: '7', name: '西安地铁10号线管理员', code: 'project_safety_admin', level: 'project_safety_admin', company: '中铁一局', project: '西安地铁10号线', description: '项目管理权限' },
-  { id: '8', name: '中铁隧道局管理员', code: 'branch_admin', level: 'branch_admin', company: '中铁隧道局', description: '隧道局全权限' },
-  { id: '9', name: '隧道工队管理员', code: 'team_admin', level: 'team_admin', company: '中铁隧道局', project: '西安地铁10号线', team: '隧道工队', description: '隧道工队管理' },
-];
-
-// 角色树形结构数据
-const roleTreeData: RoleTreeNode[] = [
-  {
-    id: 'hq',
-    name: '总部',
-    type: 'company',
-    children: [
-      {
-        id: 'hq-admin',
-        name: '系统管理员',
-        type: 'role',
-        roleId: '1'
-      }
-    ]
-  },
-  {
-    id: 'company1',
-    name: '中铁一局',
-    type: 'company',
-    children: [
-      {
-        id: 'company1-admin',
-        name: '分公司管理员',
-        type: 'role',
-        roleId: '2'
-      },
-      {
-        id: 'project1',
-        name: '西安地铁8号线',
-        type: 'project',
-        children: [
-          {
-            id: 'project1-admin',
-            name: '项目管理员',
-            type: 'role',
-            roleId: '3'
-          },
-          {
-            id: 'team1',
-            name: '土建工队',
-            type: 'team',
-            children: [
-              { id: 'team1-admin', name: '土建工队管理员', type: 'role', roleId: '4' }
-            ]
-          },
-          {
-            id: 'team2',
-            name: '机电工队',
-            type: 'team',
-            children: [
-              { id: 'team2-admin', name: '机电工队管理员', type: 'role', roleId: '5' }
-            ]
-          },
-          {
-            id: 'team3',
-            name: '安全工队',
-            type: 'team',
-            children: [
-              { id: 'team3-admin', name: '安全工队管理员', type: 'role', roleId: '6' }
-            ]
-          }
-        ]
-      },
-      {
-        id: 'project2',
-        name: '西安地铁10号线',
-        type: 'project',
-        children: [
-          {
-            id: 'project2-admin',
-            name: '项目管理员',
-            type: 'role',
-            roleId: '7'
-          }
-        ]
-      }
-    ]
-  },
-  {
-    id: 'company2',
-    name: '中铁隧道局',
-    type: 'company',
-    children: [
-      {
-        id: 'company2-admin',
-        name: '分公司管理员',
-        type: 'role',
-        roleId: '8'
-      },
-      {
-        id: 'project3',
-        name: '西安地铁10号线',
-        type: 'project',
-        children: [
-          {
-            id: 'team4',
-            name: '隧道工队',
-            type: 'team',
-            children: [
-              { id: 'team4-admin', name: '隧道工队管理员', type: 'role', roleId: '9' }
-            ]
-          }
-        ]
-      }
-    ]
-  }
-];
 
 const permissionTree: PermissionNode[] = [
   {
@@ -235,39 +112,143 @@ const permissionTree: PermissionNode[] = [
   },
 ];
 
-// 各角色默认权限
+const allPermissionCodes = permissionTree.flatMap(module => module.children?.map(child => child.code) || []);
+
 const defaultPermissions: Record<string, string[]> = {
-  headquarters_admin: [
-    'dashboard.view',
-    'monitor.playback', 'monitor.track', 'monitor.voice', 'monitor.camera',
-    'fence.view', 'fence.create', 'fence.edit', 'fence.delete',
-    'device.view', 'device.create', 'device.edit', 'device.delete',
-    'personnel.view', 'personnel.create', 'personnel.edit', 'personnel.delete',
-    'alarm.view', 'alarm.handle',
-    'system.role', 'system.log',
-  ],
-  branch_admin: [
-    'dashboard.view',
-    'monitor.playback', 'monitor.track', 'monitor.voice', 'monitor.camera',
-    'fence.view', 'fence.create', 'fence.edit', 'fence.delete',
-    'device.view', 'device.create', 'device.edit',
-    'personnel.view', 'personnel.create', 'personnel.edit',
-    'alarm.view', 'alarm.handle',
-  ],
-  project_safety_admin: [
-    'dashboard.view',
-    'monitor.playback', 'monitor.track', 'monitor.voice',
-    'fence.view', 'fence.create',
-    'device.view',
-    'personnel.view',
-    'alarm.view', 'alarm.handle',
-  ],
-  team_admin: [
-    'dashboard.view',
-    'monitor.playback',
-    'personnel.view',
-    'alarm.view',
-  ],
+  headquarters_admin: [...allPermissionCodes],
+  branch_admin: [...allPermissionCodes],
+  project_safety_admin: [...allPermissionCodes],
+  grid_admin: [...allPermissionCodes],
+  team_admin: [...allPermissionCodes],
+};
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
+const ROLE_RANK: Record<Role['level'], number> = {
+  team_admin: 1,
+  grid_admin: 2,
+  project_safety_admin: 3,
+  branch_admin: 4,
+  headquarters_admin: 5,
+};
+
+const getCurrentPermissionLevel = (): Role['level'] => {
+  const level = localStorage.getItem('permission_level') as Role['level'] | null;
+  if (level && ROLE_RANK[level]) return level;
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+    if (auth?.permission_level && ROLE_RANK[auth.permission_level as Role['level']]) {
+      return auth.permission_level;
+    }
+  } catch {
+    // Ignore invalid stored auth.
+  }
+  return 'headquarters_admin';
+};
+
+const getAllowedLevels = (currentLevel: Role['level']) =>
+  Object.keys(ROLE_RANK).filter(
+    (level) => ROLE_RANK[level as Role['level']] <= ROLE_RANK[currentLevel]
+  );
+
+const buildAuthHeaders = () => ({
+  'Content-Type': 'application/json',
+  ...(localStorage.getItem('auth_token') ? {
+    'X-Auth-Token': localStorage.getItem('auth_token') || '',
+    Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
+  } : {}),
+  'X-Role': localStorage.getItem('role') || '',
+  'X-Department-Id': localStorage.getItem('department_id') || '',
+  'X-Username': localStorage.getItem('username') || '',
+  'X-Permission-Level': localStorage.getItem('permission_level') || getCurrentPermissionLevel(),
+});
+
+const levelLabel: Partial<Record<Role['level'], string>> = {
+  headquarters_admin: '总部管理员',
+  branch_admin: '分公司管理员',
+  project_safety_admin: '项目管理员',
+  grid_admin: '网格管理员',
+  team_admin: '工队管理员',
+};
+
+const getGroupName = (value: string | undefined, fallback: string) => {
+  const trimmed = String(value || '').trim();
+  return trimmed || fallback;
+};
+
+const addChild = (parent: RoleTreeNode, child: RoleTreeNode) => {
+  parent.children = parent.children || [];
+  parent.children.push(child);
+};
+
+const buildRoleTreeFromAccounts = (accountRoles: Role[]): RoleTreeNode[] => {
+  const hq: RoleTreeNode = { id: 'hq', name: '总部', type: 'company', children: [] };
+  const companyMap = new Map<string, RoleTreeNode>();
+  const projectMap = new Map<string, RoleTreeNode>();
+  const teamMap = new Map<string, RoleTreeNode>();
+
+  const getCompanyNode = (company: string) => {
+    const key = company || '未分配公司';
+    if (!companyMap.has(key)) {
+      companyMap.set(key, { id: `company-${key}`, name: key, type: 'company', children: [] });
+    }
+    return companyMap.get(key)!;
+  };
+
+  const getProjectNode = (companyNode: RoleTreeNode, company: string, project: string) => {
+    const key = `${company || '未分配公司'}::${project || '未分配项目'}`;
+    if (!projectMap.has(key)) {
+      const node = { id: `project-${key}`, name: project || '未分配项目', type: 'project' as const, children: [] };
+      projectMap.set(key, node);
+      addChild(companyNode, node);
+    }
+    return projectMap.get(key)!;
+  };
+
+  const getTeamNode = (projectNode: RoleTreeNode, company: string, project: string, team: string) => {
+    const key = `${company || '未分配公司'}::${project || '未分配项目'}::${team || '未分配工队'}`;
+    if (!teamMap.has(key)) {
+      const node = { id: `team-${key}`, name: team || '未分配工队', type: 'team' as const, children: [] };
+      teamMap.set(key, node);
+      addChild(projectNode, node);
+    }
+    return teamMap.get(key)!;
+  };
+
+  accountRoles.forEach((role) => {
+    const roleNode: RoleTreeNode = {
+      id: `role-${role.id}`,
+      name: `${role.name}${role.name === role.code ? '' : `（${role.code}）`}`,
+      type: 'role',
+      roleId: role.id,
+    };
+    if (role.level === 'headquarters_admin') {
+      addChild(hq, roleNode);
+      return;
+    }
+
+    const company = getGroupName(role.company, '未分配公司');
+    const companyNode = getCompanyNode(company);
+    if (role.level === 'branch_admin') {
+      addChild(companyNode, roleNode);
+      return;
+    }
+
+    const project = getGroupName(role.project, '未分配项目');
+    const projectNode = getProjectNode(companyNode, company, project);
+    if (role.level === 'project_safety_admin') {
+      addChild(projectNode, roleNode);
+      return;
+    }
+
+    const team = getGroupName(role.team, '未分配工队');
+    addChild(getTeamNode(projectNode, company, project, team), roleNode);
+  });
+
+  return [
+    ...(hq.children?.length ? [hq] : []),
+    ...Array.from(companyMap.values()),
+  ];
 };
 
 // 颜色映射
@@ -402,11 +383,19 @@ const PermissionCard: React.FC<PermissionCardProps> = ({ module, checkedKeys, on
 // ============================================
 export default function PermissionManagement() {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [accountRoles, setAccountRoles] = useState<Role[]>([]);
+  const [roleTree, setRoleTree] = useState<RoleTreeNode[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [checkedPermissions, setCheckedPermissions] = useState<string[]>([]);
+  const [savedPermissions, setSavedPermissions] = useState<Record<string, string[]>>({});
   const [hasChanges, setHasChanges] = useState(false);
   const [roleSearchKeyword, setRoleSearchKeyword] = useState('');
   const [permSearchKeyword, setPermSearchKeyword] = useState('');
   const [saving, setSaving] = useState(false);
+  const currentPermissionLevel = getCurrentPermissionLevel();
+  const allowedLevels = getAllowedLevels(currentPermissionLevel);
+  const canUseRole = (role: Role) => allowedLevels.includes(role.level);
+  const visibleRoles = accountRoles.filter(canUseRole);
 
   // 筛选角色树
   const filterRoleTree = (nodes: RoleTreeNode[]): RoleTreeNode[] => {
@@ -424,7 +413,80 @@ export default function PermissionManagement() {
     }, []);
   };
 
-  const filteredRoleTree = filterRoleTree(roleTreeData);
+  const filterRoleTreeByLevel = (nodes: RoleTreeNode[]): RoleTreeNode[] => {
+    return nodes.reduce<RoleTreeNode[]>((acc, node) => {
+      if (node.type === 'role') {
+        const role = accountRoles.find(r => r.id === node.roleId);
+        if (role && canUseRole(role)) acc.push(node);
+        return acc;
+      }
+      const children = node.children ? filterRoleTreeByLevel(node.children) : [];
+      if (children.length > 0) {
+        acc.push({ ...node, children });
+      }
+      return acc;
+    }, []);
+  };
+
+  const filteredRoleTree = filterRoleTree(filterRoleTreeByLevel(roleTree));
+
+  useEffect(() => {
+    const loadPermissionAccounts = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/permissions/accounts`, {
+          headers: buildAuthHeaders(),
+        });
+        if (!res.ok) {
+          setAccountRoles([]);
+          setRoleTree([]);
+          return;
+        }
+        const data = await res.json();
+        const nextRoles: Role[] = (Array.isArray(data) ? data : [])
+          .filter(item => item?.id && item?.level && ROLE_RANK[item.level as Role['level']])
+          .map(item => ({
+            id: String(item.id),
+            name: item.name || item.username || '未命名账号',
+            code: item.username || String(item.id),
+            level: item.level,
+            company: item.company || '',
+            project: item.project || '',
+            team: item.team || '',
+            description: item.description || levelLabel[item.level as Role['level']] || '',
+          }));
+        setAccountRoles(nextRoles);
+        setRoleTree(buildRoleTreeFromAccounts(nextRoles));
+      } catch (error) {
+        console.error('加载账号列表失败:', error);
+        setAccountRoles([]);
+        setRoleTree([]);
+      } finally {
+        setLoadingAccounts(false);
+      }
+    };
+
+    const loadRolePermissions = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/permissions/roles`, {
+          headers: buildAuthHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const next: Record<string, string[]> = {};
+        for (const item of Array.isArray(data) ? data : []) {
+          if (item.level && Array.isArray(item.permissions)) {
+            next[item.level] = item.permissions;
+          }
+        }
+        setSavedPermissions(next);
+      } catch (error) {
+        console.error('加载权限配置失败:', error);
+      }
+    };
+
+    loadPermissionAccounts();
+    loadRolePermissions();
+  }, []);
 
   // 筛选权限模块
   const filteredPermissions = permSearchKeyword
@@ -440,11 +502,11 @@ export default function PermissionManagement() {
   // 切换角色时加载权限
   useEffect(() => {
     if (selectedRole) {
-      const perms = defaultPermissions[selectedRole.level] || [];
+      const perms = savedPermissions[selectedRole.level] || defaultPermissions[selectedRole.level] || [];
       setCheckedPermissions(perms);
       setHasChanges(false);
     }
-  }, [selectedRole]);
+  }, [selectedRole, savedPermissions]);
 
   // 处理勾选
   const handleCheck = (code: string, checked: boolean) => {
@@ -459,12 +521,18 @@ export default function PermissionManagement() {
     if (!selectedRole) return;
     setSaving(true);
     try {
-      console.log('保存权限:', {
-        roleId: selectedRole.id,
-        roleName: selectedRole.name,
-        permissions: checkedPermissions
+      const res = await fetch(`${API_BASE}/api/permissions/roles/${selectedRole.level}`, {
+        method: 'PUT',
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({ permissions: checkedPermissions }),
       });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      if (!res.ok) {
+        throw new Error(`save permissions http ${res.status}`);
+      }
+      setSavedPermissions(prev => ({
+        ...prev,
+        [selectedRole.level]: checkedPermissions,
+      }));
       setHasChanges(false);
       alert(`「${selectedRole.name}」权限配置已保存`);
     } catch (error) {
@@ -484,7 +552,7 @@ export default function PermissionManagement() {
   };
 
   const handleSelectRole = (roleId: string) => {
-    const role = roles.find(r => r.id === roleId);
+    const role = visibleRoles.find(r => r.id === roleId);
     if (role) setSelectedRole(role);
   };
 
@@ -550,7 +618,11 @@ export default function PermissionManagement() {
           
           {/* 角色树 */}
           <div className="flex-1 overflow-y-auto p-2">
-            {filteredRoleTree.length > 0 ? (
+            {loadingAccounts ? (
+              <div className="text-center py-8 text-slate-500 text-xs">
+                正在加载数据库账号...
+              </div>
+            ) : filteredRoleTree.length > 0 ? (
               filteredRoleTree.map(node => (
                 <RoleTreeItem
                   key={node.id}
@@ -563,7 +635,7 @@ export default function PermissionManagement() {
               ))
             ) : (
               <div className="text-center py-8 text-slate-500 text-xs">
-                未找到匹配的角色
+                数据库中未找到可配置权限的管理员账号
               </div>
             )}
           </div>

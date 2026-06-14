@@ -22,5 +22,28 @@
     <color name="green">#22C55E</color>
     <color name="red">#EF4444</color>
     <color name="yellow">#FACC15</color>
-    <color name="purple_500">#7C4DFF</color>
+    
+    <!-- 管理页面新增颜色 -->
+    <color name="primary">#3B82F6</color>
+    <color name="primary_light">#DBEAFE</color>
+    <color name="gray_50">#F9FAFB</color>
+    <color name="gray_100">#F3F4F6</color>
+    <color name="gray_200">#E5E7EB</color>
+    <color name="divider">#E5E7EB</color>
+    
+    <!-- Web 端对齐颜色 -->
+    <color name="cyan_300">#67E8F9</color>
+    <color name="cyan_400">#22D3EE</color>
+    <color name="cyan_500">#06B6D4</color>
+    <color name="blue_400">#60A5FA</color>
+    <color name="blue_500">#3B82F6</color>
+    <color name="orange_400">#FB923C</color>
+    <color name="green_400">#4ADE80</color>
+    <color name="green_500">#22C55E</color>
+    <color name="slate_200">#E2E8F0</color>
+    <color name="slate_400">#94A3B8</color>
+    <color name="purple_400">#C084FC</color>
+    <color name="purple_500">#A855F7</color>
+    <color name="red_400">#F87171</color>
+    <color name="red_500">#EF4444</color>
 </resources>

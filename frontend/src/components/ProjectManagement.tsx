@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, X, FolderTree, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { getAuthHeaders } from '../api/config';
+import { hasStoredPermission } from '../utils/permissions';
 
 interface Project {
   id: number;
@@ -57,7 +59,7 @@ const [loading, setLoading] = useState(false);
 const fetchProjects = async () => {
   try {
     setLoading(true);
-    const res = await fetch(`${API_BASE}/projects/`);
+    const res = await fetch(`${API_BASE}/projects/`, { headers: getAuthHeaders() });
     if (res.ok) {
       const data = await res.json();
       const apiData = Array.isArray(data) ? data : data.value || data.data || [];
@@ -93,6 +95,7 @@ const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const [filterCompany, setFilterCompany] = useState<string>('all');
 const [filterTeam, setFilterTeam] = useState<string>('all');
 const [filterStatus, setFilterStatus] = useState<string>('all');
+const canCreatePersonnel = hasStoredPermission('personnel.create');
 
 const companies = ['all', ...new Set(projects.map(p => p.company))];
 const teams = ['all', ...new Set(projects.map(p => p.team))];
@@ -203,9 +206,9 @@ const confirmImport = () => {
   
   <button onClick={() => { setFilterCompany('all'); setFilterStatus('all'); setSearchTerm(''); }} className="text-xs text-cyan-400">重置</button>
   
-  <button onClick={() => setShowUploadModal(true)} className="px-3 py-1.5 bg-green-500/20 text-green-300 rounded-lg flex items-center gap-1 text-sm"><Upload size={14} />批量导入</button>
+  {canCreatePersonnel && <button onClick={() => setShowUploadModal(true)} className="px-3 py-1.5 bg-green-500/20 text-green-300 rounded-lg flex items-center gap-1 text-sm"><Upload size={14} />批量导入</button>}
   <button onClick={downloadTemplate} className="px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-lg flex items-center gap-1 text-sm"><Download size={14} />下载模板</button>
-  <button onClick={() => { setEditingItem(null); setShowModal(true); }} className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg flex items-center gap-1 text-sm"><Plus size={14} />添加项目</button>
+  {canCreatePersonnel && <button onClick={() => { setEditingItem(null); setShowModal(true); }} className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg flex items-center gap-1 text-sm"><Plus size={14} />添加项目</button>}
 </div>
 
       <div className="overflow-x-auto">

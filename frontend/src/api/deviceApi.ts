@@ -1,9 +1,9 @@
 import axios from "axios";
 
-import { API_BASE_URL } from "./config";
+import { API_BASE_URL, attachAuthInterceptor } from "./config";
 
 // 创建 axios 实例
-const apiClient = axios.create({
+const apiClient = attachAuthInterceptor(axios.create({
   baseURL: API_BASE_URL,
   timeout: 5000, // 请求超时时间
   headers: {
@@ -11,7 +11,7 @@ const apiClient = axios.create({
     // 如果有 token 验证，可以在这里添加 Authorization
     // 'Authorization': `Bearer ${localStorage.getItem('token')}`
   },
-});
+}));
 
 // 定义接口数据类型（与 types.ts 保持一致或映射）
 export interface ApiDevice {
@@ -33,12 +33,20 @@ export interface LocationDevice {
   lat?: number;
   lng?: number;
   company: string;
+  branch_id?: string;
   project: string;
+  project_id?: string;
+  grid?: string;
+  grid_id?: string;
   type?: "uwb_band" | "uwb_badge" | "rtk_band" | "rtk_badge" | "wifi" | string;
+  install_location?: string;
   team?: string;
+  team_id?: string;
+  personnel_id?: string;
   status: "online" | "offline" | "fault" | string;
   holder: string;
   holderPhone?: string;
+  phone_num?: string;
   remark?: string;
   lastUpdate?: string;
   createdAt?: string;

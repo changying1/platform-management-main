@@ -57,7 +57,7 @@ export interface Grid {
   name: string;
   level: GridLevel;
   parent_id?: string;
-  project_id?: string;
+  project_id: string;
   bounds_json: string; // 地理边界坐标 JSON
   area?: number; // 面积（平方米）
   description?: string;

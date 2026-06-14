@@ -85,16 +85,25 @@ public class GridManagementActivity extends AppCompatActivity {
             return view;
         }
 
+        private java.util.Map<String, String> getAuthHeaders() {
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            String token = com.app.myapplication.data.local.SessionManager.getToken(requireContext());
+            if (token != null && !token.isEmpty()) {
+                headers.put("Authorization", "Bearer " + token);
+            }
+            return headers;
+        }
+
         private void loadGrids() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(ManagementApi.class)
-                    .getGrids(null, null)
-                    .enqueue(new Callback<List<GridItem>>() {
+                    .getGrids(getAuthHeaders())
+                    .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                         @Override
-                        public void onResponse(Call<List<GridItem>> call, Response<List<GridItem>> response) {
+                        public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
-                                gridList = response.body();
+                                gridList = parseGridList(response.body());
                                 adapter.setData(gridList);
                                 tvEmpty.setVisibility(gridList.isEmpty() ? View.VISIBLE : View.GONE);
                             } else {
@@ -103,11 +112,25 @@ public class GridManagementActivity extends AppCompatActivity {
                         }
 
                         @Override
-                        public void onFailure(Call<List<GridItem>> call, Throwable t) {
+                        public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
                             loadHardcodedGrids();
                         }
                     });
+        }
+
+        private List<GridItem> parseGridList(List<com.google.gson.JsonObject> jsonList) {
+            List<GridItem> list = new ArrayList<>();
+            for (com.google.gson.JsonObject json : jsonList) {
+                GridItem item = new GridItem();
+                item.setId(json.has("id") ? json.get("id").getAsString() : "");
+                item.setName(json.has("name") ? json.get("name").getAsString() : "");
+                item.setGridId(json.has("grid_id") ? json.get("grid_id").getAsString() : "");
+                item.setLevel(json.has("level") ? json.get("level").getAsString() : "");
+                item.setDescription(json.has("description") ? json.get("description").getAsString() : "");
+                list.add(item);
+            }
+            return list;
         }
 
         private void loadHardcodedGrids() {
@@ -166,16 +189,25 @@ public class GridManagementActivity extends AppCompatActivity {
             return view;
         }
 
+        private java.util.Map<String, String> getAuthHeaders() {
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            String token = com.app.myapplication.data.local.SessionManager.getToken(requireContext());
+            if (token != null && !token.isEmpty()) {
+                headers.put("Authorization", "Bearer " + token);
+            }
+            return headers;
+        }
+
         private void loadPersonnel() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(ManagementApi.class)
-                    .getGridPersonnel(null, null)
-                    .enqueue(new Callback<List<GridPersonnel>>() {
+                    .getGridPersonnel(getAuthHeaders(), "1")
+                    .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                         @Override
-                        public void onResponse(Call<List<GridPersonnel>> call, Response<List<GridPersonnel>> response) {
+                        public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
-                                personnelList = response.body();
+                                personnelList = parsePersonnelList(response.body());
                                 adapter.setData(personnelList);
                                 tvEmpty.setVisibility(personnelList.isEmpty() ? View.VISIBLE : View.GONE);
                             } else {
@@ -184,11 +216,25 @@ public class GridManagementActivity extends AppCompatActivity {
                         }
 
                         @Override
-                        public void onFailure(Call<List<GridPersonnel>> call, Throwable t) {
+                        public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
                             loadHardcodedPersonnel();
                         }
                     });
+        }
+
+        private List<GridPersonnel> parsePersonnelList(List<com.google.gson.JsonObject> jsonList) {
+            List<GridPersonnel> list = new ArrayList<>();
+            for (com.google.gson.JsonObject json : jsonList) {
+                GridPersonnel item = new GridPersonnel();
+                item.setId(json.has("id") ? json.get("id").getAsString() : "");
+                item.setName(json.has("name") ? json.get("name").getAsString() : "");
+                item.setRole(json.has("role") ? json.get("role").getAsString() : "");
+                item.setPhone(json.has("phone") ? json.get("phone").getAsString() : "");
+                item.setDepartment(json.has("department") ? json.get("department").getAsString() : "");
+                list.add(item);
+            }
+            return list;
         }
 
         private void loadHardcodedPersonnel() {
@@ -247,16 +293,25 @@ public class GridManagementActivity extends AppCompatActivity {
             return view;
         }
 
+        private java.util.Map<String, String> getAuthHeaders() {
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            String token = com.app.myapplication.data.local.SessionManager.getToken(requireContext());
+            if (token != null && !token.isEmpty()) {
+                headers.put("Authorization", "Bearer " + token);
+            }
+            return headers;
+        }
+
         private void loadUnits() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(ManagementApi.class)
-                    .getResponsibilityUnitTree()
-                    .enqueue(new Callback<List<ResponsibilityUnit>>() {
+                    .getResponsibilityTree(getAuthHeaders())
+                    .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
                         @Override
-                        public void onResponse(Call<List<ResponsibilityUnit>> call, Response<List<ResponsibilityUnit>> response) {
+                        public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
-                                unitList = response.body();
+                                unitList = parseUnitList(response.body());
                                 adapter.setData(unitList);
                                 tvEmpty.setVisibility(unitList.isEmpty() ? View.VISIBLE : View.GONE);
                             } else {
@@ -265,11 +320,26 @@ public class GridManagementActivity extends AppCompatActivity {
                         }
 
                         @Override
-                        public void onFailure(Call<List<ResponsibilityUnit>> call, Throwable t) {
+                        public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
                             loadHardcodedUnits();
                         }
                     });
+        }
+
+        private List<ResponsibilityUnit> parseUnitList(List<com.google.gson.JsonObject> jsonList) {
+            List<ResponsibilityUnit> list = new ArrayList<>();
+            for (com.google.gson.JsonObject json : jsonList) {
+                ResponsibilityUnit item = new ResponsibilityUnit();
+                item.setId(json.has("id") ? json.get("id").getAsString() : "");
+                item.setUnitId(json.has("unit_id") ? json.get("unit_id").getAsString() : "");
+                item.setName(json.has("name") ? json.get("name").getAsString() : "");
+                item.setType(json.has("type") ? json.get("type").getAsString() : "");
+                item.setLevel(json.has("level") ? json.get("level").getAsInt() : 0);
+                item.setUnderConstruction(json.has("under_construction") && json.get("under_construction").getAsBoolean());
+                list.add(item);
+            }
+            return list;
         }
 
         private void loadHardcodedUnits() {

@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 
-from app.core.database import get_mongo_collection, get_next_sequence
+from app.core.data_scope import is_hq, project_ids_for_user, text
+from app.core.database import get_mongo_collection, get_compatible_mongo_db
+from app.core.security import get_current_user
+from app.services.audit_log_service import write_audit_log
 from app.schemas.project_schema import (
     ProjectCreate,
     ProjectUpdate,
@@ -24,6 +27,10 @@ regions_collection = get_mongo_collection("project_region")
 fences_collection = get_mongo_collection("fence")
 teams_collection = get_mongo_collection("team")
 alarms_collection = get_mongo_collection("alarm_record")
+
+
+def _project_collections():
+    return (projects_collection, legacy_projects_collection, sql_projects_collection)
 
 
 def _safe_int(value, default=0):
@@ -73,20 +80,46 @@ def _project_doc(project_id: int):
 
 
 def _find_project_in_collections(project_id: int):
-    for collection in (projects_collection, legacy_projects_collection, sql_projects_collection):
+    entry = _find_project_entry(project_id)
+    return entry[1] if entry else None
+
+
+def _find_project_entry(project_id: int):
+    for collection in _project_collections():
         project = collection.find_one(_id_query(project_id), {"_id": 0})
         if project:
-            return project
+            return collection, project
     return None
 
 
 def _project_source_docs(query=None):
     query = query or {}
-    for collection in (projects_collection, legacy_projects_collection, sql_projects_collection):
-        docs = list(collection.find(query, {"_id": 0}).sort("id", 1))
-        if docs:
-            return docs
-    return []
+    docs_by_id = {}
+    for collection in _project_collections():
+        for doc in collection.find(query, {"_id": 0}).sort("id", 1):
+            project_id = _safe_int(doc.get("id"))
+            if project_id and project_id not in docs_by_id:
+                docs_by_id[project_id] = doc
+    return [docs_by_id[key] for key in sorted(docs_by_id)]
+
+
+def _max_project_id() -> int:
+    max_id = 0
+    for collection in _project_collections():
+        for item in collection.find({}, {"_id": 0, "id": 1}):
+            max_id = max(max_id, _safe_int(item.get("id")))
+    return max_id
+
+
+def _next_project_id() -> int:
+    next_id = _max_project_id() + 1
+    counters = get_compatible_mongo_db("counters")["counters"]
+    counters.update_one(
+        {"_id": "project_id"},
+        {"$max": {"seq": next_id}},
+        upsert=True,
+    )
+    return next_id
 
 
 def _virtual_project_docs():
@@ -243,8 +276,31 @@ def _project_alarm_count(project: dict):
     })
 
 
+def _project_visible(project: dict, current_user: dict) -> bool:
+    if is_hq(current_user):
+        return True
+
+    level = current_user.get("permission_level")
+    if level == "branch_admin":
+        branch_ids = [text(current_user.get("department_id")), text(current_user.get("branch_id"))]
+        branch_ids = [item for item in branch_ids if item]
+        project_branch = text(project.get("branch_id"))
+        return not branch_ids or project_branch in branch_ids
+
+    visible_project_ids = project_ids_for_user(current_user)
+    if visible_project_ids:
+        return text(project.get("id")) in visible_project_ids
+
+    project_name = text(current_user.get("project"))
+    return bool(project_name and text(project.get("name")) == project_name)
+
+
 @router.get("/", response_model=List[ProjectListItem])
-def get_projects(search: Optional[str] = None, branch_id: Optional[int] = None):
+def get_projects(
+    search: Optional[str] = None,
+    branch_id: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+):
     query = {}
 
     if branch_id:
@@ -283,6 +339,8 @@ def get_projects(search: Optional[str] = None, branch_id: Optional[int] = None):
         if branch_id:
             source_projects = [p for p in source_projects if _safe_int(p.get("branch_id")) == branch_id]
 
+    source_projects = [project for project in source_projects if _project_visible(project, current_user)]
+
     for project in source_projects:
         user_ids = project.get("user_ids", [])
         region_ids = project.get("region_ids", [])
@@ -310,45 +368,87 @@ def get_projects(search: Optional[str] = None, branch_id: Optional[int] = None):
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: int):
+def get_project(project_id: int, current_user: dict = Depends(get_current_user)):
     project = _project_doc(project_id)
     if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not _project_visible(project, current_user):
         raise HTTPException(status_code=404, detail="项目不存在")
     return _to_response(project)
 
 
 @router.post("/", response_model=ProjectResponse)
-def create_project(project_data: ProjectCreate):
-    next_id = get_next_sequence("project_id")
+def create_project(project_data: ProjectCreate, current_user: dict = Depends(get_current_user)):
+    next_id = _next_project_id()
     doc = project_data.model_dump()
     doc["id"] = next_id
     projects_collection.insert_one(doc)
+    write_audit_log(
+        current_user=current_user,
+        action="添加项目",
+        target_type="project",
+        target_name=doc.get("name") or str(next_id),
+        after=doc,
+        project=doc.get("name"),
+    )
     return _to_response(doc)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-def update_project(project_id: int, project_data: ProjectUpdate):
-    project = _project_doc(project_id)
+def update_project(project_id: int, project_data: ProjectUpdate, current_user: dict = Depends(get_current_user)):
+    entry = _find_project_entry(project_id)
+    project = entry[1] if entry else _virtual_project_doc(project_id)
     if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not _project_visible(project, current_user):
         raise HTTPException(status_code=404, detail="项目不存在")
     updates = {k: v for k, v in project_data.model_dump().items() if v is not None}
     if updates:
-        projects_collection.update_one(_id_query(project_id), {"$set": updates})
-    return _to_response(_project_doc(project_id))
+        if not entry:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        entry[0].update_one(_id_query(project_id), {"$set": updates})
+    updated = _project_doc(project_id)
+    write_audit_log(
+        current_user=current_user,
+        action="变更项目信息",
+        target_type="project",
+        target_name=(updated or project).get("name") or str(project_id),
+        before=project,
+        after=updated,
+        project=(updated or project).get("name"),
+    )
+    return _to_response(updated)
 
 
 @router.delete("/{project_id}")
-def delete_project(project_id: int):
-    result = projects_collection.delete_one(_id_query(project_id))
+def delete_project(project_id: int, current_user: dict = Depends(get_current_user)):
+    entry = _find_project_entry(project_id)
+    project = entry[1] if entry else _virtual_project_doc(project_id)
+    if not project or not _project_visible(project, current_user):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not entry:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    result = entry[0].delete_one(_id_query(project_id))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="项目不存在")
+    write_audit_log(
+        current_user=current_user,
+        action="删除项目",
+        target_type="project",
+        target_name=project.get("name") or str(project_id),
+        before=project,
+        project=project.get("name"),
+        level="warning",
+    )
     return {"message": "项目已删除"}
 
 
 @router.get("/{project_id}/fences")
-def get_project_fences(project_id: int):
+def get_project_fences(project_id: int, current_user: dict = Depends(get_current_user)):
     project = _project_doc(project_id)
     if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not _project_visible(project, current_user):
         raise HTTPException(status_code=404, detail="项目不存在")
     fences = []
     for fence in fences_collection.find({"$or": [{"project_id": project_id}, {"project_id": str(project_id)}, {"project": project.get("name")}]}, {"_id": 0}):

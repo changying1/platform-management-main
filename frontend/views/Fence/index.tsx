@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause, AlertCircle, ShieldAlert } from "lucide-react";
+import { hasStoredPermission } from "../../src/utils/permissions";
 import { useFenceManager } from "./hooks/useFenceManager";
 import { useFenceMap } from "./hooks/useFenceMap";
 import { FenceSidebar } from "./components/FenceSidebar";
@@ -9,11 +10,30 @@ import { FenceAddModal } from "./components/FenceAddModal";
 import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
+import { getAuthHeaders, withAuthTokenParam } from "../../src/api/config";
 
-import { FenceData } from "./types";
+import { FenceData, getFenceDeviceAlarmKeys } from "./types";
+
+declare global {
+  interface Window {
+    AMap?: any;
+  }
+}
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
+const HISTORICAL_FENCE_STORAGE_KEY = 'fence:historical-map-view';
+const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
+  fetch(input, {
+    ...init,
+    headers: {
+      ...(init.headers || {}),
+      ...getAuthHeaders(),
+    },
+    credentials: "include",
+  });
+
+const text = (value: any) => String(value ?? "").trim();
 
 interface AlarmResponse {
   device_id?: string | number;
@@ -39,10 +59,19 @@ interface SystemSettings {
   fenceGracePeriod: number;
 }
 
+type HistoricalFenceView = {
+  logId?: string | number;
+  logTime?: string;
+  action?: string;
+  targetName?: string;
+  versionLabel?: string;
+  fence: FenceData;
+};
+
 // 获取系统设置
 const fetchSystemSettings = async (): Promise<SystemSettings> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/admin/settings`);
+      const response = await authFetch(`${API_BASE_URL}/admin/settings`);
     if (!response.ok) {
       console.warn("获取系统设置失败，使用默认值");
       return { fenceGracePeriod: 3 }; // 默认3秒延迟
@@ -57,17 +86,113 @@ const fetchSystemSettings = async (): Promise<SystemSettings> => {
   }
 };
 
+const parseMaybeJson = (value: any) => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const toLatLngPair = (value: any): [number, number] | null => {
+  if (Array.isArray(value) && value.length >= 2) {
+    const first = Number(value[0]);
+    const second = Number(value[1]);
+    if (Number.isFinite(first) && Number.isFinite(second)) return [first, second];
+  }
+  if (value && typeof value === "object") {
+    const lat = Number(value.lat ?? value.latitude);
+    const lng = Number(value.lng ?? value.lon ?? value.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  }
+  return null;
+};
+
+const normalizeFenceSeverity = (value: any): FenceData["severity"] => {
+  if (value === "severe" || value === "risk") return value;
+  return "normal";
+};
+
+const normalizeHistoricalFence = (snapshot: any): FenceData | null => {
+  if (!snapshot || typeof snapshot !== "object") return null;
+
+  const geometry = snapshot.geometry || {};
+  const coordinates = parseMaybeJson(snapshot.coordinates_json);
+  const rawShape = String(snapshot.shape || snapshot.type || "").toLowerCase();
+  const pointsSource = snapshot.points || geometry.points || (rawShape !== "circle" ? coordinates : null);
+  const points = Array.isArray(pointsSource)
+    ? pointsSource.map(toLatLngPair).filter(Boolean) as [number, number][]
+    : [];
+  const center = toLatLngPair(snapshot.center || geometry.center || (rawShape === "circle" ? coordinates : null));
+  const isCircle = rawShape === "circle" || snapshot.type === "Circle";
+
+  if (isCircle && !center) return null;
+  if (!isCircle && points.length < 3) return null;
+
+  return {
+    id: String(snapshot.fence_id || snapshot.id || snapshot.mongo_id || `history-${Date.now()}`),
+    name: String(snapshot.name || "历史围栏"),
+    company: String(snapshot.company || ""),
+    project: String(snapshot.project || ""),
+    grid: String(snapshot.grid || snapshot.grid_name || ""),
+    grid_name: String(snapshot.grid_name || snapshot.grid || ""),
+    branch_id: snapshot.branch_id ?? null,
+    project_id: snapshot.project_id ?? null,
+    grid_id: snapshot.grid_id ?? null,
+    team_id: snapshot.team_id ?? null,
+    type: isCircle ? "Circle" : "Polygon",
+    behavior: snapshot.behavior === "No Exit" ? "No Exit" : "No Entry",
+    severity: normalizeFenceSeverity(snapshot.severity || snapshot.alarm_type),
+    schedule: {
+      start: String(snapshot.schedule?.start || snapshot.scheduleStart || snapshot.effective_time?.start || snapshot.createdAt || new Date().toISOString()),
+      end: String(snapshot.schedule?.end || snapshot.scheduleEnd || snapshot.effective_time?.end || snapshot.updatedAt || new Date().toISOString()),
+    },
+    center: center || undefined,
+    points: points.length > 0 ? points : undefined,
+    radius: Number(snapshot.radius || geometry.radius || 100),
+    isActive: snapshot.is_active ?? snapshot.isActive ?? false,
+    createdAt: String(snapshot.createdAt || ""),
+    updatedAt: String(snapshot.updatedAt || ""),
+  };
+};
+
+const readHistoricalFenceView = (): HistoricalFenceView | null => {
+  try {
+    const raw = localStorage.getItem(HISTORICAL_FENCE_STORAGE_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(HISTORICAL_FENCE_STORAGE_KEY);
+    const payload = JSON.parse(raw);
+    const fence = normalizeHistoricalFence(payload.snapshot);
+    if (!fence) return null;
+    return {
+      logId: payload.logId,
+      logTime: payload.logTime,
+      action: payload.action,
+      targetName: payload.targetName,
+      versionLabel: payload.versionLabel,
+      fence,
+    };
+  } catch {
+    localStorage.removeItem(HISTORICAL_FENCE_STORAGE_KEY);
+    return null;
+  }
+};
+
 export default function FenceManagement() {
   const [editingFenceId, setEditingFenceId] = useState<string | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const canCreateFence = hasStoredPermission("fence.create");
+  const canDeleteFence = hasStoredPermission("fence.delete");
   const [selectedFence, setSelectedFence] = useState<FenceData | null>(null);
   const [violationTypes, setViolationTypes] = useState<Record<string, "No Entry" | "No Exit" | null>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [pendingFenceData, setPendingFenceData] = useState<any>(null); 
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; fenceId: string | null }>({ show: false, fenceId: null });
   const [showSuccess, setShowSuccess] = useState(false);
+  const [historicalFenceView, setHistoricalFenceView] = useState<HistoricalFenceView | null>(null);
   
   // 新增：WebSocket相关状态
   const [fenceAlarm, setFenceAlarm] = useState<FenceAlarm | null>(null);
@@ -102,10 +227,10 @@ export default function FenceManagement() {
     try {
       const apiUrl = new URL(API_BASE_URL);
       const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-      return `${wsProtocol}//${apiUrl.host}/ws/alarm`;
+      return withAuthTokenParam(`${wsProtocol}//${apiUrl.host}/ws/alarm`);
     } catch {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return `${wsProtocol}//${window.location.hostname}:9000/ws/alarm`;
+      return withAuthTokenParam(`${wsProtocol}//${window.location.hostname}:9000/ws/alarm`);
     }
   };
 
@@ -118,7 +243,9 @@ export default function FenceManagement() {
 
   const {
     fences,
+    filteredFences,
     teams,
+    organizationTree,
     devices,
     filteredDevices,
     regions,
@@ -214,7 +341,7 @@ export default function FenceManagement() {
 
   const fetchCollectedPoints = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/fence/collect/points`);
+      const res = await authFetch(`${API_BASE_URL}/fence/collect/points`);
       if (!res.ok) return;
       const data = await res.json();
       mergeCollectedPoints(data.points || []);
@@ -228,7 +355,7 @@ export default function FenceManagement() {
     setCollectedPoints([]);
 
     try {
-      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "POST" });
+      await authFetch(`${API_BASE_URL}/fence/collect/points`, { method: "POST" });
     } catch (e) {
       console.error("启动围栏收集失败:", e);
     }
@@ -242,7 +369,7 @@ export default function FenceManagement() {
   const endCollectMode = useCallback(async () => {
     stopCollectPolling();
     try {
-      await fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" });
+      await authFetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" });
     } catch (e) {
       console.error("结束围栏收集失败:", e);
     }
@@ -252,7 +379,7 @@ export default function FenceManagement() {
   useEffect(() => {
     return () => {
       stopCollectPolling();
-      void fetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" }).catch(() => {});
+      void authFetch(`${API_BASE_URL}/fence/collect/points`, { method: "DELETE" }).catch(() => {});
     };
   }, [stopCollectPolling]);
 
@@ -261,6 +388,7 @@ export default function FenceManagement() {
     mapRef, 
     setCenter,
     renderFences,
+    renderHistoricalFence,
     renderDevices,
     renderDraft,
     bindClick,
@@ -268,14 +396,48 @@ export default function FenceManagement() {
     setMapDraggable, 
   } = useFenceMap(mapContainerRef);
 
+  useEffect(() => {
+    const pendingHistoricalFence = readHistoricalFenceView();
+    if (pendingHistoricalFence) {
+      setHistoricalFenceView(pendingHistoricalFence);
+      setSidebarCollapsed(true);
+      setSelectedFence(null);
+    }
+  }, []);
+
   const companies = ["all", ...new Set(fences.map(f => f.company).filter(Boolean))];
   const projects = filter.company && filter.company !== "all"
     ? ["all", ...new Set(fences.filter(f => f.company === filter.company).map(f => f.project))]
     : ["all", ...new Set(fences.map(f => f.project))];
+  const gridNameById = React.useMemo(() => {
+    const map = new Map<string, string>();
+    const visit = (nodes: typeof organizationTree) => {
+      nodes.forEach(node => {
+        const nodeType = text(node.type).toLowerCase();
+        if (nodeType === "grid" || nodeType === "safety_office") {
+          [node.unit_id, node.grid_id, node.id].forEach(id => {
+            const key = text(id);
+            if (key) map.set(key, node.name);
+          });
+        }
+        visit(node.children || []);
+      });
+    };
+    visit(organizationTree);
+    return map;
+  }, [organizationTree]);
+  const getGridName = React.useCallback((item: { grid?: string; grid_name?: string; grid_id?: string | number | null }) => {
+    return text(item.grid_name || item.grid || gridNameById.get(text(item.grid_id)) || item.grid_id);
+  }, [gridNameById]);
+  const gridSources = [
+    ...fences.filter(f => (!filter.company || f.company === filter.company) && (!filter.project || f.project === filter.project)),
+    ...devices.filter(d => (!filter.company || d.company === filter.company) && (!filter.project || d.project === filter.project)),
+  ];
+  const grids = ["all", ...new Set(gridSources.map(getGridName).filter(Boolean))];
 
 const fetchPendingFenceAlarms = useCallback(async () => {
   try {
-    const res = await fetch(`${API_BASE_URL}/alarms/?skip=0&limit=500`);
+    const res = await authFetch(`${API_BASE_URL}/alarms/?skip=0&limit=500&source_type=fence`);
     if (!res.ok) return;
 
     const alarms: AlarmResponse[] = await res.json();
@@ -285,7 +447,7 @@ const fetchPendingFenceAlarms = useCallback(async () => {
       const status = String(alarm.status || "").toLowerCase();
       const alarmType = String(alarm.alarm_type || "");
       const isPending = status !== "resolved" && status !== "ignored";
-      const isFenceAlarm = alarm.fence_id !== undefined && alarm.fence_id !== null || alarmType.includes("电子围栏");
+      const isFenceAlarm = alarm.fence_id !== undefined && alarm.fence_id !== null;
       const deviceId = alarm.device_id !== undefined && alarm.device_id !== null ? String(alarm.device_id) : "";
 
       if (!isPending || !isFenceAlarm || !deviceId) return;
@@ -540,9 +702,16 @@ const handleSaveFenceWithRules = (ruleData: any) => {
   const newFence = {
     id: Date.now().toString(),
     name: ruleData.name,
-    company: ruleData.company,
-    project: ruleData.project,
-    workTeam: ruleData.workTeam,
+    company: ruleData.company || "",
+    project: ruleData.project || "",
+    grid: ruleData.grid || "",
+    team: ruleData.team || "",
+    workTeam: ruleData.team || ruleData.workTeam || "",
+    branch_id: ruleData.branch_id || null,
+    project_id: ruleData.project_id || null,
+    grid_id: ruleData.grid_id || null,
+    team_id: ruleData.team_id || null,
+    orgs: ruleData.orgs || [],
     description: ruleData.description,
     behavior: ruleData.behavior,
     severity: ruleData.severity,
@@ -584,8 +753,15 @@ const handleSaveFenceAfterDraw = () => {
     const newFence = {
       id: Date.now().toString(),
       name: pendingFenceData.name,
-      company: pendingFenceData.company,
-      project: pendingFenceData.project,
+      company: pendingFenceData.company || "",
+      project: pendingFenceData.project || "",
+      grid: pendingFenceData.grid || "",
+      team: pendingFenceData.team || "",
+      branch_id: pendingFenceData.branch_id || null,
+      project_id: pendingFenceData.project_id || null,
+      grid_id: pendingFenceData.grid_id || null,
+      team_id: pendingFenceData.team_id || null,
+      orgs: pendingFenceData.orgs || [],
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
@@ -610,8 +786,15 @@ const handleSaveFenceAfterDraw = () => {
     const newFence = {
       id: Date.now().toString(),
       name: pendingFenceData.name,
-      company: pendingFenceData.company,
-      project: pendingFenceData.project,
+      company: pendingFenceData.company || "",
+      project: pendingFenceData.project || "",
+      grid: pendingFenceData.grid || "",
+      team: pendingFenceData.team || "",
+      branch_id: pendingFenceData.branch_id || null,
+      project_id: pendingFenceData.project_id || null,
+      grid_id: pendingFenceData.grid_id || null,
+      team_id: pendingFenceData.team_id || null,
+      orgs: pendingFenceData.orgs || [],
       description: pendingFenceData.description,
       behavior: pendingFenceData.behavior,
       severity: pendingFenceData.severity,
@@ -639,13 +822,18 @@ useEffect(() => {
   if (!mapReady) return;
   
 renderFences(
-  fences, 
+  filteredFences, 
   regions, 
   selectedFence?.id, 
   undefined, 
   drawingMode !== "none", 
   (region) => {},
   getFenceColor
+);
+
+renderHistoricalFence(
+  historicalFenceView?.fence || null,
+  historicalFenceView?.versionLabel
 );
   
   renderDevices(filteredDevices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
@@ -661,7 +849,7 @@ renderDraft(
   activeDrawTool === 'polygon' ? mouseLngLat : null,
   activeDrawTool === 'brush' && isDrawing
 );
-}, [mapReady, fences, regions, selectedFence, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, isDrawing]);
+}, [mapReady, filteredFences, regions, selectedFence, historicalFenceView, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, renderHistoricalFence, pendingFenceData, isDrawing]);
 
 // 监听debugMode变化，退出调试模式时保存设备位置
 const [prevDebugMode, setPrevDebugMode] = useState(false);
@@ -705,7 +893,9 @@ const handleDelayedAlarmsOnExitDebug = () => {
   
   // 查找当前越界的设备
   const violationDevices = filteredDevices.filter(device => {
-    const violation = violationTypes[device.device_id];
+    const violation = getFenceDeviceAlarmKeys(device)
+      .map((key) => violationTypes[key])
+      .find(Boolean);
     return violation === "No Entry" || violation === "No Exit";
   });
   
@@ -713,7 +903,9 @@ const handleDelayedAlarmsOnExitDebug = () => {
   violationDevices.forEach(device => {
     const timerId = window.setTimeout(() => {
       // 延迟后再次检查设备是否仍然越界
-      const currentViolation = violationTypes[device.device_id];
+      const currentViolation = getFenceDeviceAlarmKeys(device)
+        .map((key) => violationTypes[key])
+        .find(Boolean);
       if (currentViolation === "No Entry" || currentViolation === "No Exit") {
         // 设备仍然越界，触发警报
         console.log(`设备 ${device.device_id} 越界${currentViolation === "No Entry" ? "进入" : "离开"}警报（延迟${gracePeriod}秒后触发）`);
@@ -1233,6 +1425,7 @@ const handleEditFence = (fence: FenceData) => {
         setFilter={setFilter}
         companies={companies}
         projects={projects}
+        grids={grids}
       />
 
 <div className="flex-1 m-4 mt-2 rounded-lg overflow-hidden border border-blue-400/30 shadow-xl relative z-0">
@@ -1250,6 +1443,37 @@ const handleEditFence = (fence: FenceData) => {
   </div>
 
   <div ref={mapContainerRef} className="w-full h-full" />
+
+  {historicalFenceView && (
+    <div className="absolute top-4 right-4 z-20 max-w-md rounded-lg border border-amber-300/50 bg-slate-950/90 p-4 shadow-2xl backdrop-blur-md">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
+            <MapPin size={16} />
+            正在查看历史围栏
+          </div>
+          <div className="mt-1 text-base font-semibold text-white">{historicalFenceView.fence.name}</div>
+          <div className="mt-1 text-xs text-slate-400">
+            {historicalFenceView.versionLabel || "历史版本"}
+            {historicalFenceView.logTime ? ` · ${new Date(historicalFenceView.logTime).toLocaleString()}` : ""}
+          </div>
+        </div>
+        <button
+          onClick={() => setHistoricalFenceView(null)}
+          className="rounded p-1 text-slate-400 transition-all hover:bg-slate-800 hover:text-amber-200"
+          title="关闭历史围栏"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-300">
+        <span>形状：{historicalFenceView.fence.type === "Circle" ? "圆形" : "多边形"}</span>
+        <span>规则：{historicalFenceView.fence.behavior === "No Entry" ? "禁止进入" : "禁止离开"}</span>
+        <span>单位：{historicalFenceView.fence.company || "-"}</span>
+        <span>项目：{historicalFenceView.fence.project || "-"}</span>
+      </div>
+    </div>
+  )}
 </div>
 
 <div className="absolute bottom-24 right-4 z-20 bg-slate-900/90 backdrop-blur-md border border-cyan-400/30 rounded-lg p-3 min-w-[180px] shadow-2xl">
@@ -1330,7 +1554,7 @@ const handleEditFence = (fence: FenceData) => {
       ))}
     </div>
     
-    {collectedPoints.length >= 3 && (
+    {canCreateFence && collectedPoints.length >= 3 && (
       <button
         onClick={() => setShowAddModal(true)}
         className="w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 rounded-xl text-xs font-bold transition-all"
@@ -1341,6 +1565,7 @@ const handleEditFence = (fence: FenceData) => {
   </div>
 )}
 
+{canCreateFence && (
 <button
   onClick={() => {
     setShowAddModal(true);
@@ -1351,6 +1576,7 @@ const handleEditFence = (fence: FenceData) => {
   <Plus size={20} />
   设置新围栏
 </button>
+)}
 
 <button
   onClick={() => setDebugMode(!debugMode)}
@@ -1378,9 +1604,10 @@ const handleEditFence = (fence: FenceData) => {
 
       <div className="absolute left-0 top-16 bottom-0 z-20">
         <FenceSidebar
-          fences={fences}
+          fences={filteredFences}
           teams={teams}
-          devices={devices}
+          organizationTree={organizationTree}
+          devices={filteredDevices}
           stats={stats}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -1400,8 +1627,17 @@ const handleEditFence = (fence: FenceData) => {
               mapRef.current?.setZoom(16);
             }
           }}
+          onSelectDevice={(device) => {
+            const lat = Number(device.lat);
+            const lng = Number(device.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) return;
+            setSelectedFence(null);
+            setCenter([lat, lng]);
+            mapRef.current?.setZoom(19);
+          }}
           onEditFence={handleEditFence}
           onDeleteFence={handleDeleteClick}
+          canDeleteFence={canDeleteFence}
           violationTypes={violationTypes}
           selectedFence={selectedFence}
         />
@@ -1450,6 +1686,14 @@ const handleEditFence = (fence: FenceData) => {
     const newFence = {
       id: Date.now().toString(),
       name: data.name,
+      company: data.company || "",
+      project: data.project || "",
+      grid: data.grid || "",
+      team: data.team || "",
+      branch_id: data.branch_id || null,
+      project_id: data.project_id || null,
+      grid_id: data.grid_id || null,
+      team_id: data.team_id || null,
       orgs: data.orgs || [],
       description: data.description,
       behavior: data.behavior,
@@ -1478,6 +1722,7 @@ const handleEditFence = (fence: FenceData) => {
   editingFenceId={editingFenceId}
   companies={companies.filter(c => c !== "all")}
   projects={projects.filter(p => p !== "all")}
+  organizationTree={organizationTree}
   devices={devices}
   collectedPoints={collectedPoints}
   onStartCollectMode={() => {
@@ -1517,6 +1762,7 @@ const handleEditFence = (fence: FenceData) => {
   activeTool={activeDrawTool}
   tempPoints={tempPoints}
   tempShape={tempShape}
+  organizationTree={organizationTree}
   onSave={handleSaveFenceWithRules}
   onCancel={resetDrawing}
   onBackToDraw={() => {

@@ -37,13 +37,13 @@ public class LoginViewModel extends AndroidViewModel {
         return repo.isLoggedIn();
     }
 
-    // 暂时免密登录：后面你把 repo.loginNoPassword() 换成真实接口即可
-    public void loginNoPassword(String username) {
+    // 用户名+密码登录
+    public void login(String username, String password) {
         UiState s = new UiState();
         s.loading = true;
         uiState.setValue(s);
 
-        repo.loginNoPassword(username, new AuthRepository.Callback() {
+        repo.login(username, password, new AuthRepository.Callback() {
             @Override
             public void onSuccess(LoginResult result) {
                 UiState ok = new UiState();

@@ -1,0 +1,116 @@
+> Task :app:compileDebugJavaWithJavac FAILED
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\data\repo\AuthRepository.java:6: 错误: 找不到符号
+import com.app.myapplication.data.api.AuthApi;
+                                     ^
+  符号:   类 AuthApi
+  位置: 程序包 com.app.myapplication.data.api
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\data\repo\AuthRepository.java:35: 错误: 找不到符号
+        AuthApi api = ApiClient.get(context).create(AuthApi.class);
+        ^
+  符号:   类 AuthApi
+  位置: 类 AuthRepository
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\data\repo\AuthRepository.java:35: 错误: 找不到符号
+        AuthApi api = ApiClient.get(context).create(AuthApi.class);
+                                                    ^
+  符号:   类 AuthApi
+  位置: 类 AuthRepository
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\data\repo\AuthRepository.java:36: 错误: 程序包AuthApi不存在
+        api.login(new AuthApi.LoginRequest(account, pwd)).enqueue(new retrofit2.Callback<LoginResult>() {
+                             ^
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\DeviceManagementActivity.java:196: 错误: 找不到符号
+                    tvPort = itemView.findViewById(R.id.tv_port);
+                                                       ^
+  符号:   变量 tv_port
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\DeviceManagementActivity.java:235: 错误: 无法将接口 ManagementApi中的方法 getLocationDevices应用到给定类型;
+                    .getLocationDevices()
+                    ^
+  需要: Map<String,String>
+  找到:    没有参数
+  原因: 实际参数列表和形式参数列表长度不同
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\DeviceManagementActivity.java:281: 错误: 找不到符号
+                                .deleteLocationDevice(deviceId)
+                                ^
+  符号:   方法 deleteLocationDevice(String)
+  位置: 接口 ManagementApi
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\DeviceManagementActivity.java:356: 错误: 找不到符号
+                    tvHolder = itemView.findViewById(R.id.tv_holder);
+                                                         ^
+  符号:   变量 tv_holder
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:91: 错误: 无法将接口 ManagementApi中的方法 getGrids应用到给定类型;
+                    .getGrids(null, null)
+                    ^
+  需要: Map<String,String>
+  找到:    <空值>,<空值>
+  原因: 实际参数列表和形式参数列表长度不同
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:172: 错误: 找不到符号
+                    .getGridPersonnel(null, null)
+                    ^
+  符号:   方法 getGridPersonnel(<空值>,<空值>)
+  位置: 接口 ManagementApi
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:253: 错误: 找不到符号
+                    .getResponsibilityUnitTree()
+                    ^
+  符号:   方法 getResponsibilityUnitTree()
+  位置: 接口 ManagementApi
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:354: 错误: 找不到符号
+                tvGridId = itemView.findViewById(R.id.tv_grid_id);
+                                                     ^
+  符号:   变量 tv_grid_id
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:355: 错误: 找不到符号
+                tvLevel = itemView.findViewById(R.id.tv_level);
+                                                    ^
+  符号:   变量 tv_level
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\GridManagementActivity.java:356: 错误: 找不到符号
+                tvDescription = itemView.findViewById(R.id.tv_description);
+                                                          ^
+  符号:   变量 tv_description
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\PersonnelManagementActivity.java:66: 错误: 无法将接口 ManagementApi中的方法 getPersonnel应用到给定类型;
+                .getPersonnel()
+                ^
+  需要: Map<String,String>
+  找到:    没有参数
+  原因: 实际参数列表和形式参数列表长度不同
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\PersonnelManagementActivity.java:171: 错误: 找不到符号
+                            .deletePersonnel(personnelId)
+                            ^
+  符号:   方法 deletePersonnel(String)
+  位置: 接口 ManagementApi
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\ProjectManagementActivity.java:70: 错误: 无法将接口 ManagementApi中的方法 getProjects应用到给定类型;
+                .getProjects(search, null)
+                ^
+  需要: Map<String,String>
+  找到:    String,<空值>
+  原因: 实际参数列表和形式参数列表长度不同
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\ProjectManagementActivity.java:98: 错误: 找不到符号
+                            .deleteProject(projectId)
+                            ^
+  符号:   方法 deleteProject(int)
+  位置: 接口 ManagementApi
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\ProjectManagementActivity.java:150: 错误: 找不到符号
+                tvManager = itemView.findViewById(R.id.tv_manager);
+                                                      ^
+  符号:   变量 tv_manager
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\manage\ProjectManagementActivity.java:151: 错误: 找不到符号
+                tvLocation = itemView.findViewById(R.id.tv_location);
+                                                       ^
+  符号:   变量 tv_location
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\management\adapter\ProjectAdapter.java:68: 错误: 找不到符号
+            tvManager = itemView.findViewById(R.id.tv_manager);
+                                                  ^
+  符号:   变量 tv_manager
+  位置: 类 id
+D:\JavaProgram\platform-management-main\App-main\App-main\MyApplication\app\src\main\java\com\app\myapplication\ui\management\adapter\ProjectAdapter.java:70: 错误: 找不到符号
+            tvDate = itemView.findViewById(R.id.tv_date);
+                                               ^
+  符号:   变量 tv_date
+  位置: 类 id
+注: 某些输入文件使用或覆盖了已过时的 API。
+注: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+22 个错误

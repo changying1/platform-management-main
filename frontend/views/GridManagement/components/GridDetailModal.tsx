@@ -1,7 +1,6 @@
 import React from 'react';
-import { X, Users, Cpu, AlertTriangle, Calendar } from 'lucide-react';
+import { AlertTriangle, Calendar, Cpu, X } from 'lucide-react';
 import type { GridDetail } from '../../../types';
-import { roleNames, levelNames } from '../../../src/api/gridApi';
 
 interface GridDetailModalProps {
   grid: GridDetail;
@@ -9,150 +8,114 @@ interface GridDetailModalProps {
   onClose: () => void;
 }
 
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'normal':
+      return 'text-green-400 bg-green-500/10';
+    case 'warning':
+      return 'text-yellow-400 bg-yellow-500/10';
+    case 'alarm':
+      return 'text-red-400 bg-red-500/10';
+    default:
+      return 'text-gray-400 bg-gray-500/10';
+  }
+};
+
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'normal':
+      return '正常';
+    case 'warning':
+      return '预警';
+    case 'alarm':
+      return '报警';
+    default:
+      return status;
+  }
+};
+
 export const GridDetailModal: React.FC<GridDetailModalProps> = ({ grid, isOpen, onClose }) => {
   if (!isOpen) return null;
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'normal':
-        return 'text-green-400 bg-green-500/10';
-      case 'warning':
-        return 'text-yellow-400 bg-yellow-500/10';
-      case 'alarm':
-        return 'text-red-400 bg-red-500/10';
-      default:
-        return 'text-gray-400 bg-gray-500/10';
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'normal':
-        return '正常';
-      case 'warning':
-        return '预警';
-      case 'alarm':
-        return '报警';
-      default:
-        return status;
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 rounded-xl w-[500px] max-h-[80vh] overflow-hidden border border-white/20 shadow-2xl">
-        {/* 头部 */}
-        <div className="bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4 border-b border-white/10 flex items-center justify-between">
+      <div className="max-h-[80vh] w-[520px] overflow-hidden rounded-xl border border-white/20 bg-slate-800 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4">
           <div>
             <h3 className="text-xl font-bold text-white">{grid.name}</h3>
-            <p className="text-sm text-white/60">{levelNames[grid.level] || grid.level}</p>
+            <p className="text-sm text-white/60">所属项目：{grid.project_id || '-'}</p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-white/60 hover:text-white"
+            className="rounded-lg p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+            type="button"
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* 内容 */}
-        <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
-          {/* 基本信息 */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-white/5 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
+        <div className="max-h-[calc(80vh-80px)] overflow-y-auto p-6">
+          <div className="mb-6 grid grid-cols-2 gap-4">
+            <div className="rounded-lg bg-white/5 p-4">
+              <div className="mb-2 flex items-center gap-2">
                 <AlertTriangle size={14} className="text-white/60" />
                 <span className="text-xs text-white/60">状态</span>
               </div>
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(grid.status)}`}>
+              <span className={`rounded-full px-3 py-1 text-sm font-medium ${getStatusColor(grid.status)}`}>
                 {getStatusText(grid.status)}
               </span>
             </div>
-            
-            <div className="bg-white/5 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs text-white/60">面积</span>
-              </div>
-              <span className="text-white font-medium">{grid.area || '-'} m²</span>
+
+            <div className="rounded-lg bg-white/5 p-4">
+              <span className="mb-2 block text-xs text-white/60">面积</span>
+              <span className="font-medium text-white">{grid.area || '-'} m2</span>
             </div>
           </div>
 
-          {/* 描述 */}
-          <div className="bg-white/5 rounded-lg p-4 mb-6">
-            <span className="text-xs text-white/60 mb-2 block">描述</span>
+          <div className="mb-6 rounded-lg bg-white/5 p-4">
+            <span className="mb-2 block text-xs text-white/60">描述</span>
             <p className="text-white/80">{grid.description || '-'}</p>
           </div>
 
-          {/* 责任人列表 */}
           <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <Users size={16} className="text-cyan-400" />
-              <span className="text-white font-medium">责任人</span>
-            </div>
-            <div className="bg-white/5 rounded-lg p-4">
-              {grid.personnel && grid.personnel.length > 0 ? (
-                grid.personnel.map((person) => (
-                  <div key={person.id} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center">
-                        <span className="text-white text-sm font-medium">{person.name.charAt(0)}</span>
-                      </div>
-                      <span className="text-white">{person.name}</span>
-                    </div>
-                    <span className="px-2 py-1 rounded text-xs bg-cyan-500/10 text-cyan-300">
-                      {person.role_name || roleNames[person.role] || person.role}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-white/50 text-sm">暂无责任人</p>
-              )}
-            </div>
-          </div>
-
-          {/* 设备列表 */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="mb-3 flex items-center gap-2">
               <Cpu size={16} className="text-green-400" />
-              <span className="text-white font-medium">设备</span>
+              <span className="font-medium text-white">设备</span>
             </div>
-            <div className="bg-white/5 rounded-lg p-4">
+            <div className="rounded-lg bg-white/5 p-4">
               {grid.devices && grid.devices.length > 0 ? (
                 grid.devices.map((device) => (
-                  <div key={device.id} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                  <div key={device.id} className="flex items-center justify-between border-b border-white/5 py-2 last:border-0">
                     <div>
                       <span className="text-white">{device.name}</span>
                       <p className="text-xs text-white/50">{device.id}</p>
                     </div>
-                    <span className="px-2 py-1 rounded text-xs bg-green-500/10 text-green-300">
-                      {device.type === 'camera' ? '摄像头' : device.type === 'gps' ? '定位器' : '传感器'}
-                    </span>
+                    <span className="rounded bg-green-500/10 px-2 py-1 text-xs text-green-300">{device.type}</span>
                   </div>
                 ))
               ) : (
-                <p className="text-white/50 text-sm">暂无设备</p>
+                <p className="text-sm text-white/50">暂无设备</p>
               )}
             </div>
           </div>
 
-          {/* 更新时间 */}
           <div className="flex items-center gap-4 text-xs text-white/50">
             <div className="flex items-center gap-1">
               <Calendar size={12} />
-              <span>创建: {grid.created_at}</span>
+              <span>创建：{grid.created_at}</span>
             </div>
             <div className="flex items-center gap-1">
               <Calendar size={12} />
-              <span>更新: {grid.updated_at}</span>
+              <span>更新：{grid.updated_at}</span>
             </div>
           </div>
         </div>
 
-        {/* 底部按钮 */}
-        <div className="px-6 py-4 border-t border-white/10 flex justify-end gap-3">
+        <div className="flex justify-end gap-3 border-t border-white/10 px-6 py-4">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+            className="rounded-lg bg-white/10 px-4 py-2 text-white transition-colors hover:bg-white/20"
+            type="button"
           >
             关闭
           </button>

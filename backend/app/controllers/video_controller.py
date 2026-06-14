@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.core.database import get_db
+from app.core.data_scope import in_scope
+from app.core.security import get_current_user
 # 统一使用 video_schema 以匹配模块结构
 from app.schemas.video_schema import (
     VideoCreate,
@@ -26,7 +29,6 @@ import threading
 from datetime import datetime
 # --- 在现有的 import 语句下面添加 ---
 from app.services.ai_manager import ai_manager
-from pydantic import BaseModel
 from app.services.ai_features.registry import list_rules
 from app.services.ai_runtime.algorithm_catalog import list_algorithms
 
@@ -41,6 +43,41 @@ def _ensure_zoom_direction(direction: str):
 
 
 # --- 放在 router 定义之前或之后都可以，只要在下面的接口用到它之前 ---
+def _video_scope_kwargs() -> dict:
+    return {
+        "project_fields": ("project_id",),
+        "grid_fields": ("grid_id", "grid"),
+        "team_fields": ("team_id",),
+        "branch_fields": ("branch_id",),
+        "company_fields": ("company", "department"),
+        "project_name_fields": ("project",),
+        "team_name_fields": ("team", "workTeam", "work_team"),
+    }
+
+
+def _video_visible(video_doc: dict | None, current_user: dict) -> bool:
+    return in_scope(video_doc, current_user, **_video_scope_kwargs())
+
+
+def _require_video_scope(video_id: int | str, current_user: dict):
+    video_doc = service._get_video_doc_by_id(video_id)
+    if not _video_visible(video_doc, current_user):
+        raise HTTPException(status_code=404, detail="Video device not found")
+    return video_doc
+
+
+def _default_scope_fields(current_user: dict) -> dict:
+    return {
+        "branch_id": current_user.get("branch_id") or current_user.get("department_id"),
+        "project_id": current_user.get("project_id"),
+        "grid_id": current_user.get("grid_id"),
+        "team_id": current_user.get("team_id"),
+        "company": current_user.get("company") or current_user.get("department"),
+        "project": current_user.get("project"),
+        "team": current_user.get("team") or current_user.get("work_team"),
+    }
+
+
 class AIMonitorRequest(BaseModel):
     device_id: str
     rtsp_url: str | None = None
@@ -67,12 +104,13 @@ class TrafficOcrRequest(BaseModel):
     capture_time: str | None = None
 
 @router.post("/ai/start")
-async def start_ai(req: AIMonitorRequest, db=Depends(get_db)):
+async def start_ai(req: AIMonitorRequest, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """开启 AI 监控"""
     device_id = str(req.device_id or "").strip()
     if not device_id:
         raise HTTPException(status_code=400, detail="device_id 不能为空")
 
+    _require_video_scope(device_id, current_user)
     db_video = None
     rtsp_url = (req.rtsp_url or "").strip()
 
@@ -115,13 +153,9 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="启动失败或已在运行")
 
 @router.get("/ai/rules")
-def get_ai_rules():
-    return {
-        "code": 0,
-        "data": list_algorithms()
-    }
-
-    """获取限定的 AI 规则列表"""
+def get_ai_rules(current_user: dict = Depends(get_current_user)):
+    """获取当前可用 AI 规则列表。"""
+    catalog_items = list_algorithms()
     rules = list_rules()
     
     allowed_keys = [
@@ -129,7 +163,6 @@ def get_ai_rules():
         "smoking",
         "phone",
         "person_distance",
-        "face_recognition",
         "signage",
         "behavior",
         "supervisor_count",
@@ -144,7 +177,6 @@ def get_ai_rules():
         "smoking": "抽烟检测",
         "phone": "打电话检测",
         "person_distance": "多人作业人员间距检测",
-        "face_recognition": "人脸识别",
         "signage": "现场标识类",
         "behavior": "作业行为类",
         "supervisor_count": "现场监督人数统计",
@@ -161,6 +193,20 @@ def get_ai_rules():
                 "key": key,
                 "desc": display_names.get(key, rules[key].desc)
             })
+
+    seen = {item.get("key") for item in result if isinstance(item, dict)}
+    catalog_iter = catalog_items.values() if isinstance(catalog_items, dict) else (catalog_items or [])
+    for item in catalog_iter:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key") or item.get("id") or item.get("code")
+        if not key or key in seen:
+            continue
+        result.append({
+            "key": key,
+            "desc": item.get("desc") or item.get("name") or key,
+        })
+        seen.add(key)
             
     return {
         "code": 0,
@@ -168,26 +214,26 @@ def get_ai_rules():
     }
 
 @router.post("/add_camera", response_model=VideoOut)
-def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db)):
+def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     Dynamically adds a new camera by commanding the media server
     and then creating a record in the database.
     """
     try:
-        return service.add_camera_to_media_server(db, camera)
+        return service.add_camera_to_media_server(db, camera, scope_fields=_default_scope_fields(current_user))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/", response_model=List[VideoOut])
-def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db)):
+def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """获取所有视频设备列表"""
-    return service.get_videos(db, skip=skip, limit=limit)
+    return service.get_videos(db, skip=skip, limit=limit, current_user=current_user)
 
 @router.post("/", response_model=VideoOut)
-def create_video(video: VideoCreate, db=Depends(get_db)):
+def create_video(video: VideoCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """手动创建/添加视频设备"""
     try:
-        return service.create_video(db, video)
+        return service.create_video(db, video, scope_fields=_default_scope_fields(current_user))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -197,14 +243,16 @@ def create_video(video: VideoCreate, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail="An internal server error occurred while creating the video.")
 
 @router.get("/{video_id}/rules")
-def get_device_rules(video_id: int):
+def get_device_rules(video_id: int, current_user: dict = Depends(get_current_user)):
     """获取设备已配置的算法规则"""
+    _require_video_scope(video_id, current_user)
     return {"rules": ai_manager.get_device_rules(str(video_id))}
 
 
 @router.put("/{video_id}/rules")
-def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest):
+def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest, current_user: dict = Depends(get_current_user)):
     """更新设备算法规则；若设备正在监控则热更新"""
+    _require_video_scope(video_id, current_user)
     rules = ai_manager.set_device_rules(str(video_id), body.rules or [])
 
     monitor = ai_manager.active_monitors.get(str(video_id))
@@ -215,37 +263,70 @@ def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest):
     return {"status": "ok", "rules": rules}
 
 @router.put("/{video_id}", response_model=VideoOut)
-def update_video(video_id: int, video: VideoUpdate, db=Depends(get_db)):
+def update_video(video_id: int, video: VideoUpdate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """更新视频设备信息"""
+    _require_video_scope(video_id, current_user)
     updated_video = service.update_video(db, video_id, video)
     if not updated_video:
         raise HTTPException(status_code=404, detail="Video device not found")
     return updated_video
 
 @router.delete("/{video_id}")
-def delete_video(video_id: int, db=Depends(get_db)):
+def delete_video(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """删除视频设备"""
+    _require_video_scope(video_id, current_user)
     success = service.delete_video(db, video_id)
     if not success:
         raise HTTPException(status_code=404, detail="Video device not found")
     return {"status": "success"}
 
+class BatchUpdateOrgRequest(BaseModel):
+    """批量更新设备组织架构的请求模型"""
+    company: Optional[str] = None
+    project: Optional[str] = None
+    grid: Optional[str] = None
+    team: Optional[str] = None
+    device_ids: Optional[List[int]] = None  # 可选：指定设备ID列表，为空则更新所有设备
+
+@router.put("/batch/org", response_model=dict)
+def batch_update_organization(
+    request: BatchUpdateOrgRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """批量更新设备组织架构信息"""
+    updated_count = service.batch_update_organization(
+        db,
+        company=request.company,
+        project=request.project,
+        grid=request.grid,
+        team=request.team,
+        device_ids=request.device_ids
+    )
+    return {"status": "success", "updated_count": updated_count}
+
 @router.post("/sync")
-def sync_devices(db=Depends(get_db)):
+def sync_devices(db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """从海康威视等平台同步设备列表"""
     service.sync_hikvision_devices(db)
     return {"message": "Sync started"}
 
 
 @router.get("/ezviz/health")
-def get_ezviz_health():
+def get_ezviz_health(current_user: dict = Depends(get_current_user)):
     """萤石云配置与 token 健康检查"""
     return service.get_ezviz_health()
 
 
 @router.get("/stream/{video_id}", response_model=StreamUrlResponse)
-def get_video_stream(video_id: int, protocol: Optional[str] = None, db: Session = Depends(get_db)):
+def get_video_stream(
+    video_id: int,
+    protocol: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     try:
+        _require_video_scope(video_id, current_user)
         info = service.get_stream_info(db, video_id, protocol=protocol)  # ← 调用 service 层方法
         if not info or not info.get("url"):
             raise HTTPException(status_code=404, detail="Stream URL not found or device offline")
@@ -274,9 +355,10 @@ def get_video_stream(video_id: int, protocol: Optional[str] = None, db: Session 
 
 
 @router.post("/{video_id}/playback/save")
-def save_playback_clip(video_id: int, body: PlaybackSaveRequest):
+def save_playback_clip(video_id: int, body: PlaybackSaveRequest, current_user: dict = Depends(get_current_user)):
     """保存指定时间段的回放视频"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.save_playback_clip(video_id, body.start_time, body.end_time, output_type="playback", filename_prefix="playback")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -285,7 +367,7 @@ def save_playback_clip(video_id: int, body: PlaybackSaveRequest):
 
 
 @router.get("/{video_id}/recordings")
-def list_recording_segments(video_id: int, limit: int = 72):
+def list_recording_segments(video_id: int, limit: int = 72, current_user: dict = Depends(get_current_user)):
     started_at = time.time()
     started_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     logger.info(
@@ -296,6 +378,7 @@ def list_recording_segments(video_id: int, limit: int = 72):
     )
     """获取设备录像分段列表（默认最近72段）"""
     try:
+        _require_video_scope(video_id, current_user)
         result = service.list_recording_segments(video_id, limit)
         logger.info(
             "recordings list controller done video_id=%s limit=%s count=%s elapsed_ms=%.2f",
@@ -316,9 +399,10 @@ def list_recording_segments(video_id: int, limit: int = 72):
 
 
 @router.post("/{video_id}/playback/temp-cache")
-def save_temp_cache_clip(video_id: int, body: TempCacheTriggerRequest):
+def save_temp_cache_clip(video_id: int, body: TempCacheTriggerRequest, current_user: dict = Depends(get_current_user)):
     """触发从上一个归档时间节点到当前时刻的临时回放缓存"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.save_temp_cache_until_now(video_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -327,18 +411,20 @@ def save_temp_cache_clip(video_id: int, body: TempCacheTriggerRequest):
 
 
 @router.get("/{video_id}/playback/videos")
-def list_saved_playback_videos(video_id: int, limit: int = 120):
+def list_saved_playback_videos(video_id: int, limit: int = 120, current_user: dict = Depends(get_current_user)):
     """获取已保存的常态回放视频列表"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.list_saved_playback_videos(video_id, limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取常态回放列表失败: {e}")
 
 
 @router.get("/{video_id}/monitoring-summary")
-def get_monitoring_summary(video_id: int, db=Depends(get_db)):
+def get_monitoring_summary(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """获取设备流量监测摘要（已使用/阈值/剩余）"""
     try:
+        _require_video_scope(video_id, current_user)
         summary = service.get_monitoring_summary(db, video_id)
         if not summary:
             raise HTTPException(status_code=404, detail="设备不存在")
@@ -388,26 +474,34 @@ def get_traffic_status(video_id: int, db=Depends(get_db)):
 
 
 @router.get("/{video_id}/playback/temp/videos")
-def list_temp_cache_videos(video_id: int, limit: int = 30):
+def list_temp_cache_videos(video_id: int, limit: int = 30, current_user: dict = Depends(get_current_user)):
     """获取临时缓存回放视频列表"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.list_temp_cache_videos(video_id, limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取临时回放列表失败: {e}")
 
 
 @router.get("/{video_id}/alarm/videos")
-def list_saved_alarm_videos(video_id: int, limit: int = 120):
+def list_saved_alarm_videos(video_id: int, limit: int = 120, current_user: dict = Depends(get_current_user)):
     """获取报警回放视频列表"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.list_saved_alarm_videos(video_id, limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取报警回放列表失败: {e}")
 
 
 @router.post("/time/sync/{video_id}")
-def sync_camera_time(video_id: int, force: bool = True, db=Depends(get_db)):
+def sync_camera_time(
+    video_id: int,
+    force: bool = True,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """手动触发摄像头时间同步（默认强制同步）"""
+    _require_video_scope(video_id, current_user)
     result = service.sync_camera_time_if_needed(db, video_id, force=force)
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("message", "摄像头校时失败"))
@@ -449,20 +543,27 @@ def _mjpeg_frame_generator(rtsp_url: str):
 
 
 @router.get("/mjpeg/{video_id}")
-def get_video_mjpeg(video_id: int, db=Depends(get_db)):
+def get_video_mjpeg(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     提供简易 MJPEG 实时预览流（multipart/x-mixed-replace）。
     适合快速演示，但占用 CPU，生产建议接入 MediaMTX/ZLMediaKit 或 HLS/WebRTC。
     """
+    _require_video_scope(video_id, current_user)
     url = service.get_stream_url(db, video_id)
     if not url:
         raise HTTPException(status_code=404, detail="Stream URL not found or device offline")
     return StreamingResponse(_mjpeg_frame_generator(url), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @router.post("/ptz/{video_id}")
-def ptz_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
+def ptz_control(
+    video_id: int,
+    body: PTZControlRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """云台控制接口，前端发送方向和速度，然后通过 ONVIF 控制摄像头"""
     try:
+        _require_video_scope(video_id, current_user)
         # 添加日志
         import logging
         logger_temp = logging.getLogger("ptz_control")
@@ -476,9 +577,15 @@ def ptz_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"PTZ 控制失败: {e}")
 
 @router.post("/ptz/{video_id}/start")
-def ptz_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
+def ptz_start(
+    video_id: int,
+    body: PTZControlRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """云台持续移动（按下开始），前端按键按下时调用"""
     try:
+        _require_video_scope(video_id, current_user)
         service.ptz_start_move(db, video_id, body.direction.value, body.speed or 0.5)
         return {"status": "ok"}
     except ValueError as e:
@@ -488,9 +595,10 @@ def ptz_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/stop")
-def ptz_stop(video_id: int, db=Depends(get_db)):
+def ptz_stop(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """云台停止移动（松开停止），前端按键松开时调用"""
     try:
+        _require_video_scope(video_id, current_user)
         service.ptz_stop_move(db, video_id)
         return {"status": "ok"}
     except ValueError as e:
@@ -500,9 +608,15 @@ def ptz_stop(video_id: int, db=Depends(get_db)):
 
 
 @router.post("/zoom/{video_id}")
-def zoom_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
+def zoom_control(
+    video_id: int,
+    body: PTZControlRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """变焦单次控制接口"""
     try:
+        _require_video_scope(video_id, current_user)
         direction = body.direction.value
         _ensure_zoom_direction(direction)
         service.zoom_move(db, video_id, direction, body.speed or 0.5, body.duration or 0.5)
@@ -516,9 +630,15 @@ def zoom_control(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
 
 
 @router.post("/zoom/{video_id}/start")
-def zoom_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
+def zoom_start(
+    video_id: int,
+    body: PTZControlRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """变焦持续控制开始（按下开始）"""
     try:
+        _require_video_scope(video_id, current_user)
         direction = body.direction.value
         _ensure_zoom_direction(direction)
         service.zoom_start_move(db, video_id, direction, body.speed or 0.5)
@@ -532,9 +652,10 @@ def zoom_start(video_id: int, body: PTZControlRequest, db=Depends(get_db)):
 
 
 @router.post("/zoom/{video_id}/stop")
-def zoom_stop(video_id: int, db=Depends(get_db)):
+def zoom_stop(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """变焦持续控制停止（松开停止）"""
     try:
+        _require_video_scope(video_id, current_user)
         service.zoom_stop_move(db, video_id)
         return {"status": "ok"}
     except ValueError as e:
@@ -544,9 +665,10 @@ def zoom_stop(video_id: int, db=Depends(get_db)):
 
 
 @router.get("/ptz/{video_id}/presets", response_model=list[PTZPresetItem])
-def get_presets(video_id: int, db=Depends(get_db)):
+def get_presets(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """获取摄像头预置点列表"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.list_presets(db, video_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -555,9 +677,15 @@ def get_presets(video_id: int, db=Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/presets", response_model=PTZPresetItem)
-def create_preset(video_id: int, body: PresetCreateRequest, db=Depends(get_db)):
+def create_preset(
+    video_id: int,
+    body: PresetCreateRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """保存当前云台位置为预置点"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.set_preset(db, video_id, body.name, body.token)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -566,9 +694,16 @@ def create_preset(video_id: int, body: PresetCreateRequest, db=Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/presets/{preset_token}/goto")
-def goto_preset(video_id: int, preset_token: str, body: PresetGotoRequest, db=Depends(get_db)):
+def goto_preset(
+    video_id: int,
+    preset_token: str,
+    body: PresetGotoRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """跳转到指定预置点"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.goto_preset(db, video_id, preset_token, body.speed or 0.5)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -577,9 +712,15 @@ def goto_preset(video_id: int, preset_token: str, body: PresetGotoRequest, db=De
 
 
 @router.delete("/ptz/{video_id}/presets/{preset_token}")
-def delete_preset(video_id: int, preset_token: str, db=Depends(get_db)):
+def delete_preset(
+    video_id: int,
+    preset_token: str,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """删除预置点"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.remove_preset(db, video_id, preset_token)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -588,9 +729,15 @@ def delete_preset(video_id: int, preset_token: str, db=Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/presets/bulk-delete", response_model=PresetBulkDeleteResponse)
-def bulk_delete_presets(video_id: int, body: PresetBulkDeleteRequest, db=Depends(get_db)):
+def bulk_delete_presets(
+    video_id: int,
+    body: PresetBulkDeleteRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """批量删除预置点（减少前端逐条 DELETE 导致的 CORS 预检刷屏）"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.remove_presets_bulk(db, video_id, body.preset_tokens)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -599,9 +746,15 @@ def bulk_delete_presets(video_id: int, body: PresetBulkDeleteRequest, db=Depends
 
 
 @router.post("/ptz/{video_id}/cruise/start")
-def start_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_db)):
+def start_cruise(
+    video_id: int,
+    body: CruiseStartRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """启动常规巡航（按预置点列表轮巡）"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.start_cruise(db, video_id, body.preset_tokens, body.dwell_seconds or 8.0, body.rounds)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -610,27 +763,30 @@ def start_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_db)):
 
 
 @router.post("/ptz/{video_id}/cruise/stop")
-def stop_cruise(video_id: int):
+def stop_cruise(video_id: int, current_user: dict = Depends(get_current_user)):
     """停止常规巡航"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.stop_cruise(video_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"停止巡航失败: {e}")
 
 
 @router.get("/ptz/{video_id}/cruise/status")
-def cruise_status(video_id: int):
+def cruise_status(video_id: int, current_user: dict = Depends(get_current_user)):
     """获取巡航状态"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.get_cruise_status(video_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取巡航状态失败: {e}")
 
 
 @router.post("/ptz/{video_id}/cruise/start-current")
-def start_current_cruise(video_id: int, db=Depends(get_db)):
+def start_current_cruise(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """使用当前保存的配置启动巡航"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.start_current_cruise(db, video_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -639,9 +795,15 @@ def start_current_cruise(video_id: int, db=Depends(get_db)):
 
 
 @router.put("/ptz/{video_id}/cruise/current")
-def save_current_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_db)):
+def save_current_cruise(
+    video_id: int,
+    body: CruiseStartRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """保存当前巡航配置"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.save_current_cruise_config(
             db,
             video_id,
@@ -656,9 +818,10 @@ def save_current_cruise(video_id: int, body: CruiseStartRequest, db=Depends(get_
 
 
 @router.get("/ptz/{video_id}/cruise/current")
-def get_current_cruise(video_id: int, db=Depends(get_db)):
+def get_current_cruise(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """获取当前巡航配置"""
     try:
+        _require_video_scope(video_id, current_user)
         return service.get_current_cruise_config(db, video_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -667,8 +830,9 @@ def get_current_cruise(video_id: int, db=Depends(get_db)):
 
 
 @router.post("/ai/stop")
-async def stop_ai(device_id: str):
+async def stop_ai(device_id: str, current_user: dict = Depends(get_current_user)):
     """停止 AI 监控"""
+    _require_video_scope(device_id, current_user)
     success = ai_manager.stop_monitoring(device_id)
     if success:
         return {"code": 200, "message": "AI监控已停止"}
@@ -678,9 +842,15 @@ async def stop_ai(device_id: str):
 
 
 @router.get("/{video_id}/recordings/direct")
-def list_recording_videos(video_id: int, limit: int = 120, sort: str = "desc"):
+def list_recording_videos(
+    video_id: int,
+    limit: int = 120,
+    sort: str = "desc",
+    current_user: dict = Depends(get_current_user),
+):
     """获取设备的常规录制视频列表（用于"常规监控回放"）"""
     try:
+        _require_video_scope(video_id, current_user)
         videos = service.list_recording_videos_direct(video_id, limit=limit, sort_order=sort)
         return {"code": 0, "data": videos, "total": len(videos)}
     except Exception as e:
@@ -688,9 +858,15 @@ def list_recording_videos(video_id: int, limit: int = 120, sort: str = "desc"):
 
 
 @router.get("/{video_id}/alarms/videos")
-def list_alarm_videos_for_device(video_id: int, limit: int = 120, sort: str = "desc"):
+def list_alarm_videos_for_device(
+    video_id: int,
+    limit: int = 120,
+    sort: str = "desc",
+    current_user: dict = Depends(get_current_user),
+):
     """获取设备的报警视频列表（用于"报警监控回放"）"""
     try:
+        _require_video_scope(video_id, current_user)
         videos = service.list_alarm_videos_direct(video_id, limit=limit, sort_order=sort)
         return {"code": 0, "data": videos, "total": len(videos)}
     except Exception as e:
@@ -698,10 +874,37 @@ def list_alarm_videos_for_device(video_id: int, limit: int = 120, sort: str = "d
 
 
 @router.get("/{video_id}/alarms/screenshots")
-def list_alarm_screenshots_for_device(video_id: int, limit: int = 120, sort: str = "desc"):
+def list_alarm_screenshots_for_device(
+    video_id: int,
+    limit: int = 120,
+    sort: str = "desc",
+    current_user: dict = Depends(get_current_user),
+):
     """获取设备的告警截图列表（用于"告警截图"）"""
     try:
+        _require_video_scope(video_id, current_user)
         screenshots = service.list_alarm_screenshots(video_id, limit=limit, sort_order=sort)
         return {"code": 0, "data": screenshots, "total": len(screenshots)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取告警截图列表失败: {e}")
+
+
+@router.get("/storage/status")
+def get_storage_status(current_user: dict = Depends(get_current_user)):
+    """获取存储空间使用情况"""
+    try:
+        status = service.check_storage_space()
+        return {"code": 0, "data": status}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取存储状态失败: {e}")
+
+
+@router.post("/storage/cleanup")
+def trigger_storage_cleanup(current_user: dict = Depends(get_current_user)):
+    """手动触发存储清理"""
+    try:
+        service.cleanup_expired_files()
+        status = service.check_storage_space()
+        return {"code": 0, "message": "清理完成", "data": status}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清理失败: {e}")

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { ProjectFormData, User, Device, Region, Branch } from '../types';
-import { getApiUrl } from '@/src/api/config';
+import { getApiUrl, getAuthHeaders } from '@/src/api/config';
 
 interface ProjectModalProps {
   isEdit?: boolean;
@@ -9,6 +9,52 @@ interface ProjectModalProps {
   onClose: () => void;
   onSuccess: () => void;
 }
+
+const formatApiError = (status: number, payload: unknown): string => {
+  if (!payload) return `HTTP ${status}`;
+  if (typeof payload === 'string') return payload || `HTTP ${status}`;
+
+  if (typeof payload === 'object') {
+    const data = payload as { detail?: unknown; message?: unknown; error?: unknown };
+    const detail = data.detail ?? data.message ?? data.error;
+
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (!item || typeof item !== 'object') return String(item);
+          const errorItem = item as { loc?: unknown[]; msg?: string };
+          const field = Array.isArray(errorItem.loc) ? errorItem.loc.join('.') : '';
+          return field ? `${field}: ${errorItem.msg || '校验失败'}` : errorItem.msg || JSON.stringify(item);
+        })
+        .join('\n');
+    }
+
+    if (detail) return typeof detail === 'string' ? detail : JSON.stringify(detail);
+    return JSON.stringify(payload);
+  }
+
+  return `HTTP ${status}`;
+};
+
+const readApiError = async (res: Response): Promise<string> => {
+  const contentType = res.headers.get('content-type') || '';
+  try {
+    const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+    return formatApiError(res.status, payload);
+  } catch {
+    return `HTTP ${res.status} ${res.statusText}`;
+  }
+};
+
+const asArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === 'object') {
+    const data = value as { data?: unknown; list?: unknown; items?: unknown; records?: unknown; devices?: unknown };
+    const nested = data.data ?? data.list ?? data.items ?? data.records ?? data.devices;
+    if (Array.isArray(nested)) return nested as T[];
+  }
+  return [];
+};
 
 export function ProjectModal({ isEdit = false, initialData, onClose, onSuccess }: ProjectModalProps) {
   const [formData, setFormData] = useState<ProjectFormData>(
@@ -32,16 +78,17 @@ export function ProjectModal({ isEdit = false, initialData, onClose, onSuccess }
 
   useEffect(() => {
     // 加载可选的用户、设备、区域、分公司
+    const headers = getAuthHeaders();
     Promise.all([
-      fetch(getApiUrl('/admin/users')).then((r) => r.json()).catch(() => []),
-      fetch(getApiUrl('/devices/')).then((r) => r.json()).catch(() => []),
-      fetch(getApiUrl('/fence/regions')).then((r) => r.json()).catch(() => []),
+      fetch(getApiUrl('/admin/users'), { headers }).then((r) => r.json()).catch(() => []),
+      fetch(getApiUrl('/device/list'), { headers }).then((r) => r.json()).catch(() => []),
+      fetch(getApiUrl('/fence/regions'), { headers }).then((r) => r.json()).catch(() => []),
       // fix: dashboard controller uses /api/dashboard prefix
-      fetch(getApiUrl('/api/dashboard/branches')).then((r) => r.json()).catch(() => []),
+      fetch(getApiUrl('/api/dashboard/branches'), { headers }).then((r) => r.json()).catch(() => []),
     ]).then(([users, devices, regions, branches]) => {
-      setAvailableUsers(users || []);
-      setAvailableDevices(devices || []);
-      setAvailableRegions(regions || []);
+      setAvailableUsers(asArray<User>(users));
+      setAvailableDevices(asArray<Device>(devices));
+      setAvailableRegions(asArray<Region>(regions));
       // fix: ensure branches is an array to avoid map error
       setAvailableBranches(Array.isArray(branches) ? branches : []);
     });
@@ -54,18 +101,26 @@ export function ProjectModal({ isEdit = false, initialData, onClose, onSuccess }
     try {
       const url = isEdit ? getApiUrl(`/projects/${(initialData as any).id}`) : getApiUrl('/projects/');
       const method = isEdit ? 'PUT' : 'POST';
+      const payload = {
+        ...formData,
+        branch_id: formData.branch_id || undefined,
+        user_ids: formData.user_ids.filter((id) => Number.isFinite(id)),
+        device_ids: formData.device_ids.filter(Boolean),
+        region_ids: formData.region_ids.filter((id) => Number.isFinite(id)),
+      };
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error('Failed to save project');
+      if (!res.ok) throw new Error(await readApiError(res));
       onSuccess();
     } catch (error) {
       console.error('Error saving project:', error);
-      alert(isEdit ? '更新失败' : '创建失败');
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`${isEdit ? '更新失败' : '创建失败'}\n\n原因：${message}`);
     } finally {
       setLoading(false);
     }
@@ -164,8 +219,8 @@ export function ProjectModal({ isEdit = false, initialData, onClose, onSuccess }
                 value={formData.user_ids.map(String)}
                 onChange={(e) => {
                   const selected = Array.from(e.target.selectedOptions, (opt: HTMLOptionElement) =>
-                    parseInt(opt.value)
-                  );
+                    Number(opt.value)
+                  ).filter((id) => Number.isFinite(id));
                   setFormData({ ...formData, user_ids: selected });
                 }}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:outline-none"
@@ -208,8 +263,8 @@ export function ProjectModal({ isEdit = false, initialData, onClose, onSuccess }
                 value={formData.region_ids.map(String)}
                 onChange={(e) => {
                   const selected = Array.from(e.target.selectedOptions, (opt: HTMLOptionElement) =>
-                    parseInt(opt.value)
-                  );
+                    Number(opt.value)
+                  ).filter((id) => Number.isFinite(id));
                   setFormData({ ...formData, region_ids: selected });
                 }}
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:outline-none"

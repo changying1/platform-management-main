@@ -14,10 +14,12 @@ class GridBase(BaseModel):
     grid_id: str
     name: str
     level: GridLevel
+    project_id: Optional[str] = ""
     description: Optional[str] = ""
     bounds_json: Optional[str] = ""
     parent_id: Optional[str] = None
-    project_id: Optional[str] = None
+    status: Optional[str] = "normal"
+    area: Optional[float] = None
 
 
 class GridCreate(GridBase):
@@ -32,6 +34,8 @@ class GridUpdate(BaseModel):
     bounds_json: Optional[str] = None
     parent_id: Optional[str] = None
     project_id: Optional[str] = None
+    status: Optional[str] = None
+    area: Optional[float] = None
 
 
 class GridOut(GridBase):

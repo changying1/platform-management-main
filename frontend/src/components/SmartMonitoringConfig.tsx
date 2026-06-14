@@ -16,6 +16,11 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
+  Building2,
+  Folder,
+  FolderOpen,
+  MapPin,
+  Users,
 } from 'lucide-react';
 import {
   startAIMonitoring,
@@ -28,8 +33,9 @@ import {
 
 interface SmartMonitoringConfigProps {
   devices: Video[];
-  onClose: () => void;
+  onClose?: () => void;
   onSuccess?: () => void;
+  embedded?: boolean;
   // ✅ 新增：初始选中的设备ID列表
   initialSelectedDeviceIds?: number[];
   // ✅ 新增：初始选中的算法ID列表
@@ -39,6 +45,8 @@ interface SmartMonitoringConfigProps {
 interface DeviceFilter {
   company: string;
   project: string;
+  grid: string;
+  team: string;
   status: string;
   searchText: string;
 }
@@ -49,10 +57,79 @@ interface BindingConfig {
   autoStart: boolean;
 }
 
+const textOf = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map(textOf).filter(Boolean).join(' ');
+  }
+  return String(value).trim();
+};
+
+const firstText = (source: unknown, keys: string[]): string => {
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = textOf(record?.[key]);
+    if (value) return value;
+  }
+  return '';
+};
+
+const normalizeText = (value: unknown): string => textOf(value).toLowerCase();
+
+const getDeviceCompany = (device: Video) =>
+  firstText(device, ['company', 'department', 'dept', 'branch_name', 'branchName']);
+
+const getDeviceProject = (device: Video) =>
+  firstText(device, ['project', 'project_name', 'projectName']);
+
+const getDeviceGrid = (device: Video) =>
+  firstText(device, ['grid', 'grid_name', 'gridName', 'grid_id', 'gridId']);
+
+const getDeviceTeam = (device: Video) =>
+  firstText(device, ['team', 'team_name', 'teamName', 'workTeam', 'work_team', 'team_id', 'teamId']);
+
+const getDeviceResponsible = (device: Video) =>
+  firstText(device, [
+    'responsible_person_name',
+    'responsiblePersonName',
+    'responsible_person',
+    'responsiblePerson',
+    'holder_name',
+    'holderName',
+    'holder',
+    'holder_id',
+    'holderId',
+    'manager_name',
+    'managerName',
+    'manager',
+    'owner_name',
+    'ownerName',
+    'owner_id',
+    'ownerId',
+  ]);
+
+const getDeviceSearchText = (device: Video) =>
+  [
+    device.id,
+    device.name,
+    getDeviceCompany(device),
+    getDeviceProject(device),
+    getDeviceGrid(device),
+    getDeviceTeam(device),
+    getDeviceResponsible(device),
+    device.ip_address,
+    device.device_serial,
+    device.remark,
+  ]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(' ');
+
 export default function SmartMonitoringConfig({ 
   devices, 
   onClose, 
   onSuccess,
+  embedded = false,
   initialSelectedDeviceIds = [],
   initialSelectedAlgoIds = []
 }: SmartMonitoringConfigProps) {
@@ -61,9 +138,25 @@ export default function SmartMonitoringConfig({
   const [filter, setFilter] = useState<DeviceFilter>({
     company: 'all',
     project: 'all',
+    grid: 'all',
+    team: 'all',
     status: 'all',
     searchText: '',
   });
+
+  // 确保初始状态正确，防止意外修改
+  useEffect(() => {
+    // 只在组件挂载时检查初始状态
+    if (filter.company !== 'all') {
+      console.warn('Filter company was modified on mount:', filter.company);
+    }
+    
+    // 检查设备数据中的公司值是否一致
+    const companyValues = [...new Set(devices.map(d => d.company).filter(Boolean))];
+    if (companyValues.length > 1) {
+      console.warn('Multiple companies found in devices:', companyValues);
+    }
+  }, []); // 空依赖数组，只在挂载时执行一次
   
   const [selectedDevices, setSelectedDevices] = useState<Set<number>>(
     () => new Set(initialSelectedDeviceIds)
@@ -74,6 +167,7 @@ export default function SmartMonitoringConfig({
   
   const [autoStart, setAutoStart] = useState(true);
   const [configuring, setConfiguring] = useState(false);
+  const [showTreeDropdown, setShowTreeDropdown] = useState(false);
   const [configResults, setConfigResults] = useState<Map<number, { success: boolean; message: string }>>(new Map());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['filter']));
   const [showPreview, setShowPreview] = useState(false);
@@ -110,7 +204,17 @@ export default function SmartMonitoringConfig({
   // ✅ 删除重复的 useEffect（第 86 行附近的那个）
 
   const fetchAIRules = async () => {
-    setAlgos([]);
+    const defaultAlgos = [
+      { id: "helmet", name: "安全帽检测", desc: "检测安全帽佩戴情况" },
+      { id: "smoking", name: "抽烟检测", desc: "检测人员抽烟行为" },
+      { id: "signage", name: "现场标识类", desc: "识别现场安全标识" },
+      { id: "supervisor_count", name: "现场监督人数统计", desc: "统计监督人员数量" },
+      { id: "ladder_angle", name: "梯子角度类", desc: "检测梯子使用角度" },
+      { id: "hole_curb", name: "孔口挡坎违规类", desc: "检测孔口挡坎合规性" },
+      { id: "unauthorized_person", name: "围栏入侵管理类", desc: "检测非法入侵" },
+    ];
+    
+    setAlgos(defaultAlgos);
     
     try {
       const rules: AIRule[] = await getAIRules();
@@ -127,26 +231,100 @@ export default function SmartMonitoringConfig({
     }
   };
 
-  const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
+  const companies = ['all', ...new Set(devices.map(getDeviceCompany).filter(Boolean))];
+  
   const getProjectsByCompany = () => {
     if (filter.company === 'all') {
-      return ['all', ...new Set(devices.map(d => d.project).filter(Boolean))];
+      return ['all', ...new Set(devices.map(getDeviceProject).filter(Boolean))];
     }
     const projects = devices
-      .filter(d => d.company === filter.company)
-      .map(d => d.project)
+      .filter(d => getDeviceCompany(d) === filter.company)
+      .map(getDeviceProject)
       .filter(Boolean);
     return ['all', ...new Set(projects)];
   };
   const projects = getProjectsByCompany();
+  
+  const getGridsByProject = () => {
+    let filtered = devices;
+    if (filter.company !== 'all') {
+      filtered = filtered.filter(d => getDeviceCompany(d) === filter.company);
+    }
+    if (filter.project !== 'all') {
+      filtered = filtered.filter(d => getDeviceProject(d) === filter.project);
+    }
+    const grids = filtered.map(getDeviceGrid).filter(Boolean);
+    return ['all', ...new Set(grids)];
+  };
+  const grids = getGridsByProject();
+  
+  const getTeamsByGrid = () => {
+    let filtered = devices;
+    if (filter.company !== 'all') {
+      filtered = filtered.filter(d => getDeviceCompany(d) === filter.company);
+    }
+    if (filter.project !== 'all') {
+      filtered = filtered.filter(d => getDeviceProject(d) === filter.project);
+    }
+    if (filter.grid !== 'all') {
+      filtered = filtered.filter(d => getDeviceGrid(d) === filter.grid);
+    }
+    const teams = filtered.map(getDeviceTeam).filter(Boolean);
+    return ['all', ...new Set(teams)];
+  };
+  const teams = getTeamsByGrid();
+
+  // 树形下拉菜单辅助函数
+  const getProjectsByCompanyFilter = (company: string) => {
+    const projects = devices
+      .filter(d => getDeviceCompany(d) === company)
+      .map(getDeviceProject)
+      .filter(Boolean);
+    return ['all', ...new Set(projects)];
+  };
+
+  const getGridsByCompanyFilter = (company: string) => {
+    const grids = devices
+      .filter(d => getDeviceCompany(d) === company)
+      .map(getDeviceGrid)
+      .filter(Boolean);
+    return [...new Set(grids)];
+  };
+
+  const getGridsByProjectFilter = (company: string, project: string) => {
+    const grids = devices
+      .filter(d => getDeviceCompany(d) === company && getDeviceProject(d) === project)
+      .map(getDeviceGrid)
+      .filter(Boolean);
+    return ['all', ...new Set(grids)];
+  };
+
+  const getTeamsByGridFilter = (company: string, project: string, grid: string) => {
+    const teams = devices
+      .filter(d => getDeviceCompany(d) === company && getDeviceProject(d) === project && getDeviceGrid(d) === grid)
+      .map(getDeviceTeam)
+      .filter(Boolean);
+    return ['all', ...new Set(teams)];
+  };
+
+  const getGridStatus = (grid: string) => {
+    // 模拟网格状态
+    const statusMap: Record<string, 'normal' | 'warning'> = {
+      'A区出入口': 'normal',
+      'B区施工区': 'warning',
+      'C区材料堆放': 'normal',
+    };
+    return statusMap[grid] || 'normal';
+  };
 
   // 过滤设备
   const filteredDevices = devices.filter(device => {
-    if (filter.company !== 'all' && device.company !== filter.company) return false;
-    if (filter.project !== 'all' && device.project !== filter.project) return false;
+    if (filter.company !== 'all' && getDeviceCompany(device) !== filter.company) return false;
+    if (filter.project !== 'all' && getDeviceProject(device) !== filter.project) return false;
+    if (filter.grid !== 'all' && getDeviceGrid(device) !== filter.grid) return false;
+    if (filter.team !== 'all' && getDeviceTeam(device) !== filter.team) return false;
     if (filter.status !== 'all' && device.status !== filter.status) return false;
-    if (filter.searchText && !device.name.toLowerCase().includes(filter.searchText.toLowerCase()) &&
-        !device.ip_address?.includes(filter.searchText)) return false;
+    if (filter.searchText && !getDeviceSearchText(device).includes(normalizeText(filter.searchText))) return false;
     return true;
   });
 
@@ -301,8 +479,10 @@ export default function SmartMonitoringConfig({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-xl border border-cyan-500/30 shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div className={embedded ? "h-full min-h-[640px]" : "fixed inset-0 z-[300] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"}>
+      <div className={`bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-xl border border-cyan-500/30 shadow-2xl w-full flex flex-col overflow-hidden ${
+        embedded ? 'h-full' : 'max-w-6xl max-h-[90vh]'
+      }`}>
         
         {/* 头部 */}
         <div className="flex items-center justify-between p-6 border-b border-cyan-500/20 bg-slate-900/50">
@@ -315,36 +495,36 @@ export default function SmartMonitoringConfig({
               <p className="text-sm text-slate-400">批量配置设备的AI监控功能</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-slate-200"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 统计信息 */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-1.5">
+                <span className="text-xl font-bold text-cyan-400">{stats.totalDevices}</span>
+                <span className="text-sm text-slate-400">总设备</span>
+              </div>
+              <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-1.5">
+                <span className="text-xl font-bold text-green-400">{stats.selectedDevices}</span>
+                <span className="text-sm text-slate-400">已选设备</span>
+              </div>
+              <div className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-lg px-3 py-1.5">
+                <span className="text-xl font-bold text-purple-400">{stats.selectedAlgos}</span>
+                <span className="text-sm text-slate-400">已选功能</span>
+              </div>
+            </div>
+            
+            {!embedded && onClose && (
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-slate-200"
+              >
+                <X size={20} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           
-          {/* 统计卡片 */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-              <div className="text-2xl font-bold text-cyan-400">{stats.totalDevices}</div>
-              <div className="text-sm text-slate-400">总设备数</div>
-            </div>
-            {/* <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-              <div className="text-2xl font-bold text-blue-400">{stats.filteredDevices}</div>
-              <div className="text-sm text-slate-400">筛选后设备</div>
-            </div> */}
-            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-              <div className="text-2xl font-bold text-green-400">{stats.selectedDevices}</div>
-              <div className="text-sm text-slate-400">已选设备</div>
-            </div>
-            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-              <div className="text-2xl font-bold text-purple-400">{stats.selectedAlgos}</div>
-              <div className="text-sm text-slate-400">已选功能</div>
-            </div>
-          </div>
-
           <div className="grid grid-cols-2 gap-6">
             
             {/* 左侧：设备筛选与选择 */}
@@ -371,65 +551,185 @@ export default function SmartMonitoringConfig({
               </div>
 
               {/* 筛选条件 */}
-              <div className="bg-slate-800/30 rounded-lg border border-slate-700 p-4 space-y-3">
-                <div 
-                  className="flex items-center justify-between cursor-pointer"
-                  onClick={() => toggleGroup('filter')}
-                >
-                  <div className="flex items-center gap-2 text-slate-300 font-medium">
+              <div className="bg-slate-800/30 rounded-lg border border-slate-700 p-3">
+                <div className="flex items-center gap-2">
+                  {/* 标题 */}
+                  <div className="flex items-center gap-1.5 text-slate-300 font-medium text-sm shrink-0">
                     <Filter size={14} />
                     筛选条件
                   </div>
-                  {expandedGroups.has('filter') ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                </div>
-                
-                {expandedGroups.has('filter') && (
-                  <div className="space-y-3 pt-2">
-                    {/* 搜索框 */}
-                    <div className="relative">
-                      <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="搜索设备名称或IP..."
-                        value={filter.searchText}
-                        onChange={(e) => setFilter({ ...filter, searchText: e.target.value })}
-                        className="w-full bg-slate-900/50 border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                      />
-                    </div>
 
-                    <div className="grid grid-cols-3 gap-3">
-                      <select
-                        value={filter.company}
-                        onChange={(e) => setFilter({ ...filter, company: e.target.value, project: 'all' })}
-                        className="bg-slate-900/50 border border-slate-600 rounded-lg px-2 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
-                      >
-                        {companies.map(c => (
-                          <option key={c} value={c}>{c === 'all' ? '全部公司' : c}</option>
-                        ))}
-                      </select>
-
-                      <select
-                        value={filter.project}
-                        onChange={(e) => setFilter({ ...filter, project: e.target.value })}
-                        className="bg-slate-900/50 border border-slate-600 rounded-lg px-2 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
-                      >
-                        {projects.map(p => (
-                          <option key={p} value={p}>{p === 'all' ? '全部项目' : p}</option>
-                        ))}
-                      </select>
-
-                      <select
-                        value={filter.status}
-                        onChange={(e) => setFilter({ ...filter, status: e.target.value })}
-                        className="bg-slate-900/50 border border-slate-600 rounded-lg px-2 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
-                      >
-                        <option value="all">全部状态</option>
-                        <option value="online">在线</option>
-                        <option value="offline">离线</option>
-                      </select>
-                    </div>
+                  {/* 搜索框 */}
+                  <div className="relative flex-1 max-w-xs">
+                    <Search size={12} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="搜索设备、公司、项目、网格、工队或责任人..."
+                      value={filter.searchText}
+                      onChange={(e) => setFilter({ ...filter, searchText: e.target.value })}
+                      className="w-full bg-slate-900/50 border border-slate-600 rounded-lg pl-7 pr-2 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                    />
                   </div>
-                )}
+
+                  {/* 层级选择下拉按钮 */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowTreeDropdown(!showTreeDropdown)}
+                      className="bg-cyan-600 hover:bg-cyan-500 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                    >
+                      <Building2 size={14} />
+                      {filter.company === 'all' ? '全部公司' : filter.company}
+                      {filter.project !== 'all' && ` / ${filter.project}`}
+                      {filter.grid !== 'all' && ` / ${filter.grid}`}
+                      {filter.team !== 'all' && ` / ${filter.team}`}
+                      <ChevronDown size={14} className={`transition-transform ${showTreeDropdown ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {/* 树形下拉菜单 */}
+                    {showTreeDropdown && (
+                      <div className="absolute top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 min-w-[200px] max-h-[300px] overflow-y-auto">
+                        <div className="p-2">
+                          {/* 全部公司选项 */}
+                          <div
+                            className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-xs transition-colors mb-1 ${
+                              filter.company === 'all' ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
+                            }`}
+                            onClick={() => {
+                              setFilter({ company: 'all', project: 'all', grid: 'all', team: 'all', status: filter.status, searchText: filter.searchText });
+                              setShowTreeDropdown(false);
+                            }}
+                          >
+                            <Building2 size={12} />
+                            全部公司
+                          </div>
+                          {companies.filter(c => c !== 'all').map(company => (
+                            <div key={company} className="mb-1">
+                              <div
+                                className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-xs transition-colors ${
+                                  filter.company === company ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
+                                }`}
+                                onClick={() => {
+                                  setFilter({ ...filter, company, project: 'all', grid: 'all', team: 'all' });
+                                }}
+                              >
+                                <Building2 size={12} />
+                                {company}
+                                <span className="text-slate-500 ml-auto">({getGridsByCompanyFilter(company).length}个网格)</span>
+                              </div>
+                              {/* 项目层级 */}
+                              {filter.company === company && (
+                                <div className="ml-4 mt-1">
+                                  <div
+                                    className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                      filter.project === 'all' && filter.company === company ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-400 hover:bg-slate-800'
+                                    }`}
+                                    onClick={() => {
+                                      setFilter({ ...filter, project: 'all', grid: 'all', team: 'all' });
+                                    }}
+                                  >
+                                    <Folder size={12} />
+                                    全部项目
+                                  </div>
+                                  {getProjectsByCompanyFilter(company).filter(p => p !== 'all').map(project => (
+                                    <div key={project} className="mb-1">
+                                      <div
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                          filter.project === project ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
+                                        }`}
+                                        onClick={() => {
+                                          setFilter({ ...filter, project, grid: 'all', team: 'all' });
+                                        }}
+                                      >
+                                        <FolderOpen size={12} />
+                                        {project}
+                                      </div>
+                                      {/* 网格层级 */}
+                                      {filter.project === project && (
+                                        <div className="ml-4 mt-1">
+                                          <div
+                                            className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                              filter.grid === 'all' && filter.project === project ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-400 hover:bg-slate-800'
+                                            }`}
+                                            onClick={() => {
+                                              setFilter({ ...filter, grid: 'all', team: 'all' });
+                                            }}
+                                          >
+                                            <MapPin size={12} />
+                                            全部网格
+                                          </div>
+                                          {getGridsByProjectFilter(company, project).filter(g => g !== 'all').map(grid => (
+                                            <div key={grid} className="mb-1">
+                                              <div
+                                                className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                                  filter.grid === grid ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
+                                                }`}
+                                                onClick={() => {
+                                                  setFilter({ ...filter, grid, team: 'all' });
+                                                }}
+                                              >
+                                                <MapPin size={12} className="text-cyan-400" />
+                                                {grid}
+                                                <span className="flex-1" />
+                                                <span className={`w-2 h-2 rounded-full ${getGridStatus(grid) === 'normal' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                                                <span className="text-slate-500 ml-1">{getGridStatus(grid) === 'normal' ? '正常' : '预警'}</span>
+                                              </div>
+                                              {/* 工队层级 */}
+                                              {filter.grid === grid && (
+                                                <div className="ml-4 mt-1">
+                                                  <div
+                                                    className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                                      filter.team === 'all' && filter.grid === grid ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-400 hover:bg-slate-800'
+                                                    }`}
+                                                    onClick={() => {
+                                                      setFilter({ ...filter, team: 'all' });
+                                                    }}
+                                                  >
+                                                    <Users size={12} />
+                                                    全部工队
+                                                  </div>
+                                                  {getTeamsByGridFilter(company, project, grid).filter(t => t !== 'all').map(team => (
+                                                    <div
+                                                      key={team}
+                                                      className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs transition-colors ${
+                                                        filter.team === team ? 'bg-cyan-600/20 text-cyan-400' : 'text-slate-300 hover:bg-slate-800'
+                                                      }`}
+                                                      onClick={() => {
+                                                        setFilter({ ...filter, team });
+                                                        setShowTreeDropdown(false);
+                                                      }}
+                                                    >
+                                                      <Users size={12} className="text-green-400" />
+                                                      {team}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 状态选择 */}
+                  <select
+                    value={filter.status}
+                    onChange={(e) => setFilter({ ...filter, status: e.target.value })}
+                    className="bg-slate-900/50 border border-slate-600 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-400 min-w-[70px]"
+                  >
+                    <option value="all">全部状态</option>
+                    <option value="online">在线</option>
+                    <option value="offline">离线</option>
+                  </select>
+                </div>
               </div>
 
               {/* 设备列表 */}
@@ -459,7 +759,10 @@ export default function SmartMonitoringConfig({
                               <span className="text-sm font-medium text-slate-200 truncate">{device.name}</span>
                             </div>
                             <div className="text-xs text-slate-400 truncate">
-                              {device.company && `${device.company} / `}{device.project}
+                              {getDeviceCompany(device) && `${getDeviceCompany(device)} / `}
+                              {getDeviceProject(device) && `${getDeviceProject(device)} / `}
+                              {getDeviceGrid(device) && `${getDeviceGrid(device)} / `}
+                              {getDeviceTeam(device)}
                             </div>
                           </div>
                           {configResults.has(device.id) && (
@@ -576,12 +879,14 @@ export default function SmartMonitoringConfig({
             )}
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-200 transition-colors"
-            >
-              取消
-            </button>
+            {!embedded && onClose && (
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-200 transition-colors"
+              >
+                取消
+              </button>
+            )}
             <button
               onClick={applyConfiguration}
               disabled={configuring || selectedDevices.size === 0}

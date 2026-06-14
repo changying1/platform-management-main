@@ -2,7 +2,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import type React from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
-import { FenceData, ProjectRegionData, FenceDevice } from "../types";
+import { FenceData, ProjectRegionData, FenceDevice, getFenceDeviceAlarmKeys } from "../types";
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "ab3044412b12b8deb9da741c6739be1d";
 const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || "65a74edbb64d47769637df170a5da117";
@@ -19,7 +19,8 @@ export const useFenceMap = (containerRef: React.RefObject<HTMLDivElement>) => {
     fences: any[];
     devices: Record<string, any>;
     draft: any[];
-  }>({ fences: [], devices: {}, draft: [] });
+    historical: any[];
+  }>({ fences: [], devices: {}, draft: [], historical: [] });
 
   const toAmapLngLat = (latlng: [number, number]) => [latlng[1], latlng[0]] as [number, number];
 
@@ -79,6 +80,82 @@ mapRef.current = new AMap.Map(containerRef.current, {
   const setCenter = useCallback((latlng: [number, number]) => {
     if (mapRef.current) mapRef.current.setCenter(toAmapLngLat(latlng));
   }, []);
+
+  const renderHistoricalFence = useCallback((fence: FenceData | null, label?: string) => {
+    if (!mapRef.current || !amapRef.current) return;
+    clearGroup("historical");
+    if (!fence) return;
+
+    const AMap = amapRef.current;
+    const map = mapRef.current;
+    const color = "#f59e0b";
+    const commonOptions = {
+      strokeColor: color,
+      fillColor: color,
+      fillOpacity: 0.22,
+      strokeWeight: 6,
+      strokeOpacity: 1,
+      strokeStyle: "dashed",
+      strokeDasharray: [12, 8],
+      zIndex: 120,
+      clickable: false,
+      bubble: true,
+    };
+
+    let center: [number, number] | null = null;
+
+    if (fence.type === "Circle" && fence.center) {
+      center = fence.center;
+      const circle = new AMap.Circle({
+        ...commonOptions,
+        center: toAmapLngLat(fence.center),
+        radius: fence.radius || 100,
+      });
+      map.add(circle);
+      overlayRefs.current.historical.push(circle);
+    } else if (fence.type === "Polygon" && fence.points && fence.points.length > 0) {
+      center = fence.points.reduce(
+        (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+        [0, 0]
+      ).map(value => value / fence.points!.length) as [number, number];
+
+      const polygon = new AMap.Polygon({
+        ...commonOptions,
+        path: fence.points.map(toAmapLngLat),
+      });
+      map.add(polygon);
+      overlayRefs.current.historical.push(polygon);
+    }
+
+    if (!center) return;
+
+    const labelMarker = new AMap.Marker({
+      position: toAmapLngLat(center),
+      content: `
+        <div style="
+          background: rgba(245, 158, 11, 0.96);
+          color: #0f172a;
+          font-size: 12px;
+          font-weight: 800;
+          padding: 6px 12px;
+          border-radius: 999px;
+          border: 2px solid white;
+          box-shadow: 0 8px 22px rgba(15,23,42,0.35);
+          white-space: nowrap;
+          pointer-events: none;
+        ">
+          ${label || "历史围栏"} · ${fence.name}
+        </div>
+      `,
+      offset: new AMap.Pixel(0, -34),
+      zIndex: 140,
+    });
+    map.add(labelMarker);
+    overlayRefs.current.historical.push(labelMarker);
+
+    map.setCenter(toAmapLngLat(center));
+    map.setZoom(fence.type === "Circle" ? 18 : 16);
+  }, [clearGroup]);
 
   // 添加地点搜索
 const initPlaceSearch = useCallback(() => {
@@ -308,6 +385,7 @@ const commonOptions = {
     onDeviceMove?: (id: string, lat: number, lng: number) => void
   ) => {
     if (!mapRef.current || !amapRef.current) return;
+    const AMap = amapRef.current;
     const map = mapRef.current;
     
     const currentMarkers = overlayRefs.current.devices;
@@ -322,7 +400,9 @@ const commonOptions = {
     });
 
     devices.forEach((device) => {
-      const vType = violationTypes[device.device_id];
+      const vType = getFenceDeviceAlarmKeys(device)
+        .map((key) => violationTypes[key])
+        .find(Boolean) || null;
       const isControlled = controlledIds.has(device.device_id);
       
       let color = "#22c55e"; 
@@ -655,6 +735,7 @@ const setMapDraggable = useCallback((draggable: boolean) => {
     mapRef,   
     setCenter,
     renderFences,
+    renderHistoricalFence,
     renderDevices,
     renderDraft,
     bindClick,

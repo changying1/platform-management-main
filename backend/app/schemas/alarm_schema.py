@@ -20,6 +20,19 @@ class AlarmUpdate(BaseModel):
 class AlarmOut(AlarmCreate):
     id: int
     project_id: int | None = None
+    branch_id: Optional[int | str] = None
+    branch_name: Optional[str] = None
+    company: Optional[str] = None
+    project_name: Optional[str] = None
+    project: Optional[str] = None
+    grid_id: Optional[str] = None
+    grid_name: Optional[str] = None
+    grid: Optional[str] = None
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    team: Optional[str] = None
+    trigger_person_name: Optional[str] = None
+    trigger_person_id: Optional[str] = None
     timestamp: datetime
     handled_at: datetime | None = None
     recording_path: Optional[str] = None
@@ -42,6 +55,7 @@ class AlarmOut(AlarmCreate):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     error_message: Optional[str] = None
+    source_type: Optional[str] = None
     
     
     class Config:

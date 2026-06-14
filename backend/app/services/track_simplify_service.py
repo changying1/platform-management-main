@@ -10,7 +10,7 @@ import math
 import time
 from datetime import datetime
 from app.utils.logger import get_logger
-from app.utils.config_manager import get_system_settings
+from app.utils.config_manager import get_system_settings
 
 logger = get_logger("TrackSimplifyService")
 

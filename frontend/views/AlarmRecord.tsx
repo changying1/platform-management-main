@@ -1,6 +1,7 @@
-﻿﻿import React, { useState, useEffect, useRef } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
+import { hasStoredPermission } from '../src/utils/permissions';
 import { 
   Bell, 
   ShieldAlert, 
@@ -22,6 +23,7 @@ interface AlarmRecord {
   id: string;
   alarmCode: string;
   alarmType: string;
+  recordKey: string;
   type: 'fence' | 'video';
   title: string;
   description: string;
@@ -32,8 +34,11 @@ interface AlarmRecord {
   location: string;
   deviceName: string;
   deviceId: string;
-  personName: string;
+  personName?: string;
   personnelId?: string;
+  branchName?: string;
+  projectName?: string;
+  gridName?: string;
   team?: string;
   snapshot?: string;
   videoPath?: string;
@@ -46,6 +51,7 @@ interface AlarmRecord {
   fenceId?: string;
   fenceName?: string;
   projectId?: number;
+  sourceType?: 'fence' | 'video';
 }
 
 type AlarmFilterTreeNode = {
@@ -194,6 +200,7 @@ function AlarmPlaybackPlayer({ src, alarm }: { src: string; alarm: AlarmRecord }
 export default function AlarmRecords() {
   const [activeTab, setActiveTab] = useState<'all' | 'fence' | 'video'>('all');
   const [alarms, setAlarms] = useState<AlarmRecord[]>([]);
+  const [stats, setStats] = useState({ total: 0, pending: 0, fence: 0, video: 0 });
   const [selectedAlarm, setSelectedAlarm] = useState<AlarmRecord | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
 const [searchKeyword, setSearchKeyword] = useState('');
@@ -209,12 +216,15 @@ const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 const [selectedVideoAlarm, setSelectedVideoAlarm] = useState<AlarmRecord | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
+const canHandleAlarm = hasStoredPermission('alarm.handle');
 const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
 const [selectedProject, setSelectedProject] = useState<string>('all');
 const [selectedTeam, setSelectedTeam] = useState<string>('all');
 const [filterTreePos, setFilterTreePos] = useState<{ top: number; left: number } | null>(null);
 const filterTreeRef = useRef<HTMLDivElement>(null);
+const loadSeqRef = useRef(0);
+
 const formatAlarmCodeDate = (timestamp?: string) => {
   const date = timestamp ? new Date(timestamp) : null;
   if (date && !Number.isNaN(date.getTime())) {
@@ -240,12 +250,26 @@ const normalizeSearchText = (value: unknown) =>
     .replace(/[：:\s_-]+/g, '')
     .replace(/设备|device/g, '');
 
+const getAlarmSourceType = (item: AlarmResponse): 'fence' | 'video' => {
+  const rawItem = item as any;
+  const sourceType = String(rawItem.source_type || '').toLowerCase();
+  const alarmSource = String(rawItem.alarm_source || '').toLowerCase();
+  const alarmType = String(item.alarm_type || '');
+  const description = String(item.description || '');
+
+  return sourceType === 'fence' ||
+    alarmSource === 'fence' ||
+    item.fence_id !== undefined && item.fence_id !== null ||
+    alarmType.includes('围栏') ||
+    description.includes('围栏')
+    ? 'fence'
+    : 'video';
+};
+
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
   const rawItem = item as any;
-  const sourceType = rawItem.source_type || '';
-  const isFence =
-    sourceType === 'fence' ||
-    (!sourceType && item.fence_id !== undefined && item.fence_id !== null);
+  const sourceType = getAlarmSourceType(item);
+  const isFence = sourceType === 'fence';
 
   const rawType = String(item.alarm_type || '');
   const title = rawType || (isFence ? '围栏告警' : '视频告警');
@@ -257,8 +281,11 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
       ? String(item.location)
       : '未提供位置';
 
-  const team = rawItem.team || rawItem.team_name || rawItem.work_team || '';
-  const personName = rawItem.person_name || rawItem.personnel_name || rawItem.person_label || '未知';
+  const branchName = rawItem.branch_name || rawItem.company || rawItem.department || '';
+  const projectName = rawItem.project_name || rawItem.project || '';
+  const gridName = rawItem.grid_name || rawItem.grid || '';
+  const team = rawItem.team_name || rawItem.team || rawItem.work_team || rawItem.workTeam || '';
+  const personName = rawItem.trigger_person_name || rawItem.person_name || rawItem.personnel_name || rawItem.captured_person_name || rawItem.bound_person_name || rawItem.person_label || '未知';
   const personnelId =
     rawItem.personnel_id !== undefined && rawItem.personnel_id !== null
       ? String(rawItem.personnel_id)
@@ -273,6 +300,13 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     id: String(item.id),
     alarmCode,
     alarmType: rawType || title,
+    recordKey: [
+      sourceType,
+      item.id,
+      item.timestamp || '',
+      item.fence_id ?? '',
+      rawItem._id ?? '',
+    ].join('-'),
     type: isFence ? 'fence' : 'video',
     title,
     description: item.description || personText || title,
@@ -288,6 +322,9 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     deviceId,
     personName,
     personnelId,
+    branchName: branchName || undefined,
+    projectName: projectName || undefined,
+    gridName: gridName || undefined,
     team: team || undefined,
     snapshot: toStaticUrl(item.alarm_image_path || item.image_url || item.snapshot_url || rawItem.picture_url),
     videoPath: toStaticUrl(item.recording_path || item.video_url || item.clip_url),
@@ -303,20 +340,39 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
         : undefined,
     fenceName: isFence ? locationText : undefined,
     projectId: rawItem.project_id,
+    sourceType,
   };
 };
 const loadAlarms = async () => {
+  const requestSeq = ++loadSeqRef.current;
+  const requestedTab = activeTab;
   try {
-    const sourceType = activeTab === 'all' ? undefined : activeTab;
-    const data = await alarmApi.getAlarms(undefined, sourceType);
+    const sourceType = requestedTab === 'all' ? undefined : requestedTab;
+    const [data, latestStats] = await Promise.all([
+      alarmApi.getAlarms(undefined, sourceType, 500),
+      alarmApi.getStats(),
+    ]);
+    if (requestSeq !== loadSeqRef.current || requestedTab !== activeTab) return;
+    setStats(latestStats);
+    console.log('[AlarmRecord] loaded', {
+      tab: requestedTab,
+      sourceType,
+      total: data.length,
+      first: data.slice(0, 5).map((item) => ({
+        id: item.id,
+        source_type: item.source_type,
+        fence_id: item.fence_id,
+        alarm_type: item.alarm_type,
+      })),
+    });
     const mapped = data
+      .filter((item) => requestedTab === 'all' || getAlarmSourceType(item) === requestedTab)
       .map(mapAlarmFromApi)
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
     setAlarms(mapped);
   } catch (error) {
     console.error('加载告警记录失败:', error);
-    setAlarms([]);
   }
 };
 
@@ -445,22 +501,30 @@ const handleConfirmProcess = async () => {
   const companyTree: AlarmFilterTreeNode[] = Array.from(
     alarms.reduce((map, alarm) => {
       const projectName =
-        alarm.projectId !== undefined && alarm.projectId !== null
+        alarm.projectName ||
+        (alarm.projectId !== undefined && alarm.projectId !== null
           ? `项目 ${alarm.projectId}`
-          : '未分配项目';
+          : '未分配项目');
+      const companyName = alarm.branchName || '未分配分公司';
 
-      if (!map.has(projectName)) {
-        map.set(projectName, {
-          id: projectName,
-          name: projectName,
-          projects: [{ name: projectName, teams: [] as string[] }],
+      if (!map.has(companyName)) {
+        map.set(companyName, {
+          id: companyName,
+          name: companyName,
+          projects: [],
         });
       }
 
+      const entry = map.get(companyName)!;
+      let projectEntry = entry.projects.find((item) => item.name === projectName);
+      if (!projectEntry) {
+        projectEntry = { name: projectName, teams: [] as string[] };
+        entry.projects.push(projectEntry);
+      }
+
       if (alarm.team) {
-        const entry = map.get(projectName)!;
-        if (!entry.projects[0].teams.includes(alarm.team)) {
-          entry.projects[0].teams.push(alarm.team);
+        if (!projectEntry.teams.includes(alarm.team)) {
+          projectEntry.teams.push(alarm.team);
         }
       }
 
@@ -470,24 +534,22 @@ const handleConfirmProcess = async () => {
 
   const filteredAlarms = alarms.filter(alarm => {
     // 类型筛选
-    if (activeTab !== 'all' && alarm.type !== activeTab) return false;
+    if (activeTab !== 'all' && alarm.sourceType !== activeTab) return false;
     // 状态筛选
     if (filterStatus !== 'all' && alarm.status !== filterStatus) return false;
     if (selectedCompany !== 'all') {
-      const projectName =
-        alarm.projectId !== undefined && alarm.projectId !== null
-          ? `项目 ${alarm.projectId}`
-          : '未分配项目';
-      if (projectName !== selectedCompany) {
+      const companyName = alarm.branchName || '未分配分公司';
+      if (companyName !== selectedCompany) {
         return false;
       }
     }
 
     if (selectedProject !== 'all') {
       const projectName =
-        alarm.projectId !== undefined && alarm.projectId !== null
+        alarm.projectName ||
+        (alarm.projectId !== undefined && alarm.projectId !== null
           ? `项目 ${alarm.projectId}`
-          : '未分配项目';
+          : '未分配项目');
       if (projectName !== selectedProject) {
         return false;
       }
@@ -495,7 +557,7 @@ const handleConfirmProcess = async () => {
 
     // 工队筛选
     if (selectedTeam !== 'all') {
-      const searchableText = `${alarm.team || ''} ${alarm.description} ${alarm.location}`;
+      const searchableText = `${alarm.team || ''} ${alarm.gridName || ''} ${alarm.description} ${alarm.location}`;
       if (!searchableText.includes(selectedTeam)) {
         return false;
       }
@@ -517,6 +579,9 @@ const handleConfirmProcess = async () => {
         alarm.location,
         alarm.personName,
         alarm.personnelId,
+        alarm.branchName,
+        alarm.projectName,
+        alarm.gridName,
         alarm.team,
         statusText,
         levelText,
@@ -542,13 +607,6 @@ const handleConfirmProcess = async () => {
     }
     return true;
   });
-
-  const stats = {
-    total: alarms.length,
-    pending: alarms.filter(a => a.status === 'pending').length,
-    fence: alarms.filter(a => a.type === 'fence').length,
-    video: alarms.filter(a => a.type === 'video').length,
-  };
 
   return (
     <div className="h-full overflow-auto p-6">
@@ -850,24 +908,22 @@ onClick={(e) => {
       {/* 告警列表 - 表格型 */}
       <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-700/50 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[1280px] table-fixed">
             <thead className="border-b border-blue-400/20 bg-slate-800/50">
               <tr>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警编号</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警类型</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">等级</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">状态</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">人员</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">位置</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">设备</th>
-                <th className="px-4 py-3.5 text-left text-sm font-semibold text-slate-300">时间</th>
-                <th className="px-4 py-3.5 text-right text-sm font-semibold text-slate-300">操作</th>
+                <th className="w-[150px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警编号</th>
+                <th className="w-[310px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">告警信息</th>
+                <th className="w-[150px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">处置</th>
+                <th className="w-[300px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">组织链路</th>
+                <th className="w-[260px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">对象信息</th>
+                <th className="w-[140px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">时间</th>
+                <th className="w-[180px] px-4 py-3.5 text-right text-sm font-semibold text-slate-300">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {filteredAlarms.map(alarm => (
                 <tr 
-                   key={alarm.id} 
+                   key={alarm.recordKey} 
                    onClick={() => setSelectedAlarm(alarm)}
                    className={`hover:bg-slate-800/30 cursor-pointer transition-colors ${
                      alarm.status === 'pending' ? 'bg-red-500/5' : ''
@@ -877,7 +933,7 @@ onClick={(e) => {
                      <div className="text-sm text-cyan-300 font-medium">{alarm.alarmCode}</div>
                      <div className="text-xs text-slate-500 mt-1">ID: {alarm.id}</div>
                    </td>
-                   <td className="px-4 py-4">
+                   <td className="px-4 py-4 align-top">
                      <div className="flex items-center gap-2">
                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
                          alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
@@ -889,56 +945,74 @@ onClick={(e) => {
                          )}
                        </div>
                        <div>
-                         <div className="text-base text-white font-medium">{alarm.alarmType}</div>
+                         <div className="text-base text-white font-medium truncate" title={alarm.alarmType}>{alarm.alarmType}</div>
                          <div className="text-sm text-slate-400 mt-1 max-w-[260px] truncate">{alarm.description}</div>
                        </div>
                      </div>
                    </td>
-                   <td className="px-4 py-4">
+                   <td className="px-4 py-4 align-top">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className={`text-xs px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
                         {getLevelText(alarm.level)}
                       </span>
-                   </td>
-                   <td className="px-4 py-4">
                       <span className={`text-xs px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
                         {getStatusText(alarm.status)}
                       </span>
+                    </div>
                    </td>
-                   <td className="px-4 py-4">
-                     <div className="text-sm text-slate-300">{alarm.personName}</div>
-                     {alarm.personnelId && <div className="text-xs text-slate-500 mt-1">ID: {alarm.personnelId}</div>}
-                   </td>
-                   <td className="px-4 py-4">
-                     <div className="flex items-center gap-1 text-sm text-slate-300">
-                       <MapPin size={14} className="text-slate-500" />
-                       {alarm.location}
+                   <td className="px-4 py-4 align-top">
+                     <div className="space-y-1.5 text-sm">
+                       <div className="truncate text-slate-200" title={alarm.branchName || '-'}>
+                         <span className="text-slate-500">分：</span>{alarm.branchName || '-'}
+                       </div>
+                       <div className="truncate text-slate-200" title={alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}>
+                         <span className="text-slate-500">项：</span>{alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}
+                       </div>
+                       <div className="flex flex-wrap gap-1">
+                         <span className="max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/25" title={alarm.gridName || '-'}>
+                           {alarm.gridName || '-'}
+                         </span>
+                         <span className="max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30" title={alarm.team || '-'}>
+                           {alarm.team || '-'}
+                         </span>
+                       </div>
                      </div>
                    </td>
-                   <td className="px-4 py-4">
-                     <div className="flex items-center gap-1 text-sm text-slate-300">
-                       <User size={14} className="text-slate-500" />
-                       {alarm.deviceName}
+                   <td className="px-4 py-4 align-top">
+                     <div className="space-y-1.5 text-sm text-slate-300">
+                       <div className="flex items-center gap-1 truncate" title={alarm.personName || '-'}>
+                         <User size={14} className="shrink-0 text-slate-500" />
+                         <span className="truncate">{alarm.personName || '-'}</span>
+                       </div>
+                       <div className="flex items-center gap-1 truncate" title={alarm.deviceName}>
+                         <Video size={14} className="shrink-0 text-slate-500" />
+                         <span className="truncate">{alarm.deviceName}</span>
+                       </div>
+                       <div className="flex items-center gap-1 truncate" title={alarm.location}>
+                         <MapPin size={14} className="shrink-0 text-slate-500" />
+                         <span className="truncate">{alarm.location}</span>
+                       </div>
                      </div>
                      <div className="text-xs text-slate-500 mt-1">设备ID: {alarm.deviceId || '-'}</div>
                    </td>
-                   <td className="px-4 py-4">
-                     <div className="flex items-center gap-1 text-sm text-slate-300">
-                       <Clock size={14} className="text-slate-500" />
-                       {new Date(alarm.time).toLocaleString()}
+                   <td className="px-4 py-4 align-top">
+                     <div className="flex items-start gap-1 text-sm text-slate-300">
+                       <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
+                       <span className="leading-5">{new Date(alarm.time).toLocaleString()}</span>
                      </div>
                    </td>
-                   <td className="px-4 py-4 text-right">
-                    <div className="flex justify-end gap-2">
+                   <td className="px-4 py-4 text-right align-top">
+                    <div className="flex flex-wrap justify-end gap-2">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setPreviewImage(alarm.snapshot!);
                           }}
-                          className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2.5 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <ImageIcon size={14} />
-                          报警截图
+                          截图
                         </button>
                       )}
 
@@ -948,20 +1022,20 @@ onClick={(e) => {
                             e.stopPropagation();
                             openAlarmVideo(alarm);
                           }}
-                          className="px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <Video size={14} />
-                          报警视频
+                          视频
                         </button>
                       )}
 
-                      {alarm.status === 'pending' && (
+                      {canHandleAlarm && alarm.status === 'pending' && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleOpenProcessModal(alarm, 'resolved');
                           }}
-                          className="px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2.5 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <CheckCircle size={14} />
                           处理
@@ -1043,6 +1117,26 @@ onClick={(e) => {
                   <span className="text-slate-400">发生时间：</span>
                   <span className="text-slate-200">{new Date(selectedAlarm.time).toLocaleString()}</span>
                 </div>
+                <div>
+                  <span className="text-slate-400">所属分公司：</span>
+                  <span className="text-slate-200">{selectedAlarm.branchName || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400">所属项目：</span>
+                  <span className="text-slate-200">{selectedAlarm.projectName || (selectedAlarm.projectId ? `项目 ${selectedAlarm.projectId}` : '-')}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400">所属网格：</span>
+                  <span className="text-slate-200">{selectedAlarm.gridName || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400">所属工队：</span>
+                  <span className="text-slate-200">{selectedAlarm.team || '-'}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-slate-400">触发人员：</span>
+                  <span className="text-slate-200">{selectedAlarm.personName || '-'}</span>
+                </div>
                 <div className="col-span-2">
                   <span className="text-slate-400">发生位置：</span>
                   <span className="text-slate-200">{selectedAlarm.location}</span>
@@ -1108,7 +1202,7 @@ onClick={(e) => {
             </div>
             
             <div className="flex gap-3 mt-6">
-              {selectedAlarm.status === 'pending' && (
+              {canHandleAlarm && selectedAlarm.status === 'pending' && (
  <button
   onClick={() => handleOpenProcessModal(selectedAlarm, 'resolved')}
   className="flex-1 py-2 bg-green-500 hover:bg-green-600 rounded-lg text-sm font-medium transition-all"
@@ -1137,7 +1231,7 @@ onClick={(e) => {
       )}
 
     {/* 处理弹窗 */}
-{showProcessModal && processingAlarm && (
+{canHandleAlarm && showProcessModal && processingAlarm && (
   <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowProcessModal(false)}>
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[450px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
       <div className="flex justify-between items-center mb-4">

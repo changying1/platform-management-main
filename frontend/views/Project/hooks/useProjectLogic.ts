@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ProjectListItem, ProjectDetail, Fence } from "../types";
-import { getApiUrl } from "@/src/api/config";
+import { getApiUrl, getAuthHeaders } from "@/src/api/config";
 
 export function useProjectLogic() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -40,7 +40,7 @@ export function useProjectLogic() {
       if (params.length > 0) {
         url += `?${params.join("&")}`;
       }
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch projects");
       const data = await res.json();
       setProjects(data);
@@ -57,7 +57,7 @@ export function useProjectLogic() {
 
   const fetchProjectDetail = async (projectId: number) => {
     try {
-      const res = await fetch(getApiUrl(`/projects/${projectId}`));
+      const res = await fetch(getApiUrl(`/projects/${projectId}`), { headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch project detail");
       const data = await res.json();
       setProjectDetail(data);
@@ -68,7 +68,7 @@ export function useProjectLogic() {
 
   const fetchProjectFences = async (projectId: number) => {
     try {
-      const res = await fetch(getApiUrl(`/projects/${projectId}/fences`));
+      const res = await fetch(getApiUrl(`/projects/${projectId}/fences`), { headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch project fences");
       const data = await res.json();
       setProjectFences(data);
@@ -83,6 +83,7 @@ export function useProjectLogic() {
     try {
       const res = await fetch(getApiUrl(`/projects/${projectId}`), {
         method: "DELETE",
+        headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error("Failed to delete project");
       fetchProjects(searchQueryRef.current, selectedBranchIdRef.current);

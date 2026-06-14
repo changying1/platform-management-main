@@ -1,32 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Grid3X3, Map, Users, FolderTree } from 'lucide-react';
-import type { Grid, GridDetail, GridStats } from '../../types';
-import { GridList } from './components/GridList';
+import React, { useEffect, useState } from 'react';
+import { AlertCircle, Filter, Grid3X3, Map, Plus, Search, X } from 'lucide-react';
+import type { Grid, GridDetail } from '../../types';
+import { gridApiClient } from '../../src/api/gridApi';
+import { hasStoredPermission } from '../../src/utils/permissions';
 import { GridDetailModal } from './components/GridDetailModal';
 import { GridFormModal } from './components/GridFormModal';
+import { GridList } from './components/GridList';
 import { GridMap } from './components/GridMap';
-import { ResponsibilityUnitView } from './components/ResponsibilityUnit';
-import { AssignGridModal } from './components/AssignGridModal';
-import {
-  gridApiClient,
-  gridPersonnelApiClient,
-  roleNames,
-} from '../../src/api/gridApi';
 
-type TabType = 'list' | 'map' | 'personnel' | 'unit';
-
-interface PersonnelItem {
-  id: string;
-  name: string;
-  role: string;
-  phone: string;
-  department: string;
-  grid_ids: string[];
-}
+type TabType = 'list' | 'map';
 
 const GridManagement: React.FC = () => {
   const [grids, setGrids] = useState<Grid[]>([]);
-  const [personnelList, setPersonnelList] = useState<PersonnelItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('list');
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -34,27 +19,18 @@ const GridManagement: React.FC = () => {
   const [editingGrid, setEditingGrid] = useState<Grid | null>(null);
   const [selectedGrid, setSelectedGrid] = useState<GridDetail | null>(null);
   const [loading, setLoading] = useState(false);
-  const [isAssignOpen, setIsAssignOpen] = useState(false);
-  const [assigningPersonnel, setAssigningPersonnel] = useState<PersonnelItem | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const canCreatePersonnel = hasStoredPermission('personnel.create');
+  const canEditPersonnel = hasStoredPermission('personnel.edit');
+  const canDeletePersonnel = hasStoredPermission('personnel.delete');
 
   const loadGrids = async () => {
     try {
       setLoading(true);
-      const data = await gridApiClient.getGrids();
-      setGrids(data);
-    } catch (error) {
-      console.error('加载网格列表失败:', error);
+      setGrids(await gridApiClient.getGrids());
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadPersonnel = async () => {
-    try {
-      const data = await gridPersonnelApiClient.getPersonnel();
-      setPersonnelList(data);
-    } catch (error) {
-      console.error('加载责任人员失败:', error);
     }
   };
 
@@ -62,56 +38,26 @@ const GridManagement: React.FC = () => {
     loadGrids();
   }, []);
 
-  useEffect(() => {
-    if (activeTab === 'personnel') {
-      loadPersonnel();
-    }
-  }, [activeTab]);
-
   const filteredGrids = grids.filter((grid) =>
     String(grid?.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleCreate = () => {
-    setEditingGrid(null);
-    setIsFormOpen(true);
-  };
-
-  const handleEdit = (grid: Grid) => {
-    setEditingGrid(grid);
-    setIsFormOpen(true);
-  };
-
-  const handleDelete = async (gridId: string) => {
-    if (window.confirm('确定要删除这个网格吗？')) {
-      try {
-        await gridApiClient.deleteGrid(gridId);
-        await loadGrids();
-      } catch (error) {
-        console.error('删除网格失败:', error);
-        alert('删除失败');
-      }
-    }
-  };
-
   const handleView = async (grid: Grid) => {
-    try {
-      const detail = await gridApiClient.getGridById(grid.grid_id || grid.id);
-      setSelectedGrid({
-        ...detail,
-        personnel: [],
-        devices: [],
-        alarm_count: 0,
-        danger_count: 0,
-      });
-      setIsDetailOpen(true);
-    } catch (error) {
-      console.error('加载网格详情失败:', error);
-    }
+    const detail = await gridApiClient.getGridById(grid.grid_id || grid.id);
+    setSelectedGrid({
+      ...detail,
+      personnel: [],
+      devices: [],
+      alarm_count: 0,
+      danger_count: 0,
+    });
+    setIsDetailOpen(true);
   };
 
   const handleFormSubmit = async (data: any) => {
+    if (saving) return;
     try {
+      setSaving(true);
       if (editingGrid) {
         await gridApiClient.updateGrid(editingGrid.id, data);
       } else {
@@ -120,55 +66,33 @@ const GridManagement: React.FC = () => {
       await loadGrids();
       setIsFormOpen(false);
       setEditingGrid(null);
-    } catch (error) {
-      console.error('保存网格失败:', error);
-      alert('保存失败');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || error?.message;
+      const message = detail === 'Grid ID already exists'
+        ? '网格编号已存在，请更换网格编号'
+        : detail || '保存网格失败';
+      setErrorMessage(message);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleGridClick = (grid: Grid) => {
-    handleView(grid);
-  };
-
-  const handleAssignGrid = (person: PersonnelItem) => {
-    setAssigningPersonnel(person);
-    setIsAssignOpen(true);
-  };
-
-  const handleAssignSubmit = async (gridIds: string[]) => {
-    if (!assigningPersonnel) return;
-    try {
-      await gridPersonnelApiClient.updatePersonnel(assigningPersonnel.id, { grid_ids: gridIds });
-      await loadPersonnel();
-      setIsAssignOpen(false);
-      setAssigningPersonnel(null);
-    } catch (error) {
-      console.error('分配网格失败:', error);
-      alert('分配失败');
-    }
-  };
-
-  const getGridNames = (gridIds: string[]) => {
-    if (!gridIds || gridIds.length === 0) return '-';
-    return gridIds
-      .map((grid_id) => grids.find((g) => g.grid_id === grid_id)?.name)
-      .filter(Boolean)
-      .join(', ');
+  const handleDelete = async (gridId: string) => {
+    if (!window.confirm('确定删除这个网格吗？')) return;
+    await gridApiClient.deleteGrid(gridId);
+    await loadGrids();
   };
 
   return (
     <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md p-4 h-full overflow-auto">
-
-      {/* 操作栏 */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        {/* 搜索框 */}
         <div className="relative flex-1 min-w-[180px] max-w-[280px]">
-          <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
           <input
             type="text"
             placeholder="搜索网格名称..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(event) => setSearchTerm(event.target.value)}
             className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
           />
         </div>
@@ -178,15 +102,19 @@ const GridManagement: React.FC = () => {
           <span>筛选</span>
         </button>
 
+        {canCreatePersonnel && (
         <button
-          onClick={handleCreate}
+          onClick={() => {
+            setEditingGrid(null);
+            setIsFormOpen(true);
+          }}
           className="flex items-center gap-2 px-4 py-1.5 bg-cyan-500/20 border border-cyan-500/50 rounded-lg text-sm text-cyan-300 hover:bg-cyan-500/30 transition-colors"
         >
           <Plus size={14} />
           <span>新建网格</span>
         </button>
+        )}
 
-        {/* 标签切换按钮 */}
         <button
           onClick={() => setActiveTab('list')}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
@@ -209,125 +137,25 @@ const GridManagement: React.FC = () => {
           <Map size={16} />
           <span>网格地图</span>
         </button>
-        <button
-          onClick={() => setActiveTab('personnel')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
-            activeTab === 'personnel'
-              ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-              : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-          }`}
-        >
-          <Users size={16} />
-          <span>责任分配</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('unit')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm ${
-            activeTab === 'unit'
-              ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-              : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-          }`}
-        >
-          <FolderTree size={16} />
-          <span>责任单元</span>
-        </button>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {activeTab === 'list' && (
-          <GridList
-            grids={filteredGrids}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onView={handleView}
-          />
-        )}
-
-        {activeTab === 'map' && (
-          <GridMap grids={grids} onGridClick={handleGridClick} />
-        )}
-
-        {activeTab === 'personnel' && (
-          <div className="bg-slate-800/30 rounded-lg border border-slate-700/50 p-4">
-            <div className="flex items-center gap-6 mb-4">
-              <h3 className="text-base font-semibold text-slate-200">责任人员管理</h3>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 bg-cyan-500/20 px-3 py-1 rounded-lg border border-cyan-500/30">
-                  <span className="text-lg font-bold text-cyan-400">{personnelList.length}</span>
-                  <span className="text-xs text-cyan-300/80">总人数</span>
-                </div>
-                <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1 rounded-lg border border-blue-500/30">
-                  <span className="text-lg font-bold text-blue-400">
-                    {personnelList.filter((p) => p.role === 'grid_manager').length}
-                  </span>
-                  <span className="text-xs text-blue-300/80">网格长</span>
-                </div>
-                <div className="flex items-center gap-2 bg-green-500/20 px-3 py-1 rounded-lg border border-green-500/30">
-                  <span className="text-lg font-bold text-green-400">
-                    {personnelList.filter((p) => p.role === 'safety_manager').length}
-                  </span>
-                  <span className="text-xs text-green-300/80">安全员</span>
-                </div>
-                <div className="flex items-center gap-2 bg-yellow-500/20 px-3 py-1 rounded-lg border border-yellow-500/30">
-                  <span className="text-lg font-bold text-yellow-400">
-                    {personnelList.filter((p) => p.role === 'technician').length}
-                  </span>
-                  <span className="text-xs text-yellow-300/80">技术员</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-700/30">
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">姓名</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">角色</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">所属单位</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">联系电话</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">负责网格</th>
-                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-400">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {personnelList.map((person) => (
-                    <tr key={person.id} className="border-t border-slate-700/30">
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center">
-                            <span className="text-white text-xs font-medium">{String(person.name || '?').charAt(0)}</span>
-                          </div>
-                          <span className="text-sm text-slate-200">{person.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="px-2 py-0.5 rounded text-xs bg-cyan-500/20 text-cyan-300">
-                          {roleNames[person.role] || person.role}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-sm text-slate-400">{person.department}</td>
-                      <td className="px-3 py-2 text-sm text-slate-400">{person.phone}</td>
-                      <td className="px-3 py-2 text-sm text-slate-400">
-                        {getGridNames(person.grid_ids)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => handleAssignGrid(person)}
-                          className="px-2 py-1 rounded text-xs bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30"
-                        >
-                          分配网格
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'unit' && <ResponsibilityUnitView />}
-      </div>
+      {loading ? (
+        <div className="py-10 text-center text-slate-400">加载中...</div>
+      ) : activeTab === 'list' ? (
+        <GridList
+          grids={filteredGrids}
+          onEdit={(grid) => {
+            setEditingGrid(grid);
+            setIsFormOpen(true);
+          }}
+          onDelete={handleDelete}
+          onView={handleView}
+          canEdit={canEditPersonnel}
+          canDelete={canDeletePersonnel}
+        />
+      ) : (
+        <GridMap grids={grids} onGridClick={handleView} />
+      )}
 
       <GridFormModal
         isOpen={isFormOpen}
@@ -337,6 +165,7 @@ const GridManagement: React.FC = () => {
         }}
         onSubmit={handleFormSubmit}
         editGrid={editingGrid}
+        existingGrids={grids}
       />
 
       <GridDetailModal
@@ -348,16 +177,35 @@ const GridManagement: React.FC = () => {
         }}
       />
 
-      <AssignGridModal
-        isOpen={isAssignOpen}
-        onClose={() => {
-          setIsAssignOpen(false);
-          setAssigningPersonnel(null);
-        }}
-        onAssign={handleAssignSubmit}
-        personnelId={assigningPersonnel?.id || ''}
-        currentGridIds={assigningPersonnel?.grid_ids || []}
-      />
+      {errorMessage && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-rose-400/40 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div className="flex items-center gap-2 text-rose-300">
+                <AlertCircle size={20} />
+                <h3 className="text-base font-semibold text-white">保存网格失败</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorMessage('')}
+                className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 text-sm leading-6 text-slate-200">{errorMessage}</div>
+            <div className="flex justify-end border-t border-white/10 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setErrorMessage('')}
+                className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -6,6 +6,12 @@ export interface SavedPlayback {
   deviceName: string;
   company?: string;      // ✅ 添加
   project?: string;   
+  grid?: string;
+  grid_id?: string;
+  grid_name?: string;
+  team?: string;
+  team_id?: string;
+  team_name?: string;
   type: 'manual' | 'alarm';
   startTime: string;
   endTime: string;
@@ -28,4 +34,10 @@ export interface Device {
   status?: string;
   company?: string;
   project?: string;
+  grid?: string;
+  grid_id?: string;
+  grid_name?: string;
+  team?: string;
+  team_id?: string;
+  team_name?: string;
 }

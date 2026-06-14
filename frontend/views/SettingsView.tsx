@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+﻿﻿import React, { useState, useEffect } from 'react';
+import { getAuthHeaders } from '../src/api/config';
+import SmartMonitoringConfig from '../src/components/SmartMonitoringConfig';
+import { getAllVideos, type Video as MonitoringVideo } from '../src/api/videoApi';
 import { 
   Settings, 
   Bell, 
@@ -31,10 +34,11 @@ import {
   Building2,
   FolderTree,
   Users,
+  MonitorCog,
 } from 'lucide-react';
 
 // 设置分类
-type SettingsTab = 'alarm' | 'video' | 'fence' | 'log' | 'account' | 'notification' | 'backup' | 'ai';
+type SettingsTab = 'alarm' | 'video' | 'fence' | 'smartMonitoring' | 'log' | 'account' | 'notification' | 'backup' | 'ai';
 
 // 设置数据结构
 interface SystemSettings {
@@ -55,9 +59,10 @@ interface SystemSettings {
   alarmRepeatInterval: number;
   alarmAutoResolve: boolean;
   alarmRetentionDays: number;
+  safetyProductionDays: number;
+  safetyProductionUpdatedDate?: string;
   alarmSevereFlash: boolean;
   alarmSevereUpgrade: 'sound' | 'voice' | 'call' | 'sms';
-  alarmVolume: number;
   
   // 告警分级开关
   alarmSosEnabled: boolean;
@@ -88,6 +93,13 @@ interface SystemSettings {
   alarmVideoRetentionDays: number;
   alarmVideoSurroundMinutes: number;
   alarmScreenshotRetentionDays: number;
+  
+  // 存储空间管理
+  storageMaxSizeGB: number;
+  storageWarningThreshold: number;
+  storageCriticalThreshold: number;
+  storageAutoCleanup: boolean;
+  storageCleanupStrategy: 'age' | 'space' | 'both';
   
   // 围栏设置
   fenceDetectionInterval: number;
@@ -174,6 +186,7 @@ interface SystemSettings {
   hqAdminPermissions: string[];
   branchAdminPermissions: string[];
   projectAdminPermissions: string[];
+  gridAdminPermissions: string[];
   teamAdminPermissions: string[];
   
   // AI 助手设置
@@ -183,6 +196,16 @@ interface SystemSettings {
   aiModelName: string;
   aiVectorDbPath: string;
 }
+
+const adminPermissionOptions = [
+  { value: 'dashboard', label: '仪表板' },
+  { value: 'monitor', label: '视频监控' },
+  { value: 'fence', label: '电子围栏' },
+  { value: 'device', label: '设备管理' },
+  { value: 'personnel', label: '人员管理' },
+  { value: 'alarm', label: '告警管理' },
+  { value: 'system', label: '系统设置' },
+];
 
 const orgTreeData: OrgNode[] = [
   {
@@ -270,32 +293,52 @@ export default function SettingsView() {
     region: ''
   });
   const [storagePaths, setStoragePaths] = useState<any[]>([]);
-  const [backupFiles, setBackupFiles] = useState<any[]>([]);
+  const [storageStatus, setStorageStatus] = useState<any>(null);
+  const [backupFiles, setBackupFiles] = useState<any[]>([
+    { filename: 'full_backup_20250421_143022.tar.gz', date: '2025-04-21 14:30', size: '15.2 MB', type: '完整备份' },
+    { filename: 'full_backup_20250420_220000.tar.gz', date: '2025-04-20 22:00', size: '14.8 MB', type: '定时备份' },
+    { filename: 'full_backup_20250419_181533.tar.gz', date: '2025-04-19 18:15', size: '13.5 MB', type: '手动备份' },
+  ]);
   
   useEffect(() => {
-    refreshStoragePaths();
-    refreshBackupFiles();
+    fetch('/api/backup/storage/paths')
+      .then(res => res.json())
+      .then(paths => {
+        console.log('加载存储路径:', paths);
+        setStoragePaths(paths);
+      });
+    
+    fetch('/api/backup/list')
+      .then(res => res.json())
+      .then(files => {
+        console.log('加载备份文件:', files);
+        if (files && files.length > 0) {
+          setBackupFiles(files);
+        }
+      });
+    
+    // 加载存储状态
+    loadStorageStatus();
   }, []);
+  
+  const loadStorageStatus = () => {
+    fetch('/video/storage/status')
+      .then(res => res.json())
+      .then(result => {
+        if (result.code === 0) {
+          console.log('加载存储状态:', result.data);
+          setStorageStatus(result.data);
+        }
+      })
+      .catch(err => console.error('加载存储状态失败:', err));
+  };
 
   const refreshStoragePaths = () => {
     fetch('/api/backup/storage/paths')
       .then(res => res.json())
       .then(paths => {
         console.log('刷新存储路径:', paths);
-        setStoragePaths(Array.isArray(paths) ? paths : []);
-      });
-  };
-
-  const refreshBackupFiles = () => {
-    fetch('/api/backup/list')
-      .then(res => res.json())
-      .then(files => {
-        console.log('加载备份文件:', files);
-        setBackupFiles(Array.isArray(files) ? files : []);
-      })
-      .catch(e => {
-        console.log('加载备份文件失败:', e);
-        setBackupFiles([]);
+        setStoragePaths(paths);
       });
   };
 
@@ -323,6 +366,19 @@ export default function SettingsView() {
       });
   };
   
+  useEffect(() => {
+    setTimeout(() => {
+      const slider = document.getElementById('alarmVolumeSlider') as HTMLInputElement;
+      const valueText = document.getElementById('alarmVolumeValue');
+      if (slider && valueText) {
+        slider.addEventListener('input', () => {
+          (window as any).alarmVolume = Number(slider.value) / 100;
+          valueText.textContent = slider.value + '%';
+        });
+      }
+    }, 100);
+  }, [activeTab]);
+
   const [settings, setSettings] = useState<SystemSettings>({
     systemName: '中铁一局智能安全管理系统',
     theme: 'dark',
@@ -338,9 +394,10 @@ export default function SettingsView() {
     alarmRepeatInterval: 5,
     alarmAutoResolve: false,
     alarmRetentionDays: 30,
+    safetyProductionDays: 0,
+    safetyProductionUpdatedDate: '',
     alarmSevereFlash: true,
     alarmSevereUpgrade: 'sound',
-    alarmVolume: 30,
     alarmSosEnabled: true,
     alarmFenceEnabled: true,
     alarmLowBatteryEnabled: true,
@@ -355,6 +412,14 @@ export default function SettingsView() {
     alarmVideoRetentionDays: 90,
     alarmVideoSurroundMinutes: 1,
     alarmScreenshotRetentionDays: 90,
+    
+    // 存储空间管理默认值
+    storageMaxSizeGB: 500,
+    storageWarningThreshold: 80,
+    storageCriticalThreshold: 95,
+    storageAutoCleanup: true,
+    storageCleanupStrategy: 'both',
+    
     fenceDetectionInterval: 3,
     fenceDefaultRadius: 50,
     fenceRetentionDays: 365,
@@ -401,6 +466,7 @@ export default function SettingsView() {
         hqAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
         branchAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm'],
         projectAdminPermissions: ['dashboard', 'monitor', 'fence', 'device.view', 'personnel.view', 'alarm'],
+        gridAdminPermissions: ['dashboard', 'monitor', 'fence', 'device.view', 'personnel.view', 'alarm.view'],
         teamAdminPermissions: ['dashboard', 'monitor.view', 'personnel.view', 'alarm.view'],
 
     // AI 助手设置
@@ -431,7 +497,8 @@ export default function SettingsView() {
   });
   
   const [saved, setSaved] = useState(false);
-  const [settingsMessage, setSettingsMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordData, setPasswordData] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
   const [showOldPassword, setShowOldPassword] = useState(false);
@@ -447,6 +514,22 @@ export default function SettingsView() {
   const [showKbCreator, setShowKbCreator] = useState(false);
   const [kbList, setKbList] = useState(['default']);
   const [selectedKb, setSelectedKb] = useState('default');
+  const [monitoringDevices, setMonitoringDevices] = useState<MonitoringVideo[]>([]);
+  const [monitoringDevicesLoading, setMonitoringDevicesLoading] = useState(false);
+  const [monitoringDevicesError, setMonitoringDevicesError] = useState('');
+
+  const loadMonitoringDevices = async () => {
+    setMonitoringDevicesLoading(true);
+    setMonitoringDevicesError('');
+    try {
+      const data = await getAllVideos();
+      setMonitoringDevices(data || []);
+    } catch (error: any) {
+      setMonitoringDevicesError(error?.message || '加载监控设备失败');
+    } finally {
+      setMonitoringDevicesLoading(false);
+    }
+  };
 
   // 初始化时从后端加载设置和知识库文档
   useEffect(() => {
@@ -459,9 +542,6 @@ export default function SettingsView() {
             ...config,
             aiAlarmLevelConfigs: config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs,
           }));
-          if (typeof config.alarmVolume === 'number') {
-            (window as any).alarmVolume = config.alarmVolume / 100;
-          }
         }
       })
       .catch(() => {
@@ -470,6 +550,12 @@ export default function SettingsView() {
 
     loadKbDocuments();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'smartMonitoring' && monitoringDevices.length === 0 && !monitoringDevicesLoading) {
+      loadMonitoringDevices();
+    }
+  }, [activeTab]);
 
   const loadKbDocuments = () => {
     fetch('/api/ai/kb/documents')
@@ -541,35 +627,34 @@ export default function SettingsView() {
     }
   };
 
-  const showSettingsMessage = (message: string) => {
-    setSettingsMessage(message);
-    setTimeout(() => setSettingsMessage(''), 3000);
-  };
-
   const handleSave = async () => {
-    // 同时保存到 localStorage 和后端
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setSaveError('');
     localStorage.setItem('systemSettings', JSON.stringify(settings));
-    (window as any).alarmVolume = (settings.alarmVolume || 0) / 100;
-    
+
     try {
-      const res = await fetch('/admin/settings', {
+      const response = await fetch('/admin/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(settings),
       });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || '系统设置保存失败');
       }
-
     } catch (e) {
-      showSettingsMessage('后端保存失败，已暂存到浏览器本地');
+      console.error('后端设置保存失败:', e);
+      setSaveError(e instanceof Error ? e.message : '系统设置保存失败');
+      setTimeout(() => setSaveError(''), 3000);
+      setSaving(false);
       return;
-      console.log('后端设置保存失败，已保存到本地');
     }
-    
+
+    setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    showSettingsMessage('设置已保存，并已同步到后端服务');
     console.log('设置已保存:', settings);
   };
 
@@ -587,9 +672,10 @@ export default function SettingsView() {
         alarmRepeatInterval: 5,
         alarmAutoResolve: false,
         alarmRetentionDays: 30,
+        safetyProductionDays: 0,
+        safetyProductionUpdatedDate: new Date().toISOString().slice(0, 10),
         alarmSevereFlash: false,
         alarmSevereUpgrade: 'sound',
-        alarmVolume: 30,
         aiAlarmLevelConfigs: [
           { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
           { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
@@ -615,6 +701,14 @@ export default function SettingsView() {
         alarmVideoRetentionDays: 90,
         alarmVideoSurroundMinutes: 1,
         alarmScreenshotRetentionDays: 90,
+        
+        // 存储空间管理
+        storageMaxSizeGB: 500,
+        storageWarningThreshold: 80,
+        storageCriticalThreshold: 95,
+        storageAutoCleanup: true,
+        storageCleanupStrategy: 'both',
+        
         fenceDetectionInterval: 3,
         fenceDefaultRadius: 50,
         fenceRetentionDays: 365,
@@ -657,15 +751,6 @@ export default function SettingsView() {
         aiVectorDbPath: './vector_db',
       };
       setSettings(defaultSettings);
-      localStorage.setItem('systemSettings', JSON.stringify(defaultSettings));
-      (window as any).alarmVolume = defaultSettings.alarmVolume / 100;
-      fetch('/admin/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(defaultSettings),
-      })
-        .then(() => showSettingsMessage('已恢复默认设置，并同步到后端'))
-        .catch(() => showSettingsMessage('已恢复默认设置，后端同步失败'));
     }
   };
 
@@ -704,6 +789,7 @@ export default function SettingsView() {
     { key: 'video', label: '视频设置', icon: Video },
     { key: 'fence', label: '围栏及定位设置', icon: MapPin },
     { key: 'alarm', label: '告警设置', icon: Bell },
+    { key: 'smartMonitoring', label: '智能监控配置', icon: MonitorCog },
     { key: 'ai', label: 'AI 助手设置', icon: Bot },
     { key: 'log', label: '日志设置', icon: FileText },
     { key: 'account', label: '账号安全', icon: Shield },
@@ -754,22 +840,57 @@ export default function SettingsView() {
               </button>
               <button
                 onClick={handleSave}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-lg shadow-cyan-500/20"
+                disabled={saving}
+                className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all active:scale-95 disabled:cursor-wait ${
+                  saved
+                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                    : saveError
+                      ? 'bg-red-500 text-white shadow-lg shadow-red-500/20'
+                      : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white shadow-lg shadow-cyan-500/20'
+                }`}
               >
-                <Save size={14} />
-                保存设置
+                {saved ? <CheckCircle size={14} /> : <Save size={14} className={saving ? 'animate-pulse' : ''} />}
+                {saving ? '保存中...' : saved ? '已保存' : saveError ? '保存失败' : '保存设置'}
               </button>
+              {(saved || saveError) && (
+                <div className={`text-center text-xs ${saveError ? 'text-red-300' : 'text-emerald-300'}`}>
+                  {saveError || '设置已保存'}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* 右侧内容 */}
         <div className="flex-1 bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-6">
-          {(saved || settingsMessage) && (
-            <div className="mb-4 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
-              {settingsMessage || '设置已保存'}
+          {/* 智能监控配置 */}
+          {activeTab === 'smartMonitoring' && (
+            <div className="h-[calc(100vh-180px)] min-h-[680px]">
+              {monitoringDevicesError && (
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  <span>{monitoringDevicesError}</span>
+                  <button
+                    onClick={loadMonitoringDevices}
+                    className="rounded bg-red-500/20 px-3 py-1 text-xs text-red-100 hover:bg-red-500/30"
+                  >
+                    重新加载
+                  </button>
+                </div>
+              )}
+              {monitoringDevicesLoading ? (
+                <div className="flex h-full items-center justify-center rounded-xl border border-slate-700 bg-slate-800/30 text-sm text-slate-300">
+                  正在加载监控设备...
+                </div>
+              ) : (
+                <SmartMonitoringConfig
+                  embedded
+                  devices={monitoringDevices}
+                  onSuccess={loadMonitoringDevices}
+                />
+              )}
             </div>
           )}
+
           {/* AI 助手设置 */}
           {activeTab === 'ai' && (
             <div className="space-y-4">
@@ -1431,6 +1552,17 @@ export default function SettingsView() {
             <div className="space-y-4">
               <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mb-4">
                 <h3 className="text-sm font-semibold text-white mb-3">基础设置</h3>
+                <div className="mb-4 max-w-sm">
+                  <label className="block text-sm text-slate-300 mb-1.5">安全生产天数</label>
+                  <input
+                    type="number"
+                    value={settings.safetyProductionDays}
+                    onChange={(e) => setSettings({ ...settings, safetyProductionDays: Math.max(0, Number(e.target.value) || 0) })}
+                    min={0}
+                    max={99999}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                   <div className="flex items-center justify-between py-1">
                     <div>
@@ -1542,16 +1674,11 @@ export default function SettingsView() {
                         type="range" 
                         min="0" 
                         max="100" 
-                        value={settings.alarmVolume}
-                        onChange={(e) => {
-                          const nextVolume = Number(e.target.value);
-                          setSettings({ ...settings, alarmVolume: nextVolume });
-                          (window as any).alarmVolume = nextVolume / 100;
-                        }}
+                        defaultValue={Math.round((window as any).alarmVolume * 100)}
                         className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                       />
                       <span className="text-slate-500 text-sm">🔊</span>
-                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{settings.alarmVolume}%</span>
+                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{Math.round((window as any).alarmVolume * 100)}%</span>
                     </div>
                   </div>
 
@@ -1561,42 +1688,19 @@ export default function SettingsView() {
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <button
-                      onClick={() => {
-                        fetch('/alarms/test', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ severity: 'low', description: '系统设置页面低等级告警测试' }),
-                        }).then(() => showSettingsMessage('低等级测试告警已写入后台'));
-                        window.stopAlarmSound && window.stopAlarmSound();
-                        window.playAlarmSound && window.playAlarmSound('low');
-                      }}
+                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('low'); }}
                       className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 px-4 rounded-lg transition-all text-sm"
                     >
                       🔵 低等级
                     </button>
                     <button
-                      onClick={() => {
-                        fetch('/alarms/test', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ severity: 'medium', description: '系统设置页面中等级告警测试' }),
-                        }).then(() => showSettingsMessage('中等级测试告警已写入后台'));
-                        window.stopAlarmSound && window.stopAlarmSound();
-                        window.playAlarmSound && window.playAlarmSound('medium', true);
-                      }}
+                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('medium', true); }}
                       className="bg-amber-600 hover:bg-amber-500 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-amber-500/20"
                     >
                       🟡 中等级
                     </button>
                     <button
-                      onClick={() => {
-                        fetch('/alarms/test', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ severity: 'high', description: '系统设置页面高等级告警测试' }),
-                        }).then(() => showSettingsMessage('高等级测试告警已写入后台'));
-                        window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high');
-                      }}
+                      onClick={() => window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high')}
                       className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-red-500/30"
                     >
                       🔴 高等级
@@ -2025,7 +2129,7 @@ export default function SettingsView() {
               {/* 各级管理员初始权限 */}
               <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
                 <h3 className="text-base font-semibold text-white mb-4">各级管理员初始权限</h3>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
                   {/* 总部管理员 */}
                   <div className="bg-slate-800/50 rounded-lg p-3 border border-red-500/30">
                     <div className="text-sm font-semibold text-red-400 mb-3 flex items-center gap-2">
@@ -2033,31 +2137,23 @@ export default function SettingsView() {
                       总部管理员
                     </div>
                     <div className="space-y-2">
-                      {['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'].map(perm => (
-                        <label key={perm} className="flex items-center gap-2 cursor-pointer">
+                      {adminPermissionOptions.map(option => (
+                        <label key={option.value} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={settings.hqAdminPermissions?.includes(perm) || false}
+                            checked={settings.hqAdminPermissions?.includes(option.value) || false}
                             onChange={(e) => {
                               const perms = settings.hqAdminPermissions || [];
                               setSettings({
                                 ...settings,
                                 hqAdminPermissions: e.target.checked 
-                                  ? [...perms, perm] 
-                                  : perms.filter(p => p !== perm)
+                                  ? [...perms, option.value] 
+                                  : perms.filter(p => p !== option.value)
                               });
                             }}
                             className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-red-500 focus:ring-red-500 focus:ring-offset-0"
                           />
-                          <span className="text-xs text-slate-300">{
-                            perm === 'dashboard' ? '仪表板' :
-                            perm === 'monitor' ? '视频监控' :
-                            perm === 'fence' ? '电子围栏' :
-                            perm === 'device' ? '设备管理' :
-                            perm === 'personnel' ? '人员管理' :
-                            perm === 'alarm' ? '告警管理' :
-                            perm === 'system' ? '系统设置' : perm
-                          }</span>
+                          <span className="text-xs text-slate-300">{option.label}</span>
                         </label>
                       ))}
                     </div>
@@ -2070,30 +2166,23 @@ export default function SettingsView() {
                       分公司管理员
                     </div>
                     <div className="space-y-2">
-                      {['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm'].map(perm => (
-                        <label key={perm} className="flex items-center gap-2 cursor-pointer">
+                      {adminPermissionOptions.map(option => (
+                        <label key={option.value} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={settings.branchAdminPermissions?.includes(perm) || false}
+                            checked={settings.branchAdminPermissions?.includes(option.value) || false}
                             onChange={(e) => {
                               const perms = settings.branchAdminPermissions || [];
                               setSettings({
                                 ...settings,
                                 branchAdminPermissions: e.target.checked 
-                                  ? [...perms, perm] 
-                                  : perms.filter(p => p !== perm)
+                                  ? [...perms, option.value] 
+                                  : perms.filter(p => p !== option.value)
                               });
                             }}
                             className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-orange-500 focus:ring-orange-500 focus:ring-offset-0"
                           />
-                          <span className="text-xs text-slate-300">{
-                            perm === 'dashboard' ? '仪表板' :
-                            perm === 'monitor' ? '视频监控' :
-                            perm === 'fence' ? '电子围栏' :
-                            perm === 'device' ? '设备管理' :
-                            perm === 'personnel' ? '人员管理' :
-                            perm === 'alarm' ? '告警管理' : perm
-                          }</span>
+                          <span className="text-xs text-slate-300">{option.label}</span>
                         </label>
                       ))}
                     </div>
@@ -2106,64 +2195,80 @@ export default function SettingsView() {
                       项目管理员
                     </div>
                     <div className="space-y-2">
-                      {['dashboard', 'monitor', 'fence', 'device.view', 'personnel.view', 'alarm'].map(perm => (
-                        <label key={perm} className="flex items-center gap-2 cursor-pointer">
+                      {adminPermissionOptions.map(option => (
+                        <label key={option.value} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={settings.projectAdminPermissions?.includes(perm) || false}
+                            checked={settings.projectAdminPermissions?.includes(option.value) || false}
                             onChange={(e) => {
                               const perms = settings.projectAdminPermissions || [];
                               setSettings({
                                 ...settings,
                                 projectAdminPermissions: e.target.checked 
-                                  ? [...perms, perm] 
-                                  : perms.filter(p => p !== perm)
+                                  ? [...perms, option.value] 
+                                  : perms.filter(p => p !== option.value)
                               });
                             }}
                             className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
                           />
-                          <span className="text-xs text-slate-300">{
-                            perm === 'dashboard' ? '仪表板' :
-                            perm === 'monitor' ? '视频监控' :
-                            perm === 'fence' ? '电子围栏' :
-                            perm === 'device.view' ? '设备查看' :
-                            perm === 'personnel.view' ? '人员查看' :
-                            perm === 'alarm' ? '告警管理' : perm
-                          }</span>
+                          <span className="text-xs text-slate-300">{option.label}</span>
                         </label>
                       ))}
                     </div>
                   </div>
                   
                   {/* 工队管理员 */}
+                  <div className="bg-slate-800/50 rounded-lg p-3 border border-cyan-500/30">
+                    <div className="text-sm font-semibold text-cyan-400 mb-3 flex items-center gap-2">
+                      <FolderTree size={14} />
+                      网格管理员
+                    </div>
+                    <div className="space-y-2">
+                      {adminPermissionOptions.map(option => (
+                        <label key={option.value} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settings.gridAdminPermissions?.includes(option.value) || false}
+                            onChange={(e) => {
+                              const perms = settings.gridAdminPermissions || [];
+                              setSettings({
+                                ...settings,
+                                gridAdminPermissions: e.target.checked
+                                  ? [...perms, option.value]
+                                  : perms.filter(p => p !== option.value)
+                              });
+                            }}
+                            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+                          />
+                          <span className="text-xs text-slate-300">{option.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="bg-slate-800/50 rounded-lg p-3 border border-green-500/30">
                     <div className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2">
                       <Users size={14} />
                       工队管理员
                     </div>
                     <div className="space-y-2">
-                      {['dashboard', 'monitor.view', 'personnel.view', 'alarm.view'].map(perm => (
-                        <label key={perm} className="flex items-center gap-2 cursor-pointer">
+                      {adminPermissionOptions.map(option => (
+                        <label key={option.value} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={settings.teamAdminPermissions?.includes(perm) || false}
+                            checked={settings.teamAdminPermissions?.includes(option.value) || false}
                             onChange={(e) => {
                               const perms = settings.teamAdminPermissions || [];
                               setSettings({
                                 ...settings,
                                 teamAdminPermissions: e.target.checked 
-                                  ? [...perms, perm] 
-                                  : perms.filter(p => p !== perm)
+                                  ? [...perms, option.value] 
+                                  : perms.filter(p => p !== option.value)
                               });
                             }}
                             className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-green-500 focus:ring-green-500 focus:ring-offset-0"
                           />
-                          <span className="text-xs text-slate-300">{
-                            perm === 'dashboard' ? '仪表板' :
-                            perm === 'monitor.view' ? '监控查看' :
-                            perm === 'personnel.view' ? '人员查看' :
-                            perm === 'alarm.view' ? '告警查看' : perm
-                          }</span>
+                          <span className="text-xs text-slate-300">{option.label}</span>
                         </label>
                       ))}
                     </div>
@@ -2477,11 +2582,7 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/mysql', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => {
-                            console.log('MySQL备份结果:', r);
-                            showSettingsMessage(r.success ? '数据库备份已生成' : (r.detail || '数据库备份失败'));
-                            refreshBackupFiles();
-                          });
+                          .then(r => console.log('MySQL备份结果:', r));
                       }}
                       className="text-sm bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
                     >
@@ -2491,11 +2592,7 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/config', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => {
-                            console.log('配置备份结果:', r);
-                            showSettingsMessage(r.success ? '配置备份已生成' : (r.detail || '配置备份失败'));
-                            refreshBackupFiles();
-                          });
+                          .then(r => console.log('配置备份结果:', r));
                       }}
                       className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
                     >
@@ -2505,11 +2602,7 @@ export default function SettingsView() {
                       onClick={() => {
                         fetch('/api/backup/create/full', { method: 'POST' })
                           .then(r => r.json())
-                          .then(r => {
-                            console.log('完整备份结果:', r);
-                            showSettingsMessage(r.success ? '完整备份已生成' : (r.message || '完整备份失败'));
-                            refreshBackupFiles();
-                          });
+                          .then(r => console.log('完整备份结果:', r));
                       }}
                       className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-amber-500/30 transition-all cursor-pointer"
                     >
@@ -2573,6 +2666,167 @@ export default function SettingsView() {
                       )}
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* 存储空间管理 */}
+              <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <HardDrive size={16} className="text-cyan-400" />
+                    <h3 className="text-sm font-semibold text-white">存储空间管理</h3>
+                  </div>
+                  {storageStatus && (
+                    <button
+                      onClick={loadStorageStatus}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                    >
+                      刷新状态
+                    </button>
+                  )}
+                </div>
+                
+                {/* 存储状态显示 */}
+                {storageStatus && storageStatus.storages && storageStatus.storages.length > 0 && (
+                  <div className="mb-4 space-y-3">
+                    {storageStatus.storages.map((storage: any, idx: number) => (
+                      <div key={idx} className={`bg-slate-900/50 rounded-lg p-3 border ${
+                        storage.status === 'critical' ? 'border-red-500/50' :
+                        storage.status === 'warning' ? 'border-amber-500/50' :
+                        'border-slate-700/50'
+                      }`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">{storage.path}</span>
+                            {storage.status === 'critical' && (
+                              <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">紧急</span>
+                            )}
+                            {storage.status === 'warning' && (
+                              <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">警告</span>
+                            )}
+                            {storage.status === 'normal' && (
+                              <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">正常</span>
+                            )}
+                          </div>
+                          <span className="text-xs text-slate-500">
+                            数据: {storage.video_size_gb}GB / 限额: {storage.max_size_gb}GB
+                          </span>
+                        </div>
+                        
+                        {/* 进度条 */}
+                        <div className="relative h-2 bg-slate-700 rounded-full overflow-hidden">
+                          <div 
+                            className={`absolute top-0 left-0 h-full rounded-full transition-all ${
+                              storage.status === 'critical' ? 'bg-red-500' :
+                              storage.status === 'warning' ? 'bg-amber-500' :
+                              'bg-cyan-500'
+                            }`}
+                            style={{ width: `${Math.min(storage.usage_percent, 100)}%` }}
+                          />
+                        </div>
+                        
+                        <div className="flex justify-between mt-1">
+                          <span className="text-xs text-slate-400">
+                            已用: {storage.used_gb.toFixed(1)}GB / {storage.total_gb.toFixed(1)}GB
+                          </span>
+                          <span className={`text-xs font-medium ${
+                            storage.status === 'critical' ? 'text-red-400' :
+                            storage.status === 'warning' ? 'text-amber-400' :
+                            'text-cyan-400'
+                          }`}>
+                            {storage.usage_percent}%
+                          </span>
+                        </div>
+                        
+                        {storage.over_capacity && (
+                          <div className="mt-2 text-xs text-red-400">
+                            已超过设定的最大存储容量限制！
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    
+                    {storageStatus.has_critical && (
+                      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-400">
+                        存储空间紧急！系统已自动触发清理，建议立即检查存储配置或扩容。
+                      </div>
+                    )}
+                    
+                    {storageStatus.has_warning && !storageStatus.has_critical && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-400">
+                        存储空间不足警告！建议清理旧文件或增加存储容量。
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-4 gap-3 mb-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">最大存储容量(GB)</label>
+                    <input
+                      type="number"
+                      value={settings.storageMaxSizeGB || 500}
+                      onChange={(e) => setSettings({ ...settings, storageMaxSizeGB: Number(e.target.value) })}
+                      min={50}
+                      max={10000}
+                      step={50}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">达到此容量将触发清理</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">警告阈值(%)</label>
+                    <input
+                      type="number"
+                      value={settings.storageWarningThreshold || 80}
+                      onChange={(e) => setSettings({ ...settings, storageWarningThreshold: Number(e.target.value) })}
+                      min={50}
+                      max={90}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">超过此比例发出警告</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">紧急阈值(%)</label>
+                    <input
+                      type="number"
+                      value={settings.storageCriticalThreshold || 95}
+                      onChange={(e) => setSettings({ ...settings, storageCriticalThreshold: Number(e.target.value) })}
+                      min={80}
+                      max={99}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    />
+                    <p className="text-xs text-slate-500 mt-0.5">超过此比例强制清理</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">清理策略</label>
+                    <select
+                      value={settings.storageCleanupStrategy || 'both'}
+                      onChange={(e) => setSettings({ ...settings, storageCleanupStrategy: e.target.value as 'age' | 'space' | 'both' })}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                    >
+                      <option value="age">仅按时间</option>
+                      <option value="space">仅按空间</option>
+                      <option value="both">时间和空间</option>
+                    </select>
+                    <p className="text-xs text-slate-500 mt-0.5">选择清理方式</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-between py-2 border-t border-slate-700/50">
+                  <div>
+                    <div className="text-sm text-white">空间不足自动清理</div>
+                    <div className="text-xs text-slate-400">超过容量上限时自动删除旧文件</div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.storageAutoCleanup !== false}
+                      onChange={(e) => setSettings({ ...settings, storageAutoCleanup: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  </label>
                 </div>
               </div>
 
@@ -2724,9 +2978,7 @@ export default function SettingsView() {
                           </div>
                           <div>
                             <div className="text-sm text-white font-medium">{bf.filename}</div>
-                            <div className="text-xs text-slate-400">
-                              {(bf.date || bf.created_at || '').toString().replace('T', ' ').slice(0, 19)} · {typeof bf.size === 'number' ? `${(bf.size / 1024 / 1024).toFixed(1)} MB` : bf.size} · {bf.type}
-                            </div>
+                            <div className="text-xs text-slate-400">{bf.date} · {bf.size} · {bf.type}</div>
                           </div>
                         </div>
                         <button 
@@ -2738,9 +2990,6 @@ export default function SettingsView() {
                                 body: JSON.stringify({filename: bf.filename})
                               }).then(r => r.json()).then(r => {
                               console.log('恢复结果:', r);
-                              showSettingsMessage(r.success ? '已从备份恢复，请刷新页面确认配置' : (r.message || '恢复失败'));
-                              refreshStoragePaths();
-                              refreshBackupFiles();
                             });
                             }
                           }}
@@ -3376,3 +3625,5 @@ export default function SettingsView() {
     </div>
   );
 }
+
+

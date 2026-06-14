@@ -221,6 +221,72 @@ app.get('/api/dashboard/devices', async (req, res) => {
     }
 });
 
+// ========== 4.1 获取定位设备列表 ==========
+app.get('/device/list', async (req, res) => {
+    try {
+        let sql = `
+            SELECT 
+                d.id,
+                d.device_code as device_id,
+                d.device_name as name,
+                d.device_type as type,
+                d.is_online,
+                d.is_fault,
+                d.install_location,
+                d.remark,
+                d.branch_id,
+                d.project_id,
+                d.grid_id,
+                d.team_id,
+                d.personnel_id,
+                b.name as company,
+                p.name as project,
+                g.name as grid,
+                t.name as team,
+                d.created_at,
+                d.updated_at
+            FROM devices d
+            LEFT JOIN branches b ON d.branch_id = b.id
+            LEFT JOIN projects p ON d.project_id = p.id
+            LEFT JOIN grids g ON d.grid_id = g.id
+            LEFT JOIN teams t ON d.team_id = t.id
+            WHERE d.device_type IN ('rtk', 'uwb', 'gps_tag', 'gps_band', 'smart_helmet')
+            ORDER BY d.id DESC
+        `;
+        
+        const [rows] = await pool.query(sql);
+        
+        // 转换为前端需要的格式
+        const devices = rows.map(device => ({
+            device_id: String(device.device_id || device.id),
+            name: device.name,
+            type: device.type,
+            status: device.is_online ? 'online' : (device.is_fault ? 'fault' : 'offline'),
+            company: device.company || '',
+            branch_id: String(device.branch_id || ''),
+            project: device.project || '',
+            project_id: String(device.project_id || ''),
+            grid: device.grid || '',
+            grid_id: String(device.grid_id || ''),
+            team: device.team || '',
+            team_id: String(device.team_id || ''),
+            personnel_id: String(device.personnel_id || ''),
+            install_location: device.install_location || '',
+            holder: device.team || '',
+            holderPhone: '',
+            phone_num: '',
+            remark: device.remark || '',
+            lastUpdate: device.updated_at,
+            createdAt: device.created_at
+        }));
+        
+        res.json(devices);
+    } catch (error) {
+        console.error('获取定位设备列表失败:', error);
+        res.status(500).json({ error: '服务器错误' });
+    }
+});
+
 // 获取所有摄像头设备（供 VideoCenter 使用）
 // 获取摄像头设备（支持公司、项目筛选）
 // 找到这个接口，替换成下面的代码

@@ -1,90 +1,406 @@
-import React, { useState, useEffect } from 'react';
-import { X, Save } from 'lucide-react';
-import type { Grid, GridLevel } from '../../../types';
-import { levelNames } from '../../../src/api/gridApi';
+import React, { useEffect, useMemo, useState } from 'react';
+import { MapPin, Save, Search, X } from 'lucide-react';
+import L from 'leaflet';
+import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import type { Grid } from '../../../types';
+import { API_BASE_URL, getAuthHeaders } from '../../../src/api/config';
 
 interface GridFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: any) => void;
   editGrid?: Grid | null;
+  existingGrids?: Grid[];
 }
 
-export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, onSubmit, editGrid }) => {
+type LatLngTuple = [number, number];
+
+type BranchOption = {
+  id: number;
+  name: string;
+};
+
+type ProjectOption = {
+  id: number;
+  name: string;
+  branch_id?: number | null;
+  branch_name?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  center?: unknown;
+};
+
+const DEFAULT_CENTER: LatLngTuple = [34.3416, 108.9398];
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+
+const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? value : []);
+
+const nextGridId = (grids: Grid[]): string => {
+  const used = new Set(grids.map((grid) => String(grid.grid_id || '').trim()).filter(Boolean));
+  let index = 1;
+  while (used.has(`GRID-${String(index).padStart(3, '0')}`)) {
+    index += 1;
+  }
+  return `GRID-${String(index).padStart(3, '0')}`;
+};
+
+const toNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const projectCenter = (project?: ProjectOption | null): LatLngTuple | null => {
+  if (!project) return null;
+
+  const lat = toNumber(project.latitude);
+  const lng = toNumber(project.longitude);
+  if (lat !== null && lng !== null) return [lat, lng];
+
+  if (Array.isArray(project.center) && project.center.length >= 2) {
+    const first = toNumber(project.center[0]);
+    const second = toNumber(project.center[1]);
+    if (first !== null && second !== null) {
+      return Math.abs(first) > 90 ? [second, first] : [first, second];
+    }
+  }
+
+  if (typeof project.center === 'string') {
+    try {
+      return projectCenter({ ...project, center: JSON.parse(project.center) });
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+};
+
+const parseBoundaryPoints = (value?: string): LatLngTuple[] => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((point: unknown): point is number[] => (
+        Array.isArray(point) &&
+        point.length >= 2 &&
+        Number.isFinite(Number(point[0])) &&
+        Number.isFinite(Number(point[1]))
+      ))
+      .map((point: number[]) => [Number(point[0]), Number(point[1])]);
+  } catch {
+    return [];
+  }
+};
+
+const BoundaryDrawEvents: React.FC<{
+  points: LatLngTuple[];
+  onChange: (points: LatLngTuple[]) => void;
+}> = ({ points, onChange }) => {
+  useMapEvents({
+    click(event) {
+      onChange([...points, [Number(event.latlng.lat.toFixed(6)), Number(event.latlng.lng.toFixed(6))]]);
+    },
+  });
+  return null;
+};
+
+const MapFollower: React.FC<{ center: LatLngTuple; points: LatLngTuple[] }> = ({ center, points }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (points.length >= 2) {
+      map.fitBounds(points, { padding: [24, 24], maxZoom: 18 });
+    } else {
+      map.setView(center, 16);
+    }
+  }, [center, map, points]);
+
+  return null;
+};
+
+const BoundaryDrawMap: React.FC<{
+  center: LatLngTuple;
+  points: LatLngTuple[];
+  onChange: (points: LatLngTuple[]) => void;
+}> = ({ center, points, onChange }) => {
+  useEffect(() => {
+    window.setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+  }, []);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-cyan-500/30 bg-slate-900">
+      <div className="h-64">
+        <MapContainer center={center} zoom={16} style={{ height: '100%', width: '100%' }}>
+          <MapFollower center={center} points={points} />
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <BoundaryDrawEvents points={points} onChange={onChange} />
+          {points.length >= 2 && (
+            <Polyline positions={points} pathOptions={{ color: '#22d3ee', weight: 3, dashArray: '6 4' }} />
+          )}
+          {points.length >= 3 && (
+            <Polygon
+              positions={points}
+              pathOptions={{ color: '#06b6d4', weight: 2, fillColor: '#06b6d4', fillOpacity: 0.22 }}
+            />
+          )}
+          {points.map((point, index) => (
+            <CircleMarker
+              key={`${point[0]}-${point[1]}-${index}`}
+              center={point}
+              radius={6}
+              pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#06b6d4', fillOpacity: 1 }}
+            />
+          ))}
+        </MapContainer>
+      </div>
+    </div>
+  );
+};
+
+export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, onSubmit, editGrid, existingGrids = [] }) => {
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [mapCenter, setMapCenter] = useState<LatLngTuple>(DEFAULT_CENTER);
+  const [mapSearch, setMapSearch] = useState('');
+  const [searchingMap, setSearchingMap] = useState(false);
   const [formData, setFormData] = useState({
     grid_id: '',
     name: '',
-    level: 'workface' as GridLevel,
-    parent_id: '',
     project_id: '',
     bounds_json: '',
     description: '',
   });
 
   useEffect(() => {
+    if (!isOpen) return;
+
+    const loadOptions = async () => {
+      const requestOptions: RequestInit = {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      };
+      const [projectRes, summaryRes, branchRes] = await Promise.allSettled([
+        fetch(apiUrl('/projects/'), requestOptions),
+        fetch(apiUrl('/api/dashboard/summary'), requestOptions),
+        fetch(apiUrl('/api/dashboard/branches'), requestOptions),
+      ]);
+
+      const basicProjects = projectRes.status === 'fulfilled' && projectRes.value.ok
+        ? asArray<any>(await projectRes.value.json())
+        : [];
+      const summaryProjects = summaryRes.status === 'fulfilled' && summaryRes.value.ok
+        ? asArray<any>(await summaryRes.value.json())
+        : [];
+      const branchList = branchRes.status === 'fulfilled' && branchRes.value.ok
+        ? asArray<any>(await branchRes.value.json())
+        : [];
+
+      const summaryById = new Map(summaryProjects.map((item) => [String(item.id), item]));
+      const nextProjects = basicProjects.map((project) => {
+        const summary = summaryById.get(String(project.id)) || {};
+        return {
+          id: Number(project.id),
+          name: project.name || summary.name || '',
+          branch_id: toNumber(project.branch_id ?? summary.branch_id),
+          branch_name: project.branch_name,
+          latitude: toNumber(summary.latitude ?? project.latitude ?? project.lat),
+          longitude: toNumber(summary.longitude ?? project.longitude ?? project.lng),
+          center: summary.center ?? project.center,
+        };
+      }).filter((project) => Number.isFinite(project.id) && project.name);
+
+      const branchNames = new Map<number, string>();
+      branchList.forEach((branch) => {
+        const id = toNumber(branch.id);
+        if (id !== null) branchNames.set(id, branch.name || `分公司 ${id}`);
+      });
+      basicProjects.forEach((project) => {
+        const id = toNumber(project.branch_id);
+        if (id !== null && project.branch_name) branchNames.set(id, project.branch_name);
+      });
+      nextProjects.forEach((project) => {
+        if (project.branch_id !== null && project.branch_id !== undefined && !branchNames.has(project.branch_id)) {
+          branchNames.set(project.branch_id, `分公司 ${project.branch_id}`);
+        }
+      });
+
+      setBranches(Array.from(branchNames.entries()).map(([id, name]) => ({ id, name })));
+      setProjects(nextProjects);
+
+      if (nextProjects.length === 1) {
+        setSelectedBranchId(nextProjects[0].branch_id ? String(nextProjects[0].branch_id) : '');
+        setFormData((prev) => ({ ...prev, project_id: String(nextProjects[0].id) }));
+      }
+    };
+
+    loadOptions().catch((error) => console.error('加载项目选项失败:', error));
+  }, [isOpen]);
+
+  useEffect(() => {
     if (editGrid) {
       setFormData({
         grid_id: editGrid.grid_id,
         name: editGrid.name,
-        level: editGrid.level,
-        parent_id: editGrid.parent_id?.toString() || '',
         project_id: editGrid.project_id?.toString() || '',
         bounds_json: editGrid.bounds_json,
         description: editGrid.description || '',
       });
-    } else {
-      setFormData({
-        grid_id: '',
-        name: '',
-        level: 'workface',
-        parent_id: '',
-        project_id: '',
-        bounds_json: '',
-        description: '',
-      });
+      return;
     }
-  }, [editGrid, isOpen]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    setFormData({
+      grid_id: nextGridId(existingGrids),
+      name: '',
+      project_id: '',
+      bounds_json: '',
+      description: '',
+    });
+  }, [editGrid, existingGrids, isOpen]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => String(project.id) === formData.project_id),
+    [formData.project_id, projects]
+  );
+
+  const visibleProjects = useMemo(() => {
+    if (!selectedBranchId) return projects;
+    return projects.filter((project) => String(project.branch_id || '') === selectedBranchId);
+  }, [projects, selectedBranchId]);
+
+  useEffect(() => {
+    const center = projectCenter(selectedProject);
+    if (center) setMapCenter(center);
+  }, [selectedProject]);
+
+  const handleProjectChange = (projectId: string) => {
+    setFormData((prev) => ({ ...prev, project_id: projectId }));
+  };
+
+  const handleBranchChange = (branchId: string) => {
+    setSelectedBranchId(branchId);
+    const firstProject = projects.find((project) => !branchId || String(project.branch_id || '') === branchId);
+    setFormData((prev) => ({ ...prev, project_id: firstProject ? String(firstProject.id) : '' }));
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  const boundaryPoints = parseBoundaryPoints(formData.bounds_json);
+
+  const handleBoundaryChange = (points: LatLngTuple[]) => {
+    setFormData((prev) => ({
+      ...prev,
+      bounds_json: points.length ? JSON.stringify(points) : '',
+    }));
+  };
+
+  const handleMapSearch = async () => {
+    const keyword = mapSearch.trim();
+    if (!keyword) return;
+    try {
+      setSearchingMap(true);
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(keyword)}`
+      );
+      const [result] = await response.json();
+      const lat = toNumber(result?.lat);
+      const lon = toNumber(result?.lon);
+      if (lat !== null && lon !== null) {
+        setMapCenter([lat, lon]);
+      } else {
+        alert('没有找到该位置');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('地图搜索失败');
+    } finally {
+      setSearchingMap(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const submitData = {
+    if (!formData.project_id.trim()) {
+      alert('请选择所属项目');
+      return;
+    }
+
+    onSubmit({
       ...formData,
-      parent_id: formData.parent_id ? formData.parent_id : null,
-      project_id: formData.project_id ? formData.project_id : null,
-    };
-    onSubmit(submitData);
+      level: 'workface',
+      parent_id: null,
+      project_id: formData.project_id.trim(),
+    });
   };
 
   if (!isOpen) return null;
 
-  const levels: GridLevel[] = ['project', 'workshop', 'team', 'workface'];
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 rounded-xl w-[500px] max-h-[85vh] overflow-hidden border border-white/20 shadow-2xl">
-        {/* 头部 */}
-        <div className="bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4 border-b border-white/10 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-white">
-            {editGrid ? '编辑网格' : '新建网格'}
-          </h3>
+      <div className="max-h-[88vh] w-[620px] overflow-hidden rounded-xl border border-white/20 bg-slate-800 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4">
+          <h3 className="text-xl font-bold text-white">{editGrid ? '编辑网格' : '新建网格'}</h3>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-white/60 hover:text-white"
+            className="rounded-lg p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+            type="button"
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* 表单内容 */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(85vh-140px)]">
-          {/* 网格编号 */}
+        <form onSubmit={handleSubmit} className="max-h-[calc(88vh-140px)] overflow-y-auto p-6">
+          {branches.length > 1 && (
+            <div className="mb-4">
+              <label className="mb-2 block text-sm font-medium text-white/80">
+                所属子公司 <span className="text-red-400">*</span>
+              </label>
+              <select
+                value={selectedBranchId}
+                onChange={(event) => handleBranchChange(event.target.value)}
+                className="w-full rounded-lg border border-white/20 bg-slate-700 px-4 py-2 text-white focus:border-cyan-400 focus:outline-none"
+              >
+                <option value="" className="bg-slate-700 text-white">请选择子公司</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id} className="bg-slate-700 text-white">
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
+            <label className="mb-2 block text-sm font-medium text-white/80">
+              所属项目 <span className="text-red-400">*</span>
+            </label>
+            <select
+              value={formData.project_id}
+              onChange={(event) => handleProjectChange(event.target.value)}
+              required
+              className="w-full rounded-lg border border-white/20 bg-slate-700 px-4 py-2 text-white focus:border-cyan-400 focus:outline-none"
+            >
+              <option value="" className="bg-slate-700 text-white">请选择项目</option>
+              {visibleProjects.map((project) => (
+                <option key={project.id} value={project.id} className="bg-slate-700 text-white">
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="mb-2 block text-sm font-medium text-white/80">
               网格编号 <span className="text-red-400">*</span>
             </label>
             <input
@@ -93,14 +409,13 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               value={formData.grid_id}
               onChange={handleChange}
               required
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="请输入网格编号，如：GRID-001"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
+              placeholder="如 GRID-001"
             />
           </div>
 
-          {/* 网格名称 */}
           <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
+            <label className="mb-2 block text-sm font-medium text-white/80">
               网格名称 <span className="text-red-400">*</span>
             </label>
             <input
@@ -109,103 +424,94 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               value={formData.name}
               onChange={handleChange}
               required
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="请输入网格名称"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
+              placeholder="如 1号隧道、2号桥梁、站房工程"
             />
           </div>
 
-          {/* 网格层级 */}
           <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              网格层级 <span className="text-red-400">*</span>
-            </label>
-            <select
-              name="level"
-              value={formData.level}
-              onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-slate-700 border border-white/20 text-white focus:outline-none focus:border-cyan-400"
-            >
-              {levels.map((level) => (
-                <option key={level} value={level} className="bg-slate-700 text-white">
-                  {levelNames[level] || level}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* 上级网格 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              上级网格编号
-            </label>
-            <input
-              type="text"
-              name="parent_id"
-              value={formData.parent_id}
-              onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="可选，上级网格编号"
-            />
-          </div>
-
-          {/* 所属项目 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              所属项目编号
-            </label>
-            <input
-              type="text"
-              name="project_id"
-              value={formData.project_id}
-              onChange={handleChange}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="可选，项目编号"
-            />
-          </div>
-
-          {/* 地理边界 */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              地理边界 (JSON)
-            </label>
+            <label className="mb-2 block text-sm font-medium text-white/80">地理边界</label>
+            <div className="mb-2 flex gap-2">
+              <div className="relative flex-1">
+                <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
+                <input
+                  value={mapSearch}
+                  onChange={(event) => setMapSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleMapSearch();
+                    }
+                  }}
+                  className="w-full rounded-md border border-white/15 bg-white/10 py-1.5 pl-9 pr-3 text-sm text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
+                  placeholder="搜索地点，定位后再绘制边界"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleMapSearch}
+                disabled={searchingMap}
+                className="flex items-center gap-1 rounded-md border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Search size={14} />
+                搜索
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBoundaryChange(boundaryPoints.slice(0, -1))}
+                disabled={boundaryPoints.length === 0}
+                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                撤销点
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBoundaryChange([])}
+                disabled={boundaryPoints.length === 0}
+                className="rounded-md border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                清空
+              </button>
+            </div>
+            <BoundaryDrawMap center={mapCenter} points={boundaryPoints} onChange={handleBoundaryChange} />
+            <div className="mt-2 text-xs text-white/50">
+              选择项目后地图会定位到项目位置；也可搜索地点后，在地图上依次点击绘制网格边界。
+            </div>
             <textarea
               name="bounds_json"
               value={formData.bounds_json}
               onChange={handleChange}
               rows={3}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 font-mono text-sm"
-              placeholder='例如: "[[31.2304, 121.4737], [31.2306, 121.4739], ...]"'
+              className="mt-2 w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 font-mono text-sm text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
+              placeholder="边界坐标会自动生成，也可粘贴 JSON 坐标"
             />
           </div>
 
-          {/* 描述 */}
           <div className="mb-4">
-            <label className="block text-sm font-medium text-white/80 mb-2">
-              描述
-            </label>
+            <label className="mb-2 block text-sm font-medium text-white/80">描述</label>
             <textarea
               name="description"
               value={formData.description}
               onChange={handleChange}
               rows={3}
-              className="w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400"
-              placeholder="请输入网格描述"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
+              placeholder="请输入网格说明"
             />
           </div>
         </form>
 
-        {/* 底部按钮 */}
-        <div className="px-6 py-4 border-t border-white/10 flex justify-end gap-3">
+        <div className="flex justify-end gap-3 border-t border-white/10 px-6 py-4">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+            className="rounded-lg bg-white/10 px-4 py-2 text-white transition-colors hover:bg-white/20"
+            type="button"
           >
             取消
           </button>
           <button
-            type="submit"
             onClick={handleSubmit}
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-500 text-white hover:from-cyan-400 hover:to-blue-400 transition-colors flex items-center gap-2"
+            className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-500 px-4 py-2 text-white transition-colors hover:from-cyan-400 hover:to-blue-400"
+            type="button"
           >
             <Save size={16} />
             {editGrid ? '保存修改' : '创建网格'}

@@ -1,6 +1,7 @@
 import os
 import time
-from .registry import ai_rule
+from .registry import ai_rule
+from app.utils.config_manager import get_face_recognition_enabled
 
 _face_service = None
 _last_recognition_time = 0.0
@@ -27,7 +28,10 @@ def detect_and_recognize_faces(service, frame):
         return False, None
 
     # 频率控制
-    now = time.time()
+    if not get_face_recognition_enabled():
+        return False, None
+
+    now = time.time()
     if now - _last_recognition_time < RECOGNITION_INTERVAL:
         return False, None
     _last_recognition_time = now

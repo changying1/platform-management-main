@@ -106,23 +106,15 @@
 
         <!-- 管理中心 -->
         <activity
-            android:name=".ui.manage.ManagementCenterActivity"
-            android:exported="false" />
+            android:name=".ui.management.ManagementActivity"
+            android:exported="false"
+            android:label="管理中心" />
+
+        <!-- 全局设置 -->
         <activity
-            android:name=".ui.manage.ProjectManagementActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ui.manage.GridManagementActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ui.manage.PersonnelManagementActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ui.manage.DeviceManagementActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ui.manage.PermissionManagementActivity"
-            android:exported="false" />
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:label="全局设置" />
 
     </application>
 
