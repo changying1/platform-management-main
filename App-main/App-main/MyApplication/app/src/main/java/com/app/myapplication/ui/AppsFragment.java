@@ -75,6 +75,10 @@ public class AppsFragment extends Fragment {
         rvQuick.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(requireContext(), 3));
         rvQuick.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
+        RecyclerView rvCameraManagement = root.findViewById(R.id.rv_camera_management);
+        rvCameraManagement.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(requireContext(), 1));
+        rvCameraManagement.setOverScrollMode(View.OVER_SCROLL_NEVER);
+
         int spacingPx = (int) (8 * getResources().getDisplayMetrics().density);
         rvQuick.addItemDecoration(new GridSpacingItemDecoration(3, spacingPx, true));
 
@@ -112,8 +116,11 @@ public class AppsFragment extends Fragment {
 
         rvQuick.setAdapter(quickAdapter);
 
-
-
+        List<com.app.myapplication.ui.adapter.QuickActionsAdapter.Item> cameraQuick = new ArrayList<>();
+        cameraQuick.add(new com.app.myapplication.ui.adapter.QuickActionsAdapter.Item("摄像头管理", android.R.drawable.ic_menu_camera));
+        rvCameraManagement.setAdapter(new com.app.myapplication.ui.adapter.QuickActionsAdapter(cameraQuick, item ->
+                startActivity(new Intent(requireContext(),
+                        com.app.myapplication.ui.video.CameraManagementActivity.class))));
 
         RecyclerView rvNews = root.findViewById(R.id.rv_news);
         rvNews.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(requireContext()));

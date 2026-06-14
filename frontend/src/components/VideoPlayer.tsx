@@ -1,13 +1,17 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { recognizeVideoTraffic } from '../api/videoApi';
 
-// ✅ 内网穿透智能适配！
 const detectBackendUrl = (): string => {
   if ((import.meta as any).env?.VITE_API_BASE_URL) return (import.meta as any).env?.VITE_API_BASE_URL;
   if (window.location.port === '3000') return '';
   return `${window.location.protocol}//${window.location.host}`;
 };
+
 const API_BASE_URL = detectBackendUrl();
+const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
+const MAX_RETRIES = 8;
+const RETRY_DELAY_MS = 1200;
 
 interface VideoPlayerProps {
   src: string;
@@ -21,15 +25,16 @@ interface MonitoringSummary {
   weekly_quota_text?: string;
   weekly_used_text?: string;
   weekly_remaining_text?: string;
+  monthly_threshold_text?: string;
+  estimated_remaining_text?: string;
+  traffic_status?: string;
+  last_traffic_ocr_time?: string | null;
+  last_calculated_at?: string | null;
   main_status?: string;
   status_tags?: string[];
 }
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
-
-const MAX_RETRIES = 8;
-const RETRY_DELAY_MS = 1200;
-const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
 
 const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry }) => (
   <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
@@ -40,6 +45,7 @@ const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry 
     />
     {onRetry && (
       <button
+        type="button"
         onClick={onRetry}
         className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
       >
@@ -49,6 +55,60 @@ const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry 
   </div>
 );
 
+const hasRecognizedTraffic = (summary?: MonitoringSummary | null): boolean => {
+  const text = summary?.weekly_used_text || '';
+  return !!text && text !== '--' && text !== '等待识别' && text !== '识别中';
+};
+
+const normalizeTrafficSummary = (data: any, previous: MonitoringSummary | null): MonitoringSummary => {
+  const next: MonitoringSummary = {
+    weekly_used_text: data?.weekly_used_text,
+    weekly_quota_text: data?.weekly_quota_text,
+    weekly_remaining_text: data?.weekly_remaining_text,
+    monthly_threshold_text: data?.monthly_threshold_text,
+    estimated_remaining_text: data?.estimated_remaining_text,
+    traffic_status: data?.traffic_status,
+    last_traffic_ocr_time: data?.last_traffic_ocr_time || data?.last_update_time || data?.last_calculated_at || null,
+    last_calculated_at: data?.last_calculated_at || null,
+    main_status: data?.main_status,
+    status_tags: Array.isArray(data?.status_tags) ? data.status_tags : [],
+  };
+
+  if (!hasRecognizedTraffic(next) && hasRecognizedTraffic(previous)) {
+    return {
+      ...next,
+      weekly_used_text: previous?.weekly_used_text,
+      weekly_remaining_text: previous?.weekly_remaining_text,
+      estimated_remaining_text: previous?.estimated_remaining_text,
+      traffic_status: previous?.traffic_status || next.traffic_status,
+      last_traffic_ocr_time: previous?.last_traffic_ocr_time || next.last_traffic_ocr_time,
+    };
+  }
+
+  return next;
+};
+
+const formatUpdateTime = (value?: string | null): string => {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace('T', ' ').slice(0, 19);
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+};
+
+const extractErrorMessage = (error: unknown, fallback: string): string => {
+  const err = error as any;
+  if (err?.message) return String(err.message);
+  if (err?.detail) return String(err.detail);
+  return fallback;
+};
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, onError }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -57,8 +117,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   const ezRef = useRef<any>(null);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initRef = useRef<(() => void) | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [monitoringSummary, setMonitoringSummary] = useState<MonitoringSummary | null>(null);
+  const monitoringSummaryRef = useRef<MonitoringSummary | null>(null);
+  const [trafficOcrStatus, setTrafficOcrStatus] = useState('等待识别');
+  const [trafficRecognizing, setTrafficRecognizing] = useState(false);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimeoutRef.current) {
@@ -67,30 +131,69 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     }
   }, []);
 
-  const fetchMonitoringSummary = useCallback(async () => {
+  const fetchTrafficStatus = useCallback(async () => {
     if (!videoId) {
+      console.info('[Traffic] skip GET status: empty videoId');
+      monitoringSummaryRef.current = null;
       setMonitoringSummary(null);
-      return;
+      return null;
     }
 
+    const url = `${API_BASE_URL}/video/${videoId}/traffic/status`;
+    console.info('[Traffic] GET status start', { videoId, url });
     try {
-      const res = await fetch(`${API_BASE_URL}/video/${videoId}/monitoring-summary`, { cache: 'no-store' });
-      if (!res.ok) return;
+      const res = await fetch(url, { cache: 'no-store' });
+      console.info('[Traffic] GET status response', { videoId, ok: res.ok, status: res.status });
+      if (!res.ok) {
+        setTrafficOcrStatus((current) => (hasRecognizedTraffic(monitoringSummaryRef.current) ? current : '状态获取失败'));
+        return null;
+      }
+
       const data = await res.json();
-      setMonitoringSummary({
-        weekly_used_text: data?.weekly_used_text,
-        weekly_quota_text: data?.weekly_quota_text,
-        weekly_remaining_text: data?.weekly_remaining_text,
-        main_status: data?.main_status,
-        status_tags: Array.isArray(data?.status_tags) ? data.status_tags : [],
+      let normalized: MonitoringSummary | null = null;
+      setMonitoringSummary((previous) => {
+        normalized = normalizeTrafficSummary(data, previous);
+        monitoringSummaryRef.current = normalized;
+        return normalized;
       });
-    } catch {
-      // ignore
+      if (hasRecognizedTraffic(normalized)) {
+        setTrafficOcrStatus('已缓存');
+      }
+      return normalized;
+    } catch (error) {
+      console.error('[Traffic] GET status failed', error);
+      setTrafficOcrStatus((current) => (hasRecognizedTraffic(monitoringSummaryRef.current) ? current : '状态获取失败'));
+      return null;
     }
   }, [videoId]);
 
+  const handleRecognizeTraffic = useCallback(async () => {
+    if (!videoId || trafficRecognizing) return;
+
+    setTrafficRecognizing(true);
+    setTrafficOcrStatus('后端识别中');
+    console.info('[Traffic] recognize start', { videoId });
+
+    try {
+      const result: any = await recognizeVideoTraffic(videoId);
+      if (result?.success === false) {
+        throw new Error(result?.message || '识别失败');
+      }
+      console.info('[Traffic] recognize success', { videoId, result });
+      await fetchTrafficStatus();
+      setTrafficOcrStatus('识别完成');
+    } catch (error) {
+      const message = extractErrorMessage(error, '识别失败');
+      console.error('[Traffic] recognize failed', { videoId, error });
+      setTrafficOcrStatus(message);
+    } finally {
+      setTrafficRecognizing(false);
+    }
+  }, [fetchTrafficStatus, trafficRecognizing, videoId]);
+
   const cleanupPlayer = useCallback(() => {
     clearRetryTimer();
+    console.info('[VideoPlayer] player destroy', { videoId, src, playType });
 
     if (hlsRef.current) {
       try {
@@ -105,8 +208,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
       } catch {}
       flvRef.current = null;
     }
-
-    setMonitoringSummary(null);
 
     if (ezRef.current) {
       try {
@@ -124,34 +225,36 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     if (containerRef.current) {
       containerRef.current.innerHTML = '';
     }
-  }, [clearRetryTimer]);
+  }, [clearRetryTimer, playType, src, videoId]);
 
-  const scheduleRetry = useCallback((reason: string) => {
-    if (retryCountRef.current >= MAX_RETRIES) {
-      setConnectionStatus('error');
-      onError?.(`视频流连接失败：${reason}`);
-      return;
-    }
+  const scheduleRetry = useCallback(
+    (reason: string) => {
+      if (retryCountRef.current >= MAX_RETRIES) {
+        setConnectionStatus('error');
+        onError?.(`视频流连接失败：${reason}`);
+        return;
+      }
 
-    retryCountRef.current += 1;
-    setConnectionStatus('connecting');
-    clearRetryTimer();
-    retryTimeoutRef.current = setTimeout(() => {
-      if (!src) return;
-      // 通过重置状态触发 useEffect 重建播放器
+      retryCountRef.current += 1;
       setConnectionStatus('connecting');
-      initRef.current?.();
-    }, RETRY_DELAY_MS);
-  }, [clearRetryTimer, onError, src]);
-
-  const initRef = useRef<(() => void) | null>(null);
+      clearRetryTimer();
+      retryTimeoutRef.current = setTimeout(() => {
+        if (!src) return;
+        setConnectionStatus('connecting');
+        initRef.current?.();
+      }, RETRY_DELAY_MS);
+    },
+    [clearRetryTimer, onError, src]
+  );
 
   const initPlayer = useCallback(() => {
     if (!src) return;
+    console.info('[VideoPlayer] player init start', { videoId, src, playType });
     cleanupPlayer();
 
-    const isEzopen = src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen';
-    const isHls = src.includes('.m3u8') || String(playType || '').toLowerCase() === 'hls';
+    const normalizedPlayType = String(playType || '').toLowerCase();
+    const isEzopen = src.startsWith('ezopen://') || normalizedPlayType === 'ezopen';
+    const isHls = src.includes('.m3u8') || normalizedPlayType === 'hls';
 
     if (isEzopen) {
       if (!accessToken) {
@@ -180,20 +283,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
               handleSuccess: () => {
                 retryCountRef.current = 0;
                 setConnectionStatus('connected');
-                fetchMonitoringSummary();
+                console.info('[VideoPlayer] player init success', { videoId, src, playType });
               },
               handleError: (err: any) => {
-                console.error('EZUIKit error:', err);
+                console.error('[VideoPlayer] player error', err);
                 scheduleRetry('ezopen 播放失败');
               },
             });
-          } catch (e) {
-            console.error('EZUIKit 初始化失败:', e);
+          } catch (error) {
+            console.error('EZUIKit 初始化失败', error);
             scheduleRetry('EZUIKit 初始化失败');
           }
         })
-        .catch((e) => {
-          console.error('ezuikit-js 加载失败:', e);
+        .catch((error) => {
+          console.error('ezuikit-js 加载失败:', error);
           scheduleRetry('EZUIKit SDK 加载失败');
         });
       return;
@@ -209,14 +312,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     videoEl.onplaying = () => {
       retryCountRef.current = 0;
       setConnectionStatus('connected');
-      fetchMonitoringSummary();
+      console.info('[VideoPlayer] player init success', { videoId, src, playType });
     };
     videoEl.onerror = () => {
+      console.error('[VideoPlayer] player error', videoEl.error);
       scheduleRetry('video 标签播放失败');
     };
 
     if (isHls) {
       if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        console.info('[VideoPlayer] player set src', { videoId, src, playType });
         videoEl.src = src;
         videoEl.play().catch(() => {});
         return;
@@ -230,6 +335,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         hlsRef.current = hls;
         hls.attachMedia(videoEl);
         hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          console.info('[VideoPlayer] player set src', { videoId, src, playType });
           hls.loadSource(src);
         });
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -237,6 +343,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data?.fatal) {
+            console.error('[VideoPlayer] player error', data);
             scheduleRetry('HLS 解析失败');
           }
         });
@@ -248,7 +355,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
       return;
     }
 
-    // flv / 其他协议优先走 flv.js，失败则回退原生播放
     const flvjs = (window as any).flvjs;
     if (flvjs?.isSupported?.()) {
       try {
@@ -270,21 +376,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         flvPlayer.load();
         flvPlayer.play().catch(() => {});
         flvPlayer.on('error', () => {
+          console.error('[VideoPlayer] player error', { videoId, src, playType });
           scheduleRetry('FLV 播放失败');
         });
         flvPlayer.on('statistics_info', () => {
           retryCountRef.current = 0;
           setConnectionStatus('connected');
+          console.info('[VideoPlayer] player init success', { videoId, src, playType });
         });
         return;
-      } catch (e) {
-        console.error('flv.js 初始化失败:', e);
+      } catch (error) {
+        console.error('flv.js 初始化失败', error);
       }
     }
 
+    console.info('[VideoPlayer] player set src', { videoId, src, playType });
     videoEl.src = src;
     videoEl.play().catch(() => {});
-  }, [accessToken, cleanupPlayer, fetchMonitoringSummary, onError, playType, scheduleRetry, src]);
+  }, [accessToken, cleanupPlayer, onError, playType, scheduleRetry, src, videoId]);
 
   initRef.current = initPlayer;
 
@@ -302,7 +411,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     return () => {
       cleanupPlayer();
     };
-  }, [src, playType, accessToken, initPlayer, cleanupPlayer]);
+  }, [videoId, src, playType]);
+
+  useEffect(() => {
+    fetchTrafficStatus();
+  }, [fetchTrafficStatus]);
 
   const showNativeVideo = !(src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen');
   const shouldShowLogoFallback =
@@ -310,12 +423,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     monitoringSummary?.main_status === 'offline' ||
     monitoringSummary?.status_tags?.includes('VIDEO_DEVICE_OFFLINE');
 
-  useEffect(() => {
-    if (!videoId) return;
-    fetchMonitoringSummary();
-    const timer = setInterval(fetchMonitoringSummary, 10000);
-    return () => clearInterval(timer);
-  }, [videoId, fetchMonitoringSummary]);
+  const hasCachedTraffic = hasRecognizedTraffic(monitoringSummary);
+  const usedText = hasCachedTraffic ? monitoringSummary?.weekly_used_text : '等待识别';
+  const thresholdText = monitoringSummary?.monthly_threshold_text || monitoringSummary?.weekly_quota_text || '30.00GB';
+  const remainingText = monitoringSummary?.estimated_remaining_text || monitoringSummary?.weekly_remaining_text || '--';
+  const updateTimeText = formatUpdateTime(monitoringSummary?.last_traffic_ocr_time);
+  const isTrafficAlarm = monitoringSummary?.traffic_status === 'alarm';
 
   return (
     <div className="w-full h-full bg-black rounded-lg overflow-hidden relative">
@@ -350,19 +463,39 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         </span>
       </div>
 
-      <div className="absolute bottom-2 right-2 z-10 bg-black/60 border border-cyan-300/20 rounded px-3 py-2 text-[11px] text-slate-100 min-w-[220px]">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-slate-300">已使用流量</span>
-          <span className="font-semibold text-cyan-200">{monitoringSummary?.weekly_used_text || '--'}</span>
+      <div
+        className={`absolute bottom-4 right-4 z-10 rounded-md px-4 py-3 text-sm text-slate-100 min-w-[320px] shadow-lg border ${
+          isTrafficAlarm ? 'bg-rose-950/85 border-rose-300/50' : 'bg-slate-900/82 border-cyan-200/25'
+        }`}
+      >
+        {isTrafficAlarm && <div className="mb-2 text-[13px] font-bold text-rose-100">流量不足</div>}
+        <div className="flex items-center justify-between gap-8">
+          <span className="text-slate-200">已使用流量</span>
+          <span className="text-base font-bold text-cyan-100">{usedText}</span>
         </div>
-        <div className="flex items-center justify-between gap-3 mt-1">
-          <span className="text-slate-300">流量阈值</span>
-          <span className="font-semibold">{monitoringSummary?.weekly_quota_text || '--'}</span>
+        <div className="flex items-center justify-between gap-8 mt-2">
+          <span className="text-slate-200">流量阈值</span>
+          <span className="text-base font-bold text-white">{thresholdText}</span>
         </div>
-        <div className="flex items-center justify-between gap-3 mt-1">
-          <span className="text-slate-300">剩余流量</span>
-          <span className="font-semibold">{monitoringSummary?.weekly_remaining_text || '--'}</span>
+        <div className="flex items-center justify-between gap-8 mt-2">
+          <span className="text-slate-200">估算剩余流量</span>
+          <span className="text-base font-bold text-white">{remainingText}</span>
         </div>
+        <div className="flex items-center justify-between gap-8 mt-2 text-xs">
+          <span className="text-slate-300">更新时间</span>
+          <span className="font-semibold text-slate-100">{updateTimeText}</span>
+        </div>
+        <div className="mt-2 border-t border-white/10 pt-2 text-xs text-slate-300">
+          识别状态：{trafficOcrStatus}
+        </div>
+        <button
+          type="button"
+          onClick={handleRecognizeTraffic}
+          disabled={!videoId || trafficRecognizing}
+          className="mt-3 w-full rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+        >
+          {trafficRecognizing ? '后端识别中...' : '识别流量'}
+        </button>
       </div>
 
       {connectionStatus === 'error' && (
@@ -371,6 +504,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
             <div className="text-lg font-semibold mb-2">视频流连接失败</div>
             <div className="text-sm text-gray-300 mb-4">请检查摄像头是否在线，或稍后重试</div>
             <button
+              type="button"
               onClick={() => {
                 retryCountRef.current = 0;
                 setConnectionStatus('connecting');

@@ -1,5 +1,19 @@
 import { API_BASE_URL } from './config';
 
+export async function recognizeVideoTraffic(videoId: string | number): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/video/${videoId}/traffic/recognize`, {
+    method: 'POST',
+  });
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {}
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.message || 'Failed to recognize traffic');
+  }
+  return data;
+}
+
 // ✅ 🔥 内网穿透终极解决方案！每次调用都实时检测！
 // 不管本地开发还是远程内网穿透，100% 正确！
 const getApiBase = (): string => {
@@ -257,6 +271,14 @@ export interface VideoMonitoringSummary {
   weekly_quota_text: string;
   weekly_used_text: string;
   weekly_remaining_text: string;
+  monthly_threshold_gb?: number;
+  safety_buffer_gb?: number;
+  estimated_remaining_gb?: number | null;
+  monthly_threshold_text?: string;
+  estimated_remaining_text?: string;
+  traffic_status?: 'normal' | 'low' | 'alarm' | 'unknown' | string;
+  traffic_ocr_text?: string;
+  last_traffic_ocr_time?: string | null;
   cycle_start_time: string;
   cycle_end_time: string;
   last_calculated_at: string;

@@ -95,6 +95,13 @@ TOKEN_ERROR_CODES = {"10002", "10029", "10030", "10031", "20002"}
 DEFAULT_WEEKLY_QUOTA_GB = float(os.getenv("VIDEO_DEFAULT_WEEKLY_QUOTA_GB", "5"))
 DEFAULT_WEEKLY_QUOTA_BYTES = int(DEFAULT_WEEKLY_QUOTA_GB * 1024 * 1024 * 1024)
 TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_RATIO", "0.2"))
+MONTHLY_TRAFFIC_THRESHOLD_GB = float(os.getenv("VIDEO_MONTHLY_TRAFFIC_THRESHOLD_GB", "30"))
+TRAFFIC_SAFETY_BUFFER_GB = float(os.getenv("VIDEO_TRAFFIC_SAFETY_BUFFER_GB", "1"))
+TRAFFIC_ALARM_REMAINING_GB = float(os.getenv("VIDEO_TRAFFIC_ALARM_REMAINING_GB", "1"))
+TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS", "8"))
+TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS", "5"))
+TRAFFIC_OCR_DEBUG_IMAGE_ENV = "TRAFFIC_OCR_DEBUG_IMAGE_PATH"
+BYTES_PER_GB = 1024 * 1024 * 1024
 EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
@@ -634,6 +641,195 @@ class VideoService:
             return f"{int(display)}{units[unit_index]}"
         return f"{display:.2f}{units[unit_index]}"
 
+    def _format_gb(self, value: Optional[float]) -> str:
+        if value is None:
+            return "--"
+        return f"{max(0.0, float(value)):.2f}GB"
+
+    def _traffic_unit_to_gb(self, value: float, unit: str) -> float:
+        normalized_unit = str(unit or "").upper()
+        if normalized_unit in {"T", "TB"}:
+            return value * 1024
+        if normalized_unit in {"M", "MB"}:
+            return value / 1024
+        return value
+
+    def _format_traffic_candidate_text(self, value: float, unit: str) -> str:
+        normalized_unit = str(unit or "").upper()
+        if normalized_unit in {"G", "GB", "B"}:
+            normalized_unit = "GB"
+        elif normalized_unit in {"M", "MB"}:
+            normalized_unit = "MB"
+        elif normalized_unit in {"T", "TB"}:
+            normalized_unit = "TB"
+        value_text = f"{value:.6f}".rstrip("0").rstrip(".")
+        return f"{value_text}{normalized_unit}"
+
+    def _extract_traffic_ocr_candidates(self, ocr_text: str) -> list[dict]:
+        raw_text = str(ocr_text or "")
+        if not raw_text.strip():
+            return []
+
+        text = raw_text.upper()
+        text = text.replace("O", "0").replace("L", "1").replace("I", "1")
+        text = text.replace("G8", "GB").replace("M8", "MB").replace("T8", "TB")
+        pattern = re.compile(r"(?<![A-Z])(\d+(?:[.,]\d+)?)(\s*)(TB|GB|MB|G|M|B)(?![A-Z])", re.IGNORECASE)
+        text_len = max(1, len(text))
+        candidates: list[dict] = []
+
+        for match in pattern.finditer(text):
+            raw_value = match.group(1)
+            raw_unit = match.group(3).upper()
+            raw_match = text[match.start():match.end()]
+
+            try:
+                value = float(raw_value.replace(",", "."))
+            except (TypeError, ValueError):
+                continue
+
+            normalized_unit = raw_unit
+            if normalized_unit == "B":
+                normalized_unit = "GB"
+            value_gb = self._traffic_unit_to_gb(value, normalized_unit)
+            has_decimal = "." in raw_value or "," in raw_value
+            position_ratio = match.start() / text_len
+            following = text[match.end():match.end() + 12]
+
+            excluded = False
+            exclude_reason = ""
+            if raw_unit == "G" and abs(value - 4.0) < 1e-9:
+                excluded = True
+                if re.match(r"\s*,\s*\d", following):
+                    exclude_reason = "signal_4g_with_signal_number"
+                else:
+                    exclude_reason = "signal_4g"
+
+            score = 0.0
+            if normalized_unit in {"G", "GB"}:
+                score += 40
+                if has_decimal:
+                    score += 120
+                else:
+                    score += 20
+            elif normalized_unit in {"M", "MB"}:
+                score += 10
+                if has_decimal:
+                    score += 20
+            elif normalized_unit in {"T", "TB"}:
+                score -= 20
+
+            if 0 <= value_gb <= 100:
+                score += 80
+            else:
+                score -= 180
+
+            if position_ratio >= 0.5:
+                score += 35
+            score += min(25.0, position_ratio * 25.0)
+
+            if excluded:
+                score -= 1000
+
+            candidates.append({
+                "raw": raw_match.strip(),
+                "text": self._format_traffic_candidate_text(value, normalized_unit),
+                "value": value,
+                "unit": "GB" if normalized_unit in {"G", "GB"} else normalized_unit,
+                "value_gb": max(0.0, value_gb),
+                "start": match.start(),
+                "end": match.end(),
+                "position_ratio": round(position_ratio, 4),
+                "has_decimal": has_decimal,
+                "excluded": excluded,
+                "exclude_reason": exclude_reason,
+                "score": round(score, 4),
+            })
+
+        candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
+        return candidates
+
+    def _parse_traffic_ocr_text_with_candidates(self, ocr_text: str) -> tuple[Optional[tuple[float, str]], list[dict]]:
+        candidates = self._extract_traffic_ocr_candidates(ocr_text)
+        valid_candidates = [item for item in candidates if not item.get("excluded")]
+        if not valid_candidates:
+            return None, candidates
+
+        best = valid_candidates[0]
+        return (max(0.0, float(best["value_gb"])), str(best["text"])), candidates
+
+    def _parse_traffic_ocr_text(self, ocr_text: str) -> Optional[tuple[float, str]]:
+        parsed, _ = self._parse_traffic_ocr_text_with_candidates(ocr_text)
+        return parsed
+
+    def _get_stored_traffic_usage_gb(self, db_video: VideoDevice) -> tuple[Optional[float], str, Optional[datetime]]:
+        used_gb = getattr(db_video, "traffic_used_gb", None)
+        ocr_text = str(getattr(db_video, "traffic_ocr_text", "") or "")
+        updated_at = getattr(db_video, "traffic_ocr_updated_at", None)
+        try:
+            if used_gb is None:
+                return None, ocr_text, updated_at
+            return max(0.0, float(used_gb)), ocr_text, updated_at
+        except (TypeError, ValueError):
+            return None, ocr_text, updated_at
+
+    def _is_suspicious_traffic_history(self, used_gb: Optional[float], threshold_gb: Optional[float] = None) -> bool:
+        if used_gb is None:
+            return False
+        try:
+            value = float(used_gb)
+        except (TypeError, ValueError):
+            return False
+
+        threshold = float(threshold_gb or MONTHLY_TRAFFIC_THRESHOLD_GB)
+        return value > 100 or value > threshold * 3
+
+    def _build_traffic_summary_fields(self, used_gb: Optional[float], ocr_text: str = "") -> dict:
+        threshold_gb = MONTHLY_TRAFFIC_THRESHOLD_GB
+        safety_buffer_gb = TRAFFIC_SAFETY_BUFFER_GB
+
+        if used_gb is None:
+            return {
+                "traffic_ocr_text": ocr_text,
+                "traffic_status": "unknown",
+                "monthly_threshold_gb": threshold_gb,
+                "safety_buffer_gb": safety_buffer_gb,
+                "estimated_remaining_gb": None,
+                "weekly_quota_bytes": int(threshold_gb * BYTES_PER_GB),
+                "weekly_used_bytes": 0,
+                "weekly_remaining_bytes": 0,
+                "weekly_quota_text": self._format_gb(threshold_gb),
+                "weekly_used_text": "识别中",
+                "weekly_remaining_text": "--",
+                "monthly_threshold_text": self._format_gb(threshold_gb),
+                "estimated_remaining_text": "--",
+            }
+
+        estimated_remaining_gb = threshold_gb - float(used_gb) - safety_buffer_gb
+        display_remaining_gb = max(estimated_remaining_gb, 0.0)
+        traffic_status = (
+            "alarm"
+            if estimated_remaining_gb < TRAFFIC_ALARM_REMAINING_GB
+            else "low"
+            if estimated_remaining_gb < 3
+            else "normal"
+        )
+
+        return {
+            "traffic_ocr_text": ocr_text,
+            "traffic_status": traffic_status,
+            "monthly_threshold_gb": threshold_gb,
+            "safety_buffer_gb": safety_buffer_gb,
+            "estimated_remaining_gb": estimated_remaining_gb,
+            "weekly_quota_bytes": int(threshold_gb * BYTES_PER_GB),
+            "weekly_used_bytes": int(float(used_gb) * BYTES_PER_GB),
+            "weekly_remaining_bytes": int(display_remaining_gb * BYTES_PER_GB),
+            "weekly_quota_text": self._format_gb(threshold_gb),
+            "weekly_used_text": self._format_gb(float(used_gb)),
+            "weekly_remaining_text": self._format_gb(display_remaining_gb),
+            "monthly_threshold_text": self._format_gb(threshold_gb),
+            "estimated_remaining_text": self._format_gb(display_remaining_gb),
+        }
+
     def _get_week_cycle_bounds(self, reference: Optional[datetime] = None) -> Tuple[datetime, datetime]:
         now = reference or datetime.now()
         week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1130,6 +1326,429 @@ class VideoService:
             "cycle_start_time": cycle_start,
             "cycle_end_time": cycle_end,
             "last_calculated_at": now,
+            **status_summary,
+        }
+
+    def _sync_traffic_ocr_alarm(self, db: Session, db_video: VideoDevice, traffic_fields: dict) -> bool:
+        used_gb = traffic_fields.get("estimated_remaining_gb")
+        active = used_gb is not None and float(used_gb) < TRAFFIC_ALARM_REMAINING_GB
+        description = (
+            f"摄像头流量不足预警：当前估算剩余流量已低于 {TRAFFIC_ALARM_REMAINING_GB:.0f}GB，"
+            f"已使用 {traffic_fields.get('weekly_used_text') or '--'}，"
+            f"流量阈值 {traffic_fields.get('monthly_threshold_text') or '30.00GB'}，"
+            f"保护余量 {TRAFFIC_SAFETY_BUFFER_GB:.0f}GB，"
+            f"估算剩余 {traffic_fields.get('estimated_remaining_text') or '--'}"
+        )
+        if active:
+            month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            existing_this_month = self._alarm_collection().find_one({
+                "device_id": str(db_video.id),
+                "alarm_type": "VIDEO_TRAFFIC_LOW",
+                "timestamp": {"$gte": month_start},
+            })
+            if existing_this_month:
+                return False
+
+        return self._sync_single_monitoring_alarm(
+            db=db,
+            db_video=db_video,
+            alarm_type="VIDEO_TRAFFIC_LOW",
+            severity="medium",
+            description=description,
+            active=active,
+        )
+
+    def report_traffic_ocr(self, db: Session, video_id: int, ocr_text: str, used_gb: Optional[float] = None):
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            return None
+
+        parsed, candidates = self._parse_traffic_ocr_text_with_candidates(ocr_text)
+        normalized_ocr_text = str(ocr_text or "").strip()
+        if used_gb is None:
+            if not parsed:
+                self._update_video_fields(video_id, {
+                    "traffic_ocr_text": normalized_ocr_text,
+                    "traffic_ocr_status": "unrecognized",
+                    "traffic_ocr_updated_at": datetime.utcnow(),
+                })
+                refreshed = self._get_video_runtime_by_id(video_id) or db_video
+                current_used_gb, current_ocr_text, updated_at = self._get_stored_traffic_usage_gb(refreshed)
+                fields = self._build_traffic_summary_fields(current_used_gb, current_ocr_text or normalized_ocr_text)
+                return {
+                    "success": False,
+                    "message": "未识别到合法流量读数",
+                    "last_update_time": updated_at,
+                    "candidates": candidates,
+                    **fields,
+                }
+            used_gb, normalized_ocr_text = parsed
+        else:
+            used_gb = max(0.0, float(used_gb))
+            if parsed:
+                normalized_ocr_text = parsed[1]
+
+        now = datetime.utcnow()
+        last_used_gb, _, _ = self._get_stored_traffic_usage_gb(db_video)
+        last_month = getattr(db_video, "last_ocr_month", None)
+        current_month = datetime.now().strftime("%Y-%m")
+        is_new_month = last_month != current_month
+        threshold_gb = MONTHLY_TRAFFIC_THRESHOLD_GB
+        historical_used_gb = last_used_gb
+        history_suspicious = self._is_suspicious_traffic_history(historical_used_gb, threshold_gb)
+
+        is_valid = True
+        invalid_reason = ""
+        reset_suspicious_history = False
+        if history_suspicious and not is_new_month:
+            reset_suspicious_history = True
+        elif last_used_gb is not None and not is_new_month:
+            if last_used_gb > 0 and used_gb > last_used_gb * 5:
+                is_valid = False
+                invalid_reason = "读数异常增大，已忽略"
+            elif used_gb + 0.05 < last_used_gb:
+                is_valid = False
+                invalid_reason = "本月读数异常下降，已忽略"
+
+        traffic_debug = {
+            "selected_traffic_value": used_gb,
+            "historical_used_gb": historical_used_gb,
+            "historical_value_suspicious": history_suspicious,
+            "final_used_gb": used_gb if is_valid else last_used_gb,
+        }
+
+        if is_valid:
+            self._update_video_fields(video_id, {
+                "traffic_used_gb": used_gb,
+                "traffic_ocr_text": normalized_ocr_text,
+                "traffic_ocr_status": "recognized",
+                "traffic_ocr_updated_at": now,
+                "last_ocr_month": current_month,
+            })
+            db_video = self._get_video_runtime_by_id(video_id) or db_video
+            used_for_summary = used_gb
+            traffic_debug["final_used_gb"] = used_for_summary
+        else:
+            self._update_video_fields(video_id, {
+                "traffic_rejected_ocr_text": normalized_ocr_text,
+                "traffic_rejected_used_gb": used_gb,
+                "traffic_ocr_status": "rejected",
+                "traffic_ocr_reject_reason": invalid_reason,
+                "traffic_ocr_updated_at": now,
+            })
+            db_video = self._get_video_runtime_by_id(video_id) or db_video
+            used_for_summary, normalized_ocr_text, _ = self._get_stored_traffic_usage_gb(db_video)
+            traffic_debug["final_used_gb"] = used_for_summary
+
+        fields = self._build_traffic_summary_fields(used_for_summary, normalized_ocr_text)
+        self._sync_traffic_ocr_alarm(db, db_video, fields)
+        message = "ok" if is_valid else invalid_reason
+        if reset_suspicious_history:
+            message = "历史流量统计异常，已使用当前OCR读数重置。"
+
+        logger.info(
+            "Traffic OCR usage debug video_id=%s selected=%s historical=%s suspicious=%s final=%s",
+            video_id,
+            traffic_debug["selected_traffic_value"],
+            traffic_debug["historical_used_gb"],
+            traffic_debug["historical_value_suspicious"],
+            traffic_debug["final_used_gb"],
+        )
+
+        return {
+            "success": is_valid,
+            "message": message,
+            "alarm_triggered": fields["traffic_status"] == "alarm",
+            "last_update_time": now,
+            "candidates": candidates,
+            "traffic_debug": traffic_debug,
+            **fields,
+        }
+
+    def get_traffic_status(self, db: Session, video_id: int):
+        return self.get_monitoring_summary(db, video_id)
+
+    def recognize_video_traffic(self, db: Session, video_id: int):
+        print(f"[TrafficOCR] recognize start video_id={video_id}")
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            return {"success": False, "message": "设备不存在"}
+
+        debug_dir = self._get_traffic_ocr_debug_dir()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+
+        try:
+            snapshot_path, method = self._capture_traffic_snapshot(db, db_video, debug_dir, timestamp)
+            print(f"[TrafficOCR] snapshot method={method}")
+            print(f"[TrafficOCR] snapshot saved path={snapshot_path}")
+        except Exception as exc:
+            reason = str(exc) or "获取截图失败"
+            print(f"[TrafficOCR] recognize failed reason={reason}")
+            return {"success": False, "message": reason}
+
+        try:
+            raw_text, traffic_text, used_gb, candidates, roi_path, debug_image = self._recognize_traffic_from_snapshot(
+                snapshot_path=snapshot_path,
+                video_id=video_id,
+                debug_dir=debug_dir,
+                timestamp=timestamp,
+            )
+        except Exception as exc:
+            reason = str(exc) or "识别失败"
+            print(f"[TrafficOCR] recognize failed reason={reason}")
+            return {"success": False, "message": reason}
+
+        result = self.report_traffic_ocr(db, video_id, traffic_text, used_gb)
+        if not result:
+            return {"success": False, "message": "设备不存在"}
+
+        traffic_value = None
+        traffic_unit = ""
+        value_match = re.search(r"(\d+(?:\.\d+)?)(TB|GB|MB)", traffic_text or "", re.IGNORECASE)
+        if value_match:
+            traffic_value = float(value_match.group(1))
+            traffic_unit = value_match.group(2).upper()
+
+        print("[TrafficOCR] update status success")
+        return {
+            **result,
+            "success": bool(result.get("success", used_gb is not None)),
+            "device_id": video_id,
+            "raw_text": raw_text,
+            "traffic_text": traffic_text,
+            "traffic_value": traffic_value,
+            "traffic_unit": traffic_unit,
+            "used_traffic_gb": used_gb,
+            "candidates": candidates,
+            "debug_image": debug_image,
+            "roi_path": roi_path,
+            "traffic_limit_gb": result.get("monthly_threshold_gb"),
+            "estimated_remaining_gb": result.get("estimated_remaining_gb"),
+            "last_calculated_at": result.get("last_update_time") or result.get("last_calculated_at"),
+        }
+
+    def _get_traffic_ocr_debug_dir(self) -> str:
+        root = Path(__file__).resolve().parents[2] / "runtime" / "traffic_ocr"
+        root.mkdir(parents=True, exist_ok=True)
+        return str(root)
+
+    def _get_traffic_ocr_debug_image_path(self) -> str:
+        raw_path = str(os.getenv(TRAFFIC_OCR_DEBUG_IMAGE_ENV, "") or "").strip().strip('"')
+        if not raw_path:
+            return ""
+        path = Path(raw_path)
+        if path.is_absolute():
+            return str(path)
+        return str((Path.cwd() / path).resolve())
+
+    def _capture_traffic_snapshot(self, db: Session, db_video: VideoDevice, debug_dir: str, timestamp: str) -> tuple[str, str]:
+        video_id = int(getattr(db_video, "id"))
+        snapshot_path = os.path.join(debug_dir, f"snapshot_{video_id}_{timestamp}.jpg")
+
+        debug_image_path = self._get_traffic_ocr_debug_image_path()
+        if debug_image_path:
+            if not os.path.exists(debug_image_path):
+                raise ValueError("测试图片不存在")
+            shutil.copyfile(debug_image_path, snapshot_path)
+            print(f"[TrafficOCR] snapshot method=debug_image path={debug_image_path}")
+            return snapshot_path, "debug_image"
+
+        if self._is_ezviz_access(db_video):
+            try:
+                self._capture_ezviz_snapshot(db_video, snapshot_path)
+                return snapshot_path, "ezviz"
+            except Exception as exc:
+                print(f"[TrafficOCR] ezviz snapshot failed video_id={video_id} reason={exc}")
+
+        live_url = ""
+        try:
+            protocol = "hls" if self._is_ezviz_access(db_video) else None
+            stream_info = self.get_stream_info(db, video_id, protocol=protocol)
+            live_url = str((stream_info or {}).get("url") or "")
+        except Exception as exc:
+            print(f"[TrafficOCR] get stream url failed video_id={video_id} reason={exc}")
+
+        if not live_url:
+            live_url = str(getattr(db_video, "rtsp_url", "") or getattr(db_video, "stream_url", "") or "")
+        if not live_url:
+            raise ValueError("直播流不可用")
+
+        self._capture_ffmpeg_snapshot(live_url, snapshot_path)
+        return snapshot_path, "ffmpeg"
+
+    def _capture_ezviz_snapshot(self, db_video: VideoDevice, output_path: str) -> None:
+        device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
+        channel_no = int(getattr(db_video, "channel_no", None) or 1)
+        if not device_serial:
+            raise ValueError("萤石设备缺少 device_serial")
+
+        payload = {"deviceSerial": device_serial, "channelNo": channel_no}
+        body = None
+        last_error = None
+        for path in ["/api/lapp/device/capture", "/api/lapp/v2/device/capture"]:
+            try:
+                body = self._call_ezviz_api(path, payload)
+                break
+            except Exception as exc:
+                last_error = exc
+
+        if body is None:
+            raise ValueError(f"萤石截图失败: {last_error}")
+
+        data = body.get("data") or {}
+        picture_url = (
+            data.get("picUrl")
+            or data.get("pictureUrl")
+            or data.get("url")
+            or data.get("imageUrl")
+            or (data if isinstance(data, str) else "")
+        )
+        if not picture_url:
+            raise ValueError("萤石截图接口未返回图片地址")
+
+        response = requests.get(str(picture_url), timeout=TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        if not response.content:
+            raise ValueError("萤石截图为空")
+        with open(output_path, "wb") as fh:
+            fh.write(response.content)
+
+    def _capture_ffmpeg_snapshot(self, live_url: str, output_path: str) -> None:
+        ffmpeg_path = self._get_ffmpeg_path()
+        command = [
+            ffmpeg_path,
+            "-y",
+            "-loglevel",
+            "error",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            live_url,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            output_path,
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError("获取截图超时")
+
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "").strip()[-500:]
+            raise ValueError(f"获取截图失败: {error or 'ffmpeg 截图失败'}")
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise ValueError("获取截图失败")
+
+    def _recognize_traffic_from_snapshot(
+        self,
+        snapshot_path: str,
+        video_id: int,
+        debug_dir: str,
+        timestamp: str,
+    ) -> tuple[str, str, Optional[float], list[dict], str, str]:
+        try:
+            import cv2
+        except Exception as exc:
+            raise ValueError(f"OpenCV 依赖未安装: {exc}")
+
+        try:
+            import pytesseract
+        except Exception:
+            raise ValueError("OCR依赖未安装")
+
+        image = cv2.imread(snapshot_path)
+        if image is None:
+            raise ValueError("截图文件无法读取")
+
+        h, w = image.shape[:2]
+        if self._get_traffic_ocr_debug_image_path():
+            print(f"[TrafficOCR] frame.shape={image.shape}")
+
+        x1 = max(0, min(w - 1, int(w * 0.20)))
+        y1 = 0
+        x2 = w
+        y2 = max(y1 + 1, min(h, int(h * 0.25)))
+        print(f"[TrafficOCR] crop top roi x1={x1} y1={y1} x2={x2} y2={y2}")
+
+        roi = image[y1:y2, x1:x2]
+        resized = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        debug_static_dir = self._get_default_static_subdir("debug")
+        roi_abs_path = os.path.join(debug_static_dir, "traffic_ocr_roi.jpg")
+        cv2.imwrite(roi_abs_path, binary)
+        roi_path = self._to_backend_static_web_path(roi_abs_path)
+        print(f"[TrafficOCR] roi saved path={roi_abs_path}")
+
+        raw_text_parts = []
+        variants = [binary, cv2.bitwise_not(binary)]
+
+        for variant_idx, variant in enumerate(variants):
+            try:
+                raw_text = pytesseract.image_to_string(
+                    variant,
+                    lang="eng",
+                    config="--psm 6 -c tessedit_char_whitelist=0123456789.,GBMTBgbmtb ",
+                    timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
+                )
+            except RuntimeError as exc:
+                if "timeout" in str(exc).lower():
+                    raise ValueError("识别超时")
+                raise
+
+            raw_text = str(raw_text or "").strip()
+            print(f"[TrafficOCR] ocr raw_text variant={variant_idx}: {raw_text}")
+            if raw_text:
+                raw_text_parts.append(raw_text)
+
+            parsed, candidates = self._parse_traffic_ocr_text_with_candidates(raw_text)
+            if parsed:
+                used_gb, traffic_text = parsed
+                print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} candidates={candidates}")
+                return raw_text, traffic_text, used_gb, candidates, roi_path, roi_path
+
+        raw_text = "\n".join(raw_text_parts).strip()
+        print(f"[TrafficOCR] ocr raw_text={raw_text}")
+        parsed, candidates = self._parse_traffic_ocr_text_with_candidates(raw_text)
+        if parsed:
+            used_gb, traffic_text = parsed
+            print(f"[TrafficOCR] parsed combined traffic_text={traffic_text} used_gb={used_gb} candidates={candidates}")
+            return raw_text, traffic_text, used_gb, candidates, roi_path, roi_path
+        return raw_text, "", None, candidates, roi_path, roi_path
+
+    def get_monitoring_summary(self, db: Session, video_id: int):
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            return None
+
+        if self._is_ezviz_access(db_video):
+            self._refresh_ezviz_device_status(db_video)
+            db_video = self._get_video_runtime_by_id(video_id) or db_video
+
+        now = datetime.now()
+        cycle_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        used_gb, ocr_text, traffic_updated_at = self._get_stored_traffic_usage_gb(db_video)
+        traffic_fields = self._build_traffic_summary_fields(used_gb, ocr_text)
+        status_summary = self._build_device_status_summary(db, db_video)
+        self._sync_traffic_ocr_alarm(db, db_video, traffic_fields)
+        status_summary = self._build_device_status_summary(db, db_video)
+
+        return {
+            "device_id": db_video.id,
+            "device_name": db_video.name,
+            "cycle_start_time": cycle_start,
+            "cycle_end_time": now,
+            "last_calculated_at": now,
+            "last_traffic_ocr_time": traffic_updated_at,
+            **traffic_fields,
             **status_summary,
         }
 

@@ -94,6 +94,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.8.7")
     implementation("androidx.lifecycle:lifecycle-livedata:2.8.7")
     implementation("androidx.preference:preference:1.2.1")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")

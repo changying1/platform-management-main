@@ -59,6 +59,13 @@ class PlaybackSaveRequest(BaseModel):
 class TempCacheTriggerRequest(BaseModel):
     force: bool = True
 
+
+class TrafficOcrRequest(BaseModel):
+    ocr_text: str = ""
+    used_gb: float | None = None
+    source: str = "video_osd"
+    capture_time: str | None = None
+
 @router.post("/ai/start")
 async def start_ai(req: AIMonitorRequest, db=Depends(get_db)):
     """开启 AI 监控"""
@@ -340,6 +347,44 @@ def get_monitoring_summary(video_id: int, db=Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取流量监测摘要失败: {e}")
+
+
+@router.post("/{video_id}/traffic/ocr")
+def report_traffic_ocr(video_id: int, body: TrafficOcrRequest, db=Depends(get_db)):
+    """上报从视频顶部 OSD OCR 识别出的本月已使用流量。"""
+    try:
+        result = service.report_traffic_ocr(db, video_id, body.ocr_text, body.used_gb)
+        if not result:
+            raise HTTPException(status_code=404, detail="设备不存在")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"上报 OCR 流量识别结果失败: {e}")
+
+
+@router.post("/{video_id}/traffic/recognize")
+def recognize_traffic(video_id: int, db=Depends(get_db)):
+    """后端截图并识别视频画面中的流量读数。"""
+    try:
+        return service.recognize_video_traffic(db, video_id)
+    except Exception as e:
+        logger.exception("traffic recognize failed video_id=%s", video_id)
+        return {"success": False, "message": str(e) or "识别失败"}
+
+
+@router.get("/{video_id}/traffic/status")
+def get_traffic_status(video_id: int, db=Depends(get_db)):
+    """获取摄像头 SIM 卡估算剩余流量状态。"""
+    try:
+        result = service.get_traffic_status(db, video_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="设备不存在")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取流量状态失败: {e}")
 
 
 @router.get("/{video_id}/playback/temp/videos")

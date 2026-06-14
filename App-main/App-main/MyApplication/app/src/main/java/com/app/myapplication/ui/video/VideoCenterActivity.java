@@ -129,9 +129,6 @@ public class VideoCenterActivity extends AppCompatActivity {
             @Override public void afterTextChanged(Editable s) {}
         });
 
-        // 新增
-        btnAdd.setOnClickListener(v -> showAddCameraDialog());
-
         // 格数
         chip4.setChecked(true);
         chip4.setOnClickListener(v -> applyColumns(2));

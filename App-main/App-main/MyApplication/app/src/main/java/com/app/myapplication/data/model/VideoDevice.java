@@ -23,6 +23,48 @@ public class VideoDevice {
     @SerializedName("password")
     public String password;
 
+    @SerializedName("platform_type")
+    private String platformType;
+
+    @SerializedName("device_type")
+    private String deviceType;
+
+    @SerializedName("access_source")
+    private String accessSource;
+
+    @SerializedName("ptz_source")
+    private String ptzSource;
+
+    @SerializedName("device_serial")
+    private String deviceSerial;
+
+    @SerializedName("channel_no")
+    private Integer channelNo;
+
+    @SerializedName("stream_protocol")
+    private String streamProtocol;
+
+    @SerializedName("company")
+    private String company;
+
+    @SerializedName("project")
+    private String project;
+
+    @SerializedName("install_location")
+    private String installLocation;
+
+    @SerializedName("grid")
+    private String grid;
+
+    @SerializedName("team")
+    private String team;
+
+    @SerializedName("manager")
+    private String manager;
+
+    @SerializedName("manager_phone")
+    private String managerPhone;
+
     // 流地址（RTSP / HLS / FLV）
     @SerializedName("rtsp_url")
     private String streamUrl;
@@ -93,6 +135,122 @@ public class VideoDevice {
         return password;
     }
 
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public String getPlatformType() {
+        return platformType;
+    }
+
+    public void setPlatformType(String platformType) {
+        this.platformType = platformType;
+    }
+
+    public String getDeviceType() {
+        return deviceType;
+    }
+
+    public void setDeviceType(String deviceType) {
+        this.deviceType = deviceType;
+    }
+
+    public String getAccessSource() {
+        return accessSource;
+    }
+
+    public void setAccessSource(String accessSource) {
+        this.accessSource = accessSource;
+    }
+
+    public String getPtzSource() {
+        return ptzSource;
+    }
+
+    public void setPtzSource(String ptzSource) {
+        this.ptzSource = ptzSource;
+    }
+
+    public String getDeviceSerial() {
+        return deviceSerial;
+    }
+
+    public void setDeviceSerial(String deviceSerial) {
+        this.deviceSerial = deviceSerial;
+    }
+
+    public Integer getChannelNo() {
+        return channelNo;
+    }
+
+    public void setChannelNo(Integer channelNo) {
+        this.channelNo = channelNo;
+    }
+
+    public String getStreamProtocol() {
+        return streamProtocol;
+    }
+
+    public void setStreamProtocol(String streamProtocol) {
+        this.streamProtocol = streamProtocol;
+    }
+
+    public String getCompany() {
+        return company;
+    }
+
+    public void setCompany(String company) {
+        this.company = company;
+    }
+
+    public String getProject() {
+        return project;
+    }
+
+    public void setProject(String project) {
+        this.project = project;
+    }
+
+    public String getInstallLocation() {
+        return installLocation;
+    }
+
+    public void setInstallLocation(String installLocation) {
+        this.installLocation = installLocation;
+    }
+
+    public String getGrid() {
+        return grid;
+    }
+
+    public void setGrid(String grid) {
+        this.grid = grid;
+    }
+
+    public String getTeam() {
+        return team;
+    }
+
+    public void setTeam(String team) {
+        this.team = team;
+    }
+
+    public String getManager() {
+        return manager;
+    }
+
+    public void setManager(String manager) {
+        this.manager = manager;
+    }
+
+    public String getManagerPhone() {
+        return managerPhone;
+    }
+
+    public void setManagerPhone(String managerPhone) {
+        this.managerPhone = managerPhone;
+    }
+
 
 
     public String getStreamUrl() {
@@ -123,7 +281,7 @@ public class VideoDevice {
         return status;
     }
 
-    /** online / offline */
+    /** online / offline / fault / maintenance */
     public void setStatus(String status) {
         this.status = status;
     }
