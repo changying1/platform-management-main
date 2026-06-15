@@ -321,9 +321,16 @@ export interface VideoMonitoringSummary {
   weekly_quota_text: string;
   weekly_used_text: string;
   weekly_remaining_text: string;
+  traffic_limit_gb?: number;
   monthly_threshold_gb?: number;
   safety_buffer_gb?: number;
+  traffic_reserved_gb?: number;
+  alarm_threshold_gb?: number;
+  used_gb?: number | null;
   estimated_remaining_gb?: number | null;
+  remaining_gb?: number | null;
+  traffic_remaining_gb?: number | null;
+  remaining_formula?: string;
   monthly_threshold_text?: string;
   estimated_remaining_text?: string;
   traffic_status?: 'normal' | 'low' | 'alarm' | 'unknown' | string;

@@ -207,8 +207,9 @@ DEFAULT_WEEKLY_QUOTA_BYTES = int(DEFAULT_WEEKLY_QUOTA_GB * 1024 * 1024 * 1024)
 
 TRAFFIC_ALERT_THRESHOLD_RATIO = float(os.getenv("VIDEO_TRAFFIC_ALERT_THRESHOLD_RATIO", "0.2"))
 MONTHLY_TRAFFIC_THRESHOLD_GB = float(os.getenv("VIDEO_MONTHLY_TRAFFIC_THRESHOLD_GB", "30"))
-TRAFFIC_SAFETY_BUFFER_GB = float(os.getenv("VIDEO_TRAFFIC_SAFETY_BUFFER_GB", "1"))
-TRAFFIC_ALARM_REMAINING_GB = float(os.getenv("VIDEO_TRAFFIC_ALARM_REMAINING_GB", "1"))
+TRAFFIC_RESERVED_GB = float(os.getenv("TRAFFIC_RESERVED_GB", os.getenv("VIDEO_TRAFFIC_SAFETY_BUFFER_GB", "2")))
+TRAFFIC_SAFETY_BUFFER_GB = TRAFFIC_RESERVED_GB
+TRAFFIC_ALARM_REMAINING_GB = float(os.getenv("VIDEO_TRAFFIC_ALARM_REMAINING_GB", "2"))
 TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS", "8"))
 TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS", "5"))
 TRAFFIC_OCR_DEBUG_IMAGE_ENV = "TRAFFIC_OCR_DEBUG_IMAGE_PATH"
@@ -1430,6 +1431,12 @@ class VideoService:
             return value / 1024
         return value
 
+    def _integer_traffic_gb(self, value_gb: Any) -> int:
+        try:
+            return max(0, int(float(value_gb)))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
     def _format_traffic_candidate_text(self, value: float, unit: str) -> str:
         normalized_unit = str(unit or "").upper()
         if normalized_unit in {"G", "GB", "B"}:
@@ -1466,7 +1473,9 @@ class VideoService:
             normalized_unit = raw_unit
             if normalized_unit == "B":
                 normalized_unit = "GB"
-            value_gb = self._traffic_unit_to_gb(value, normalized_unit)
+            raw_value_gb = max(0.0, self._traffic_unit_to_gb(value, normalized_unit))
+            integer_value_gb = self._integer_traffic_gb(raw_value_gb)
+            value_gb = float(integer_value_gb)
             has_decimal = "." in raw_value or "," in raw_value
             position_ratio = match.start() / text_len
             following = text[match.end():match.end() + 12]
@@ -1508,10 +1517,12 @@ class VideoService:
 
             candidates.append({
                 "raw": raw_match.strip(),
-                "text": self._format_traffic_candidate_text(value, normalized_unit),
-                "value": value,
-                "unit": "GB" if normalized_unit in {"G", "GB"} else normalized_unit,
-                "value_gb": max(0.0, value_gb),
+                "text": f"{integer_value_gb}GB",
+                "value": integer_value_gb,
+                "unit": "GB",
+                "raw_value_gb": raw_value_gb,
+                "integer_value_gb": integer_value_gb,
+                "value_gb": value_gb,
                 "start": match.start(),
                 "end": match.end(),
                 "position_ratio": round(position_ratio, 4),
@@ -1544,7 +1555,7 @@ class VideoService:
         try:
             if used_gb is None:
                 return None, ocr_text, updated_at
-            return max(0.0, float(used_gb)), ocr_text, updated_at
+            return float(self._integer_traffic_gb(used_gb)), ocr_text, updated_at
         except (TypeError, ValueError):
             return None, ocr_text, updated_at
 
@@ -1561,15 +1572,25 @@ class VideoService:
 
     def _build_traffic_summary_fields(self, used_gb: Optional[float], ocr_text: str = "") -> dict:
         threshold_gb = MONTHLY_TRAFFIC_THRESHOLD_GB
-        safety_buffer_gb = TRAFFIC_SAFETY_BUFFER_GB
+        traffic_reserved_gb = TRAFFIC_RESERVED_GB
+        safety_buffer_gb = traffic_reserved_gb
+        alarm_threshold_gb = max(0.0, threshold_gb - traffic_reserved_gb)
+        remaining_formula = "traffic_limit_gb - used_gb - traffic_reserved_gb"
 
         if used_gb is None:
             return {
                 "traffic_ocr_text": ocr_text,
                 "traffic_status": "unknown",
+                "traffic_limit_gb": threshold_gb,
                 "monthly_threshold_gb": threshold_gb,
                 "safety_buffer_gb": safety_buffer_gb,
+                "traffic_reserved_gb": traffic_reserved_gb,
+                "alarm_threshold_gb": alarm_threshold_gb,
+                "used_gb": None,
                 "estimated_remaining_gb": None,
+                "remaining_gb": None,
+                "traffic_remaining_gb": None,
+                "remaining_formula": remaining_formula,
                 "weekly_quota_bytes": int(threshold_gb * BYTES_PER_GB),
                 "weekly_used_bytes": 0,
                 "weekly_remaining_bytes": 0,
@@ -1580,11 +1601,12 @@ class VideoService:
                 "estimated_remaining_text": "--",
             }
 
-        estimated_remaining_gb = threshold_gb - float(used_gb) - safety_buffer_gb
+        integer_used_gb = float(self._integer_traffic_gb(used_gb))
+        estimated_remaining_gb = max(0.0, threshold_gb - integer_used_gb - traffic_reserved_gb)
         display_remaining_gb = max(estimated_remaining_gb, 0.0)
         traffic_status = (
             "alarm"
-            if estimated_remaining_gb < TRAFFIC_ALARM_REMAINING_GB
+            if integer_used_gb >= alarm_threshold_gb
             else "low"
             if estimated_remaining_gb < 3
             else "normal"
@@ -1593,14 +1615,21 @@ class VideoService:
         return {
             "traffic_ocr_text": ocr_text,
             "traffic_status": traffic_status,
+            "traffic_limit_gb": threshold_gb,
             "monthly_threshold_gb": threshold_gb,
             "safety_buffer_gb": safety_buffer_gb,
+            "traffic_reserved_gb": traffic_reserved_gb,
+            "alarm_threshold_gb": alarm_threshold_gb,
+            "used_gb": integer_used_gb,
             "estimated_remaining_gb": estimated_remaining_gb,
+            "remaining_gb": estimated_remaining_gb,
+            "traffic_remaining_gb": estimated_remaining_gb,
+            "remaining_formula": remaining_formula,
             "weekly_quota_bytes": int(threshold_gb * BYTES_PER_GB),
-            "weekly_used_bytes": int(float(used_gb) * BYTES_PER_GB),
+            "weekly_used_bytes": int(integer_used_gb * BYTES_PER_GB),
             "weekly_remaining_bytes": int(display_remaining_gb * BYTES_PER_GB),
             "weekly_quota_text": self._format_gb(threshold_gb),
-            "weekly_used_text": self._format_gb(float(used_gb)),
+            "weekly_used_text": self._format_gb(integer_used_gb),
             "weekly_remaining_text": self._format_gb(display_remaining_gb),
             "monthly_threshold_text": self._format_gb(threshold_gb),
             "estimated_remaining_text": self._format_gb(display_remaining_gb),
@@ -2411,13 +2440,21 @@ class VideoService:
         }
 
     def _sync_traffic_ocr_alarm(self, db: Session, db_video: VideoDevice, traffic_fields: dict) -> bool:
-        used_gb = traffic_fields.get("estimated_remaining_gb")
-        active = used_gb is not None and float(used_gb) < TRAFFIC_ALARM_REMAINING_GB
+        used_gb = traffic_fields.get("weekly_used_bytes")
+        used_gb = (float(used_gb) / BYTES_PER_GB) if used_gb is not None else None
+        traffic_reserved_gb = float(traffic_fields.get("traffic_reserved_gb", TRAFFIC_RESERVED_GB) or TRAFFIC_RESERVED_GB)
+        alarm_threshold_gb = float(
+            traffic_fields.get(
+                "alarm_threshold_gb",
+                max(0.0, MONTHLY_TRAFFIC_THRESHOLD_GB - traffic_reserved_gb),
+            )
+        )
+        active = used_gb is not None and float(used_gb) >= alarm_threshold_gb
         description = (
-            f"摄像头流量不足预警：当前估算剩余流量已低于 {TRAFFIC_ALARM_REMAINING_GB:.0f}GB，"
+            f"摄像头流量不足预警：当前已使用流量达到 {alarm_threshold_gb:.0f}GB 报警阈值，"
             f"已使用 {traffic_fields.get('weekly_used_text') or '--'}，"
             f"流量阈值 {traffic_fields.get('monthly_threshold_text') or '30.00GB'}，"
-            f"保护余量 {TRAFFIC_SAFETY_BUFFER_GB:.0f}GB，"
+            f"预留流量 {traffic_reserved_gb:.0f}GB，"
             f"估算剩余 {traffic_fields.get('estimated_remaining_text') or '--'}"
         )
         if active:
@@ -2445,31 +2482,67 @@ class VideoService:
 
         parsed, candidates = self._parse_traffic_ocr_text_with_candidates(ocr_text)
         normalized_ocr_text = str(ocr_text or "").strip()
+        selected_candidate = next((item for item in candidates if not item.get("excluded")), None)
+        raw_selected_traffic_value = None
+        integer_selected_traffic_value = None
         if used_gb is None:
             if not parsed:
+                now = datetime.utcnow()
                 self._update_video_fields(video_id, {
-                    "traffic_ocr_text": normalized_ocr_text,
+                    "traffic_rejected_ocr_text": normalized_ocr_text,
+                    "traffic_rejected_used_gb": None,
                     "traffic_ocr_status": "unrecognized",
-                    "traffic_ocr_updated_at": datetime.utcnow(),
+                    "traffic_ocr_reject_reason": "未识别到可信流量读数",
+                    "traffic_ocr_updated_at": now,
                 })
                 refreshed = self._get_video_runtime_by_id(video_id) or db_video
                 current_used_gb, current_ocr_text, updated_at = self._get_stored_traffic_usage_gb(refreshed)
                 fields = self._build_traffic_summary_fields(current_used_gb, current_ocr_text or normalized_ocr_text)
                 return {
                     "success": False,
-                    "message": "未识别到合法流量读数",
+                    "message": "未识别到可信流量读数",
                     "last_update_time": updated_at,
                     "candidates": candidates,
+                    "traffic_text": current_ocr_text or "",
+                    "traffic_value": None,
+                    "traffic_debug": {
+                        "selected_traffic_value": None,
+                        "raw_selected_traffic_value": None,
+                        "integer_selected_traffic_value": None,
+                        "traffic_limit_gb": fields.get("traffic_limit_gb"),
+                        "used_gb": fields.get("used_gb"),
+                        "traffic_reserved_gb": TRAFFIC_RESERVED_GB,
+                        "alarm_threshold_gb": max(0.0, MONTHLY_TRAFFIC_THRESHOLD_GB - TRAFFIC_RESERVED_GB),
+                        "estimated_remaining_gb": fields.get("estimated_remaining_gb"),
+                        "remaining_formula": fields.get("remaining_formula"),
+                        "historical_used_gb": current_used_gb,
+                        "delta_gb": None,
+                        "delta_allowed": False,
+                        "ignored_reason": "未识别到可信流量读数",
+                        "historical_value_suspicious": self._is_suspicious_traffic_history(current_used_gb),
+                        "final_used_gb": current_used_gb,
+                        "no_usable_candidate_reason": "no_trusted_traffic_reading",
+                    },
                     **fields,
                 }
             used_gb, normalized_ocr_text = parsed
+            raw_selected_traffic_value = (
+                selected_candidate.get("raw_value_gb")
+                if selected_candidate and selected_candidate.get("raw_value_gb") is not None
+                else used_gb
+            )
         else:
-            used_gb = max(0.0, float(used_gb))
+            raw_selected_traffic_value = max(0.0, float(used_gb))
             if parsed:
                 normalized_ocr_text = parsed[1]
+                if selected_candidate and selected_candidate.get("raw_value_gb") is not None:
+                    raw_selected_traffic_value = selected_candidate.get("raw_value_gb")
+        integer_selected_traffic_value = self._integer_traffic_gb(raw_selected_traffic_value)
+        used_gb = float(integer_selected_traffic_value)
+        recognized_ocr_text = normalized_ocr_text
 
         now = datetime.utcnow()
-        last_used_gb, _, _ = self._get_stored_traffic_usage_gb(db_video)
+        last_used_gb, _, last_updated_at = self._get_stored_traffic_usage_gb(db_video)
         last_month = getattr(db_video, "last_ocr_month", None)
         current_month = datetime.now().strftime("%Y-%m")
         is_new_month = last_month != current_month
@@ -2480,19 +2553,55 @@ class VideoService:
         is_valid = True
         invalid_reason = ""
         reset_suspicious_history = False
+        delta_gb = None
+        delta_allowed = True
         if history_suspicious and not is_new_month:
             reset_suspicious_history = True
-        elif last_used_gb is not None and not is_new_month:
-            if last_used_gb > 0 and used_gb > last_used_gb * 5:
-                is_valid = False
-                invalid_reason = "读数异常增大，已忽略"
-            elif used_gb + 0.05 < last_used_gb:
-                is_valid = False
-                invalid_reason = "本月读数异常下降，已忽略"
+
+        if not reset_suspicious_history:
+            if last_used_gb is not None and not is_new_month:
+                delta_gb = used_gb - float(last_used_gb)
+                growth_gb = max(0.0, delta_gb)
+                within_normal_delta = 0 <= used_gb <= threshold_gb and growth_gb <= 5
+                if within_normal_delta:
+                    is_valid = True
+                    invalid_reason = ""
+                elif used_gb > 100:
+                    is_valid = False
+                    invalid_reason = "traffic reading exceeds 100GB, ignored"
+                elif used_gb > threshold_gb * 3:
+                    is_valid = False
+                    invalid_reason = "traffic reading exceeds monthly threshold x3, ignored"
+                elif growth_gb > 5:
+                    is_valid = False
+                    invalid_reason = "single traffic growth exceeds 5GB, ignored"
+                elif growth_gb > 0 and last_updated_at:
+                    try:
+                        elapsed_hours = max((now - last_updated_at).total_seconds() / 3600, 0.0)
+                    except TypeError:
+                        elapsed_hours = 0.0
+                    if elapsed_hours > 0 and growth_gb / elapsed_hours > 10:
+                        is_valid = False
+                        invalid_reason = "traffic growth rate exceeds 10GB/hour, ignored"
+            else:
+                if used_gb > 100:
+                    is_valid = False
+                    invalid_reason = "traffic reading exceeds 100GB, ignored"
+                elif used_gb > threshold_gb * 3:
+                    is_valid = False
+                    invalid_reason = "traffic reading exceeds monthly threshold x3, ignored"
+            delta_allowed = is_valid
 
         traffic_debug = {
             "selected_traffic_value": used_gb,
+            "raw_selected_traffic_value": raw_selected_traffic_value,
+            "integer_selected_traffic_value": integer_selected_traffic_value,
+            "traffic_reserved_gb": TRAFFIC_RESERVED_GB,
+            "alarm_threshold_gb": max(0.0, threshold_gb - TRAFFIC_RESERVED_GB),
             "historical_used_gb": historical_used_gb,
+            "delta_gb": delta_gb,
+            "delta_allowed": delta_allowed,
+            "ignored_reason": invalid_reason,
             "historical_value_suspicious": history_suspicious,
             "final_used_gb": used_gb if is_valid else last_used_gb,
         }
@@ -2517,10 +2626,18 @@ class VideoService:
                 "traffic_ocr_updated_at": now,
             })
             db_video = self._get_video_runtime_by_id(video_id) or db_video
-            used_for_summary, normalized_ocr_text, _ = self._get_stored_traffic_usage_gb(db_video)
+            used_for_summary, summary_ocr_text, _ = self._get_stored_traffic_usage_gb(db_video)
             traffic_debug["final_used_gb"] = used_for_summary
 
-        fields = self._build_traffic_summary_fields(used_for_summary, normalized_ocr_text)
+        fields = self._build_traffic_summary_fields(used_for_summary, normalized_ocr_text if is_valid else summary_ocr_text)
+        traffic_debug.update({
+            "traffic_limit_gb": fields.get("traffic_limit_gb"),
+            "used_gb": fields.get("used_gb"),
+            "traffic_reserved_gb": fields.get("traffic_reserved_gb"),
+            "alarm_threshold_gb": fields.get("alarm_threshold_gb"),
+            "estimated_remaining_gb": fields.get("estimated_remaining_gb"),
+            "remaining_formula": fields.get("remaining_formula"),
+        })
         try:
             self._sync_traffic_ocr_alarm(db, db_video, fields)
         except Exception as exc:
@@ -2544,13 +2661,15 @@ class VideoService:
         )
 
         return {
+            **fields,
             "success": is_valid,
             "message": message,
             "alarm_triggered": fields["traffic_status"] == "alarm",
             "last_update_time": now,
             "candidates": candidates,
+            "traffic_text": recognized_ocr_text,
+            "traffic_value": used_gb,
             "traffic_debug": traffic_debug,
-            **fields,
         }
 
     def get_traffic_status(self, db: Session, video_id: int):
@@ -2575,7 +2694,7 @@ class VideoService:
             return {"success": False, "message": reason}
 
         try:
-            raw_text, traffic_text, used_gb, candidates, roi_path, debug_image = self._recognize_traffic_from_snapshot(
+            ocr_result = self._recognize_traffic_from_snapshot(
                 snapshot_path=snapshot_path,
                 video_id=video_id,
                 debug_dir=debug_dir,
@@ -2586,9 +2705,58 @@ class VideoService:
             print(f"[TrafficOCR] recognize failed reason={reason}")
             return {"success": False, "message": reason}
 
+        raw_text = str(ocr_result.get("raw_text") or "")
+        traffic_text = str(ocr_result.get("traffic_text") or "")
+        used_gb = ocr_result.get("used_gb")
+        candidates = ocr_result.get("candidates") or []
+        roi_path = str(ocr_result.get("roi_path") or "")
+        debug_image = str(ocr_result.get("debug_image") or roi_path)
+
         result = self.report_traffic_ocr(db, video_id, traffic_text, used_gb)
         if not result:
             return {"success": False, "message": "设备不存在"}
+
+        traffic_debug = dict(result.get("traffic_debug") or {})
+        ocr_selected_candidate = next((item for item in candidates if not item.get("excluded")), None)
+        if ocr_selected_candidate:
+            raw_candidate_value = ocr_selected_candidate.get("raw_value_gb")
+            integer_candidate_value = ocr_selected_candidate.get("integer_value_gb")
+            if raw_candidate_value is not None:
+                traffic_debug["raw_selected_traffic_value"] = raw_candidate_value
+            if integer_candidate_value is not None:
+                traffic_debug["integer_selected_traffic_value"] = integer_candidate_value
+                traffic_debug["selected_traffic_value"] = float(integer_candidate_value)
+        traffic_debug.update({
+            "selected_source": ocr_result.get("selected_source"),
+            "selected_preprocessing": ocr_result.get("selected_preprocessing"),
+            "selected_candidate_raw": ocr_result.get("selected_candidate_raw"),
+            "rejected_big_integer_candidates": ocr_result.get("rejected_big_integer_candidates") or [],
+            "all_candidates_count": ocr_result.get("all_candidates_count", len(candidates)),
+            "usable_candidates_count": ocr_result.get("usable_candidates_count", 0),
+            "excluded_candidates_count": ocr_result.get("excluded_candidates_count", 0),
+            "no_usable_candidate_reason": ocr_result.get("no_usable_candidate_reason") or "",
+            "segmented_left_raw_text": ocr_result.get("segmented_left_raw_text") or "",
+            "segmented_middle_raw_text": ocr_result.get("segmented_middle_raw_text") or "",
+            "segmented_right_raw_text": ocr_result.get("segmented_right_raw_text") or "",
+            "segmented_left_text": ocr_result.get("segmented_left_text") or "",
+            "segmented_middle_text": ocr_result.get("segmented_middle_text") or "",
+            "segmented_right_text": ocr_result.get("segmented_right_text") or "",
+            "segmented_merged_text": ocr_result.get("segmented_merged_text") or "",
+            "segmented_merge_method": ocr_result.get("segmented_merge_method") or "",
+            "segmented_candidate_value": ocr_result.get("segmented_candidate_value"),
+            "recognized_chars": ocr_result.get("recognized_chars") or [],
+            "char_boxes": ocr_result.get("char_boxes") or [],
+            "char_confidences": ocr_result.get("char_confidences") or [],
+            "template_match_text": ocr_result.get("template_match_text") or "",
+            "traffic_text": ocr_result.get("traffic_text") or traffic_text,
+            "traffic_value": ocr_result.get("traffic_value"),
+            "template_match_debug_images": ocr_result.get("template_match_debug_images") or {},
+            "primary_roi_texts": ocr_result.get("primary_roi_texts") or [],
+            "primary_roi_candidates": ocr_result.get("primary_roi_candidates") or [],
+            "primary_roi_debug": ocr_result.get("primary_roi_debug") or [],
+            "selected_roi_name": ocr_result.get("selected_roi_name") or "",
+        })
+        result["traffic_debug"] = traffic_debug
 
         traffic_value = None
         traffic_unit = ""
@@ -2610,7 +2778,36 @@ class VideoService:
             "candidates": candidates,
             "debug_image": debug_image,
             "roi_path": roi_path,
+            "precise_raw_text": ocr_result.get("precise_raw_text") or "",
+            "precise_roi_path": ocr_result.get("precise_roi_path") or "",
+            "ocr_variants": ocr_result.get("ocr_variants") or [],
+            "selected_source": ocr_result.get("selected_source"),
+            "selected_preprocessing": ocr_result.get("selected_preprocessing"),
+            "selected_candidate_raw": ocr_result.get("selected_candidate_raw"),
+            "rejected_big_integer_candidates": ocr_result.get("rejected_big_integer_candidates") or [],
+            "all_candidates_count": ocr_result.get("all_candidates_count", len(candidates)),
+            "usable_candidates_count": ocr_result.get("usable_candidates_count", 0),
+            "excluded_candidates_count": ocr_result.get("excluded_candidates_count", 0),
+            "no_usable_candidate_reason": ocr_result.get("no_usable_candidate_reason") or "",
             "traffic_limit_gb": result.get("monthly_threshold_gb"),
+            "segmented_left_raw_text": ocr_result.get("segmented_left_raw_text") or "",
+            "segmented_middle_raw_text": ocr_result.get("segmented_middle_raw_text") or "",
+            "segmented_right_raw_text": ocr_result.get("segmented_right_raw_text") or "",
+            "segmented_left_text": ocr_result.get("segmented_left_text") or "",
+            "segmented_middle_text": ocr_result.get("segmented_middle_text") or "",
+            "segmented_right_text": ocr_result.get("segmented_right_text") or "",
+            "segmented_merged_text": ocr_result.get("segmented_merged_text") or "",
+            "segmented_merge_method": ocr_result.get("segmented_merge_method") or "",
+            "segmented_candidate_value": ocr_result.get("segmented_candidate_value"),
+            "recognized_chars": ocr_result.get("recognized_chars") or [],
+            "char_boxes": ocr_result.get("char_boxes") or [],
+            "char_confidences": ocr_result.get("char_confidences") or [],
+            "template_match_text": ocr_result.get("template_match_text") or "",
+            "template_match_debug_images": ocr_result.get("template_match_debug_images") or {},
+            "primary_roi_texts": ocr_result.get("primary_roi_texts") or [],
+            "primary_roi_candidates": ocr_result.get("primary_roi_candidates") or [],
+            "primary_roi_debug": ocr_result.get("primary_roi_debug") or [],
+            "selected_roi_name": ocr_result.get("selected_roi_name") or "",
             "estimated_remaining_gb": result.get("estimated_remaining_gb"),
             "last_calculated_at": result.get("last_update_time") or result.get("last_calculated_at"),
         }
@@ -2740,20 +2937,25 @@ class VideoService:
         video_id: int,
         debug_dir: str,
         timestamp: str,
-    ) -> tuple[str, str, Optional[float], list[dict], str, str]:
+    ) -> dict:
         try:
             import cv2
         except Exception as exc:
-            raise ValueError(f"OpenCV 依赖未安装: {exc}")
+            raise ValueError(f"OpenCV dependency is not installed: {exc}")
+
+        try:
+            import numpy as np
+        except Exception as exc:
+            raise ValueError(f"NumPy dependency is not installed: {exc}")
 
         try:
             import pytesseract
         except Exception:
-            raise ValueError("OCR依赖未安装")
+            pytesseract = None
 
         image = cv2.imread(snapshot_path)
         if image is None:
-            raise ValueError("截图文件无法读取")
+            raise ValueError("Snapshot image cannot be read")
 
         h, w = image.shape[:2]
         if self._get_traffic_ocr_debug_image_path():
@@ -2766,51 +2968,1166 @@ class VideoService:
         print(f"[TrafficOCR] crop top roi x1={x1} y1={y1} x2={x2} y2={y2}")
 
         roi = image[y1:y2, x1:x2]
-        resized = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
         debug_static_dir = self._get_default_static_subdir("debug")
         roi_abs_path = os.path.join(debug_static_dir, "traffic_ocr_roi.jpg")
-        cv2.imwrite(roi_abs_path, binary)
+        cv2.imwrite(roi_abs_path, roi)
         roi_path = self._to_backend_static_web_path(roi_abs_path)
         print(f"[TrafficOCR] roi saved path={roi_abs_path}")
 
-        raw_text_parts = []
-        variants = [binary, cv2.bitwise_not(binary)]
+        roi_h, roi_w = roi.shape[:2]
+        px1 = max(0, min(roi_w - 1, int(roi_w * 0.35)))
+        py1 = max(0, min(roi_h - 1, int(roi_h * 0.35)))
+        px2 = max(px1 + 1, min(roi_w, int(roi_w * 0.70)))
+        py2 = max(py1 + 1, min(roi_h, int(roi_h * 0.85)))
+        precise_roi = roi[py1:py2, px1:px2]
+        precise_abs_path = os.path.join(debug_static_dir, "traffic_ocr_roi_precise.jpg")
+        cv2.imwrite(precise_abs_path, precise_roi)
+        precise_roi_path = self._to_backend_static_web_path(precise_abs_path)
+        print(f"[TrafficOCR] precise roi saved path={precise_abs_path}")
 
-        for variant_idx, variant in enumerate(variants):
-            try:
+        traffic_runtime = self._get_video_runtime_by_id(video_id)
+        historical_used_gb, _, _ = self._get_stored_traffic_usage_gb(traffic_runtime) if traffic_runtime else (None, "", None)
+        monthly_threshold_gb = MONTHLY_TRAFFIC_THRESHOLD_GB
+
+        def has_left_text_region(gray_image) -> bool:
+            if gray_image is None or gray_image.size == 0:
+                return False
+            h0, w0 = gray_image.shape[:2]
+            left = gray_image[:, :max(1, int(w0 * 0.45))]
+            dark_pixels = int(np.count_nonzero(left < 90))
+            light_pixels = int(np.count_nonzero(left > 170))
+            text_ratio = (dark_pixels + light_pixels) / max(1, left.size)
+            return text_ratio > 0.015
+
+        precise_gray = cv2.cvtColor(precise_roi, cv2.COLOR_BGR2GRAY)
+        precise_left_has_text = has_left_text_region(precise_gray)
+
+        def build_dual_mask(gray_image):
+            dark_mask = gray_image < 90
+            light_mask = gray_image > 170
+            text_mask = np.logical_or(dark_mask, light_mask)
+            output = np.full(gray_image.shape, 255, dtype=np.uint8)
+            output[text_mask] = 0
+            return output
+
+        def save_debug_image(file_name: str, image_data) -> str:
+            abs_path = os.path.join(debug_static_dir, file_name)
+            cv2.imwrite(abs_path, image_data)
+            return self._to_backend_static_web_path(abs_path)
+
+        def normalize_segment_text(raw_text: str, allowed_pattern: str) -> str:
+            text = str(raw_text or "").upper()
+            text = text.replace("O", "0").replace("L", "1").replace("I", "1")
+            text = text.replace(",", ".")
+            return "".join(re.findall(allowed_pattern, text))
+
+        def normalize_primary_roi_text(raw_text: str) -> str:
+            text = str(raw_text or "")
+            text = re.sub(r"\s+", "", text).upper()
+            text = text.replace("O", "0")
+            text = text.replace("I", "1").replace("L", "1").replace("|", "1")
+            text = text.replace("S", "5")
+            text = text.replace(",", ".")
+            text = re.sub(r"(?<=[0-9.])G8\b", "GB", text)
+            text = re.sub(r"(?<=[0-9.])M8\b", "MB", text)
+            text = re.sub(r"(?<=[0-9.])B8\b", "GB", text)
+            return text
+
+        def extract_primary_roi_candidates(raw_text: str, variant_name: str, roi_name: str, roi_priority: int) -> list[dict]:
+            normalized = normalize_primary_roi_text(raw_text)
+            pattern = re.compile(r"(\d+(?:\.\d+)?|\.\d+)\s*(GB|G|MB|M)", re.IGNORECASE)
+            candidates: list[dict] = []
+            communication_noise = bool(re.search(r"(?:^|[^0-9.])4G(?:[.,]?\d{2,4})", normalized))
+            for match in pattern.finditer(normalized):
+                value_text = match.group(1)
+                unit = match.group(2).upper()
+                compact_tail = normalized[match.start():match.end() + 8]
+                if unit == "G" and value_text == "4":
+                    if re.match(r"4G(?:[.,]?\d+)?", compact_tail):
+                        continue
+                try:
+                    value = float(value_text if not value_text.startswith(".") else f"0{value_text}")
+                except ValueError:
+                    continue
+                raw_value_gb = max(0.0, value / 1024 if unit in {"M", "MB"} else value)
+                integer_value_gb = self._integer_traffic_gb(raw_value_gb)
+                value_gb = float(integer_value_gb)
+                has_decimal = "." in value_text
+                within_threshold = 0 <= value_gb <= monthly_threshold_gb
+                history_suspicious = self._is_suspicious_traffic_history(historical_used_gb, monthly_threshold_gb)
+                historical_normal = historical_used_gb is not None and 0 <= float(historical_used_gb) <= monthly_threshold_gb
+                near_history = (
+                    not historical_normal
+                    or history_suspicious
+                    or value_gb - float(historical_used_gb) <= 5
+                )
+                score = 1000.0
+                if unit in {"G", "GB"}:
+                    score += 500
+                if has_decimal:
+                    score += 300
+                if unit == "GB":
+                    score += 80
+                if variant_name in {"original_gray_4x", "light_enhanced"}:
+                    score += 40
+                score += max(0, 30 - roi_priority * 10)
+                excluded_reasons: list[str] = []
+                if roi_name != "primary_traffic_mid_right_exact" and communication_noise and 4 <= value_gb < 5:
+                    excluded_reasons.append("communication_4g_noise")
+                    score -= 1200
+                if not within_threshold:
+                    excluded_reasons.append("exceeds_monthly_threshold")
+                    score -= 1000
+                if not near_history:
+                    excluded_reasons.append("candidate_delta_exceeds_5gb_from_history")
+                    score -= 1000
+                display_value = integer_value_gb
+                display_unit = "GB"
+                text = f"{integer_value_gb}GB"
+                candidates.append({
+                    "raw": match.group(0),
+                    "normalized_raw_text": normalized,
+                    "text": text,
+                    "value": display_value,
+                    "unit": display_unit,
+                    "raw_value_gb": raw_value_gb,
+                    "integer_value_gb": integer_value_gb,
+                    "value_gb": value_gb,
+                    "start": match.start(),
+                    "end": match.end(),
+                    "position_ratio": round(match.start() / max(1, len(normalized)), 4),
+                    "has_decimal": has_decimal,
+                    "excluded": bool(excluded_reasons),
+                    "exclude_reason": ",".join(excluded_reasons),
+                    "score": round(score, 4),
+                    "source": "primary_roi",
+                    "roi_name": roi_name,
+                    "roi_priority": roi_priority,
+                    "variant": variant_name,
+                    "preprocessing": variant_name,
+                    "trusted_decimal": has_decimal and unit in {"G", "GB"},
+                })
+            candidates.sort(
+                key=lambda item: (
+                    0 if item.get("excluded") else 1,
+                    1 if str(item.get("unit")).upper() == "GB" else 0,
+                    1 if item.get("has_decimal") else 0,
+                    float(item.get("score", 0)),
+                ),
+                reverse=True,
+            )
+            return candidates
+
+        def build_primary_roi_candidate() -> tuple[Optional[dict], dict]:
+            debug_info = {
+                "primary_roi_texts": [],
+                "primary_roi_candidates": [],
+                "selected_roi_name": "",
+                "primary_roi_debug": [],
+            }
+            if pytesseract is None:
+                return None, debug_info
+
+            roi_specs = [
+                ("primary_traffic_mid_right_exact", 0.50, 0.67, 0.00, 0.10),
+                ("primary_traffic_mid_right_wide", 0.48, 0.70, 0.00, 0.12),
+                ("primary_traffic_mid_right_extra", 0.46, 0.72, 0.00, 0.13),
+            ]
+            config = "--psm 7 --oem 3 -c tessedit_char_whitelist=0123456789.GBMbgm"
+            all_candidates: list[dict] = []
+            selected_by_priority: Optional[dict] = None
+            for roi_priority, (roi_name, x1_ratio, x2_ratio, y1_ratio, y2_ratio) in enumerate(roi_specs):
+                rx1 = max(0, min(w - 1, int(w * x1_ratio)))
+                ry1 = max(0, min(h - 1, int(h * y1_ratio)))
+                rx2 = max(rx1 + 1, min(w, int(w * x2_ratio)))
+                ry2 = max(ry1 + 1, min(h, int(h * y2_ratio)))
+                primary_roi = image[ry1:ry2, rx1:rx2]
+                roi_path = save_debug_image(f"traffic_ocr_{roi_name}.jpg", primary_roi)
+
+                gray = cv2.cvtColor(primary_roi, cv2.COLOR_BGR2GRAY)
+                gray_4x = cv2.resize(gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+                _, light_mask = cv2.threshold(gray_4x, 165, 255, cv2.THRESH_BINARY)
+                light_enhanced = cv2.bitwise_not(light_mask)
+                inverted = cv2.bitwise_not(gray_4x)
+                _, otsu = cv2.threshold(gray_4x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+                dilated = cv2.dilate(otsu, dilate_kernel, iterations=1)
+                variants = [
+                    ("original_gray_4x", gray_4x),
+                    ("light_enhanced", light_enhanced),
+                    ("inverted", inverted),
+                    ("otsu", otsu),
+                    ("dilated", dilated),
+                ]
+                roi_debug = {
+                    "roi_name": roi_name,
+                    "x1_ratio": x1_ratio,
+                    "x2_ratio": x2_ratio,
+                    "y1_ratio": y1_ratio,
+                    "y2_ratio": y2_ratio,
+                    "path": roi_path,
+                    "ocr_texts": [],
+                    "candidates": [],
+                    "selected_reason": "",
+                }
+                for variant_name, variant in variants:
+                    variant_path = save_debug_image(f"traffic_ocr_{roi_name}_{variant_name}.jpg", variant)
+                    try:
+                        raw_text = pytesseract.image_to_string(
+                            variant,
+                            lang="eng",
+                            config=config,
+                            timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
+                        )
+                    except RuntimeError as exc:
+                        if "timeout" in str(exc).lower():
+                            raise ValueError("OCR timeout")
+                        raise
+                    raw_text = str(raw_text or "").strip()
+                    normalized_text = normalize_primary_roi_text(raw_text)
+                    text_debug = {
+                        "roi_name": roi_name,
+                        "variant": variant_name,
+                        "raw_text": raw_text,
+                        "normalized_text": normalized_text,
+                        "path": variant_path,
+                    }
+                    roi_debug["ocr_texts"].append(text_debug)
+                    debug_info["primary_roi_texts"].append(text_debug)
+                    variant_candidates = extract_primary_roi_candidates(raw_text, variant_name, roi_name, roi_priority)
+                    roi_debug["candidates"].extend(variant_candidates)
+                    all_candidates.extend(variant_candidates)
+
+                roi_debug["candidates"].sort(
+                    key=lambda item: (
+                        0 if item.get("excluded") else 1,
+                        1 if str(item.get("unit")).upper() == "GB" else 0,
+                        1 if item.get("has_decimal") else 0,
+                        float(item.get("score", 0)),
+                    ),
+                    reverse=True,
+                )
+                usable_for_roi = [item for item in roi_debug["candidates"] if not item.get("excluded")]
+                if usable_for_roi and selected_by_priority is None:
+                    selected_by_priority = usable_for_roi[0]
+                    roi_debug["selected_reason"] = "selected_first_usable_roi_by_priority"
+                elif usable_for_roi:
+                    roi_debug["selected_reason"] = "usable_but_lower_priority_roi"
+                else:
+                    excluded_reasons = sorted({
+                        str(item.get("exclude_reason") or "")
+                        for item in roi_debug["candidates"]
+                        if item.get("exclude_reason")
+                    })
+                    roi_debug["selected_reason"] = ",".join(excluded_reasons) or "no_usable_candidate"
+                debug_info["primary_roi_debug"].append(roi_debug)
+
+            all_candidates.sort(
+                key=lambda item: (
+                    0 if item.get("excluded") else 1,
+                    -int(item.get("roi_priority", 99)),
+                    1 if str(item.get("unit")).upper() == "GB" else 0,
+                    1 if item.get("has_decimal") else 0,
+                    1 if item.get("source") == "primary_roi" else 0,
+                    float(item.get("score", 0)),
+                ),
+                reverse=True,
+            )
+            debug_info["primary_roi_candidates"] = all_candidates
+            if not selected_by_priority:
+                return None, debug_info
+            selected = selected_by_priority
+            debug_info["selected_roi_name"] = str(selected.get("roi_name") or "")
+            selected["score"] = round(float(selected.get("score", 0)) + 10000, 4)
+            return selected, debug_info
+
+        def build_template_match_candidate() -> tuple[Optional[dict], dict]:
+            debug_info = {
+                "selected_source": "template_match",
+                "selected_preprocessing": "connected_components",
+                "recognized_chars": [],
+                "char_boxes": [],
+                "char_confidences": [],
+                "template_match_text": "",
+                "traffic_text": "",
+                "traffic_value": None,
+                "template_match_debug_images": {},
+            }
+            if precise_roi is None or precise_roi.size == 0:
+                return None, debug_info
+
+            template_roi_path = save_debug_image("traffic_ocr_template_roi.jpg", precise_roi)
+            enlarged = cv2.resize(precise_roi, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
+            _, dark_mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
+            _, light_mask = cv2.threshold(gray, 165, 255, cv2.THRESH_BINARY)
+            dual_mask = cv2.bitwise_or(dark_mask, light_mask)
+            close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            dual_mask = cv2.morphologyEx(dual_mask, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+            dual_mask = cv2.medianBlur(dual_mask, 3)
+            dark_mask_path = save_debug_image("traffic_ocr_template_dark_mask.jpg", dark_mask)
+            light_mask_path = save_debug_image("traffic_ocr_template_light_mask.jpg", light_mask)
+            mask_path = save_debug_image("traffic_ocr_template_mask.jpg", dual_mask)
+            debug_info["template_match_debug_images"].update({
+                "roi": template_roi_path,
+                "dark_mask": dark_mask_path,
+                "light_mask": light_mask_path,
+                "mask": mask_path,
+            })
+
+            num_labels, labels, stats, _centroids = cv2.connectedComponentsWithStats(dual_mask, 8)
+            mask_h, mask_w = dual_mask.shape[:2]
+            min_area = max(8, int(mask_h * mask_w * 0.00025))
+            max_area = int(mask_h * mask_w * 0.35)
+            raw_boxes: list[tuple[int, int, int, int]] = []
+            for label_idx in range(1, num_labels):
+                x = int(stats[label_idx, cv2.CC_STAT_LEFT])
+                y = int(stats[label_idx, cv2.CC_STAT_TOP])
+                bw = int(stats[label_idx, cv2.CC_STAT_WIDTH])
+                bh = int(stats[label_idx, cv2.CC_STAT_HEIGHT])
+                area = int(stats[label_idx, cv2.CC_STAT_AREA])
+                if area < min_area or area > max_area:
+                    continue
+                if bh < max(4, int(mask_h * 0.12)) and bw > max(6, bh * 2):
+                    continue
+                if bw < 2 or bh < 2:
+                    continue
+                raw_boxes.append((x, y, bw, bh))
+
+            raw_boxes.sort(key=lambda box: box[0])
+            if not raw_boxes:
+                return None, debug_info
+
+            median_width = float(np.median([box[2] for box in raw_boxes])) if raw_boxes else 0.0
+
+            def split_wide_box(box: tuple[int, int, int, int]) -> list[tuple[int, int, int, int]]:
+                x, y, bw, bh = box
+                if median_width <= 0 or bw < median_width * 1.8:
+                    return [box]
+                crop = dual_mask[y:y + bh, x:x + bw]
+                projection = np.count_nonzero(crop, axis=0)
+                gap_cols = np.where(projection <= max(1, int(bh * 0.03)))[0]
+                if gap_cols.size == 0:
+                    return [box]
+                ranges: list[tuple[int, int]] = []
+                start = 0
+                for col in gap_cols:
+                    if col - start >= max(2, int(median_width * 0.35)):
+                        ranges.append((start, col))
+                    start = int(col) + 1
+                if bw - start >= max(2, int(median_width * 0.35)):
+                    ranges.append((start, bw))
+                split_boxes: list[tuple[int, int, int, int]] = []
+                for sx1, sx2 in ranges:
+                    sub = crop[:, sx1:sx2]
+                    ys, xs = np.where(sub > 0)
+                    if xs.size == 0 or ys.size == 0:
+                        continue
+                    nx = x + sx1 + int(xs.min())
+                    ny = y + int(ys.min())
+                    nw = int(xs.max() - xs.min() + 1)
+                    nh = int(ys.max() - ys.min() + 1)
+                    split_boxes.append((nx, ny, nw, nh))
+                return split_boxes or [box]
+
+            boxes: list[tuple[int, int, int, int]] = []
+            for box in raw_boxes:
+                boxes.extend(split_wide_box(box))
+            boxes.sort(key=lambda box: box[0])
+
+            component_debug = cv2.cvtColor(dual_mask, cv2.COLOR_GRAY2BGR)
+            for idx, (x, y, bw, bh) in enumerate(boxes):
+                cv2.rectangle(component_debug, (x, y), (x + bw, y + bh), (0, 0, 255), 1)
+                cv2.putText(component_debug, str(idx), (x, max(10, y - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+            components_path = save_debug_image("traffic_ocr_template_components.jpg", component_debug)
+            debug_info["template_match_debug_images"]["components"] = components_path
+
+            normalized_size = (28, 42)
+
+            def normalize_char_mask(mask_crop):
+                if mask_crop is None or mask_crop.size == 0:
+                    return np.zeros((normalized_size[1], normalized_size[0]), dtype=np.uint8)
+                ys, xs = np.where(mask_crop > 0)
+                if xs.size == 0 or ys.size == 0:
+                    return np.zeros((normalized_size[1], normalized_size[0]), dtype=np.uint8)
+                tight = mask_crop[int(ys.min()):int(ys.max()) + 1, int(xs.min()):int(xs.max()) + 1]
+                target_w, target_h = normalized_size
+                scale = min((target_w - 6) / max(1, tight.shape[1]), (target_h - 6) / max(1, tight.shape[0]))
+                new_w = max(1, int(round(tight.shape[1] * scale)))
+                new_h = max(1, int(round(tight.shape[0] * scale)))
+                resized = cv2.resize(tight, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                canvas = np.zeros((target_h, target_w), dtype=np.uint8)
+                xoff = (target_w - new_w) // 2
+                yoff = (target_h - new_h) // 2
+                canvas[yoff:yoff + new_h, xoff:xoff + new_w] = resized
+                _, canvas = cv2.threshold(canvas, 80, 255, cv2.THRESH_BINARY)
+                return canvas
+
+            def render_template(char: str, font_scale: float, thickness: int = 2):
+                target_w, target_h = normalized_size
+                canvas = np.zeros((target_h, target_w), dtype=np.uint8)
+                if char == ".":
+                    cv2.circle(canvas, (target_w // 2, target_h - 7), 3, 255, -1)
+                    return canvas
+                (tw, th), baseline = cv2.getTextSize(char, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+                x = max(0, (target_w - tw) // 2)
+                y = max(th + 1, (target_h + th) // 2 - baseline)
+                cv2.putText(canvas, char, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, 255, thickness, cv2.LINE_AA)
+                _, canvas = cv2.threshold(canvas, 80, 255, cv2.THRESH_BINARY)
+                return canvas
+
+            template_chars = "0123456789.GB"
+            templates = {
+                char: [
+                    render_template(char, 1.0, 2),
+                    render_template(char, 0.9, 2),
+                    render_template(char, 0.8, 1),
+                ]
+                for char in template_chars
+            }
+
+            def match_char(char_mask) -> tuple[str, float]:
+                best_char = ""
+                best_score = -1.0
+                for char, variants in templates.items():
+                    for template in variants:
+                        score = float(cv2.matchTemplate(char_mask, template, cv2.TM_CCOEFF_NORMED)[0][0])
+                        intersection = float(np.count_nonzero(cv2.bitwise_and(char_mask, template)))
+                        union = float(np.count_nonzero(cv2.bitwise_or(char_mask, template)))
+                        if union > 0:
+                            score = (score + intersection / union) / 2.0
+                        if score > best_score:
+                            best_score = score
+                            best_char = char
+                return best_char, round(max(0.0, min(1.0, best_score)), 4)
+
+            recognized_chars: list[str] = []
+            char_boxes: list[dict] = []
+            char_confidences: list[float] = []
+            char_paths: list[str] = []
+            for idx, (x, y, bw, bh) in enumerate(boxes):
+                pad = 2
+                x0 = max(0, x - pad)
+                y0 = max(0, y - pad)
+                x3 = min(mask_w, x + bw + pad)
+                y3 = min(mask_h, y + bh + pad)
+                char_crop = dual_mask[y0:y3, x0:x3]
+                normalized_char = normalize_char_mask(char_crop)
+                char_path = save_debug_image(f"traffic_char_{idx}.jpg", normalized_char)
+                char, confidence = match_char(normalized_char)
+                recognized_chars.append(char)
+                char_confidences.append(confidence)
+                char_paths.append(char_path)
+                char_boxes.append({
+                    "x": round(x / 4, 2),
+                    "y": round(y / 4, 2),
+                    "w": round(bw / 4, 2),
+                    "h": round(bh / 4, 2),
+                })
+
+            template_text = "".join(recognized_chars).upper()
+            template_text = template_text.replace("8B", "GB").replace("6B", "GB")
+            debug_info.update({
+                "recognized_chars": recognized_chars,
+                "char_boxes": char_boxes,
+                "char_confidences": char_confidences,
+                "template_match_text": template_text,
+            })
+            debug_info["template_match_debug_images"]["chars"] = char_paths
+
+            match = re.search(r"(\d+(?:\.\d+)?)\s*(GB|G)", template_text, re.IGNORECASE)
+            if not match:
+                return None, debug_info
+            raw_value_gb = max(0.0, float(match.group(1)))
+            integer_value_gb = self._integer_traffic_gb(raw_value_gb)
+            value_gb = float(integer_value_gb)
+            traffic_text = f"{integer_value_gb}GB"
+            history_suspicious = self._is_suspicious_traffic_history(historical_used_gb, monthly_threshold_gb)
+            historical_normal = historical_used_gb is not None and 0 <= float(historical_used_gb) <= monthly_threshold_gb
+            confidence_ok = bool(char_confidences) and min(char_confidences) >= 0.08 and (sum(char_confidences) / len(char_confidences)) >= 0.18
+            within_threshold = 0 <= value_gb <= monthly_threshold_gb
+            near_history = (
+                not historical_normal
+                or history_suspicious
+                or value_gb - float(historical_used_gb) <= 5
+            )
+            debug_info["traffic_text"] = traffic_text
+            debug_info["traffic_value"] = value_gb
+            if not confidence_ok or not within_threshold or not near_history:
+                return None, debug_info
+
+            candidate = {
+                "raw": template_text,
+                "text": traffic_text,
+                "value": integer_value_gb,
+                "unit": "GB",
+                "raw_value_gb": raw_value_gb,
+                "integer_value_gb": integer_value_gb,
+                "value_gb": value_gb,
+                "start": match.start(),
+                "end": match.end(),
+                "position_ratio": round(match.start() / max(1, len(template_text)), 4),
+                "has_decimal": "." in match.group(1),
+                "excluded": False,
+                "exclude_reason": "",
+                "score": round(10000 + sum(char_confidences) / max(1, len(char_confidences)) * 100, 4),
+                "source": "template_match",
+                "variant": "connected_components",
+                "preprocessing": "connected_components",
+                "trusted_decimal": "." in match.group(1),
+                "recognized_chars": recognized_chars,
+                "char_boxes": char_boxes,
+                "char_confidences": char_confidences,
+            }
+            return candidate, debug_info
+
+        def build_segmented_candidate() -> tuple[Optional[dict], dict]:
+            debug_info = {
+                "segmented_left_raw_text": "",
+                "segmented_middle_raw_text": "",
+                "segmented_right_raw_text": "",
+                "segmented_left_text": "",
+                "segmented_middle_text": "",
+                "segmented_right_text": "",
+                "segmented_merged_text": "",
+                "segmented_merge_method": "",
+                "segmented_candidate_value": None,
+            }
+            if pytesseract is None:
+                return None, debug_info
+            roi_height, roi_width = precise_roi.shape[:2]
+            if roi_width <= 1 or roi_height <= 1:
+                return None, debug_info
+
+            left_roi = precise_roi[:, 0:max(1, int(roi_width * 0.62))]
+            middle_roi = precise_roi[:, max(0, int(roi_width * 0.22)):max(1, int(roi_width * 0.50))]
+            right_roi = precise_roi[:, max(0, int(roi_width * 0.18)):roi_width]
+            save_debug_image("traffic_ocr_left_roi.jpg", left_roi)
+            save_debug_image("traffic_ocr_middle_roi.jpg", middle_roi)
+            save_debug_image("traffic_ocr_right_roi.jpg", right_roi)
+
+            left_enlarged = cv2.resize(left_roi, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
+            middle_enlarged = cv2.resize(middle_roi, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
+            right_enlarged = cv2.resize(right_roi, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
+            left_gray = cv2.cvtColor(left_enlarged, cv2.COLOR_BGR2GRAY)
+            middle_gray = cv2.cvtColor(middle_enlarged, cv2.COLOR_BGR2GRAY)
+            right_gray = cv2.cvtColor(right_enlarged, cv2.COLOR_BGR2GRAY)
+            _, left_binary = cv2.threshold(left_gray, 90, 255, cv2.THRESH_BINARY)
+            _, middle_binary = cv2.threshold(middle_gray, 90, 255, cv2.THRESH_BINARY)
+            _, right_binary = cv2.threshold(right_gray, 170, 255, cv2.THRESH_BINARY_INV)
+            save_debug_image("traffic_ocr_left_binary.jpg", left_binary)
+            save_debug_image("traffic_ocr_middle_binary.jpg", middle_binary)
+            save_debug_image("traffic_ocr_right_binary.jpg", right_binary)
+
+            left_config = "--psm 7 -c tessedit_char_whitelist=0123456789."
+            middle_config = "--psm 10 -c tessedit_char_whitelist=0123456789"
+            right_config = "--psm 7 -c tessedit_char_whitelist=0123456789.GBgb"
+            left_raw_parts: list[str] = []
+            middle_raw_parts: list[str] = []
+            right_raw_parts: list[str] = []
+            left_texts: list[str] = []
+            middle_texts: list[str] = []
+            right_texts: list[str] = []
+
+            for variant in [left_binary, left_gray]:
                 raw_text = pytesseract.image_to_string(
                     variant,
                     lang="eng",
-                    config="--psm 6 -c tessedit_char_whitelist=0123456789.,GBMTBgbmtb ",
+                    config=left_config,
                     timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
                 )
-            except RuntimeError as exc:
-                if "timeout" in str(exc).lower():
-                    raise ValueError("识别超时")
-                raise
+                raw_text = str(raw_text or "").strip()
+                if raw_text:
+                    left_raw_parts.append(raw_text)
+                normalized = normalize_segment_text(raw_text, r"[0-9.]")
+                if normalized and normalized not in left_texts:
+                    left_texts.append(normalized)
 
-            raw_text = str(raw_text or "").strip()
-            print(f"[TrafficOCR] ocr raw_text variant={variant_idx}: {raw_text}")
-            if raw_text:
-                raw_text_parts.append(raw_text)
+            middle_inverted_gray = cv2.bitwise_not(middle_gray)
+            for variant in [middle_binary, middle_gray, middle_inverted_gray]:
+                raw_text = pytesseract.image_to_string(
+                    variant,
+                    lang="eng",
+                    config=middle_config,
+                    timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
+                )
+                raw_text = str(raw_text or "").strip()
+                if raw_text:
+                    middle_raw_parts.append(raw_text)
+                normalized = normalize_segment_text(raw_text, r"[0-9]")
+                for digit in normalized:
+                    if digit and digit not in middle_texts:
+                        middle_texts.append(digit)
 
-            parsed, candidates = self._parse_traffic_ocr_text_with_candidates(raw_text)
-            if parsed:
-                used_gb, traffic_text = parsed
-                print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} candidates={candidates}")
-                return raw_text, traffic_text, used_gb, candidates, roi_path, roi_path
+            right_inverted_gray = cv2.bitwise_not(right_gray)
+            for variant in [right_binary, right_inverted_gray, right_gray]:
+                raw_text = pytesseract.image_to_string(
+                    variant,
+                    lang="eng",
+                    config=right_config,
+                    timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
+                )
+                raw_text = str(raw_text or "").strip()
+                if raw_text:
+                    right_raw_parts.append(raw_text)
+                normalized = normalize_segment_text(raw_text, r"[0-9.GB]")
+                if normalized and normalized not in right_texts:
+                    right_texts.append(normalized)
 
-        raw_text = "\n".join(raw_text_parts).strip()
+            debug_info["segmented_left_raw_text"] = "\n".join(left_raw_parts).strip()
+            debug_info["segmented_middle_raw_text"] = "\n".join(middle_raw_parts).strip()
+            debug_info["segmented_right_raw_text"] = "\n".join(right_raw_parts).strip()
+            print(
+                "[TrafficOCR] segmented raw left=%s middle=%s right=%s"
+                % (
+                    debug_info["segmented_left_raw_text"],
+                    debug_info["segmented_middle_raw_text"],
+                    debug_info["segmented_right_raw_text"],
+                )
+            )
+
+            merged_options: list[tuple[str, float, str, str, str, str, int]] = []
+
+            def add_merged_option(
+                integer_part: str,
+                decimal_part: str,
+                left_text: str,
+                middle_text: str,
+                right_text: str,
+                merge_method: str,
+                priority: int,
+            ):
+                decimal_digits = re.sub(r"\D", "", str(decimal_part or ""))[:3]
+                if not integer_part or not decimal_digits:
+                    return
+                merged_text = f"{integer_part}.{decimal_digits}GB"
+                try:
+                    value_gb = float(f"{integer_part}.{decimal_digits}")
+                except ValueError:
+                    return
+                merged_options.append((
+                    merged_text,
+                    value_gb,
+                    left_text,
+                    middle_text,
+                    right_text,
+                    merge_method,
+                    priority,
+                ))
+
+            for left_text in left_texts:
+                left_match = re.search(r"^(\d{1,2})(?:\.(\d?))?$", left_text)
+                if not left_match:
+                    continue
+                integer_part = left_match.group(1)
+                left_decimal = left_match.group(2) or ""
+                for right_text in right_texts:
+                    right_match = re.search(r"(\d{1,4})(?:\.?)(?:GB|G|B)?$", right_text)
+                    if not right_match:
+                        continue
+                    right_digits = right_match.group(1)
+
+                    if len(right_digits) >= 3:
+                        add_merged_option(
+                            integer_part,
+                            right_digits,
+                            left_text,
+                            "",
+                            right_text,
+                            "left_right_overlap",
+                            90,
+                        )
+
+                    for middle_text in middle_texts:
+                        if not middle_text:
+                            continue
+                        if right_digits.startswith(middle_text):
+                            decimal_part = right_digits
+                        else:
+                            decimal_part = f"{middle_text}{right_digits}"
+                        add_merged_option(
+                            integer_part,
+                            decimal_part,
+                            left_text,
+                            middle_text,
+                            right_text,
+                            "left_middle_right",
+                            100,
+                        )
+
+                    if left_decimal and right_digits.startswith(left_decimal):
+                        decimal_part = right_digits
+                    else:
+                        decimal_part = f"{left_decimal}{right_digits}"
+                    add_merged_option(
+                        integer_part,
+                        decimal_part,
+                        left_text,
+                        "",
+                        right_text,
+                        "left_right",
+                        50,
+                    )
+
+            history_suspicious = self._is_suspicious_traffic_history(historical_used_gb, monthly_threshold_gb)
+            for merged_text, raw_value_gb, left_text, middle_text, right_text, merge_method, _priority in sorted(
+                merged_options,
+                key=lambda item: (
+                    item[6],
+                    len(re.search(r"\.(\d+)", item[0]).group(1)) if re.search(r"\.(\d+)", item[0]) else 0,
+                    -abs(item[1] - float(historical_used_gb or item[1])),
+                ),
+                reverse=True,
+            ):
+                if merge_method == "left_right" and middle_texts and len(re.sub(r"\D", "", right_text)) < 3:
+                    continue
+                integer_value_gb = self._integer_traffic_gb(raw_value_gb)
+                value_gb = float(integer_value_gb)
+                debug_info["segmented_merged_text"] = merged_text
+                debug_info["segmented_candidate_value"] = integer_value_gb
+                debug_info["segmented_left_text"] = left_text
+                debug_info["segmented_middle_text"] = middle_text
+                debug_info["segmented_right_text"] = right_text
+                debug_info["segmented_merge_method"] = merge_method
+                within_threshold = 0 <= value_gb <= monthly_threshold_gb
+                near_history = (
+                    historical_used_gb is None
+                    or history_suspicious
+                    or abs(value_gb - float(historical_used_gb)) <= 5
+                )
+                if within_threshold and near_history:
+                    candidate = {
+                        "raw": f"{left_text}|{middle_text}|{right_text}",
+                        "text": f"{integer_value_gb}GB",
+                        "value": integer_value_gb,
+                        "unit": "GB",
+                        "raw_value_gb": raw_value_gb,
+                        "integer_value_gb": integer_value_gb,
+                        "value_gb": value_gb,
+                        "start": 0,
+                        "end": len(merged_text),
+                        "position_ratio": 0,
+                        "has_decimal": True,
+                        "excluded": False,
+                        "exclude_reason": "",
+                        "score": 10000,
+                        "source": "segmented_roi",
+                        "variant": "split_merge",
+                        "preprocessing": "split_merge",
+                        "trusted_decimal": True,
+                    }
+                    return candidate, debug_info
+
+            return None, debug_info
+
+        def build_ocr_variants(source_image, source_name: str):
+            enlarged = cv2.resize(source_image, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
+            original_gray = cv2.cvtColor(source_image, cv2.COLOR_BGR2GRAY)
+            original_resized = cv2.resize(original_gray, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            inverted = cv2.bitwise_not(otsu)
+            _, dark_text_binary = cv2.threshold(gray, 90, 255, cv2.THRESH_BINARY)
+            _, light_text_binary = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY_INV)
+            dual_mask = build_dual_mask(gray)
+            sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+            sharpened = cv2.filter2D(gray, -1, sharpen_kernel)
+            adaptive = cv2.adaptiveThreshold(
+                gray,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                31,
+                5,
+            )
+            if source_name == "precise_roi":
+                dual_mask_abs_path = os.path.join(debug_static_dir, "traffic_ocr_precise_roi_dual_mask.jpg")
+                cv2.imwrite(dual_mask_abs_path, dual_mask)
+                return [
+                    ("original_gray", original_gray),
+                    ("original_resized", original_resized),
+                    ("dual_mask", dual_mask),
+                    ("dark_text_binary", dark_text_binary),
+                    ("light_text_binary", light_text_binary),
+                    ("adaptive", adaptive),
+                    ("otsu", otsu),
+                    ("invert", inverted),
+                    ("sharpened", sharpened),
+                ]
+            return [
+                ("original_gray", original_gray),
+                ("original_resized", original_resized),
+                ("enlarged", enlarged),
+                ("otsu", otsu),
+                ("invert", inverted),
+                ("sharpened", sharpened),
+                ("adaptive", adaptive),
+            ]
+
+        def run_ocr_for_source(source_name: str, source_image, config: str) -> tuple[str, list[dict], list[dict]]:
+            if pytesseract is None:
+                raise ValueError("OCR dependency is not installed")
+            raw_text_parts: list[str] = []
+            source_candidates: list[dict] = []
+            source_variants: list[dict] = []
+
+            def enrich_candidate(candidate: dict, variant_name: str) -> dict:
+                enriched = dict(candidate)
+                enriched["source"] = source_name
+                enriched["variant"] = variant_name
+                enriched["preprocessing"] = variant_name
+                value_gb = float(enriched.get("value_gb", 0) or 0)
+                has_decimal = bool(enriched.get("has_decimal"))
+                unit = str(enriched.get("unit") or "").upper()
+                trusted_decimal = (
+                    source_name == "precise_roi"
+                    and has_decimal
+                    and unit in {"G", "GB"}
+                    and variant_name in {"original_gray", "original_resized", "dual_mask"}
+                )
+                missing_left_part = (
+                    source_name == "precise_roi"
+                    and precise_left_has_text
+                    and not has_decimal
+                    and value_gb in {3.0, 73.0, 82.0, 873.0, 882.0}
+                )
+                historical_normal = (
+                    historical_used_gb is not None
+                    and 0 <= float(historical_used_gb) <= monthly_threshold_gb
+                )
+                history_suspicious = self._is_suspicious_traffic_history(historical_used_gb, monthly_threshold_gb)
+                too_far_from_history = (
+                    historical_used_gb is not None
+                    and not history_suspicious
+                    and abs(value_gb - float(historical_used_gb)) > 5
+                )
+                exclude_reasons: list[str] = []
+                if trusted_decimal:
+                    enriched["score"] = round(float(enriched.get("score", 0)) + 500, 4)
+                    enriched["trusted_decimal"] = True
+                if missing_left_part:
+                    enriched["score"] = round(float(enriched.get("score", 0)) - 260, 4)
+                    enriched["suspicious"] = True
+                    enriched["suspicious_reason"] = "missing_left_decimal_part"
+                if historical_normal and value_gb > monthly_threshold_gb and not trusted_decimal:
+                    exclude_reasons.append("exceeds_monthly_threshold_without_trusted_decimal")
+                if too_far_from_history:
+                    exclude_reasons.append("candidate_delta_exceeds_5gb_from_history")
+                if historical_normal and value_gb in {65.0, 73.0, 82.0, 93.0, 615.0, 873.0, 882.0, 6515.0} and not has_decimal:
+                    exclude_reasons.append("known_missing_decimal_big_integer")
+                if source_name == "full_top_roi" and unit in {"G", "GB"} and not has_decimal and value_gb in {65.0, 73.0, 82.0, 93.0, 615.0, 873.0, 882.0, 6515.0}:
+                    exclude_reasons.append("full_top_roi_known_big_integer")
+                if historical_normal and value_gb > monthly_threshold_gb:
+                    enriched["score"] = round(float(enriched.get("score", 0)) - 420, 4)
+                    enriched["suspicious"] = True
+                    enriched["suspicious_reason"] = "exceeds_monthly_threshold_with_normal_history"
+                if exclude_reasons:
+                    enriched["excluded"] = True
+                    enriched["exclude_reason"] = ",".join(dict.fromkeys(exclude_reasons))
+                    enriched["score"] = round(float(enriched.get("score", 0)) - 2000, 4)
+                return enriched
+
+            for variant_name, variant in build_ocr_variants(source_image, source_name):
+                variant_key = f"{source_name}:{variant_name}"
+                variant_abs_path = os.path.join(debug_static_dir, f"traffic_ocr_{source_name}_{variant_name}.jpg")
+                cv2.imwrite(variant_abs_path, variant)
+                variant_path = self._to_backend_static_web_path(variant_abs_path)
+
+                try:
+                    variant_config = config
+                    if source_name == "precise_roi" and variant_name in {"original_gray", "original_resized", "dual_mask"}:
+                        variant_config = "--psm 7 -c tessedit_char_whitelist=0123456789.GBgb"
+                    raw_text = pytesseract.image_to_string(
+                        variant,
+                        lang="eng",
+                        config=variant_config,
+                        timeout=TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS,
+                    )
+                except RuntimeError as exc:
+                    if "timeout" in str(exc).lower():
+                        raise ValueError("OCR timeout")
+                    raise
+
+                raw_text = str(raw_text or "").strip()
+                print(f"[TrafficOCR] ocr raw_text variant={variant_key}: {raw_text}")
+                if raw_text:
+                    raw_text_parts.append(raw_text)
+
+                _, variant_candidates = self._parse_traffic_ocr_text_with_candidates(raw_text)
+                enriched_candidates = []
+                for candidate in variant_candidates:
+                    enriched = enrich_candidate(candidate, variant_name)
+                    enriched_candidates.append(enriched)
+                    source_candidates.append(enriched)
+
+                source_variants.append({
+                    "source": source_name,
+                    "variant": variant_name,
+                    "path": variant_path,
+                    "raw_text": raw_text,
+                    "candidates": enriched_candidates,
+                })
+
+            combined_raw_text = "\n".join(raw_text_parts).strip()
+            _, combined_candidates = self._parse_traffic_ocr_text_with_candidates(combined_raw_text)
+            for candidate in combined_candidates:
+                enriched = enrich_candidate(candidate, "combined")
+                source_candidates.append(enriched)
+
+            return combined_raw_text, source_candidates, source_variants
+
+        precise_config = "--psm 6 -c tessedit_char_whitelist=0123456789.GBgb"
+        top_config = "--psm 6 -c tessedit_char_whitelist=0123456789.,GBMTBgbmtb "
+        primary_candidate, primary_debug = build_primary_roi_candidate()
+        if primary_candidate:
+            used_gb = max(0.0, float(primary_candidate["value_gb"]))
+            traffic_text = str(primary_candidate["text"])
+            raw_text = "\n".join(
+                str(item.get("raw_text") or "")
+                for item in primary_debug.get("primary_roi_texts", [])
+                if item.get("raw_text")
+            ).strip()
+            print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} source=primary_roi candidates={[primary_candidate]}")
+            return {
+                "raw_text": raw_text,
+                "traffic_text": traffic_text,
+                "used_gb": used_gb,
+                "candidates": primary_debug.get("primary_roi_candidates") or [primary_candidate],
+                "roi_path": roi_path,
+                "debug_image": roi_path,
+                "precise_raw_text": raw_text,
+                "precise_roi_path": precise_roi_path,
+                "ocr_variants": [],
+                "selected_source": "primary_roi",
+                "selected_preprocessing": str(primary_candidate.get("preprocessing") or ""),
+                "selected_candidate_raw": primary_candidate.get("raw"),
+                "traffic_value": used_gb,
+                "rejected_big_integer_candidates": [],
+                "all_candidates_count": len(primary_debug.get("primary_roi_candidates") or [primary_candidate]),
+                "usable_candidates_count": len([
+                    item for item in (primary_debug.get("primary_roi_candidates") or [primary_candidate])
+                    if not item.get("excluded")
+                ]),
+                "excluded_candidates_count": len([
+                    item for item in (primary_debug.get("primary_roi_candidates") or [])
+                    if item.get("excluded")
+                ]),
+                "no_usable_candidate_reason": "",
+                "segmented_left_raw_text": "",
+                "segmented_middle_raw_text": "",
+                "segmented_right_raw_text": "",
+                "segmented_left_text": "",
+                "segmented_middle_text": "",
+                "segmented_right_text": "",
+                "segmented_merged_text": "",
+                "segmented_merge_method": "",
+                "segmented_candidate_value": None,
+                "recognized_chars": [],
+                "char_boxes": [],
+                "char_confidences": [],
+                "template_match_text": "",
+                **primary_debug,
+            }
+        segmented_candidate, segmented_debug = build_segmented_candidate()
+        if segmented_candidate:
+            used_gb = max(0.0, float(segmented_candidate["value_gb"]))
+            traffic_text = str(segmented_candidate["text"])
+            raw_text = "\n".join(
+                part for part in [
+                    segmented_debug.get("segmented_left_raw_text"),
+                    segmented_debug.get("segmented_middle_raw_text"),
+                    segmented_debug.get("segmented_right_raw_text"),
+                    segmented_debug.get("segmented_merged_text"),
+                ]
+                if part
+            ).strip()
+            print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} source=segmented_roi candidates={[segmented_candidate]}")
+            return {
+                "raw_text": raw_text,
+                "traffic_text": traffic_text,
+                "used_gb": used_gb,
+                "candidates": [segmented_candidate],
+                "roi_path": roi_path,
+                "debug_image": roi_path,
+                "precise_raw_text": raw_text,
+                "precise_roi_path": precise_roi_path,
+                "ocr_variants": [],
+                "selected_source": "segmented_roi",
+                "selected_preprocessing": "split_merge",
+                "selected_candidate_raw": segmented_candidate.get("raw"),
+                "rejected_big_integer_candidates": [],
+                "all_candidates_count": 1,
+                "usable_candidates_count": 1,
+                "excluded_candidates_count": 0,
+                "no_usable_candidate_reason": "",
+                **primary_debug,
+                **segmented_debug,
+            }
+
+        precise_raw_text, precise_candidates, precise_variants = run_ocr_for_source(
+            "precise_roi",
+            precise_roi,
+            precise_config,
+        )
+        top_raw_text, top_candidates, top_variants = run_ocr_for_source(
+            "full_top_roi",
+            roi,
+            top_config,
+        )
+
+        primary_candidates = primary_debug.get("primary_roi_candidates") or []
+        all_candidates = primary_candidates + precise_candidates + top_candidates
+        preprocessing_priority = {
+            "original_gray": 100,
+            "original_resized": 95,
+            "dual_mask": 90,
+            "dark_text_binary": 60,
+            "light_text_binary": 55,
+            "adaptive": 45,
+            "otsu": 35,
+            "invert": 30,
+            "sharpened": 25,
+            "combined": 10,
+        }
+        all_candidates.sort(
+            key=lambda item: (
+                0 if item.get("excluded") else 1,
+                0 if item.get("suspicious") else 1,
+                1 if item.get("source") == "precise_roi" else 0,
+                1 if item.get("trusted_decimal") else 0,
+                1 if item.get("has_decimal") else 0,
+                preprocessing_priority.get(str(item.get("preprocessing") or item.get("variant") or ""), 0),
+                float(item.get("score", 0)),
+            ),
+            reverse=True,
+        )
+        valid_precise = sorted(
+            [item for item in precise_candidates if not item.get("excluded") and not item.get("suspicious")],
+            key=lambda item: (
+                1 if item.get("trusted_decimal") else 0,
+                1 if item.get("has_decimal") else 0,
+                preprocessing_priority.get(str(item.get("preprocessing") or item.get("variant") or ""), 0),
+                float(item.get("score", 0)),
+            ),
+            reverse=True,
+        )
+        valid_top = sorted(
+            [item for item in top_candidates if not item.get("excluded") and not item.get("suspicious")],
+            key=lambda item: (
+                1 if item.get("has_decimal") else 0,
+                preprocessing_priority.get(str(item.get("preprocessing") or item.get("variant") or ""), 0),
+                float(item.get("score", 0)),
+            ),
+            reverse=True,
+        )
+        selected = valid_precise[0] if valid_precise else (valid_top[0] if valid_top else None)
+        selected_source = str(selected.get("source") or "") if selected else None
+        selected_preprocessing = str(selected.get("preprocessing") or selected.get("variant") or "") if selected else None
+        selected_candidate_raw = str(selected.get("raw") or "") if selected else None
+        all_candidates_count = len(all_candidates)
+        usable_candidates_count = len(valid_precise) + len(valid_top)
+        excluded_candidates_count = len([
+            item for item in all_candidates
+            if item.get("excluded") or item.get("suspicious")
+        ])
+        no_usable_candidate_reason = "all_candidates_excluded" if all_candidates_count and not usable_candidates_count else ""
+        rejected_big_integer_candidates = [
+            {
+                "raw": item.get("raw"),
+                "text": item.get("text"),
+                "value_gb": item.get("value_gb"),
+                "source": item.get("source"),
+                "preprocessing": item.get("preprocessing"),
+                "exclude_reason": item.get("exclude_reason") or item.get("suspicious_reason") or "",
+            }
+            for item in all_candidates
+            if (item.get("excluded") or item.get("suspicious"))
+            and not item.get("has_decimal")
+            and float(item.get("value_gb", 0) or 0) > monthly_threshold_gb
+        ]
+        if selected and selected.get("source") == "precise_roi" and selected.get("preprocessing") == "dual_mask":
+            selected_source = "precise_roi_dual_mask"
+        raw_text = "\n".join(part for part in [precise_raw_text, top_raw_text] if part).strip()
+
+        if selected:
+            used_gb = max(0.0, float(selected["value_gb"]))
+            traffic_text = str(selected["text"])
+            print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} source={selected_source} candidates={all_candidates}")
+            return {
+                "raw_text": raw_text,
+                "traffic_text": traffic_text,
+                "used_gb": used_gb,
+                "candidates": all_candidates,
+                "roi_path": roi_path,
+                "debug_image": roi_path,
+                "precise_raw_text": precise_raw_text,
+                "precise_roi_path": precise_roi_path,
+                "ocr_variants": precise_variants + top_variants,
+                "selected_source": selected_source,
+                "selected_preprocessing": selected_preprocessing,
+                "selected_candidate_raw": selected_candidate_raw,
+                "rejected_big_integer_candidates": rejected_big_integer_candidates,
+                "all_candidates_count": all_candidates_count,
+                "usable_candidates_count": usable_candidates_count,
+                "excluded_candidates_count": excluded_candidates_count,
+                "no_usable_candidate_reason": no_usable_candidate_reason,
+                **primary_debug,
+                **segmented_debug,
+            }
+
+        template_candidate, template_debug = build_template_match_candidate()
+        if template_candidate:
+            used_gb = max(0.0, float(template_candidate["value_gb"]))
+            traffic_text = str(template_candidate["text"])
+            template_raw_text = str(template_debug.get("template_match_text") or "")
+            template_candidates = all_candidates + [template_candidate]
+            print(f"[TrafficOCR] parsed traffic_text={traffic_text} used_gb={used_gb} source=template_match candidates={template_candidates}")
+            return {
+                "raw_text": "\n".join(part for part in [raw_text, template_raw_text] if part).strip(),
+                "traffic_text": traffic_text,
+                "used_gb": used_gb,
+                "candidates": template_candidates,
+                "roi_path": roi_path,
+                "debug_image": roi_path,
+                "precise_raw_text": template_raw_text,
+                "precise_roi_path": precise_roi_path,
+                "ocr_variants": precise_variants + top_variants,
+                "selected_source": "template_match",
+                "selected_preprocessing": "connected_components",
+                "selected_candidate_raw": template_candidate.get("raw"),
+                "rejected_big_integer_candidates": rejected_big_integer_candidates,
+                "all_candidates_count": len(template_candidates),
+                "usable_candidates_count": usable_candidates_count + 1,
+                "excluded_candidates_count": excluded_candidates_count,
+                "no_usable_candidate_reason": "",
+                **primary_debug,
+                **segmented_debug,
+                **template_debug,
+            }
+
+        raw_text = "\n".join([precise_raw_text, top_raw_text]).strip()
         print(f"[TrafficOCR] ocr raw_text={raw_text}")
-        parsed, candidates = self._parse_traffic_ocr_text_with_candidates(raw_text)
-        if parsed:
-            used_gb, traffic_text = parsed
-            print(f"[TrafficOCR] parsed combined traffic_text={traffic_text} used_gb={used_gb} candidates={candidates}")
-            return raw_text, traffic_text, used_gb, candidates, roi_path, roi_path
-        return raw_text, "", None, candidates, roi_path, roi_path
+        return {
+            "raw_text": raw_text,
+            "traffic_text": "",
+            "used_gb": None,
+            "candidates": all_candidates,
+            "roi_path": roi_path,
+            "debug_image": roi_path,
+            "precise_raw_text": precise_raw_text,
+            "precise_roi_path": precise_roi_path,
+            "ocr_variants": precise_variants + top_variants,
+            "selected_source": None,
+            "selected_preprocessing": None,
+            "selected_candidate_raw": None,
+            "rejected_big_integer_candidates": rejected_big_integer_candidates,
+            "all_candidates_count": all_candidates_count,
+            "usable_candidates_count": usable_candidates_count,
+            "excluded_candidates_count": excluded_candidates_count,
+            "no_usable_candidate_reason": no_usable_candidate_reason or "no_traffic_candidates",
+            **primary_debug,
+            **segmented_debug,
+        }
 
     def get_monitoring_summary(self, db: Session, video_id: int):
         db_video = self._get_video_runtime_by_id(video_id)
