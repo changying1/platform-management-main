@@ -38,6 +38,9 @@ public class VideoDevice {
     @SerializedName("device_serial")
     private String deviceSerial;
 
+    @SerializedName("sim_card_id")
+    private String simCardId;
+
     @SerializedName("channel_no")
     private Integer channelNo;
 
@@ -177,6 +180,14 @@ public class VideoDevice {
 
     public void setDeviceSerial(String deviceSerial) {
         this.deviceSerial = deviceSerial;
+    }
+
+    public String getSimCardId() {
+        return simCardId;
+    }
+
+    public void setSimCardId(String simCardId) {
+        this.simCardId = simCardId;
     }
 
     public Integer getChannelNo() {

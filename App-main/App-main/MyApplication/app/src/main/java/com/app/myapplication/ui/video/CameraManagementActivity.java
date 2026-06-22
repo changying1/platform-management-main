@@ -44,6 +44,8 @@ import java.util.List;
 
 public class CameraManagementActivity extends AppCompatActivity {
     private static final String TAG = "CameraManagement";
+    private static final String SCAN_TARGET_SERIAL = "serial";
+    private static final String SCAN_TARGET_SIM_CARD = "sim_card_id";
     private static final String[] DEVICE_TYPE_OPTIONS = {"枪机", "球机", "执法记录仪", "无人机", "安全帽", "其他"};
     private static final String[] PROJECT_OPTIONS = {"西安地铁8号线", "西安地铁10号线"};
     private static final String[] STATUS_OPTIONS = {"在线", "离线", "故障", "维修中"};
@@ -52,37 +54,31 @@ public class CameraManagementActivity extends AppCompatActivity {
     private CameraAdapter adapter;
     private TextView tvEmpty;
     private ProgressBar progressBar;
-    private Field activeSerialField;
+    private Field activeScanField;
+    private String activeScanTarget;
     private AlertDialog activeCameraDialog;
     private CameraForm activeCameraForm;
     private CameraFormDraft pendingScanDraft;
+    private String pendingScanTarget;
     private boolean waitingForScanResult;
+    private boolean waitingForCameraSaveResult;
 
     private final ActivityResultLauncher<ScanOptions> scanLauncher =
             registerForActivityResult(new ScanContract(), result -> {
                 waitingForScanResult = false;
+                String target = first(activeScanTarget, pendingScanTarget);
+                if (TextUtils.isEmpty(target)) target = SCAN_TARGET_SERIAL;
+
                 if (result == null || TextUtils.isEmpty(result.getContents())) {
-                    return;
-                }
-                String scannedSerial = extractSerialFromScan(result.getContents());
-
-                CameraFormDraft draft = snapshotActiveForm();
-                if (draft == null) draft = pendingScanDraft;
-
-                if (activeSerialField != null
-                        && activeCameraDialog != null
-                        && activeCameraDialog.isShowing()) {
-                    activeSerialField.editText.setText(scannedSerial);
-                    activeSerialField.editText.setSelection(activeSerialField.editText.length());
-                    pendingScanDraft = null;
+                    restoreDialogAfterScan(null, target);
                     return;
                 }
 
-                if (draft != null) {
-                    draft.serial = scannedSerial;
-                    pendingScanDraft = null;
-                    showCameraDialog(draft);
-                }
+                String scannedValue = SCAN_TARGET_SIM_CARD.equals(target)
+                        ? extractSimCardIdFromScan(result.getContents())
+                        : extractSerialFromScan(result.getContents());
+
+                restoreDialogAfterScan(scannedValue, target);
             });
 
     private final ActivityResultLauncher<String> cameraPermissionLauncher =
@@ -91,6 +87,7 @@ public class CameraManagementActivity extends AppCompatActivity {
                     launchScanner();
                 } else {
                     waitingForScanResult = false;
+                    restoreDialogAfterScan(null, first(activeScanTarget, pendingScanTarget));
                     Toast.makeText(this, "需要相机权限才能扫码", Toast.LENGTH_SHORT).show();
                 }
             });
@@ -102,6 +99,7 @@ public class CameraManagementActivity extends AppCompatActivity {
 
         if (savedInstanceState != null) {
             pendingScanDraft = (CameraFormDraft) savedInstanceState.getSerializable("pendingScanDraft");
+            pendingScanTarget = savedInstanceState.getString("pendingScanTarget");
             waitingForScanResult = savedInstanceState.getBoolean("waitingForScanResult", false);
         }
 
@@ -131,13 +129,21 @@ public class CameraManagementActivity extends AppCompatActivity {
 
         vm.getState().observe(this, s -> {
             progressBar.setVisibility(s.loading ? View.VISIBLE : View.GONE);
+            if (activeCameraDialog != null && activeCameraDialog.isShowing()) {
+                android.widget.Button positive = activeCameraDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+                if (positive != null) positive.setEnabled(!s.loading);
+            }
 
             if (!TextUtils.isEmpty(s.message)) {
                 Toast.makeText(this, s.message, Toast.LENGTH_SHORT).show();
+                if (waitingForCameraSaveResult && s.message.contains("成功")) {
+                    closeActiveCameraDialog();
+                }
                 vm.clearMessage();
             }
             if (!TextUtils.isEmpty(s.error)) {
                 Toast.makeText(this, s.error, Toast.LENGTH_SHORT).show();
+                waitingForCameraSaveResult = false;
                 vm.clearError();
             }
 
@@ -166,6 +172,9 @@ public class CameraManagementActivity extends AppCompatActivity {
         } else if (pendingScanDraft != null) {
             outState.putSerializable("pendingScanDraft", pendingScanDraft);
         }
+        if (!TextUtils.isEmpty(first(activeScanTarget, pendingScanTarget))) {
+            outState.putString("pendingScanTarget", first(activeScanTarget, pendingScanTarget));
+        }
         outState.putBoolean("waitingForScanResult", waitingForScanResult);
     }
 
@@ -186,6 +195,7 @@ public class CameraManagementActivity extends AppCompatActivity {
         String oldRemark = s(d.getRemark());
         draft.deviceType = normalizeDeviceType(first(d.getDeviceType(), readMeta(oldRemark, "设备类型")));
         draft.serial = s(d.getDeviceSerial());
+        draft.simCardId = s(d.getSimCardId());
         draft.channel = String.valueOf(d.getChannelNo() == null ? 1 : d.getChannelNo());
         draft.installLocation = first(d.getInstallLocation(), readMeta(oldRemark, "安装位置"));
         draft.company = s(d.getCompany());
@@ -221,7 +231,9 @@ public class CameraManagementActivity extends AppCompatActivity {
         Field name = addField(root, "设备名称 *", false);
         Spinner deviceType = addSpinner(root, "设备类型", DEVICE_TYPE_OPTIONS);
         Field serial = addField(root, "机器码/设备序列号", false);
-        attachScanAction(serial);
+        attachScanAction(serial, SCAN_TARGET_SERIAL);
+        Field simCardId = addField(root, "SIM卡卡号", false);
+        attachScanAction(simCardId, SCAN_TARGET_SIM_CARD);
         Field channel = addField(root, "通道号", false);
         Field installLocation = addField(root, "安装位置", false);
         Field company = addField(root, "所属分公司", false);
@@ -235,7 +247,7 @@ public class CameraManagementActivity extends AppCompatActivity {
         Field remark = addField(root, "备注", true);
 
         channel.editText.setText("1");
-        CameraForm form = new CameraForm(draft, name, deviceType, serial, channel, installLocation,
+        CameraForm form = new CameraForm(draft, name, deviceType, serial, simCardId, channel, installLocation,
                 company, project, grid, team, status, manager, managerPhone, stream, remark);
         if (draft != null) fillForm(form);
 
@@ -262,6 +274,7 @@ public class CameraManagementActivity extends AppCompatActivity {
             boolean cloudDevice = !TextUtils.isEmpty(deviceSerial);
             req.setPlatformType(cloudDevice ? "ezviz" : "onvif");
             req.setDeviceSerial(deviceSerial);
+            req.setSimCardId(value(simCardId));
             req.setChannelNo(parseChannel(value(channel)));
             req.setInstallLocation(value(installLocation));
             req.setCompany(value(company));
@@ -289,20 +302,19 @@ public class CameraManagementActivity extends AppCompatActivity {
 
             if (editing) vm.updateCamera(req);
             else vm.addCamera(req);
-            activeCameraDialog = null;
-            activeCameraForm = null;
-            activeSerialField = null;
-            pendingScanDraft = null;
-            dialog.dismiss();
+            waitingForCameraSaveResult = true;
         }));
 
         dialog.setOnDismissListener(d -> {
             if (activeCameraDialog == dialog) {
                 activeCameraDialog = null;
                 activeCameraForm = null;
-                activeSerialField = null;
+                waitingForCameraSaveResult = false;
+                activeScanField = null;
+                activeScanTarget = null;
                 if (!waitingForScanResult) {
                     pendingScanDraft = null;
+                    pendingScanTarget = null;
                 }
             }
         });
@@ -335,6 +347,7 @@ public class CameraManagementActivity extends AppCompatActivity {
         form.name.editText.setText(s(d.name));
         setSpinner(form.deviceType, normalizeDeviceType(d.deviceType));
         form.serial.editText.setText(s(d.serial));
+        form.simCardId.editText.setText(s(d.simCardId));
         form.channel.editText.setText(TextUtils.isEmpty(d.channel) ? "1" : d.channel);
         form.installLocation.editText.setText(s(d.installLocation));
         form.company.editText.setText(s(d.company));
@@ -353,6 +366,56 @@ public class CameraManagementActivity extends AppCompatActivity {
             return null;
         }
         return CameraFormDraft.from(activeCameraForm);
+    }
+
+    private void restoreDialogAfterScan(String scannedValue, String target) {
+        String safeTarget = TextUtils.isEmpty(target) ? SCAN_TARGET_SERIAL : target;
+        Field targetField = SCAN_TARGET_SIM_CARD.equals(safeTarget)
+                ? (activeCameraForm == null ? null : activeCameraForm.simCardId)
+                : (activeCameraForm == null ? null : activeCameraForm.serial);
+
+        if (targetField != null && activeCameraDialog != null && activeCameraDialog.isShowing()) {
+            if (scannedValue != null) {
+                targetField.editText.setText(scannedValue);
+                targetField.editText.setSelection(targetField.editText.length());
+            }
+            clearScanState(true);
+            return;
+        }
+
+        CameraFormDraft draft = pendingScanDraft;
+        if (draft != null) {
+            if (scannedValue != null) {
+                if (SCAN_TARGET_SIM_CARD.equals(safeTarget)) {
+                    draft.simCardId = scannedValue;
+                } else {
+                    draft.serial = scannedValue;
+                }
+            }
+            clearScanState(true);
+            showCameraDialog(draft);
+            return;
+        }
+
+        clearScanState(true);
+    }
+
+    private void closeActiveCameraDialog() {
+        AlertDialog dialog = activeCameraDialog;
+        activeCameraDialog = null;
+        activeCameraForm = null;
+        waitingForCameraSaveResult = false;
+        clearScanState(true);
+        if (dialog != null && dialog.isShowing()) {
+            dialog.dismiss();
+        }
+    }
+
+    private void clearScanState(boolean clearDraft) {
+        activeScanField = null;
+        activeScanTarget = null;
+        pendingScanTarget = null;
+        if (clearDraft) pendingScanDraft = null;
     }
 
     private void confirmDelete(VideoDevice d) {
@@ -387,13 +450,15 @@ public class CameraManagementActivity extends AppCompatActivity {
         return new Field(layout, editText);
     }
 
-    private void attachScanAction(Field serial) {
-        serial.layout.setEndIconMode(TextInputLayout.END_ICON_CUSTOM);
-        serial.layout.setEndIconDrawable(android.R.drawable.ic_menu_camera);
-        serial.layout.setEndIconContentDescription("扫码");
-        serial.layout.setEndIconOnClickListener(v -> {
-            activeSerialField = serial;
+    private void attachScanAction(Field field, String target) {
+        field.layout.setEndIconMode(TextInputLayout.END_ICON_CUSTOM);
+        field.layout.setEndIconDrawable(android.R.drawable.ic_menu_camera);
+        field.layout.setEndIconContentDescription("扫码");
+        field.layout.setEndIconOnClickListener(v -> {
+            activeScanField = field;
+            activeScanTarget = target;
             pendingScanDraft = snapshotActiveForm();
+            pendingScanTarget = target;
             waitingForScanResult = true;
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                     == PackageManager.PERMISSION_GRANTED) {
@@ -406,7 +471,8 @@ public class CameraManagementActivity extends AppCompatActivity {
 
     private void launchScanner() {
         ScanOptions options = new ScanOptions();
-        options.setPrompt("请扫描摄像头二维码");
+        String target = first(activeScanTarget, pendingScanTarget);
+        options.setPrompt(SCAN_TARGET_SIM_CARD.equals(target) ? "请扫描SIM卡卡号二维码" : "请扫描摄像头二维码");
         options.setBeepEnabled(true);
         options.setOrientationLocked(false);
         scanLauncher.launch(options);
@@ -552,6 +618,18 @@ public class CameraManagementActivity extends AppCompatActivity {
         return TextUtils.isEmpty(serial) ? result : serial;
     }
 
+    private String extractSimCardIdFromScan(String raw) {
+        String result = raw == null ? "" : raw.trim();
+        String simCardId = findQueryLikeValue(result, "sim_card_id");
+        if (!TextUtils.isEmpty(simCardId)) return simCardId;
+        simCardId = findQueryLikeValue(result, "simCardId");
+        if (!TextUtils.isEmpty(simCardId)) return simCardId;
+        simCardId = findQueryLikeValue(result, "iccid");
+        if (!TextUtils.isEmpty(simCardId)) return simCardId;
+        simCardId = findQueryLikeValue(result, "sim");
+        return TextUtils.isEmpty(simCardId) ? result : simCardId;
+    }
+
     private String findQueryLikeValue(String text, String key) {
         if (TextUtils.isEmpty(text)) return "";
         String[] parts = text.split("[?&#]");
@@ -595,6 +673,7 @@ public class CameraManagementActivity extends AppCompatActivity {
         final Field name;
         final Spinner deviceType;
         final Field serial;
+        final Field simCardId;
         final Field channel;
         final Field installLocation;
         final Field company;
@@ -607,13 +686,14 @@ public class CameraManagementActivity extends AppCompatActivity {
         final Field stream;
         final Field remark;
 
-        CameraForm(CameraFormDraft draft, Field name, Spinner deviceType, Field serial, Field channel,
+        CameraForm(CameraFormDraft draft, Field name, Spinner deviceType, Field serial, Field simCardId, Field channel,
                    Field installLocation, Field company, Spinner project, Field grid, Field team,
                    Spinner status, Field manager, Field managerPhone, Field stream, Field remark) {
             this.draft = draft == null ? new CameraFormDraft() : draft;
             this.name = name;
             this.deviceType = deviceType;
             this.serial = serial;
+            this.simCardId = simCardId;
             this.channel = channel;
             this.installLocation = installLocation;
             this.company = company;
@@ -634,6 +714,7 @@ public class CameraManagementActivity extends AppCompatActivity {
         String name = "";
         String deviceType = "";
         String serial = "";
+        String simCardId = "";
         String channel = "1";
         String installLocation = "";
         String company = "";
@@ -653,6 +734,7 @@ public class CameraManagementActivity extends AppCompatActivity {
             draft.name = valueOf(form.name);
             draft.deviceType = selectedOf(form.deviceType);
             draft.serial = valueOf(form.serial);
+            draft.simCardId = valueOf(form.simCardId);
             draft.channel = valueOf(form.channel);
             draft.installLocation = valueOf(form.installLocation);
             draft.company = valueOf(form.company);
