@@ -12,6 +12,7 @@ interface Camera {
   id: number;
   name: string;
   deviceCode: string;
+  sim_card_id?: string;
   channelNo?: number;          // 机器码/设备序列号
   location: string;
   company?: string;          // 所属分公司
@@ -135,6 +136,7 @@ const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
     id: Number(video.id),
     name,
     deviceCode: video.device_serial || String(video.id),
+    sim_card_id: video.sim_card_id || '',
     channelNo: video.channel_no || 1,
     location: video.remark || '',
     company: branchName,
@@ -479,7 +481,7 @@ const confirmImport = () => {
 
         {canCreateDevice && (
         <button
-          onClick={() => { setEditingItem(null); setShowModal(true); }}
+          onClick={() => { setEditingItem({ sim_card_id: "" } as Camera); setShowModal(true); }}
           className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm"
         >
           <Plus size={14} /> 添加摄像头
@@ -635,6 +637,17 @@ const confirmImport = () => {
                 <p className="text-xs text-slate-500 mt-1">萤石云4G摄像头的设备序列号</p>
               </div>
               
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">SIM卡卡号</label>
+                <input
+                  type="text"
+                  value={editingItem?.sim_card_id || ''}
+                  onChange={(e) => setEditingItem({ ...editingItem!, sim_card_id: e.target.value })}
+                  className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                  placeholder="请输入SIM卡卡号"
+                />
+              </div>
+
               <div>
   <label className="block text-sm text-slate-400 mb-1">通道号</label>
   <input
@@ -823,6 +836,7 @@ const confirmImport = () => {
         const payload = {
           name: editingItem.name,
           device_serial: editingItem.deviceCode,
+          sim_card_id: editingItem.sim_card_id || undefined,
           channel_no: editingItem.channelNo || 1,
           company: editingItem.company,
           branch_id: editingItem.companyId,

@@ -92,6 +92,7 @@ export interface Video {
   access_source?: 'local' | 'cloud' | string;
   ptz_source?: 'onvif' | 'ezviz' | string;
   device_serial?: string;
+  sim_card_id?: string;
   channel_no?: number;
   supports_ptz?: number;
   supports_preset?: number;
@@ -162,6 +163,7 @@ export interface VideoCreate {
   access_source?: 'local' | 'cloud' | string;
   ptz_source?: 'onvif' | 'ezviz' | string;
   device_serial?: string;
+  sim_card_id?: string;
   channel_no?: number;
   weekly_quota_bytes?: number;
   sleeping?: boolean;
@@ -195,6 +197,7 @@ export interface VideoUpdate {
   access_source?: 'local' | 'cloud' | string;
   ptz_source?: 'onvif' | 'ezviz' | string;
   device_serial?: string;
+  sim_card_id?: string;
   channel_no?: number;
   supports_ptz?: number;
   supports_preset?: number;
