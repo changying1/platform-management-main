@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Filter } from 'lucide-react';
+import { getApiUrl, getAuthHeaders } from '@/src/api/config';
 
 interface SearchBarProps {
   searchQuery: string;
   selectedBranchId: number | null;
   onSearchChange: (query: string) => void;
   onBranchChange: (branchId: number | null) => void;
-  onSearch: () => void;
+  onSearch: (branchId?: number | null, query?: string) => void;
 }
 
 interface Branch {
@@ -24,7 +25,7 @@ export function SearchBar({ searchQuery, selectedBranchId, onSearchChange, onBra
   }, [searchQuery]);
 
   useEffect(() => {
-    fetch('/api/dashboard/branches')
+    fetch(getApiUrl('/api/dashboard/branches'), { headers: getAuthHeaders() })
       .then(res => res.json())
       .then(data => {
         setBranches(data);
@@ -34,17 +35,18 @@ export function SearchBar({ searchQuery, selectedBranchId, onSearchChange, onBra
 
   const handleInputChange = (value: string) => {
     onSearchChange(value);
+    currentQueryRef.current = value;
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     debounceRef.current = setTimeout(() => {
-      onSearch();
+      onSearch(selectedBranchId, value);
     }, 300);
   };
 
   const handleBranchChange = (branchId: number | null) => {
     onBranchChange(branchId);
-    onSearch();
+    onSearch(branchId, currentQueryRef.current);
   };
 
   return (

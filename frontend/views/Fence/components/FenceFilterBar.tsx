@@ -8,6 +8,7 @@ interface FenceFilterBarProps {
   companies: string[];
   projects: string[];
   grids: string[];
+  showCompanyFilter?: boolean;
 }
 
 export const FenceFilterBar: React.FC<FenceFilterBarProps> = ({
@@ -15,8 +16,13 @@ export const FenceFilterBar: React.FC<FenceFilterBarProps> = ({
   setFilter,
   companies,
   projects,
-  grids
+  grids,
+  showCompanyFilter = true,
 }) => {
+  const searchPlaceholder = showCompanyFilter
+    ? "搜索分公司、项目、网格、围栏名、设备名..."
+    : "搜索项目、网格、围栏名、设备名...";
+
   return (
     <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md m-4 mb-0 p-3 shadow-xl">
       <div className="flex items-center gap-2">
@@ -25,7 +31,7 @@ export const FenceFilterBar: React.FC<FenceFilterBarProps> = ({
             <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-cyan-400" />
             <input
               type="text"
-              placeholder="搜索分公司、项目、网格、围栏名、设备名..."
+              placeholder={searchPlaceholder}
               value={filter.keyword || ""}
               onChange={(e) => setFilter({ ...filter, keyword: e.target.value })}
               className="w-full bg-slate-800/50 border border-slate-700 rounded-md pl-7 pr-7 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
@@ -42,24 +48,26 @@ export const FenceFilterBar: React.FC<FenceFilterBarProps> = ({
           </div>
         </div>
 
-        <div className="w-32">
-          <select
-            value={filter.company || "all"}
-            onChange={(e) => setFilter({
-              ...filter,
-              company: e.target.value === "all" ? undefined : e.target.value,
-              project: undefined,
-              grid: undefined
-            })}
-            className="w-full bg-slate-800/50 border border-cyan-400/40 rounded-md px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 cursor-pointer"
-          >
-            {companies.map(company => (
-              <option key={company} value={company} className="bg-slate-800 text-slate-200">
-                {company === "all" ? "所有分公司" : company}
-              </option>
-            ))}
-          </select>
-        </div>
+        {showCompanyFilter && (
+          <div className="w-32">
+            <select
+              value={filter.company || "all"}
+              onChange={(e) => setFilter({
+                ...filter,
+                company: e.target.value === "all" ? undefined : e.target.value,
+                project: undefined,
+                grid: undefined
+              })}
+              className="w-full bg-slate-800/50 border border-cyan-400/40 rounded-md px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-cyan-400 cursor-pointer"
+            >
+              {companies.map(company => (
+                <option key={company} value={company} className="bg-slate-800 text-slate-200">
+                  {company === "all" ? "所有分公司" : company}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="w-32">
           <select

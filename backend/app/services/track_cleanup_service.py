@@ -9,7 +9,8 @@ import threading
 from datetime import datetime, timedelta
 from app.core.database import get_mongo_collection
 from app.utils.logger import get_logger
-from app.utils.config_manager import get_system_settings
+from app.utils.config_manager import get_system_settings
+from app.services.device_location_history_service import device_location_history_service
 
 logger = get_logger("TrackCleanupService")
 
@@ -80,7 +81,10 @@ class TrackCleanupService:
             cutoff_time = datetime.now() - timedelta(days=retention_days)
             cutoff_timestamp = cutoff_time.isoformat()
             
-            logger.info(f"Starting track cleanup for records older than {retention_days} days")
+            logger.info(f"Starting track cleanup for records older than {retention_days} days")
+            deleted_count = device_location_history_service.cleanup_older_than(retention_days)
+            logger.info(f"Track cleanup completed. Deleted {deleted_count} location history points")
+            return
             
             # 更新所有设备的轨迹数据,删除过期的轨迹点
             result = self.devices_collection.update_many(

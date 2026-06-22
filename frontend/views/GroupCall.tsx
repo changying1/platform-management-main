@@ -1,6 +1,8 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronRight,
   CheckCircle2,
   FileText,
   Filter,
@@ -18,8 +20,9 @@ import {
   XCircle,
 } from 'lucide-react';
 
-import { getApiUrl } from '../src/api/config';
-import { deviceApi, type ApiDevice } from '../src/api/deviceApi';
+import { getApiUrl, getAuthHeaders } from '../src/api/config';
+import { deviceApi, type ApiDevice, type LocationDevice } from '../src/api/deviceApi';
+import { unitApiClient, type UnitTreeNode } from '../src/api/responsibilityUnitApi';
 
 type ActiveTab = 'tts' | 'records';
 type SendMode = 'group' | 'broadcast';
@@ -29,6 +32,31 @@ type GroupCallStatus = 'ACTIVE' | 'ENDED';
 
 interface Jt808Device extends ApiDevice {
   phone: string;
+  company?: string;
+  project?: string;
+  grid?: string;
+  team?: string;
+}
+
+interface CompanyFilterNode {
+  id: string;
+  name: string;
+  projects: {
+    id: string;
+    name: string;
+    grids: {
+      id: string;
+      name: string;
+      teams: string[];
+    }[];
+  }[];
+}
+
+interface OrgLookup {
+  branchNames: Map<string, string>;
+  projectNames: Map<string, string>;
+  gridNames: Map<string, string>;
+  teamNames: Map<string, string>;
 }
 
 interface TtsQueueJob {
@@ -133,14 +161,219 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
 }
 
-function isJt808Device(device: ApiDevice) {
-  const type = String(device.device_type || '').toUpperCase();
-  return type === 'JT808' || type.includes('JT808');
+function getPhoneFromDevice(device: Partial<ApiDevice> & Partial<LocationDevice>) {
+  const phoneNum = typeof device.phone_num === 'string' ? device.phone_num.trim() : '';
+  if (phoneNum) {
+    return phoneNum;
+  }
+  const holderPhone = typeof device.holderPhone === 'string' ? device.holderPhone.trim() : '';
+  if (holderPhone) {
+    return holderPhone;
+  }
+  const streamPhone = typeof device.stream_url === 'string' ? device.stream_url.trim() : '';
+  return streamPhone || String(device.id || device.device_id || '').trim();
 }
 
-function getPhoneFromDevice(device: ApiDevice) {
-  const streamPhone = typeof device.stream_url === 'string' ? device.stream_url.trim() : '';
-  return streamPhone || String(device.id || '').trim();
+const textValue = (value?: string | number | null) => String(value || '').trim();
+
+function getUnitKeys(unit: UnitTreeNode) {
+  return [unit.unit_id, unit.id, unit.project_id, unit.grid_id, unit.team_id].map(textValue).filter(Boolean);
+}
+
+function collectOrgLookups(nodes: UnitTreeNode[]): OrgLookup {
+  const lookup: OrgLookup = {
+    branchNames: new Map(),
+    projectNames: new Map(),
+    gridNames: new Map(),
+    teamNames: new Map(),
+  };
+
+  const visit = (node: UnitTreeNode) => {
+    const keys = getUnitKeys(node);
+    const target =
+      node.type === 'branch' ? lookup.branchNames :
+      node.type === 'project' ? lookup.projectNames :
+      node.type === 'grid' ? lookup.gridNames :
+      node.type === 'team' ? lookup.teamNames :
+      null;
+
+    if (target) {
+      keys.forEach((key) => target.set(key, node.name));
+      target.set(node.name, node.name);
+    }
+
+    (node.children || []).forEach(visit);
+  };
+
+  nodes.forEach(visit);
+  return lookup;
+}
+
+function resolveOrgName(value: string | undefined, map: Map<string, string>) {
+  const raw = textValue(value);
+  if (!raw) return '';
+  return map.get(raw) || raw;
+}
+
+function toJt808Device(device: LocationDevice, orgLookup?: OrgLookup): Jt808Device {
+  const rawDevice = device as LocationDevice & {
+    grid_name?: string;
+    gridName?: string;
+    team_name?: string;
+    teamName?: string;
+    workTeam?: string;
+    work_team?: string;
+  };
+  const phone = getPhoneFromDevice(device);
+  const status = String(device.status || '').toLowerCase();
+
+  return {
+    id: String(device.device_id || phone),
+    device_name: device.name || phone,
+    device_type: device.type || 'JT808',
+    ip_address: '',
+    port: 0,
+    is_online: status === 'online',
+    stream_url: phone,
+    last_latitude: typeof device.lat === 'number' ? device.lat : null,
+    last_longitude: typeof device.lng === 'number' ? device.lng : null,
+    phone,
+    company: resolveOrgName(device.company || device.branch_id, orgLookup?.branchNames || new Map()),
+    project: resolveOrgName(device.project || device.project_id, orgLookup?.projectNames || new Map()),
+    grid: resolveOrgName(rawDevice.grid || rawDevice.grid_name || rawDevice.gridName || device.grid_id, orgLookup?.gridNames || new Map()),
+    team: resolveOrgName(rawDevice.team || rawDevice.team_name || rawDevice.teamName || rawDevice.workTeam || rawDevice.work_team || device.team_id, orgLookup?.teamNames || new Map()),
+  };
+}
+
+function isOrgType(node: UnitTreeNode, types: string[]) {
+  return types.includes(String(node.type || ''));
+}
+
+function buildCompanyTreeFromOrg(nodes: UnitTreeNode[], devices: Jt808Device[]): CompanyFilterNode[] {
+  const ensureCountedGrids = new Set<string>();
+  const deviceGridCounts = new Map<string, number>();
+  const unassignedByProject = new Map<string, number>();
+  const projectNameSet = new Set<string>();
+
+  const countGrid = (gridName: string) =>
+    devices.filter((device) => textValue(device.grid) === gridName).length;
+
+  const attachUnassignedDevices = () => {
+    devices.forEach((device) => {
+      const project = textValue(device.project);
+      if (!project || !projectNameSet.has(project)) return;
+      if (device.grid && ensureCountedGrids.has(textValue(device.grid))) return;
+      unassignedByProject.set(project, (unassignedByProject.get(project) || 0) + 1);
+    });
+  };
+
+  const getTeamNames = (grid: UnitTreeNode) =>
+    (grid.children || [])
+      .filter((child) => isOrgType(child, ['team']))
+      .map((team) => team.name)
+      .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+
+  const buildProject = (project: UnitTreeNode) => {
+    projectNameSet.add(project.name);
+    const grids = (project.children || [])
+      .filter((child) => isOrgType(child, ['grid']))
+      .map((grid) => {
+        ensureCountedGrids.add(grid.name);
+        const count = countGrid(grid.name);
+        deviceGridCounts.set(grid.name, count);
+        return {
+          id: grid.name,
+          name: grid.name,
+          teams: getTeamNames(grid),
+        };
+      });
+
+    return {
+      id: project.name,
+      name: project.name,
+      grids,
+    };
+  };
+
+  const companies = nodes
+    .filter((node) => isOrgType(node, ['branch']))
+    .map((company) => ({
+      id: company.name,
+      name: company.name,
+      projects: (company.children || [])
+        .filter((child) => isOrgType(child, ['project']))
+        .map(buildProject)
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+
+  attachUnassignedDevices();
+
+  companies.forEach((company) => {
+    company.projects.forEach((project) => {
+      if ((unassignedByProject.get(project.name) || 0) > 0) {
+        project.grids.push({ id: '未分配网格', name: '未分配网格', teams: [] });
+      }
+    });
+  });
+
+  return companies;
+}
+
+function buildCompanyTree(devices: Jt808Device[], orgTree: UnitTreeNode[] = []): CompanyFilterNode[] {
+  if (orgTree.length > 0) {
+    return buildCompanyTreeFromOrg(orgTree, devices);
+  }
+
+  const companyMap = new Map<string, Map<string, Map<string, Set<string>>>>();
+
+  devices.forEach((device) => {
+    const company = String(device.company || '').trim();
+    if (!company) {
+      return;
+    }
+
+    const project = String(device.project || '').trim();
+    const grid = String(device.grid || '').trim();
+    const team = String(device.team || '').trim();
+    if (!companyMap.has(company)) {
+      companyMap.set(company, new Map());
+    }
+
+    const projectMap = companyMap.get(company)!;
+    const projectKey = project || '未分配项目';
+    if (!projectMap.has(projectKey)) {
+      projectMap.set(projectKey, new Map());
+    }
+    const gridMap = projectMap.get(projectKey)!;
+    const gridKey = grid || '未分配网格';
+    if (!gridMap.has(gridKey)) {
+      gridMap.set(gridKey, new Set());
+    }
+    if (team) {
+      gridMap.get(gridKey)!.add(team);
+    }
+  });
+
+  return Array.from(companyMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b, 'zh-Hans-CN'))
+    .map(([company, projects]) => ({
+      id: company,
+      name: company,
+      projects: Array.from(projects.entries())
+        .sort(([a], [b]) => a.localeCompare(b, 'zh-Hans-CN'))
+        .map(([project, grids]) => ({
+          id: project,
+          name: project,
+          grids: Array.from(grids.entries())
+            .sort(([a], [b]) => a.localeCompare(b, 'zh-Hans-CN'))
+            .map(([grid, teams]) => ({
+              id: grid,
+              name: grid,
+              teams: Array.from(teams).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+            })),
+        })),
+    }));
 }
 
 function isBatchResponse(payload: unknown): payload is TtsBatchResponse {
@@ -193,6 +426,21 @@ function getRecordStatus(result: TtsBatchResponse): RecordStatus {
   return 'pending';
 }
 
+function getCurrentOperatorName() {
+  try {
+    const auth = JSON.parse(localStorage.getItem('auth') || '{}') || {};
+    return (
+      auth.full_name ||
+      auth.name ||
+      auth.username ||
+      localStorage.getItem('username') ||
+      '当前用户'
+    );
+  } catch {
+    return localStorage.getItem('username') || '当前用户';
+  }
+}
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
@@ -219,24 +467,6 @@ function getGroupCallStatusMeta(status: GroupCallStatus) {
     className: 'bg-slate-700/60 text-slate-200 border border-slate-600/40',
   };
 }
-
-const companyTree = [
-  {
-    id: '中铁一局',
-    name: '中铁一局',
-    projects: [
-      { id: '西安地铁8号线', name: '西安地铁8号线', teams: ['施工一组', '施工二组', '施工三组'] }
-    ]
-  },
-  {
-    id: '中铁隧道局',
-    name: '中铁隧道局',
-    projects: [
-      { id: '深圳地铁14号线', name: '深圳地铁14号线', teams: ['盾构一组', '盾构二组'] },
-      { id: '广州地铁18号线', name: '广州地铁18号线', teams: ['土建一队', '土建二队'] }
-    ]
-  },
-];
 
 function summarizeError(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== 'object') {
@@ -312,12 +542,17 @@ export default function GroupCall() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('tts');
   const [sendMode, setSendMode] = useState<SendMode>('group');
   const [devices, setDevices] = useState<Jt808Device[]>([]);
+  const [organizationTree, setOrganizationTree] = useState<UnitTreeNode[]>([]);
   const [selectedPhones, setSelectedPhones] = useState<string[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [selectedProject, setSelectedProject] = useState<string>('all');
+  const [selectedGrid, setSelectedGrid] = useState<string>('all');
   const [selectedTeam, setSelectedTeam] = useState<string>('all');
+  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [expandedProject, setExpandedProject] = useState<string | null>(null);
+  const [expandedGrid, setExpandedGrid] = useState<string | null>(null);
   const [ttsText, setTtsText] = useState('');
   const [sendRecords, setSendRecords] = useState<SendRecord[]>([]);
   const [latestResult, setLatestResult] = useState<TtsBatchResponse | null>(null);
@@ -344,13 +579,13 @@ export default function GroupCall() {
     setLoadingError('');
 
     try {
-      const response = await deviceApi.getAllDevices();
+      const [response, orgTree] = await Promise.all([
+        deviceApi.getLocationDevices(),
+        unitApiClient.getTree().catch(() => [] as UnitTreeNode[]),
+      ]);
+      const orgLookup = collectOrgLookups(orgTree);
       const jt808Devices = response
-        .filter(isJt808Device)
-        .map((device) => ({
-          ...device,
-          phone: getPhoneFromDevice(device),
-        }))
+        .map((device) => toJt808Device(device, orgLookup))
         .filter((device) => device.phone)
         .sort((a, b) => {
           if (a.is_online !== b.is_online) {
@@ -359,6 +594,7 @@ export default function GroupCall() {
           return a.device_name.localeCompare(b.device_name, 'zh-CN');
         });
 
+      setOrganizationTree(orgTree);
       setDevices(jt808Devices);
       setSelectedPhones((prev) => prev.filter((phone) => jt808Devices.some((device) => device.phone === phone)));
     } catch (error) {
@@ -371,7 +607,9 @@ export default function GroupCall() {
 
   const loadTtsHistory = async () => {
     try {
-      const response = await fetch(getApiUrl(`/call/tts/batches?limit=${MAX_HISTORY}`));
+      const response = await fetch(getApiUrl(`/call/tts/batches?limit=${MAX_HISTORY}`), {
+        headers: getAuthHeaders(),
+      });
       const payload = (await response.json().catch(() => null)) as unknown;
       if (!response.ok || !isBatchResponseList(payload)) {
         throw new Error(summarizeError(payload, '加载播报历史失败'));
@@ -412,22 +650,38 @@ export default function GroupCall() {
   const resetFilters = () => {
     setSelectedCompany('all');
     setSelectedProject('all');
+    setSelectedGrid('all');
     setSelectedTeam('all');
     setSearchKeyword('');
+    setExpandedCompany(null);
+    setExpandedProject(null);
+    setExpandedGrid(null);
     setShowFilter(false);
   };
 
   const activeFiltersCount = [
     selectedCompany !== 'all',
     selectedProject !== 'all',
+    selectedGrid !== 'all',
     selectedTeam !== 'all',
     searchKeyword !== ''
   ].filter(Boolean).length;
 
+  const companyTree = React.useMemo(() => buildCompanyTree(devices, organizationTree), [devices, organizationTree]);
+
   const filteredDevices = devices.filter((device) => {
     const keyword = searchKeyword.trim().toLowerCase();
     if (keyword) {
-      const searchable = [device.device_name, device.phone, device.id, device.device_type]
+      const searchable = [
+        device.device_name,
+        device.phone,
+        device.id,
+        device.device_type,
+        device.company,
+        device.project,
+        device.grid,
+        device.team,
+      ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
@@ -437,27 +691,28 @@ export default function GroupCall() {
     }
 
     if (selectedCompany !== 'all') {
-      const company = companyTree.find(c => c.id === selectedCompany);
-      if (company) {
-        if (selectedProject !== 'all') {
-          const project = company.projects.find((p: any) => p.id === selectedProject);
-          if (project) {
-            if (selectedTeam !== 'all') {
-              const deviceName = (device.device_name || '').toLowerCase();
-              if (!deviceName.includes(selectedTeam.toLowerCase())) {
-                return false;
-              }
-            }
-            const deviceName = (device.device_name || '').toLowerCase();
-            if (!deviceName.includes(project.name.toLowerCase())) {
-              return false;
-            }
-          }
-        }
-        const deviceName = (device.device_name || '').toLowerCase();
-        if (!deviceName.includes(company.name.toLowerCase())) {
-          return false;
-        }
+      if (device.company !== selectedCompany) {
+        return false;
+      }
+    }
+
+    if (selectedProject !== 'all') {
+      const project = String(device.project || '').trim() || '未分配项目';
+      if (project !== selectedProject) {
+        return false;
+      }
+    }
+
+    if (selectedGrid !== 'all') {
+      const grid = String(device.grid || '').trim() || '未分配网格';
+      if (grid !== selectedGrid) {
+        return false;
+      }
+    }
+
+    if (selectedTeam !== 'all') {
+      if (device.team !== selectedTeam) {
+        return false;
       }
     }
 
@@ -477,7 +732,9 @@ export default function GroupCall() {
     setGroupCallError('');
 
     try {
-      const response = await fetch(getApiUrl('/call?limit=20'));
+      const response = await fetch(getApiUrl('/call?limit=20'), {
+        headers: getAuthHeaders(),
+      });
       const payload = (await response.json().catch(() => null)) as unknown;
       if (!response.ok || !Array.isArray(payload) || !payload.every(isGroupCallSession)) {
         throw new Error(summarizeError(payload, '加载群组通话会话失败'));
@@ -529,6 +786,7 @@ export default function GroupCall() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           initiator_id: SYSTEM_INITIATOR_ID,
@@ -557,6 +815,7 @@ export default function GroupCall() {
     try {
       const response = await fetch(getApiUrl(`/call/${callId}/end`), {
         method: 'POST',
+        headers: getAuthHeaders(),
       });
       const payload = (await response.json().catch(() => null)) as unknown;
       if (!response.ok || !isGroupCallSession(payload)) {
@@ -737,7 +996,9 @@ export default function GroupCall() {
   };
 
   const fetchBatchStatus = async (batchId: string) => {
-    const response = await fetch(getApiUrl(`/call/tts/batch/${batchId}`));
+    const response = await fetch(getApiUrl(`/call/tts/batch/${batchId}`), {
+      headers: getAuthHeaders(),
+    });
     const payload = (await response.json().catch(() => null)) as TtsBatchResponse | { detail?: unknown } | null;
     if (!response.ok || !isBatchResponse(payload)) {
       throw new Error(summarizeError(payload, '获取播报回执失败'));
@@ -765,10 +1026,11 @@ export default function GroupCall() {
     formData.append('target_phones', JSON.stringify(targetPhones));
     formData.append('duration', String(recording.duration));
     formData.append('batch_id', batch.batch_id);
-    formData.append('operator', '群组通话');
+    formData.append('operator', getCurrentOperatorName());
 
     const response = await fetch(getApiUrl('/call/voice-records'), {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: formData,
     });
     if (!response.ok) {
@@ -802,11 +1064,13 @@ export default function GroupCall() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           text,
           target_phones: targetPhones,
           request_source: sendMode,
+          operator: getCurrentOperatorName(),
         }),
       });
 
@@ -943,11 +1207,22 @@ export default function GroupCall() {
                 </button>
               </div>
 
-              <div className="mb-3 relative">
+              <div className="mb-3">
                 <div className="flex gap-2 items-center">
-                  <div className="relative">
+                  <div>
                     <button
-                      onClick={() => setShowFilter(!showFilter)}
+                      onClick={() => {
+                        setShowFilter(!showFilter);
+                        if (!showFilter && selectedCompany !== 'all') {
+                          setExpandedCompany(selectedCompany);
+                        }
+                        if (!showFilter && selectedProject !== 'all') {
+                          setExpandedProject(selectedProject);
+                        }
+                        if (!showFilter && selectedGrid !== 'all') {
+                          setExpandedGrid(selectedGrid);
+                        }
+                      }}
                       className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-all ${
                         activeFiltersCount > 0
                           ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
@@ -960,72 +1235,6 @@ export default function GroupCall() {
                         <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500 rounded-full">{activeFiltersCount}</span>
                       )}
                     </button>
-                    
-                    {showFilter && (
-                      <div className="absolute top-full left-0 mt-2 z-[400] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[300px]">
-                        <div className="space-y-3">
-                          <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-                            <span className="text-sm font-medium text-white">筛选条件</span>
-                            <button onClick={resetFilters} className="text-xs text-cyan-400 hover:text-cyan-300">清除筛选</button>
-                          </div>
-                          
-                          <div className="relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
-                            <input
-                              type="text"
-                              value={searchKeyword}
-                              onChange={(event) => setSearchKeyword(event.target.value)}
-                              placeholder="模糊搜索设备名称、手机号、ID"
-                              className="w-full rounded-lg border border-slate-700 bg-slate-900/50 py-2 pl-9 pr-3 text-sm text-slate-100 outline-none transition-all focus:border-cyan-400/50"
-                            />
-                          </div>
-                          
-                          {companyTree.map((company: any) => (
-                            <div key={company.id} className="space-y-2">
-                              <button
-                                onClick={() => {
-                                  setSelectedCompany(selectedCompany === company.id ? 'all' : company.id);
-                                  setSelectedProject('all');
-                                  setSelectedTeam('all');
-                                }}
-                                className={`w-full text-left px-2 py-1.5 rounded-lg text-sm ${
-                                  selectedCompany === company.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
-                                }`}
-                              >
-                                公司 {company.name}
-                              </button>
-                              {selectedCompany === company.id && company.projects.map((project: any) => (
-                                <div key={project.id} className="ml-4 space-y-1">
-                                  <button
-                                    onClick={() => {
-                                      setSelectedProject(selectedProject === project.id ? 'all' : project.id);
-                                      setSelectedTeam('all');
-                                    }}
-                                    className={`w-full text-left px-2 py-1 rounded-lg text-xs ${
-                                      selectedProject === project.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-slate-700'
-                                    }`}
-                                  >
-                                    项目 {project.name}
-                                  </button>
-                                  {selectedProject === project.id && project.teams.map((team: string) => (
-                                    <button
-                                      key={team}
-                                      onClick={() => setSelectedTeam(selectedTeam === team ? 'all' : team)}
-                                      className={`ml-4 w-[calc(100%-1rem)] text-left px-2 py-1 rounded-lg text-xs ${
-                                        selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-500 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      班组 {team}
-                                    </button>
-                                  ))}
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                          <button onClick={() => setShowFilter(false)} className="w-full py-1.5 bg-cyan-500 rounded-lg text-xs">确定</button>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   <button
@@ -1041,6 +1250,138 @@ export default function GroupCall() {
                     清空已选
                   </button>
                 </div>
+
+                {showFilter && (
+                  <div className="mt-3 rounded-xl border border-cyan-400/30 bg-slate-800/95 p-3 shadow-2xl">
+                    <div className="mb-3 flex items-center justify-between border-b border-slate-700 pb-2">
+                      <span className="text-sm font-medium text-white">筛选条件</span>
+                      <button onClick={resetFilters} className="text-xs text-cyan-400 hover:text-cyan-300">清除筛选</button>
+                    </div>
+
+                    <div className="relative mb-3">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
+                      <input
+                        type="text"
+                        value={searchKeyword}
+                        onChange={(event) => setSearchKeyword(event.target.value)}
+                        placeholder="搜索设备名称、手机号、ID"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-900/50 py-2 pl-9 pr-3 text-sm text-slate-100 outline-none transition-all focus:border-cyan-400/50"
+                      />
+                    </div>
+
+                    <div className="max-h-[42vh] space-y-1 overflow-y-auto pr-1">
+                      {companyTree.map((company: CompanyFilterNode) => {
+                        const companyOpen = expandedCompany === company.id;
+                        const companySelected = selectedCompany === company.id;
+                        return (
+                          <div key={company.id}>
+                            <button
+                              onClick={() => {
+                                const nextOpen = companyOpen ? null : company.id;
+                                setExpandedCompany(nextOpen);
+                                setExpandedProject(null);
+                                setExpandedGrid(null);
+                                setSelectedCompany(companySelected ? 'all' : company.id);
+                                setSelectedProject('all');
+                                setSelectedGrid('all');
+                                setSelectedTeam('all');
+                              }}
+                              className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-all ${
+                                companySelected ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              {companyOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                              <span className="min-w-0 flex-1 truncate">公司 {company.name}</span>
+                              <span className="text-xs text-slate-500">{company.projects.length}</span>
+                            </button>
+
+                            {companyOpen && (
+                              <div className="ml-4 mt-1 space-y-1 border-l border-slate-700 pl-2">
+                                {company.projects.map((project) => {
+                                  const projectOpen = expandedProject === project.id;
+                                  const projectSelected = selectedProject === project.id;
+                                  return (
+                                    <div key={project.id}>
+                                      <button
+                                        onClick={() => {
+                                          setExpandedProject(projectOpen ? null : project.id);
+                                          setExpandedGrid(null);
+                                          setSelectedCompany(company.id);
+                                          setSelectedProject(projectSelected ? 'all' : project.id);
+                                          setSelectedGrid('all');
+                                          setSelectedTeam('all');
+                                        }}
+                                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-all ${
+                                          projectSelected ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-slate-700'
+                                        }`}
+                                      >
+                                        {projectOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                        <span className="min-w-0 flex-1 truncate">项目 {project.name}</span>
+                                        <span className="text-[11px] text-slate-500">{project.grids.length}</span>
+                                      </button>
+
+                                      {projectOpen && project.grids.length > 0 && (
+                                        <div className="ml-4 mt-1 space-y-1 border-l border-slate-700 pl-2">
+                                          {project.grids.map((grid) => {
+                                            const gridOpen = expandedGrid === grid.id;
+                                            const gridSelected = selectedGrid === grid.id;
+                                            return (
+                                              <div key={grid.id}>
+                                                <button
+                                                  onClick={() => {
+                                                    setExpandedGrid(gridOpen ? null : grid.id);
+                                                    setSelectedCompany(company.id);
+                                                    setSelectedProject(project.id);
+                                                    setSelectedGrid(gridSelected ? 'all' : grid.id);
+                                                    setSelectedTeam('all');
+                                                  }}
+                                                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-all ${
+                                                    gridSelected ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-500 hover:bg-slate-700'
+                                                  }`}
+                                                >
+                                                  {gridOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                                  <span className="min-w-0 flex-1 truncate">网格 {grid.name}</span>
+                                                  <span className="text-[11px] text-slate-600">{grid.teams.length}</span>
+                                                </button>
+
+                                                {gridOpen && grid.teams.length > 0 && (
+                                                  <div className="ml-4 mt-1 space-y-1 border-l border-slate-700 pl-2">
+                                                    {grid.teams.map((team: string) => (
+                                                      <button
+                                                        key={team}
+                                                        onClick={() => {
+                                                          setSelectedCompany(company.id);
+                                                          setSelectedProject(project.id);
+                                                          setSelectedGrid(grid.id);
+                                                          setSelectedTeam(selectedTeam === team ? 'all' : team);
+                                                        }}
+                                                        className={`w-full rounded-lg px-2 py-1.5 text-left text-xs transition-all ${
+                                                          selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-500 hover:bg-slate-700'
+                                                        }`}
+                                                      >
+                                                        工队 {team}
+                                                      </button>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <button onClick={() => setShowFilter(false)} className="mt-3 w-full rounded-lg bg-cyan-500 py-1.5 text-xs text-white transition-all hover:bg-cyan-400">确定</button>
+                  </div>
+                )}
               </div>
 
               {loadingError ? (
@@ -1250,16 +1591,16 @@ export default function GroupCall() {
               </div>
             </div>
 
-              <div className="relative mb-3 flex flex-1">
-                <div className="flex flex-col gap-0.5">
+              <div className="mb-3 flex min-h-[168px] rounded-xl border border-slate-700 bg-slate-950/70">
+                <div className="flex w-12 shrink-0 flex-col border-r border-slate-700">
                   <button
                     onClick={() => {
                       stopVoiceRecognition();
                       setInputMode('text');
                     }}
-                    className={`w-12 flex-1 rounded-l-xl flex items-center justify-center text-sm font-medium transition-all ${
+                    className={`flex flex-1 items-center justify-center rounded-tl-xl text-sm font-medium transition-all ${
                       inputMode === 'text'
-                        ? 'bg-slate-950/70 border border-r-0 border-slate-700 text-cyan-300 -mr-px'
+                        ? 'bg-cyan-500/15 text-cyan-300'
                         : 'bg-slate-800/50 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                     }`}
                     title="文本输入"
@@ -1268,9 +1609,9 @@ export default function GroupCall() {
                   </button>
                   <button
                     onClick={() => setInputMode('voice')}
-                    className={`w-12 flex-1 rounded-l-xl flex items-center justify-center text-sm font-medium transition-all ${
+                    className={`flex flex-1 items-center justify-center rounded-bl-xl text-sm font-medium transition-all ${
                       inputMode === 'voice'
-                        ? 'bg-slate-950/70 border border-r-0 border-slate-700 text-cyan-300 -mr-px'
+                        ? 'bg-cyan-500/15 text-cyan-300'
                         : 'bg-slate-800/50 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                     }`}
                     title="语音输入"
@@ -1284,17 +1625,17 @@ export default function GroupCall() {
                     <textarea
                       value={ttsText}
                       onChange={(event) => setTtsText(event.target.value)}
-                          rows={8}
+                      rows={6}
                       placeholder="请输入要下发到设备端播报的文本，例如：请前往 2 号通道进行集合点检。"
-                      className="h-full min-h-[160px] max-h-[160px] w-full rounded-xl rounded-l-none border border-slate-700 bg-slate-950/70 px-4 py-3 pr-44 pb-14 text-sm text-slate-100 outline-none transition-all focus:border-cyan-400/50 resize-none overflow-y-auto"
+                      className="h-full min-h-[168px] w-full resize-none bg-transparent px-4 py-3 pb-16 pr-44 text-sm text-slate-100 outline-none transition-all placeholder:text-slate-500 focus:ring-0"
                     />
                   ) : (
-                    <div className="h-full min-h-[160px] max-h-[160px] rounded-xl rounded-l-none border border-slate-700 bg-slate-950/70 p-4 pr-44 relative">
-                      <div className="h-24 mb-3 text-sm text-slate-100 overflow-y-auto whitespace-pre-wrap">
+                    <div className="relative h-full min-h-[168px] p-4">
+                      <div className="h-24 overflow-y-auto whitespace-pre-wrap pr-40 text-sm text-slate-100">
                         {ttsText || '点击下方按钮开始语音识别，识别结果会显示在这里。'}
                       </div>
 
-                      <div className="absolute bottom-12 left-4 right-44">
+                      <div className="absolute bottom-14 left-4 right-44">
                         {interimTranscript ? (
                           <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
                             正在识别: {interimTranscript}
@@ -1308,29 +1649,29 @@ export default function GroupCall() {
                     </div>
                   )}
 
-                  <div className="absolute right-3 bottom-3 flex gap-2">
-                    {inputMode === 'voice' && (
-                      <button
-                        onClick={listening ? stopVoiceRecognition : startVoiceRecognition}
-                        className={`inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition-all ${
-                          listening
-                            ? 'bg-red-500 text-white hover:bg-red-600'
-                            : 'bg-cyan-500 text-white hover:bg-cyan-600'
-                        }`}
-                      >
-                        {listening ? <LoaderCircle size={16} className="animate-spin" /> : <Mic size={16} />}
-                        {listening ? '停止识别' : '开始识别'}
-                      </button>
-                    )}
-
+                  <div className="absolute bottom-3 right-3 flex gap-2">
+                  {inputMode === 'voice' && (
                     <button
-                      onClick={sendTts}
-                      disabled={sending}
-                      className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={listening ? stopVoiceRecognition : startVoiceRecognition}
+                      className={`inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition-all ${
+                        listening
+                          ? 'bg-red-500 text-white hover:bg-red-600'
+                          : 'bg-cyan-500 text-white hover:bg-cyan-600'
+                      }`}
                     >
-                      {sending ? <LoaderCircle size={16} className="animate-spin" /> : <Send size={16} />}
-                      {sending ? '发送中...' : inputMode === 'voice' ? '发送语音播报' : '发送文本播报'}
+                      {listening ? <LoaderCircle size={16} className="animate-spin" /> : <Mic size={16} />}
+                      {listening ? '停止识别' : '开始识别'}
                     </button>
+                  )}
+
+                  <button
+                    onClick={sendTts}
+                    disabled={sending}
+                    className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {sending ? <LoaderCircle size={16} className="animate-spin" /> : <Send size={16} />}
+                    {sending ? '发送中...' : inputMode === 'voice' ? '发送语音播报' : '发送文本播报'}
+                  </button>
                   </div>
                 </div>
               </div>

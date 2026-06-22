@@ -10,6 +10,18 @@ class UserCreate(BaseModel):
     phone: Optional[str] = None
     department: Optional[str] = None
     parent_id: Optional[int] = None
+
+    permission_level: Optional[str] = None
+
+    project: Optional[str] = None
+
+    project_id: Optional[str] = None
+
+    branch_id: Optional[str] = None
+
+    team: Optional[str] = None
+
+    work_team: Optional[str] = None
     # 员工相关字段
     employee_code: Optional[str] = None
     id_card: Optional[str] = None

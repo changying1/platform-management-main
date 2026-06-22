@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Search, Filter, Plus, MapPin, Users, AlertTriangle, Info, ChevronDown, X, Circle, Hexagon, Bug, MousePointer2, Navigation, Play, Pause, AlertCircle, ShieldAlert } from "lucide-react";
 import { hasStoredPermission } from "../../src/utils/permissions";
 import { useFenceManager } from "./hooks/useFenceManager";
@@ -11,6 +11,8 @@ import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
 import { getAuthHeaders, withAuthTokenParam } from "../../src/api/config";
+import { toGridAreas, type GridArea } from "../../src/utils/gridAreas";
+import { isHeadquartersScope, isProjectScope as isStoredProjectScope, readStoredAuth } from "../../src/utils/authScope";
 
 import { FenceData, getFenceDeviceAlarmKeys } from "./types";
 
@@ -34,6 +36,11 @@ const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
   });
 
 const text = (value: any) => String(value ?? "").trim();
+const normalize = (value: any) => text(value).toLowerCase();
+const hasFenceViolation = (
+  device: { device_id?: any; device_code?: any; device_serial?: any; phone_num?: any; raw_id?: any },
+  violationTypes: Record<string, any>
+) => getFenceDeviceAlarmKeys(device as any).some((key) => Boolean(violationTypes[key]));
 
 interface AlarmResponse {
   device_id?: string | number;
@@ -57,7 +64,21 @@ interface FenceAlarm {
 // 系统设置接口
 interface SystemSettings {
   fenceGracePeriod: number;
+  alarmPopup?: boolean;
+  alarmSound?: boolean;
+  alarmSoundType?: "none" | "standard" | "emergency";
+  alarmRepeatInterval?: number;
+  alarmSevereFlash?: boolean;
 }
+
+const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  fenceGracePeriod: 3,
+  alarmPopup: true,
+  alarmSound: true,
+  alarmSoundType: "standard",
+  alarmRepeatInterval: 5,
+  alarmSevereFlash: false,
+};
 
 type HistoricalFenceView = {
   logId?: string | number;
@@ -67,6 +88,62 @@ type HistoricalFenceView = {
   versionLabel?: string;
   fence: FenceData;
 };
+
+type StoredProjectScope = {
+  isHeadquartersScope: boolean;
+  isProjectScope: boolean;
+  projectId: string;
+};
+
+const readStoredProjectScope = (): StoredProjectScope => {
+  const auth = readStoredAuth();
+  const projectId = text(localStorage.getItem("project_id") || auth.project_id);
+
+  return {
+    isHeadquartersScope: isHeadquartersScope(auth),
+    isProjectScope: isStoredProjectScope(auth),
+    projectId,
+  };
+};
+
+const projectIdMatches = (left: any, right: any) => {
+  const a = text(left);
+  const b = text(right);
+  if (!a || !b) return false;
+  return a === b || a.replace(/^PRJ-/i, "") === b.replace(/^PRJ-/i, "");
+};
+
+const normalizeLatLngPoint = (value: any): [number, number] | null => {
+  const raw = typeof value === "string" && value.trim()
+    ? (() => {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    })()
+    : value;
+
+  if (Array.isArray(raw) && raw.length >= 2) {
+    const first = Number(raw[0]);
+    const second = Number(raw[1]);
+    if (!Number.isFinite(first) || !Number.isFinite(second) || (first === 0 && second === 0)) return null;
+    if (first >= 3 && first <= 54 && second >= 73 && second <= 136) return [first, second];
+    if (second >= 3 && second <= 54 && first >= 73 && first <= 136) return [second, first];
+  }
+
+  if (raw && typeof raw === "object") {
+    const lat = Number(raw.lat ?? raw.latitude);
+    const lng = Number(raw.lng ?? raw.lon ?? raw.longitude);
+    return normalizeLatLngPoint([lat, lng]);
+  }
+
+  return null;
+};
+
+const projectSummaryPoint = (project: any): [number, number] | null =>
+  normalizeLatLngPoint(project?.center) ||
+  normalizeLatLngPoint([project?.latitude ?? project?.lat, project?.longitude ?? project?.lng]);
 
 // 获取系统设置
 const fetchSystemSettings = async (): Promise<SystemSettings> => {
@@ -83,6 +160,26 @@ const fetchSystemSettings = async (): Promise<SystemSettings> => {
   } catch (error) {
     console.warn("获取系统设置失败（后端未连接），使用默认值:", error);
     return { fenceGracePeriod: 3 }; // 默认3秒延迟
+  }
+};
+
+const fetchFullSystemSettings = async (): Promise<SystemSettings> => {
+  try {
+    const response = await authFetch(`${API_BASE_URL}/admin/settings`);
+    if (!response.ok) return DEFAULT_SYSTEM_SETTINGS;
+    const data = await response.json();
+    return {
+      ...DEFAULT_SYSTEM_SETTINGS,
+      fenceGracePeriod: data.fenceGracePeriod !== undefined ? data.fenceGracePeriod : DEFAULT_SYSTEM_SETTINGS.fenceGracePeriod,
+      alarmPopup: data.alarmPopup !== undefined ? data.alarmPopup : DEFAULT_SYSTEM_SETTINGS.alarmPopup,
+      alarmSound: data.alarmSound !== undefined ? data.alarmSound : DEFAULT_SYSTEM_SETTINGS.alarmSound,
+      alarmSoundType: data.alarmSoundType || DEFAULT_SYSTEM_SETTINGS.alarmSoundType,
+      alarmRepeatInterval: data.alarmRepeatInterval !== undefined ? data.alarmRepeatInterval : DEFAULT_SYSTEM_SETTINGS.alarmRepeatInterval,
+      alarmSevereFlash: data.alarmSevereFlash !== undefined ? data.alarmSevereFlash : DEFAULT_SYSTEM_SETTINGS.alarmSevereFlash,
+    };
+  } catch (error) {
+    console.warn("Failed to load full system settings, using defaults", error);
+    return DEFAULT_SYSTEM_SETTINGS;
   }
 };
 
@@ -184,6 +281,8 @@ export default function FenceManagement() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [gridAreas, setGridAreas] = useState<GridArea[]>([]);
+  const [projectSummaries, setProjectSummaries] = useState<any[]>([]);
   const canCreateFence = hasStoredPermission("fence.create");
   const canDeleteFence = hasStoredPermission("fence.delete");
   const [selectedFence, setSelectedFence] = useState<FenceData | null>(null);
@@ -204,6 +303,7 @@ export default function FenceManagement() {
   const alarmWsRef = useRef<WebSocket | null>(null);
   const alarmReconnectTimerRef = useRef<number | null>(null);
   const alarmCloseTimerRef = useRef<number | null>(null);
+  const lastAlarmSoundAtRef = useRef<Record<string, number>>({});
   // 新增：退出调试模式后的冷却期标志（用于延迟警报）
   const [coolingDown, setCoolingDown] = useState(false);
   // 新增：同步冷却期标志（解决React状态异步更新问题）
@@ -212,8 +312,8 @@ export default function FenceManagement() {
   // 新增：初始化系统设置
   useEffect(() => {
     const loadSettings = async () => {
-      const settings = await fetchSystemSettings();
-      setSystemSettings(settings);
+      const settings = await fetchFullSystemSettings();
+      setSystemSettings({ ...DEFAULT_SYSTEM_SETTINGS, ...settings });
     };
     loadSettings();
     
@@ -270,13 +370,23 @@ export default function FenceManagement() {
   
   // 新增：播放警报音效
   const playAlarmSound = () => {
+    if (systemSettings.alarmSound === false || systemSettings.alarmSoundType === "none") return;
+    const nowMs = Date.now();
+    const repeatMs = Math.max(0, Number(systemSettings.alarmRepeatInterval || 0)) * 60 * 1000;
+    const lastSoundAt = lastAlarmSoundAtRef.current.__global || 0;
+    if (repeatMs > 0 && nowMs - lastSoundAt < repeatMs) return;
+    lastAlarmSoundAtRef.current.__global = nowMs;
     // 创建简单的蜂鸣音（使用Web Audio API）
     try {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const now = audioContext.currentTime;
+      const isEmergency = systemSettings.alarmSoundType === "emergency";
+      const repeatCount = isEmergency ? 6 : 4;
+      const baseFrequency = isEmergency ? 1100 : 800;
+      const gainValue = isEmergency ? 0.42 : 0.3;
       
       // 创建4个频率的警报音
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < repeatCount; i++) {
         const osc = audioContext.createOscillator();
         const gain = audioContext.createGain();
         
@@ -284,10 +394,10 @@ export default function FenceManagement() {
         gain.connect(audioContext.destination);
         
         // 快速升降的频率
-        osc.frequency.setValueAtTime(800 + i * 200, now + i * 0.15);
+        osc.frequency.setValueAtTime(baseFrequency + i * 180, now + i * 0.15);
         osc.frequency.setValueAtTime(400 + i * 100, now + i * 0.15 + 0.1);
         
-        gain.gain.setValueAtTime(0.3, now + i * 0.15);
+        gain.gain.setValueAtTime(gainValue, now + i * 0.15);
         gain.gain.setValueAtTime(0, now + i * 0.15 + 0.12);
         
         osc.start(now + i * 0.15);
@@ -298,9 +408,51 @@ export default function FenceManagement() {
     }
   };
 
+  const triggerFenceAlarm = useCallback((alarm: FenceAlarm) => {
+    const severity = String(alarm.severity || "").toLowerCase();
+    const isSevere = ["high", "severe", "critical"].includes(severity);
+    const now = Date.now();
+    const repeatMs = Math.max(0, Number(systemSettings.alarmRepeatInterval || 0)) * 60 * 1000;
+    const soundKey = `${alarm.device_id}:${alarm.fence_id}:${alarm.alarm_type}`;
+    const lastSoundAt = lastAlarmSoundAtRef.current[soundKey] || 0;
+
+    if (systemSettings.alarmPopup !== false) {
+      setFenceAlarm(alarm);
+      if (alarmCloseTimerRef.current) {
+        window.clearTimeout(alarmCloseTimerRef.current);
+      }
+      alarmCloseTimerRef.current = window.setTimeout(() => {
+        setFenceAlarm(null);
+      }, 3000);
+    }
+
+    if (repeatMs === 0 || now - lastSoundAt >= repeatMs) {
+      playAlarmSound();
+      lastAlarmSoundAtRef.current[soundKey] = now;
+    }
+
+    if (isSevere && systemSettings.alarmSevereFlash) {
+      document.body.classList.add("severe-alarm-flash");
+      window.setTimeout(() => document.body.classList.remove("severe-alarm-flash"), 3000);
+    }
+  }, [systemSettings, playAlarmSound]);
+
+  const buildFenceAlarm = (data: any, deviceId: string): FenceAlarm => ({
+    id: data.id,
+    device_id: deviceId,
+    fence_id: String(data.fence_id),
+    alarm_type: data.alarm_type,
+    severity: data.severity,
+    timestamp: data.timestamp,
+    description: data.description,
+    location: data.location,
+    person_name: data.person_name,
+  });
+
   const [mouseLngLat, setMouseLngLat] = useState<[number, number] | null>(null);
   const [collectedPoints, setCollectedPoints] = useState<any[]>([]);
   const collectPollingRef = useRef<number | null>(null);
+  const lastAutoFocusedKeywordRef = useRef("");
   const isBrushDrawingRef = useRef(false);
   const brushFinishedRef = useRef(false);
   const circleStartedRef = useRef(false);
@@ -388,6 +540,7 @@ export default function FenceManagement() {
     mapRef, 
     setCenter,
     renderFences,
+    renderGridAreas,
     renderHistoricalFence,
     renderDevices,
     renderDraft,
@@ -395,6 +548,151 @@ export default function FenceManagement() {
     bindDrawEvents,
     setMapDraggable, 
   } = useFenceMap(mapContainerRef);
+
+  useEffect(() => {
+    let stopped = false;
+    const fetchGridAreas = async () => {
+      try {
+        const response = await authFetch(`${API_BASE_URL}/api/grids/`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!stopped) setGridAreas(toGridAreas(Array.isArray(data) ? data : []));
+      } catch (error) {
+        console.warn("Failed to load grid areas", error);
+        if (!stopped) setGridAreas([]);
+      }
+    };
+
+    fetchGridAreas();
+    return () => {
+      stopped = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let stopped = false;
+    const fetchProjectSummaries = async () => {
+      try {
+        const response = await authFetch(`${API_BASE_URL}/api/dashboard/summary`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!stopped) setProjectSummaries(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.warn("Failed to load project summaries", error);
+        if (!stopped) setProjectSummaries([]);
+      }
+    };
+
+    fetchProjectSummaries();
+    return () => {
+      stopped = true;
+    };
+  }, []);
+
+  const currentProjectScope = useMemo(readStoredProjectScope, []);
+  const scopedProjectNode = useMemo(() => {
+    if (!currentProjectScope.isProjectScope || !currentProjectScope.projectId) return null;
+    let found: (typeof organizationTree)[number] | null = null;
+    const visit = (nodes: typeof organizationTree) => {
+      for (const node of nodes) {
+        if (
+          normalize(node.type) === "project" &&
+          (projectIdMatches(node.project_id, currentProjectScope.projectId) ||
+            projectIdMatches(node.unit_id, currentProjectScope.projectId) ||
+            projectIdMatches(node.id, currentProjectScope.projectId))
+        ) {
+          found = node;
+          return;
+        }
+        visit(node.children || []);
+        if (found) return;
+      }
+    };
+    visit(organizationTree);
+    return found;
+  }, [currentProjectScope, organizationTree]);
+  const scopedProjectFilterValue = scopedProjectNode?.name || currentProjectScope.projectId;
+  const initialFocusProject = useMemo(() => {
+    const summaryMatch = currentProjectScope.isProjectScope && currentProjectScope.projectId
+      ? projectSummaries.find((project) =>
+        projectIdMatches(project.id, currentProjectScope.projectId) ||
+        projectIdMatches(project.projectId, currentProjectScope.projectId)
+      )
+      : projectSummaries[0];
+
+    if (summaryMatch) {
+      return {
+        id: text(summaryMatch.id || summaryMatch.projectId),
+        name: text(summaryMatch.name || summaryMatch.projectName),
+        point: projectSummaryPoint(summaryMatch),
+      };
+    }
+
+    if (scopedProjectNode) {
+      return {
+        id: currentProjectScope.projectId,
+        name: scopedProjectNode.name,
+        point: null,
+      };
+    }
+
+    let firstProjectNode: (typeof organizationTree)[number] | null = null;
+    const visit = (nodes: typeof organizationTree) => {
+      for (const node of nodes) {
+        if (normalize(node.type) === "project" && text(node.name)) {
+          firstProjectNode = node;
+          return;
+        }
+        visit(node.children || []);
+        if (firstProjectNode) return;
+      }
+    };
+    visit(organizationTree);
+
+    if (firstProjectNode) {
+      return {
+        id: text(firstProjectNode.project_id || firstProjectNode.unit_id || firstProjectNode.id),
+        name: text(firstProjectNode.name),
+        point: null,
+      };
+    }
+
+    const projectSource = [
+      ...fences.map((item) => ({ id: text(item.project_id), name: text(item.project) })),
+      ...devices.map((item: any) => ({ id: text(item.project_id), name: text(item.project) })),
+      ...gridAreas.map((item: any) => ({ id: text(item.project_id), name: text(item.project) })),
+    ].find((item) => item.id || item.name);
+
+    return projectSource ? { ...projectSource, point: null } : null;
+  }, [currentProjectScope.isProjectScope, currentProjectScope.projectId, devices, fences, gridAreas, organizationTree, projectSummaries, scopedProjectNode]);
+
+  const filteredGridAreas = useMemo(() => {
+    return gridAreas.filter((area) => {
+      if (filter.project) {
+        const projectKey = normalize(filter.project);
+        const matchesProject =
+          normalize(area.project_id) === projectKey ||
+          normalize(area.project) === projectKey ||
+          normalize(area.project_id).replace(/^prj-/, "") === projectKey.replace(/^prj-/, "");
+        if (!matchesProject) return false;
+      }
+      if (filter.grid) {
+        const gridKey = normalize(filter.grid);
+        const matchesGrid =
+          normalize(area.grid_id) === gridKey ||
+          normalize(area.grid) === gridKey ||
+          normalize(area.name) === gridKey;
+        if (!matchesGrid) return false;
+      }
+      if (filter.keyword) {
+        const keyword = normalize(filter.keyword);
+        const matchesKeyword = [area.name, area.grid_id, area.project, area.project_id]
+          .some((value) => normalize(value).includes(keyword));
+        if (!matchesKeyword) return false;
+      }
+      return true;
+    });
+  }, [filter.grid, filter.keyword, filter.project, gridAreas]);
 
   useEffect(() => {
     const pendingHistoricalFence = readHistoricalFenceView();
@@ -406,15 +704,29 @@ export default function FenceManagement() {
   }, []);
 
   const companies = ["all", ...new Set(fences.map(f => f.company).filter(Boolean))];
+  const organizationProjects = useMemo(() => {
+    const names: string[] = [];
+    const visit = (nodes: typeof organizationTree) => {
+      nodes.forEach(node => {
+        if (normalize(node.type) === "project" && text(node.name)) names.push(node.name);
+        visit(node.children || []);
+      });
+    };
+    visit(organizationTree);
+    return names;
+  }, [organizationTree]);
   const projects = filter.company && filter.company !== "all"
-    ? ["all", ...new Set(fences.filter(f => f.company === filter.company).map(f => f.project))]
-    : ["all", ...new Set(fences.map(f => f.project))];
+    ? ["all", ...new Set([
+      ...fences.filter(f => f.company === filter.company).map(f => f.project),
+      ...organizationProjects,
+    ].filter(Boolean))]
+    : ["all", ...new Set([...fences.map(f => f.project), ...organizationProjects].filter(Boolean))];
   const gridNameById = React.useMemo(() => {
     const map = new Map<string, string>();
     const visit = (nodes: typeof organizationTree) => {
       nodes.forEach(node => {
         const nodeType = text(node.type).toLowerCase();
-        if (nodeType === "grid" || nodeType === "safety_office") {
+        if (nodeType === "grid") {
           [node.unit_id, node.grid_id, node.id].forEach(id => {
             const key = text(id);
             if (key) map.set(key, node.name);
@@ -429,11 +741,95 @@ export default function FenceManagement() {
   const getGridName = React.useCallback((item: { grid?: string; grid_name?: string; grid_id?: string | number | null }) => {
     return text(item.grid_name || item.grid || gridNameById.get(text(item.grid_id)) || item.grid_id);
   }, [gridNameById]);
+
+  const focusFence = useCallback((fence: FenceData) => {
+    setSelectedFence(fence);
+    if (fence.type === "Circle" && fence.center) {
+      setCenter(fence.center);
+      mapRef.current?.setZoom(18);
+    } else if (fence.type === "Polygon" && fence.points && fence.points.length > 0) {
+      const center = fence.points.reduce(
+        (acc, p) => [acc[0] + p[0], acc[1] + p[1]],
+        [0, 0]
+      );
+      const centerLat = center[0] / fence.points.length;
+      const centerLng = center[1] / fence.points.length;
+      setCenter([centerLat, centerLng]);
+      mapRef.current?.setZoom(16);
+    }
+  }, [mapRef, setCenter]);
+
+  const focusDevice = useCallback((device: any) => {
+    const lat = Number(device.lat);
+    const lng = Number(device.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) return false;
+    setSelectedFence(null);
+    setCenter([lat, lng]);
+    mapRef.current?.setZoom(19);
+    return true;
+  }, [mapRef, setCenter]);
+
+  const initialProjectFocusedRef = useRef(false);
+  useEffect(() => {
+    if (!mapReady || initialProjectFocusedRef.current || !initialFocusProject) return;
+
+    if (currentProjectScope.isProjectScope && scopedProjectFilterValue && (filter.project !== scopedProjectFilterValue || filter.grid)) {
+      setFilter({ ...filter, project: scopedProjectFilterValue, grid: undefined });
+    }
+
+    const targetPoint = initialFocusProject.point;
+
+    if (targetPoint) {
+      setCenter(targetPoint);
+      mapRef.current?.setZoom(17);
+      initialProjectFocusedRef.current = true;
+    }
+  }, [
+    currentProjectScope,
+    filter,
+    initialFocusProject,
+    mapReady,
+    mapRef,
+    scopedProjectFilterValue,
+    setCenter,
+    setFilter,
+  ]);
+
   const gridSources = [
-    ...fences.filter(f => (!filter.company || f.company === filter.company) && (!filter.project || f.project === filter.project)),
-    ...devices.filter(d => (!filter.company || d.company === filter.company) && (!filter.project || d.project === filter.project)),
+    ...fences.filter(f => (!filter.company || f.company === filter.company) && (!filter.project || text(f.project) === text(filter.project) || projectIdMatches(f.project_id, filter.project))),
+    ...devices.filter((d: any) => (!filter.company || d.company === filter.company) && (!filter.project || text(d.project) === text(filter.project) || projectIdMatches(d.project_id, filter.project))),
   ];
   const grids = ["all", ...new Set(gridSources.map(getGridName).filter(Boolean))];
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const keyword = text(filter.keyword);
+    if (!keyword) {
+      lastAutoFocusedKeywordRef.current = "";
+      return;
+    }
+    const normalizedKeyword = normalize(keyword);
+    const focusKey = `${normalizedKeyword}:${filteredDevices.length}:${filteredFences.length}`;
+    if (lastAutoFocusedKeywordRef.current === focusKey) return;
+
+    const matchedDevice = filteredDevices.find((device) =>
+      [device.name, device.device_id, device.holder, device.company, device.project, getGridName(device)]
+        .some((field) => normalize(field).includes(normalizedKeyword))
+    );
+    if (matchedDevice && focusDevice(matchedDevice)) {
+      lastAutoFocusedKeywordRef.current = focusKey;
+      return;
+    }
+
+    const matchedFence = filteredFences.find((fence) =>
+      [fence.name, fence.company, fence.project, getGridName(fence)]
+        .some((field) => normalize(field).includes(normalizedKeyword))
+    );
+    if (matchedFence) {
+      focusFence(matchedFence);
+      lastAutoFocusedKeywordRef.current = focusKey;
+    }
+  }, [filter.keyword, filteredDevices, filteredFences, focusDevice, focusFence, getGridName, mapReady]);
 
 const fetchPendingFenceAlarms = useCallback(async () => {
   try {
@@ -460,13 +856,36 @@ const fetchPendingFenceAlarms = useCallback(async () => {
   }
 }, []);
 
+const fenceStats = React.useMemo(() => {
+  const violatingDevices = new Set<string>();
+  filteredDevices.forEach((device) => {
+    if (hasFenceViolation(device, violationTypes)) {
+      violatingDevices.add(String(device.device_id));
+    }
+  });
+
+  return {
+    ...stats,
+    totalDevices: filteredDevices.length,
+    onlineDevices: filteredDevices.filter((device) => device.status === "online").length,
+    violations: violatingDevices.size,
+  };
+}, [filteredDevices, stats, violationTypes]);
+
 useEffect(() => {
   void fetchPendingFenceAlarms();
+  const handleAlarmStatusChanged = () => {
+    void fetchPendingFenceAlarms();
+  };
+  window.addEventListener("alarmStatusChanged", handleAlarmStatusChanged);
   const timer = window.setInterval(() => {
     void fetchPendingFenceAlarms();
   }, 10000);
 
-  return () => window.clearInterval(timer);
+  return () => {
+    window.clearInterval(timer);
+    window.removeEventListener("alarmStatusChanged", handleAlarmStatusChanged);
+  };
 }, [fetchPendingFenceAlarms]);
 
 // 新增：WebSocket连接逻辑
@@ -527,7 +946,7 @@ useEffect(() => {
               console.log(`[WebSocket警报] 设备 ${deviceId} 延迟${gracePeriod}秒后触发警报`);
               
               // 显示报警弹窗
-              setFenceAlarm({
+              triggerFenceAlarm({
                 id: data.id,
                 device_id: deviceId,
                 fence_id: String(data.fence_id),
@@ -540,7 +959,6 @@ useEffect(() => {
               });
 
               // 播放警报音效
-              playAlarmSound();
 
               // 3秒后自动关闭弹窗
               if (alarmCloseTimerRef.current) {
@@ -560,7 +978,7 @@ useEffect(() => {
             // 正常模式：立即显示警报
             console.log(`[WebSocket警报] 设备 ${deviceId} 收到警报，非冷却期，立即触发`);
             // 显示报警弹窗
-            setFenceAlarm({
+            triggerFenceAlarm({
               id: data.id,
               device_id: deviceId,
               fence_id: String(data.fence_id),
@@ -573,7 +991,6 @@ useEffect(() => {
             });
 
             // 播放警报音效
-            playAlarmSound();
 
             // 3秒后自动关闭弹窗
             if (alarmCloseTimerRef.current) {
@@ -820,6 +1237,11 @@ const handleSaveFenceAfterDraw = () => {
 
 useEffect(() => {
   if (!mapReady) return;
+  renderGridAreas(filteredGridAreas, drawingMode !== "none");
+}, [drawingMode, filteredGridAreas, mapReady, renderGridAreas]);
+
+useEffect(() => {
+  if (!mapReady) return;
   
 renderFences(
   filteredFences, 
@@ -830,16 +1252,25 @@ renderFences(
   (region) => {},
   getFenceColor
 );
+}, [mapReady, filteredFences, regions, selectedFence?.id, drawingMode, renderFences]);
 
+useEffect(() => {
+  if (!mapReady) return;
 renderHistoricalFence(
   historicalFenceView?.fence || null,
   historicalFenceView?.versionLabel
 );
+}, [mapReady, historicalFenceView, renderHistoricalFence]);
   
+useEffect(() => {
+  if (!mapReady) return;
   renderDevices(filteredDevices, violationTypes, new Set(), debugMode, (deviceId, latitude, longitude) => {
     updateDevicePosition(deviceId, latitude, longitude);
   });
+}, [mapReady, filteredDevices, violationTypes, debugMode, updateDevicePosition, renderDevices]);
 
+useEffect(() => {
+  if (!mapReady) return;
 renderDraft(
   activeDrawTool,
   tempPoints,
@@ -849,7 +1280,7 @@ renderDraft(
   activeDrawTool === 'polygon' ? mouseLngLat : null,
   activeDrawTool === 'brush' && isDrawing
 );
-}, [mapReady, filteredFences, regions, selectedFence, historicalFenceView, tempPoints, tempCenter, filteredDevices, violationTypes, debugMode, updateDevicePosition, activeDrawTool, mouseLngLat, renderDraft, renderHistoricalFence, pendingFenceData, isDrawing]);
+}, [mapReady, tempPoints, tempCenter, activeDrawTool, mouseLngLat, renderDraft, pendingFenceData, isDrawing]);
 
 // 监听debugMode变化，退出调试模式时保存设备位置
 const [prevDebugMode, setPrevDebugMode] = useState(false);
@@ -1381,13 +1812,13 @@ const handleEditFence = (fence: FenceData) => {
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)] relative">
       {/* 新增：围栏报警弹窗 */}
-      {fenceAlarm && (
+      {fenceAlarm && systemSettings.alarmPopup !== false && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setFenceAlarm(null)} />
           <div className="relative bg-gradient-to-br from-red-900 to-red-700 border-2 border-red-500 rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in slide-in-from-bottom-10">
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0">
-                <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg animate-pulse">
+                <div className={`w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg ${systemSettings.alarmSevereFlash ? "animate-pulse" : ""}`}>
                   <ShieldAlert size={32} className="text-white" />
                 </div>
               </div>
@@ -1426,6 +1857,7 @@ const handleEditFence = (fence: FenceData) => {
         companies={companies}
         projects={projects}
         grids={grids}
+        showCompanyFilter={currentProjectScope.isHeadquartersScope}
       />
 
 <div className="flex-1 m-4 mt-2 rounded-lg overflow-hidden border border-blue-400/30 shadow-xl relative z-0">
@@ -1608,38 +2040,21 @@ const handleEditFence = (fence: FenceData) => {
           teams={teams}
           organizationTree={organizationTree}
           devices={filteredDevices}
-          stats={stats}
+          stats={fenceStats}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           onSelectFence={(fence) => {
-            setSelectedFence(fence);
-            if (fence.type === "Circle" && fence.center) {
-              setCenter(fence.center);
-              mapRef.current?.setZoom(18);
-            } else if (fence.type === "Polygon" && fence.points && fence.points.length > 0) {
-              const center = fence.points.reduce(
-                (acc, p) => [acc[0] + p[0], acc[1] + p[1]],
-                [0, 0]
-              );
-              const centerLat = center[0] / fence.points.length;
-              const centerLng = center[1] / fence.points.length;
-              setCenter([centerLat, centerLng]);
-              mapRef.current?.setZoom(16);
-            }
+            focusFence(fence);
           }}
           onSelectDevice={(device) => {
-            const lat = Number(device.lat);
-            const lng = Number(device.lng);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) return;
-            setSelectedFence(null);
-            setCenter([lat, lng]);
-            mapRef.current?.setZoom(19);
+            focusDevice(device);
           }}
           onEditFence={handleEditFence}
           onDeleteFence={handleDeleteClick}
           canDeleteFence={canDeleteFence}
           violationTypes={violationTypes}
           selectedFence={selectedFence}
+          searchKeyword={filter.keyword}
         />
       </div>
 

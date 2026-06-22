@@ -70,7 +70,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
       const normalized = String(type || "").toLowerCase();
       if (normalized === "branch") return "company";
       if (normalized === "project") return "project";
-      if (normalized === "grid" || normalized === "safety_office") return "grid";
+      if (normalized === "grid") return "grid";
       if (normalized === "team") return "team";
       return null;
     };
@@ -342,6 +342,7 @@ const showTopTip = (message: string) => {
             <div
               onClick={() => {
                 setBuildMode("collect");
+                setStep("draw");
                 onStartCollectMode?.();
               }}
               className="p-6 bg-slate-800/60 hover:bg-slate-800 rounded-2xl border-2 border-slate-700 hover:border-purple-400 cursor-pointer transition-all group"

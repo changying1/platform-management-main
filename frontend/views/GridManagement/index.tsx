@@ -21,9 +21,9 @@ const GridManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const canCreatePersonnel = hasStoredPermission('personnel.create');
-  const canEditPersonnel = hasStoredPermission('personnel.edit');
-  const canDeletePersonnel = hasStoredPermission('personnel.delete');
+  const canCreateGrid = hasStoredPermission('grid.create');
+  const canEditGrid = hasStoredPermission('grid.edit');
+  const canDeleteGrid = hasStoredPermission('grid.delete');
 
   const loadGrids = async () => {
     try {
@@ -102,7 +102,7 @@ const GridManagement: React.FC = () => {
           <span>筛选</span>
         </button>
 
-        {canCreatePersonnel && (
+        {canCreateGrid && (
         <button
           onClick={() => {
             setEditingGrid(null);
@@ -150,8 +150,8 @@ const GridManagement: React.FC = () => {
           }}
           onDelete={handleDelete}
           onView={handleView}
-          canEdit={canEditPersonnel}
-          canDelete={canDeletePersonnel}
+          canEdit={canEditGrid}
+          canDelete={canDeleteGrid}
         />
       ) : (
         <GridMap grids={grids} onGridClick={handleView} />

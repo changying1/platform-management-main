@@ -3,6 +3,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import type React from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { FenceData, ProjectRegionData, FenceDevice, getFenceDeviceAlarmKeys } from "../types";
+import { boundsCenter, latLngToAmapPath, type GridArea } from "../../../src/utils/gridAreas";
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "ab3044412b12b8deb9da741c6739be1d";
 const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || "65a74edbb64d47769637df170a5da117";
@@ -16,11 +17,12 @@ export const useFenceMap = (containerRef: React.RefObject<HTMLDivElement>) => {
   const infoWindowRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const overlayRefs = useRef<{
+    grids: any[];
     fences: any[];
     devices: Record<string, any>;
     draft: any[];
     historical: any[];
-  }>({ fences: [], devices: {}, draft: [], historical: [] });
+  }>({ grids: [], fences: [], devices: {}, draft: [], historical: [] });
 
   const toAmapLngLat = (latlng: [number, number]) => [latlng[1], latlng[0]] as [number, number];
 
@@ -49,7 +51,7 @@ mapRef.current = new AMap.Map(containerRef.current, {
 });
         infoWindowRef.current = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -20) });
         setMapReady(true);
-              initPlaceSearch();
+              initRichPlaceSearch();
       } catch (e) {
         console.error("AMap init failed", e);
       }
@@ -188,6 +190,130 @@ const initPlaceSearch = useCallback(() => {
 }, []);
 
   // 渲染围栏和区域
+const initRichPlaceSearch = useCallback(() => {
+  if (!mapRef.current || !amapRef.current) return;
+  const AMap = amapRef.current;
+  const input = document.getElementById("place-search") as HTMLInputElement | null;
+  if (!input || input.dataset.placeSearchReady === "1") return;
+  input.dataset.placeSearchReady = "1";
+
+  AMap.plugin(["AMap.AutoComplete", "AMap.PlaceSearch"], () => {
+    const autoComplete = new AMap.AutoComplete({ city: "全国" });
+    const placeSearch = new AMap.PlaceSearch({ city: "全国", pageSize: 20, extensions: "all" });
+    const panel = document.createElement("div");
+    panel.style.cssText = [
+      "position:absolute",
+      "left:0",
+      "right:0",
+      "top:calc(100% + 8px)",
+      "max-height:420px",
+      "overflow:auto",
+      "display:none",
+      "border:1px solid rgba(34,211,238,.45)",
+      "border-radius:8px",
+      "background:rgba(15,23,42,.96)",
+      "box-shadow:0 18px 40px rgba(2,6,23,.45)",
+      "backdrop-filter:blur(10px)",
+      "z-index:30"
+    ].join(";");
+    input.parentElement?.appendChild(panel);
+
+    let activeMarker: any = null;
+    let searchTimer: number | undefined;
+
+    const getLngLat = (poi: any) => {
+      const location = poi?.location || poi?.entr_location || poi?.exit_location;
+      if (!location) return null;
+      const lng = Number(location.lng ?? location.getLng?.());
+      const lat = Number(location.lat ?? location.getLat?.());
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+      return { lng, lat };
+    };
+
+    const focusPoi = (poi: any) => {
+      const lnglat = getLngLat(poi);
+      if (!lnglat || !mapRef.current) return;
+      input.value = poi.name || input.value;
+      panel.style.display = "none";
+      mapRef.current.setCenter([lnglat.lng, lnglat.lat]);
+      mapRef.current.setZoom(18);
+      if (activeMarker) mapRef.current.remove(activeMarker);
+      activeMarker = new AMap.Marker({
+        position: [lnglat.lng, lnglat.lat],
+        map: mapRef.current,
+        title: poi.name || "搜索位置",
+      });
+    };
+
+    const renderTips = (tips: any[]) => {
+      panel.innerHTML = "";
+      const validTips = tips.filter((tip) => tip && tip.name && getLngLat(tip)).slice(0, 20);
+      if (!validTips.length) {
+        panel.style.display = "none";
+        return;
+      }
+
+      validTips.forEach((tip) => {
+        const lnglat = getLngLat(tip);
+        const item = document.createElement("button");
+        item.type = "button";
+        item.style.cssText = [
+          "width:100%",
+          "display:block",
+          "padding:10px 12px",
+          "border:0",
+          "border-bottom:1px solid rgba(148,163,184,.16)",
+          "background:transparent",
+          "color:#e2e8f0",
+          "text-align:left",
+          "cursor:pointer"
+        ].join(";");
+        item.onmouseenter = () => { item.style.background = "rgba(8,145,178,.22)"; };
+        item.onmouseleave = () => { item.style.background = "transparent"; };
+        item.onclick = () => focusPoi(tip);
+        const address = [tip.district, tip.address].filter(Boolean).join(" ");
+        item.innerHTML = `
+          <div style="font-size:14px;font-weight:700;line-height:1.35;color:#f8fafc;">${tip.name}</div>
+          <div style="margin-top:3px;font-size:12px;line-height:1.35;color:#94a3b8;">${address || "暂无详细地址"}</div>
+          ${lnglat ? `<div style="margin-top:3px;font-size:11px;line-height:1.3;color:#22d3ee;">${lnglat.lng.toFixed(6)}, ${lnglat.lat.toFixed(6)}</div>` : ""}
+        `;
+        panel.appendChild(item);
+      });
+      panel.style.display = "block";
+    };
+
+    const searchTips = () => {
+      const keyword = input.value.trim();
+      if (!keyword) {
+        panel.style.display = "none";
+        return;
+      }
+      autoComplete.search(keyword, (_status: string, result: any) => {
+        renderTips(Array.isArray(result?.tips) ? result.tips : []);
+      });
+    };
+
+    input.addEventListener("input", () => {
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(searchTips, 220);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const keyword = input.value.trim();
+      if (!keyword) return;
+      placeSearch.search(keyword, (_status: string, result: any) => {
+        const pois = result?.poiList?.pois || [];
+        renderTips(pois);
+        if (pois[0]) focusPoi(pois[0]);
+      });
+    });
+    document.addEventListener("click", (event) => {
+      if (event.target === input || panel.contains(event.target as Node)) return;
+      panel.style.display = "none";
+    });
+  });
+}, []);
+
 const renderFences = useCallback((
   fences: FenceData[],
   regions: ProjectRegionData[],
@@ -374,6 +500,48 @@ const commonOptions = {
     overlayRefs.current.fences.push(labelMarker);
   }
 });
+  }, [clearGroup]);
+
+  const renderGridAreas = useCallback((gridAreas: GridArea[], isDrawingMode?: boolean) => {
+    if (!mapRef.current || !amapRef.current) return;
+    const AMap = amapRef.current;
+    const map = mapRef.current;
+    clearGroup("grids");
+
+    gridAreas.forEach((area) => {
+      const color = "#22d3ee";
+      const polygon = new AMap.Polygon({
+        path: latLngToAmapPath(area.bounds),
+        strokeColor: color,
+        strokeOpacity: 0.95,
+        strokeWeight: 3,
+        fillColor: color,
+        fillOpacity: 0.16,
+        strokeDasharray: [8, 5],
+        zIndex: isDrawingMode ? -9998 : 2,
+        clickable: !isDrawingMode,
+        bubble: true,
+      });
+
+      if (!isDrawingMode) {
+        const center = boundsCenter(area.bounds);
+        polygon.on("mouseover", () => {
+          infoWindowRef.current.setContent(`
+            <div style="padding:8px 12px;min-width:150px;">
+              <div style="font-weight:700;margin-bottom:4px;">${area.name}</div>
+              <div style="font-size:12px;color:#64748b;">网格区域 ${area.grid_id || ""}</div>
+            </div>
+          `);
+          infoWindowRef.current.open(map, [center[1], center[0]]);
+        });
+        polygon.on("mouseout", () => {
+          infoWindowRef.current.close();
+        });
+      }
+
+      map.add(polygon);
+      overlayRefs.current.grids.push(polygon);
+    });
   }, [clearGroup]);
 
   // 渲染设备标记
@@ -735,6 +903,7 @@ const setMapDraggable = useCallback((draggable: boolean) => {
     mapRef,   
     setCenter,
     renderFences,
+    renderGridAreas,
     renderHistoricalFence,
     renderDevices,
     renderDraft,

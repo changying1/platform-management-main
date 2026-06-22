@@ -41,7 +41,7 @@ const toOrgType = (type: string): OrgType | null => {
   const normalized = String(type || "").toLowerCase();
   if (normalized === "branch") return "company";
   if (normalized === "project") return "project";
-  if (normalized === "grid" || normalized === "safety_office") return "grid";
+  if (normalized === "grid") return "grid";
   if (normalized === "team") return "team";
   return null;
 };

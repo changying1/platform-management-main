@@ -286,7 +286,217 @@ class VideoService:
 
         collection = self._video_collection()
 
-        return collection.find_one({"$or": [{"id": str(video_id)}, {"id": int(video_id) if str(video_id).isdigit() else video_id}]})
+        doc = collection.find_one({"$or": [{"id": str(video_id)}, {"id": int(video_id) if str(video_id).isdigit() else video_id}]})
+        return self._enrich_video_org_scope(doc)
+
+    @staticmethod
+    def _scope_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _is_placeholder_org_value(value: Any) -> bool:
+        return str(value or "").strip().lower() in {"", "0", "??", "？", "string", "null", "none", "undefined", "--", "全部项目", "全部公司"}
+
+    def _find_standard_device_doc(self, video_doc: dict | None) -> Optional[dict]:
+        if not video_doc:
+            return None
+
+        candidates = []
+        for value in (video_doc.get("device_id"), video_doc.get("bound_device_id"), video_doc.get("standard_device_id")):
+            text = self._scope_text(value)
+            if not text:
+                continue
+            candidates.extend([
+                {"id": text},
+                {"device_id": text},
+            ])
+            if text.isdigit():
+                numeric = int(text)
+                candidates.extend([
+                    {"id": numeric},
+                    {"_id": numeric},
+                    {"device_id": numeric},
+                    {"device_id": text},
+                ])
+
+        if not candidates:
+            return None
+
+        try:
+            return get_mongo_collection("device").find_one({"$or": candidates}, {"_id": 0})
+        except Exception:
+            return None
+
+    def _find_project_doc(self, project_id: Any = None, project_name: Any = None) -> Optional[dict]:
+        queries = []
+        project_id_text = self._scope_text(project_id)
+        if project_id_text:
+            queries.append({"id": project_id_text})
+            if project_id_text.isdigit():
+                queries.extend([{"id": int(project_id_text)}, {"_id": int(project_id_text)}])
+
+        project_name_text = self._scope_text(project_name)
+        if project_name_text and not self._is_placeholder_org_value(project_name_text):
+            queries.append({"name": project_name_text})
+
+        if not queries:
+            return None
+
+        for collection_name in ("project", "projects", "sql_projects"):
+            try:
+                project = get_mongo_collection(collection_name).find_one({"$or": queries}, {"_id": 0})
+            except Exception:
+                project = None
+            if project:
+                return project
+        return None
+
+    def _find_branch_doc(self, branch_id: Any = None, branch_name: Any = None) -> Optional[dict]:
+        queries = []
+        branch_id_text = self._scope_text(branch_id)
+        if branch_id_text and not self._is_placeholder_org_value(branch_id_text):
+            queries.append({"id": branch_id_text})
+            if branch_id_text.isdigit():
+                queries.extend([{"id": int(branch_id_text)}, {"_id": int(branch_id_text)}])
+
+        branch_name_text = self._scope_text(branch_name)
+        if branch_name_text and not self._is_placeholder_org_value(branch_name_text):
+            queries.append({"name": branch_name_text})
+
+        if not queries:
+            return None
+
+        for collection_name in ("branch", "branches", "sql_branches"):
+            try:
+                branch = get_mongo_collection(collection_name).find_one({"$or": queries}, {"_id": 0})
+            except Exception:
+                branch = None
+            if branch:
+                return branch
+        return None
+
+    def _find_grid_doc(self, grid_id: Any = None, grid_name: Any = None) -> Optional[dict]:
+        queries = []
+        grid_id_text = self._scope_text(grid_id)
+        if grid_id_text and not self._is_placeholder_org_value(grid_id_text):
+            queries.extend([
+                {"grid_id": grid_id_text},
+                {"id": grid_id_text},
+                {"unit_id": grid_id_text},
+            ])
+
+        grid_name_text = self._scope_text(grid_name)
+        if grid_name_text and not self._is_placeholder_org_value(grid_name_text):
+            queries.append({"name": grid_name_text})
+
+        if not queries:
+            return None
+
+        try:
+            return get_mongo_collection("grid").find_one({"$or": queries}, {"_id": 0})
+        except Exception:
+            return None
+
+    def _canonicalize_video_org_payload(self, payload: dict) -> dict:
+        payload = dict(payload or {})
+
+        grid_id = self._scope_text(payload.get("grid_id"))
+        grid_doc = self._find_grid_doc(grid_id, payload.get("grid"))
+        if grid_id and not grid_doc:
+            raise ValueError("所属网格不存在")
+
+        if grid_doc:
+            grid_project_id = self._scope_text(grid_doc.get("project_id"))
+            if not grid_project_id:
+                raise ValueError("所属网格未绑定项目")
+            requested_project_id = self._scope_text(payload.get("project_id"))
+            if requested_project_id and not self._is_placeholder_org_value(requested_project_id) and requested_project_id != grid_project_id:
+                raise ValueError("设备所属项目与网格所属项目不一致")
+            payload["grid_id"] = self._scope_text(grid_doc.get("grid_id") or grid_doc.get("id") or grid_id)
+            payload["grid"] = grid_doc.get("name") or payload.get("grid")
+            payload["project_id"] = grid_project_id
+
+        project_id = self._scope_text(payload.get("project_id"))
+        project_name = self._scope_text(payload.get("project"))
+        project_by_id = self._find_project_doc(project_id, None) if project_id and not self._is_placeholder_org_value(project_id) else None
+        project_by_name = self._find_project_doc(None, project_name) if project_name and not self._is_placeholder_org_value(project_name) else None
+
+        if project_by_id and project_by_name:
+            id_from_id = self._scope_text(project_by_id.get("id") or project_by_id.get("project_id"))
+            id_from_name = self._scope_text(project_by_name.get("id") or project_by_name.get("project_id"))
+            if id_from_id and id_from_name and id_from_id != id_from_name:
+                raise ValueError("设备所属项目ID与项目名称不一致")
+
+        project_doc = project_by_id or project_by_name
+        if project_id and not project_doc:
+            raise ValueError("所属项目不存在")
+
+        if project_doc:
+            canonical_project_id = self._scope_text(project_doc.get("id") or project_doc.get("project_id"))
+            canonical_branch_id = self._scope_text(project_doc.get("branch_id"))
+            if canonical_project_id:
+                payload["project_id"] = canonical_project_id
+            project_name = project_doc.get("name") or project_doc.get("project_name")
+            if project_name:
+                payload["project"] = project_name
+            if canonical_branch_id:
+                payload["branch_id"] = canonical_branch_id
+                branch_doc = self._find_branch_doc(canonical_branch_id, None)
+                if branch_doc:
+                    payload["company"] = branch_doc.get("name")
+
+        return payload
+
+    def _enrich_video_org_scope(self, doc: dict | None) -> dict | None:
+        if not doc:
+            return doc
+
+        enriched = dict(doc)
+        standard_device = self._find_standard_device_doc(enriched)
+        if standard_device:
+            for field in ("branch_id", "project_id", "grid_id", "team_id"):
+                if self._is_placeholder_org_value(enriched.get(field)) and not self._is_placeholder_org_value(standard_device.get(field)):
+                    enriched[field] = standard_device.get(field)
+
+            for target, sources in {
+                "company": ("company", "department", "branch_name"),
+                "project": ("project", "project_name"),
+                "grid": ("grid", "grid_name"),
+                "team": ("team", "workTeam", "work_team", "team_name"),
+            }.items():
+                if not self._is_placeholder_org_value(enriched.get(target)):
+                    continue
+                for source in sources:
+                    if not self._is_placeholder_org_value(standard_device.get(source)):
+                        enriched[target] = standard_device.get(source)
+                        break
+
+        grid_doc = self._find_grid_doc(enriched.get("grid_id"), enriched.get("grid"))
+        if grid_doc:
+            grid_project_id = self._scope_text(grid_doc.get("project_id"))
+            if grid_project_id and not self._is_placeholder_org_value(grid_project_id):
+                enriched["project_id"] = grid_project_id
+            if self._is_placeholder_org_value(enriched.get("grid")):
+                enriched["grid"] = grid_doc.get("name")
+
+        project_doc = self._find_project_doc(enriched.get("project_id"), enriched.get("project"))
+        if project_doc:
+            project_name = project_doc.get("name") or project_doc.get("project_name")
+            if project_name:
+                enriched["project"] = project_name
+            if self._is_placeholder_org_value(enriched.get("project_id")):
+                enriched["project_id"] = project_doc.get("id")
+            project_branch_id = self._scope_text(project_doc.get("branch_id"))
+            if project_branch_id and not self._is_placeholder_org_value(project_branch_id):
+                enriched["branch_id"] = project_branch_id
+
+        branch_doc = self._find_branch_doc(enriched.get("branch_id"), enriched.get("company"))
+        project_name = self._scope_text(enriched.get("project"))
+        company_name = self._scope_text(enriched.get("company"))
+        if branch_doc and (self._is_placeholder_org_value(company_name) or company_name == project_name or self._scope_text(branch_doc.get("name")) != company_name):
+            enriched["company"] = branch_doc.get("name")
+
+        return enriched
 
     def _scope_kwargs(self) -> dict:
         return {
@@ -1173,6 +1383,16 @@ class VideoService:
     def cleanup_expired_files(self):
 
         config = self._get_system_config()
+
+        if not bool(config.get("storageAutoCleanup", True)):
+
+            return
+
+        cleanup_strategy = config.get("storageCleanupStrategy", "both")
+
+        if cleanup_strategy not in ["age", "both"]:
+
+            return
 
         now = datetime.now()
 
@@ -6858,6 +7078,8 @@ class VideoService:
 
             "stream_protocol": self._normalize_stream_protocol(camera_data.stream_protocol),
 
+            "device_type": camera_data.device_type or "bullet",
+
             "platform_type": (camera_data.platform_type or "onvif"),
 
             "access_source": (camera_data.access_source or "local"),
@@ -6991,6 +7213,7 @@ class VideoService:
         for key, value in (scope_fields or {}).items():
             if payload.get(key) in [None, "", [], {}] and value not in [None, "", [], {}]:
                 payload[key] = value
+        payload = self._canonicalize_video_org_payload(payload)
 
         next_id = str(get_next_sequence("video_device_id"))
 
@@ -7013,8 +7236,10 @@ class VideoService:
     def get_videos(self, mongo_db, skip: int = 0, limit: int = 100, current_user: dict | None = None):
         collection = self._video_collection()
 
-        query = scope_filter(current_user, **self._scope_kwargs()) if current_user else {}
-        docs = list(collection.find(query, {"_id": 0}))
+        docs = [self._enrich_video_org_scope(doc) for doc in collection.find({}, {"_id": 0})]
+        docs = [doc for doc in docs if doc]
+        if current_user:
+            docs = [doc for doc in docs if in_scope(doc, current_user, **self._scope_kwargs())]
 
         docs.sort(key=lambda x: int(str(x.get("id", "0"))))
 
@@ -7067,7 +7292,7 @@ class VideoService:
 
 
 
-        merged = {**existing, **update_payload}
+        merged = self._canonicalize_video_org_payload({**existing, **update_payload})
 
 
 
@@ -7127,10 +7352,9 @@ class VideoService:
         collection = self._video_collection()
 
         video_id = str(video_id)
+        video_id_number = int(video_id) if video_id.isdigit() else video_id
 
-
-
-        db_video = collection.find_one({"id": video_id})
+        db_video = collection.find_one({"$or": [{"id": video_id}, {"id": video_id_number}]})
 
         if not db_video:
 
@@ -7148,7 +7372,7 @@ class VideoService:
 
 
 
-        collection.delete_one({"id": video_id})
+        collection.delete_one({"$or": [{"id": video_id}, {"id": video_id_number}]})
 
 
 
@@ -7672,13 +7896,21 @@ class VideoService:
 
     def _get_rtsp_url_for_device(self, db_video: VideoDevice) -> Optional[str]:
 
-        if getattr(db_video, "rtsp_url", None) and str(db_video.rtsp_url).lower().startswith("rtsp://"):
+        if (
+            getattr(db_video, "rtsp_url", None)
+            and str(db_video.rtsp_url).lower().startswith("rtsp://")
+            and "ezopen://" not in str(db_video.rtsp_url).lower()
+        ):
 
             return db_video.rtsp_url
 
 
 
-        if db_video.stream_url and str(db_video.stream_url).lower().startswith("rtsp://"):
+        if (
+            db_video.stream_url
+            and str(db_video.stream_url).lower().startswith("rtsp://")
+            and "ezopen://" not in str(db_video.stream_url).lower()
+        ):
 
             return db_video.stream_url
 
@@ -7803,6 +8035,14 @@ class VideoService:
             if ezviz_url:
 
                 return ezviz_url
+
+        stream_url = str(getattr(db_video, "stream_url", "") or "").strip()
+
+        stream_url_lower = stream_url.lower()
+
+        if stream_url_lower.startswith(("http://", "https://", "rtmp://", "rtsp://")) and "ezopen://" not in stream_url_lower:
+
+            return stream_url
 
 
 
@@ -8321,6 +8561,89 @@ class VideoService:
         except Exception:
 
             return False
+
+
+    def _get_recording_thumbnail_path(self, file_path: str) -> Optional[str]:
+
+        """Return a stable thumbnail path for a recording, generating it once if needed."""
+
+        try:
+
+            if not os.path.isfile(file_path):
+
+                return None
+
+            thumbnail_path = f"{file_path}.jpg"
+
+            if os.path.isfile(thumbnail_path) and os.path.getmtime(thumbnail_path) >= os.path.getmtime(file_path):
+
+                return thumbnail_path
+
+            ffmpeg_path = self._get_ffmpeg_path()
+
+            if not os.path.exists(ffmpeg_path):
+
+                return None
+
+            temp_path = f"{thumbnail_path}.tmp.jpg"
+
+            command = [
+
+                ffmpeg_path,
+
+                "-hide_banner",
+
+                "-loglevel",
+
+                "error",
+
+                "-y",
+
+                "-ss",
+
+                "00:00:01",
+
+                "-i",
+
+                file_path,
+
+                "-frames:v",
+
+                "1",
+
+                "-vf",
+
+                "scale=640:-1",
+
+                temp_path,
+
+            ]
+
+            result = subprocess.run(
+
+                command,
+
+                capture_output=True,
+
+                timeout=12,
+
+            )
+
+            if result.returncode == 0 and os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
+
+                os.replace(temp_path, thumbnail_path)
+
+                return thumbnail_path
+
+            if os.path.exists(temp_path):
+
+                os.remove(temp_path)
+
+        except Exception:
+
+            return None
+
+        return None
 
 
 
@@ -9137,6 +9460,7 @@ class VideoService:
                     "-c:v", "libx264",
                     "-preset", "ultrafast",
                     "-pix_fmt", "yuv420p",
+                    "-force_key_frames", "expr:gte(t,n_forced*2)",
                     "-c:a", "aac",
                     "-movflags", "+faststart",
                     final_output_path,
@@ -9396,6 +9720,25 @@ class VideoService:
 
 
 
+    def _parse_alarm_event_time(self, file_name: str) -> Optional[str]:
+        match = re.search(r"(20\d{6})_(\d{6})", file_name)
+        if match:
+            try:
+                event_dt = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+                return event_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+
+        epoch_match = re.search(r"_(\d{10})(?:_|\\.)", file_name)
+        if not epoch_match:
+            return None
+
+        try:
+            event_dt = datetime.fromtimestamp(int(epoch_match.group(1)))
+            return event_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except (OSError, ValueError):
+            return None
+
     def _list_saved_videos(self, root_dir: str, video_id: int, limit: int = 120) -> list[dict]:
 
         if not os.path.isdir(root_dir):
@@ -9406,7 +9749,7 @@ class VideoService:
 
         clips: list[dict] = []
 
-        for file_path in sorted(glob.glob(os.path.join(root_dir, "*.mp4")), reverse=True):
+        for file_path in sorted(glob.glob(os.path.join(root_dir, "**", "*.mp4"), recursive=True), reverse=True):
 
             file_name = os.path.basename(file_path)
 
@@ -9420,6 +9763,29 @@ class VideoService:
 
                 stat = os.stat(file_path)
 
+                event_at = self._parse_alarm_event_time(file_name)
+                alarm_doc = None
+                try:
+                    alarm_doc = get_mongo_collection("alarm_record").find_one(
+                        {"recording_path": {"$regex": re.escape(file_name)}},
+                        {"_id": 0},
+                    )
+                except Exception:
+                    alarm_doc = None
+
+                recording_start_time = alarm_doc.get("recording_start_time") if alarm_doc else None
+                recording_end_time = alarm_doc.get("recording_end_time") if alarm_doc else None
+                alarm_image_path = alarm_doc.get("alarm_image_path") if alarm_doc else ""
+                alarm_time = (
+                    alarm_doc.get("alarm_time")
+                    or alarm_doc.get("timestamp")
+                    or alarm_doc.get("created_at")
+                    if alarm_doc
+                    else None
+                )
+                if not alarm_time and alarm_image_path:
+                    alarm_time = self._parse_alarm_event_time(os.path.basename(str(alarm_image_path)))
+
                 clips.append(
 
                     {
@@ -9429,6 +9795,11 @@ class VideoService:
                         "size_bytes": int(stat.st_size),
 
                         "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "event_at": event_at or datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "start_time": recording_start_time or event_at or datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "end_time": recording_end_time or "",
+                        "alarm_time": alarm_time or "",
+                        "alarm_image_path": alarm_image_path,
 
                         "web_path": self._to_backend_static_web_path(file_path),
 
@@ -9550,7 +9921,14 @@ class VideoService:
 
                 if seg_start:
 
-                    updated_at = seg_start
+                    start_at = seg_start
+                    end_at = self._get_segment_end(file_path, seg_start)
+                else:
+                    duration_seconds = self._probe_segment_duration_seconds(file_path) or RECORD_SEGMENT_SECONDS
+                    start_at = updated_at - timedelta(seconds=duration_seconds)
+                    end_at = updated_at
+
+                duration_seconds = max(1, int(round((end_at - start_at).total_seconds())))
 
 
 
@@ -9560,9 +9938,19 @@ class VideoService:
 
                     "size_bytes": int(stat.st_size),
 
+                    "start_time": start_at.strftime("%Y-%m-%d %H:%M:%S"),
+
+                    "end_time": end_at.strftime("%Y-%m-%d %H:%M:%S"),
+
+                    "created_at": updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+
                     "updated_at": updated_at.strftime("%Y-%m-%d %H:%M:%S"),
 
+                    "duration_seconds": duration_seconds,
+
                     "web_path": self._to_backend_static_web_path(file_path),
+
+                    "thumbnail_path": self._to_backend_static_web_path(thumbnail_path) if (thumbnail_path := self._get_recording_thumbnail_path(file_path)) else "",
 
                     "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
 
@@ -9737,6 +10125,7 @@ class VideoService:
                     "size_bytes": int(stat.st_size),
 
                     "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                    "event_at": self._parse_alarm_event_time(file_name) or datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
 
                     "web_path": self._to_backend_static_web_path(file_path),
 
@@ -9792,7 +10181,3 @@ class VideoService:
             )
         
         return result.modified_count
-
-
-
-

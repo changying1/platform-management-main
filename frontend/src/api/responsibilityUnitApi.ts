@@ -31,7 +31,7 @@ export interface UnitTreeNode extends ResponsibilityUnit {
   children: UnitTreeNode[];
 }
 
-const hiddenUnitTypes = new Set(['personnel', 'division', 'workshop', 'site', 'subproject']);
+const hiddenUnitTypes = new Set(['personnel', 'safety_office', 'division', 'workshop', 'site', 'subproject']);
 
 const hideLegacyUnits = <T extends ResponsibilityUnit>(items: T[]): T[] =>
   items

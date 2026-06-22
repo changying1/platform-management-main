@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from app.core.data_scope import in_scope, is_hq, text
 from app.core.database import get_mongo_db
 from app.core.security import get_current_user
-from app.utils.config_manager import get_safety_production_days
+from app.utils.config_manager import get_dashboard_alarm_stat_days, get_safety_production_days
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
@@ -114,7 +114,7 @@ def _load(db, user):
     location_devices = _docs(db, "fence_device", "device", "sql_devices")
     video_devices = _docs(db, "video_device")
     devices = _location_device_docs(location_devices) + _video_device_docs(video_devices)
-    personnel = _docs(db, "personnel", "sql_personnel")
+    personnel = _docs(db, "personnel")
     attendance = _docs(db, "attendance_record")
     alarms = _docs(db, "alarm_record", "sql_alarm_records", "sql_alarms")
     grids = _docs(db, "grid")
@@ -215,7 +215,34 @@ def _load(db, user):
 
 
 def _belongs_to_project(item, project):
-    return str(item.get("project_id") or item.get("project")) in {str(project.get("id")), project.get("name")}
+    project_values = {
+        str(project.get("id")),
+        text(project.get("name")),
+    }
+    return text(item.get("project_id") or item.get("projectId") or item.get("project")) in project_values
+
+
+def _belongs_to_branch(item, branch, branch_projects=()):
+    bid = _as_int(branch.get("id"))
+    branch_names = {
+        text(branch.get("name")),
+        text(branch.get("company")),
+        text(branch.get("branch_name")),
+    }
+    branch_names.discard("")
+
+    for field in ("branch_id", "branchId", "department_id"):
+        if _as_int(item.get(field)) == bid:
+            return True
+
+    for field in ("company", "dept", "department", "branch_name"):
+        if text(item.get(field)) in branch_names:
+            return True
+
+    project_ids = {str(project.get("id")) for project in branch_projects if project.get("id") not in (None, "")}
+    project_names = {text(project.get("name")) for project in branch_projects if text(project.get("name"))}
+    item_project = text(item.get("project_id") or item.get("projectId") or item.get("project"))
+    return bool(item_project and item_project in (project_ids | project_names))
 
 
 def _format_time(value):
@@ -442,12 +469,13 @@ def _avg(projects, field):
     return round(sum(_as_int(p.get(field)) for p in projects) / max(len(projects), 1))
 
 
-def _view(name, level, branches, projects, devices, personnel, attendance, alarms, grids, teams, work_types):
-    recent_alarms = _recent_alarm_docs(alarms, 7)
+def _view(name, level, branches, projects, devices, personnel, attendance, alarms, grids, teams, work_types, alarm_stat_days=None):
+    alarm_stat_days = alarm_stat_days or get_dashboard_alarm_stat_days()
+    recent_alarms = _recent_alarm_docs(alarms, alarm_stat_days)
     alarm_stats = _alarm_stats(recent_alarms)
     alarm_stats.update({
         "todayNew": len(recent_alarms),
-        "recentDays": 7,
+        "recentDays": alarm_stat_days,
         "resolveRate": round(alarm_stats["resolved"] / max(alarm_stats["total"], 1) * 100, 1),
     })
     return {
@@ -473,6 +501,7 @@ def _view(name, level, branches, projects, devices, personnel, attendance, alarm
 @router.get("/overview")
 def dashboard_overview(user: dict = Depends(get_current_user), mongo_db=Depends(get_mongo_db)):
     branches, projects, devices, personnel, attendance, alarms, grids, teams, work_types = _load(mongo_db, user)
+    alarm_stat_days = get_dashboard_alarm_stat_days()
     permission_level = user.get("permission_level") or ""
     role = str(user.get("role") or "").upper()
     is_national_scope = (not user.get("department_id")) and (
@@ -486,7 +515,7 @@ def dashboard_overview(user: dict = Depends(get_current_user), mongo_db=Depends(
         p_alarms = [a for a in alarms if _belongs_to_project(a, project)]
         p_grids = [g for g in grids if _belongs_to_project(g, project)]
         p_teams = [t for t in teams if _belongs_to_project(t, project)]
-        item = _view(project.get("name") or "", "project", branches[:1], [project], p_devices, p_personnel, p_attendance, p_alarms, p_grids, p_teams, work_types)
+        item = _view(project.get("name") or "", "project", branches[:1], [project], p_devices, p_personnel, p_attendance, p_alarms, p_grids, p_teams, work_types, alarm_stat_days)
         item.update({
             "projectId": project.get("id"),
             "projectName": project.get("name") or "",
@@ -505,16 +534,17 @@ def dashboard_overview(user: dict = Depends(get_current_user), mongo_db=Depends(
     branches_by_id = {}
     for branch in branches:
         bid = _as_int(branch.get("id"))
-        b_projects = [p for p in projects if _as_int(p.get("branch_id")) == bid]
-        project_ids = {str(p.get("id")) for p in b_projects}
-        project_names = {p.get("name") for p in b_projects}
-        b_devices = [d for d in devices if _as_int(d.get("branch_id")) == bid or str(d.get("project_id") or d.get("project")) in project_ids | project_names]
-        b_personnel = [p for p in personnel if _as_int(p.get("branch_id")) == bid]
-        b_attendance = [a for a in attendance if _as_int(a.get("branch_id")) == bid]
-        b_alarms = [a for a in alarms if str(a.get("project_id")) in project_ids]
-        b_grids = [g for g in grids if _as_int(g.get("branch_id")) == bid or str(g.get("project_id")) in project_ids]
-        b_teams = [t for t in teams if _as_int(t.get("branch_id")) == bid or str(t.get("project_id")) in project_ids]
-        branches_by_id[str(bid)] = _view(branch.get("name") or "", "headquarters", [branch], b_projects, b_devices, b_personnel, b_attendance, b_alarms, b_grids, b_teams, work_types)
+        b_projects = [
+            p for p in projects
+            if _as_int(p.get("branch_id") or p.get("branchId")) == bid
+        ]
+        b_devices = [d for d in devices if _belongs_to_branch(d, branch, b_projects)]
+        b_personnel = [p for p in personnel if _belongs_to_branch(p, branch, b_projects)]
+        b_attendance = [a for a in attendance if _belongs_to_branch(a, branch, b_projects)]
+        b_alarms = [a for a in alarms if _belongs_to_branch(a, branch, b_projects)]
+        b_grids = [g for g in grids if _belongs_to_branch(g, branch, b_projects)]
+        b_teams = [t for t in teams if _belongs_to_branch(t, branch, b_projects)]
+        branches_by_id[str(bid)] = _view(branch.get("name") or "", "headquarters", [branch], b_projects, b_devices, b_personnel, b_attendance, b_alarms, b_grids, b_teams, work_types, alarm_stat_days)
 
     if is_national_scope:
         scope_name = "全国信息总览"
@@ -535,10 +565,10 @@ def dashboard_overview(user: dict = Depends(get_current_user), mongo_db=Depends(
             }
             for project in projects
         ],
-        "national": _view(scope_name, scope_level, branches, projects, devices, personnel, attendance, alarms, grids, teams, work_types),
+        "national": _view(scope_name, scope_level, branches, projects, devices, personnel, attendance, alarms, grids, teams, work_types, alarm_stat_days),
         "branchesById": branches_by_id,
         "projectsById": projects_by_id,
-        "todayAlarms": _alarm_list(_recent_alarm_docs(alarms, 7)),
+        "todayAlarms": _alarm_list(_recent_alarm_docs(alarms, alarm_stat_days)),
     }
 
 
@@ -609,15 +639,31 @@ def device_statistics(user: dict = Depends(get_current_user), mongo_db=Depends(g
 @router.get("/alarms/statistics")
 def alarm_statistics(user: dict = Depends(get_current_user), mongo_db=Depends(get_mongo_db)):
     alarms = _load(mongo_db, user)[5]
-    stats = _alarm_stats(alarms)
-    recent_alarms = _recent_alarm_docs(alarms, 7)
+    alarm_stat_days = get_dashboard_alarm_stat_days()
+    recent_alarms = _recent_alarm_docs(alarms, alarm_stat_days)
     recent_stats = _alarm_stats(recent_alarms)
-    return {**recent_stats, "todayNew": len(recent_alarms), "recentDays": 7, "resolveRate": round(recent_stats["resolved"] / max(recent_stats["total"], 1) * 100, 1)}
+    return {**recent_stats, "todayNew": len(recent_alarms), "recentDays": alarm_stat_days, "resolveRate": round(recent_stats["resolved"] / max(recent_stats["total"], 1) * 100, 1)}
 
 
 @router.get("/alarms/today")
-def today_alarms(user: dict = Depends(get_current_user), mongo_db=Depends(get_mongo_db)):
-    return _alarm_list(_recent_alarm_docs(_load(mongo_db, user)[5], 7), 20)
+def today_alarms(
+    branch_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+    mongo_db=Depends(get_mongo_db),
+):
+    branches, projects, _, _, _, alarms, _, _, _ = _load(mongo_db, user)
+    if project_id:
+        project = next((p for p in projects if _as_int(p.get("id")) == project_id), None)
+        alarms = [a for a in alarms if project and _belongs_to_project(a, project)]
+    elif branch_id:
+        branch = next((b for b in branches if _as_int(b.get("id")) == branch_id), None)
+        branch_projects = [
+            p for p in projects
+            if _as_int(p.get("branch_id") or p.get("branchId")) == branch_id
+        ]
+        alarms = [a for a in alarms if branch and _belongs_to_branch(a, branch, branch_projects)]
+    return _alarm_list(_recent_alarm_docs(alarms, get_dashboard_alarm_stat_days()), 20)
 
 
 @router.get("/attendance/today")

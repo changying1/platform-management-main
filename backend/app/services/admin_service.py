@@ -25,6 +25,12 @@ class AdminService:
             "department": doc.get("department"),
             "department_id": doc.get("department_id"),
             "parent_id": doc.get("parent_id"),
+            "permission_level": doc.get("permission_level"),
+            "project": doc.get("project"),
+            "project_id": doc.get("project_id"),
+            "branch_id": doc.get("branch_id"),
+            "team": doc.get("team"),
+            "work_team": doc.get("work_team"),
             "status": doc.get("status") or "pending",
             "employee_code": doc.get("employee_code"),
         }

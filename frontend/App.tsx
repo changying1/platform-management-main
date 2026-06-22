@@ -4,7 +4,7 @@ import {
   LayoutDashboard,
   Video,
   MapPin,
-  ShieldAlert,
+  Fence,
   AlertTriangle,
   Users,
   Bell,
@@ -63,6 +63,16 @@ type RuntimeAlarm = {
   deviceName: string;
   location: string;
   level: AlarmLevel;
+};
+
+type HeaderNotice = {
+  id: string;
+  type: 'alarm' | 'device' | 'system';
+  title: string;
+  message: string;
+  time?: string;
+  level: AlarmLevel;
+  targetMenu?: MenuKey;
 };
 
 declare global {
@@ -557,7 +567,7 @@ const Sidebar = ({
     { key: MenuKey.VIDEO_PLAYBACK, label: '视频回放', icon: Video },
     { key: MenuKey.TRACK_PLAYBACK, label: '轨迹回放', icon: MapPin },
     { key: MenuKey.VOICE_PLAYBACK, label: '通信回放', icon: Radio },
-    { key: MenuKey.FENCE, label: '电子围栏', icon: ShieldAlert },
+    { key: MenuKey.FENCE, label: '电子围栏', icon: Fence },
     { key: MenuKey.PROJECT, label: '项目管理', icon: Briefcase },
     { key: MenuKey.GROUP_CALL, label: '群组通话', icon: Users },
     { key: MenuKey.ALARM, label: '报警记录', icon: Bell },
@@ -844,12 +854,18 @@ const Header = ({ onLogout }: { onLogout: () => void }) => {
 const AppHeader = ({
   onLogout,
   onSwitchAccount,
+  onNavigate,
 }: {
   onLogout: () => void;
   onSwitchAccount: (username: string) => Promise<void>;
+  onNavigate: (key: MenuKey) => void;
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNoticePanel, setShowNoticePanel] = useState(false);
+  const [notices, setNotices] = useState<HeaderNotice[]>([]);
+  const [noticesLoading, setNoticesLoading] = useState(false);
+  const hiddenNoticeIdsRef = useRef<Set<string>>(new Set());
   const [showPersonalModal, setShowPersonalModal] = useState(false);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [switchableAccounts, setSwitchableAccounts] = useState<SwitchableAccount[]>([]);
@@ -858,6 +874,7 @@ const AppHeader = ({
   const [switchingUsername, setSwitchingUsername] = useState('');
   const [switchError, setSwitchError] = useState('');
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
   const currentUser = readCurrentUser();
   const resetAccountLoad = () => {
     setHasLoadedAccounts(false);
@@ -876,10 +893,123 @@ const AppHeader = ({
         setShowUserMenu(false);
         setShowAccountSwitcher(false);
       }
+      if (noticeRef.current && !noticeRef.current.contains(event.target as Node)) {
+        setShowNoticePanel(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const loadNotices = async () => {
+    setNoticesLoading(true);
+    try {
+      const [alarmsResult, devicesResult, storageResult] = await Promise.allSettled([
+        fetch(`${API_BASE_URL}/alarms/?limit=20`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        }).then((res) => (res.ok ? res.json() : [])),
+        fetch(`${API_BASE_URL}/video/?limit=5000`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        }).then((res) => (res.ok ? res.json() : [])),
+        fetch(`${API_BASE_URL}/video/storage/status`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        }).then((res) => (res.ok ? res.json() : null)),
+      ]);
+
+      const alarmItems = alarmsResult.status === 'fulfilled' && Array.isArray(alarmsResult.value)
+        ? alarmsResult.value
+        : [];
+      const deviceItems = devicesResult.status === 'fulfilled' && Array.isArray(devicesResult.value)
+        ? devicesResult.value
+        : [];
+      const storageStatus = storageResult.status === 'fulfilled'
+        ? ((storageResult.value as any)?.data || storageResult.value)
+        : null;
+
+      const pendingAlarmNotices: HeaderNotice[] = alarmItems
+        .filter((alarm: any) => String(alarm.status || '').toLowerCase() !== 'resolved')
+        .slice(0, 8)
+        .map((alarm: any) => {
+          const severity = String(alarm.severity || alarm.level || '').toLowerCase();
+          const level: AlarmLevel = severity.includes('high') || severity.includes('severe') ? 'high' : severity.includes('low') ? 'low' : 'medium';
+          return {
+            id: `alarm_${alarm.id || alarm.timestamp || Math.random()}`,
+            type: 'alarm',
+            title: alarm.alarm_type || alarm.type || '待处理告警',
+            message: alarm.description || alarm.location || alarm.device_name || '有新的告警待处理',
+            time: alarm.timestamp,
+            level,
+            targetMenu: MenuKey.ALARM,
+          };
+        });
+
+      const abnormalDeviceNotices: HeaderNotice[] = deviceItems
+        .filter((device: any) => {
+          const status = String(device.status || '').toLowerCase();
+          return status === 'offline' || status === 'fault' || device.is_fault || device.low_battery || device.storage_abnormal || device.weak_signal;
+        })
+        .slice(0, 8)
+        .map((device: any) => {
+          const status = String(device.status || '').toLowerCase();
+          const reason = device.low_battery
+            ? '低电量'
+            : device.storage_abnormal
+              ? '存储异常'
+              : device.weak_signal
+                ? '信号弱'
+                : status === 'fault' || device.is_fault
+                  ? '设备故障'
+                  : '设备离线';
+          return {
+            id: `device_${device.id || device.name}`,
+            type: 'device',
+            title: reason,
+            message: device.name || device.device_name || '未知设备',
+            level: reason === '设备离线' || reason === '设备故障' ? 'medium' : 'low',
+            targetMenu: MenuKey.MANAGEMENT,
+          };
+        });
+
+      const storageNotices: HeaderNotice[] = Array.isArray(storageStatus?.storages)
+        ? storageStatus.storages
+          .filter((storage: any) => storage.status === 'warning' || storage.status === 'critical')
+          .map((storage: any, index: number) => ({
+            id: `storage_${storage.path || index}_${storage.status}`,
+            type: 'system',
+            title: storage.status === 'critical' ? '录像存储空间紧急' : '录像存储空间警告',
+            message: `${storage.path || '录像存储路径'} · 磁盘使用率 ${storage.usage_percent}% · 数据 ${storage.video_size_gb}GB / 限额 ${storage.max_size_gb}GB`,
+            level: storage.status === 'critical' ? 'high' : 'medium',
+            targetMenu: MenuKey.SETTINGS,
+          }))
+        : [];
+
+      setNotices(
+        [...storageNotices, ...pendingAlarmNotices, ...abnormalDeviceNotices]
+          .filter((notice) => !hiddenNoticeIdsRef.current.has(notice.id))
+      );
+    } catch (error) {
+      console.warn('load notices failed:', error);
+      setNotices([]);
+    } finally {
+      setNoticesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadNotices();
+    const timer = window.setInterval(loadNotices, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleNoticeClick = (notice: HeaderNotice) => {
+    hiddenNoticeIdsRef.current.add(notice.id);
+    setNotices((current) => current.filter((item) => item.id !== notice.id));
+    if (notice.targetMenu) onNavigate(notice.targetMenu);
+    setShowNoticePanel(false);
+  };
 
   useEffect(() => {
     if (!showUserMenu || !showAccountSwitcher || hasLoadedAccounts || isLoadingAccounts) {
@@ -988,9 +1118,68 @@ const AppHeader = ({
             <span className="text-white font-bold w-24 text-center">{formatTime(currentTime)}</span>
           </div>
 
-          <div className="relative">
-            <Bell size={20} className="text-white/80 hover:text-white cursor-pointer" />
-            <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+          <div className="relative" ref={noticeRef}>
+            <button
+              type="button"
+              onClick={() => setShowNoticePanel((value) => !value)}
+              className="relative rounded-lg p-2 hover:bg-white/10 transition-colors"
+              title="通知中心"
+            >
+              <Bell size={20} className="text-white/80 hover:text-white" />
+              {notices.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-[10px] leading-5 text-white text-center shadow-lg shadow-red-500/40">
+                  {notices.length > 99 ? '99+' : notices.length}
+                </span>
+              )}
+            </button>
+            {showNoticePanel && (
+              <div className="absolute right-0 mt-2 w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-cyan-400/30 bg-slate-900/95 shadow-2xl backdrop-blur-md z-[10001]">
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">通知中心</div>
+                    <div className="text-xs text-white/45">存储预警、待处理告警与设备异常</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadNotices}
+                    className="text-xs text-cyan-300 hover:text-cyan-100"
+                  >
+                    刷新
+                  </button>
+                </div>
+                <div className="max-h-96 overflow-auto p-2">
+                  {noticesLoading && notices.length === 0 ? (
+                    <div className="flex items-center gap-2 px-3 py-6 text-sm text-white/60">
+                      <Loader2 size={16} className="animate-spin text-cyan-300" />
+                      正在加载通知
+                    </div>
+                  ) : notices.length === 0 ? (
+                    <div className="px-3 py-8 text-center text-sm text-white/55">暂无待处理通知</div>
+                  ) : (
+                    notices.map((notice) => (
+                      <button
+                        key={notice.id}
+                        type="button"
+                        onClick={() => handleNoticeClick(notice)}
+                        className="mb-2 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left transition-colors hover:border-cyan-300/40 hover:bg-cyan-500/10"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className={`text-sm font-semibold ${
+                              notice.level === 'high' ? 'text-red-300' : notice.level === 'medium' ? 'text-amber-300' : 'text-cyan-300'
+                            }`}>
+                              {notice.type === 'alarm' ? '告警' : notice.type === 'device' ? '设备' : '系统'} · {notice.title}
+                            </div>
+                            <div className="mt-1 truncate text-xs text-white/75">{notice.message}</div>
+                          </div>
+                          {notice.time && <div className="shrink-0 text-[11px] text-white/40">{String(notice.time).slice(5, 16)}</div>}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="relative" ref={userMenuRef}>
@@ -1540,7 +1729,7 @@ export default function App() {
   const navItems = [
     { key: MenuKey.DASHBOARD, label: '主页', icon: LayoutDashboard, permission: 'dashboard.view' },
     { key: MenuKey.VIDEO, label: '监控中心', icon: Video, permission: 'monitor.camera' },
-    { key: MenuKey.FENCE, label: '电子围栏', icon: MapPin, permission: 'fence.view' },
+    { key: MenuKey.FENCE, label: '电子围栏', icon: Fence, permission: 'fence.view' },
     { key: MenuKey.GROUP_CALL, label: '群组通话', icon: Phone, permission: 'monitor.voice' },
     { key: MenuKey.VIDEO_PLAYBACK, label: '视频回放', icon: RotateCcw, permission: 'monitor.playback' },
     { key: MenuKey.TRACK_PLAYBACK, label: '轨迹回放', icon: MapPin, permission: 'monitor.track' },
@@ -1551,7 +1740,8 @@ export default function App() {
     { key: MenuKey.SETTINGS, label: '系统设置', icon: Settings, permission: 'system.role' },
   ].filter(item => {
     const levelAllows = canUseMainMenu(permissionLevel, item.key);
-    return hasPermission(permissions, item.permission) && levelAllows;
+    const isHeadquarters = permissionLevel === 'headquarters_admin' || !permissionLevel;
+    return (isHeadquarters || hasPermission(permissions, item.permission)) && levelAllows;
   });
 
   return (
@@ -1570,7 +1760,7 @@ export default function App() {
           }}
         >
 
-          <AppHeader key={sessionVersion} onLogout={logout} onSwitchAccount={switchAccount} />
+          <AppHeader key={sessionVersion} onLogout={logout} onSwitchAccount={switchAccount} onNavigate={setActiveMenu} />
           {/* <main className="flex-1 overflow-hidden relative bg-transparent pb-70"> */}
             {/* Decorative HUD Elements */}
             {/* <div className="absolute top-0 left-0 w-32 h-32 border-t-2 border-l-2 border-blue-400/20 rounded-tl-3xl pointer-events-none"></div> */}

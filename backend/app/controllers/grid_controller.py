@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
 from app.core.security import get_current_user
+from app.core.data_scope import in_scope
+from app.core.permissions import require_permission
 from app.schemas.grid_schema import GridCreate, GridUpdate, GridOut
 from app.services.Grid.grid_service import grid_service
 from app.services.audit_log_service import write_audit_log
@@ -56,6 +58,20 @@ def get_grid(grid_id: str, current_user: dict = Depends(get_current_user)):
 
 @router.post("/", response_model=GridOut)
 def create_grid(data: GridCreate, current_user: dict = Depends(get_current_user)):
+    require_permission(current_user, "grid.create")
+    proposed = data.model_dump()
+    if not in_scope(
+        proposed,
+        current_user,
+        project_fields=("project_id",),
+        grid_fields=("grid_id", "parent_id"),
+        team_fields=(),
+        branch_fields=(),
+        company_fields=(),
+        project_name_fields=(),
+        team_name_fields=(),
+    ):
+        raise HTTPException(status_code=403, detail="无权在该项目下创建网格")
     try:
         created = grid_service.create_grid(data)
         write_audit_log(
@@ -75,6 +91,7 @@ def create_grid(data: GridCreate, current_user: dict = Depends(get_current_user)
 
 @router.put("/{grid_id}", response_model=GridOut)
 def update_grid(grid_id: str, data: GridUpdate, current_user: dict = Depends(get_current_user)):
+    require_permission(current_user, "grid.edit")
     before = grid_service.get_grid_by_id(grid_id, current_user=current_user)
     updated = grid_service.update_grid(grid_id, data, current_user=current_user)
     if not updated:
@@ -95,6 +112,7 @@ def update_grid(grid_id: str, data: GridUpdate, current_user: dict = Depends(get
 
 @router.delete("/{grid_id}")
 def delete_grid(grid_id: str, current_user: dict = Depends(get_current_user)):
+    require_permission(current_user, "grid.delete")
     before = grid_service.get_grid_by_id(grid_id, current_user=current_user)
     success = grid_service.delete_grid(grid_id, current_user=current_user)
     if not success:

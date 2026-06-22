@@ -7,7 +7,7 @@ from app.core.database import get_compatible_mongo_db, get_mongo_collection, get
 from app.utils.logger import get_logger
 
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 
 from typing import List, Optional
@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from app.core.ws_manager import push_alarm_threadsafe
 from app.services.alarm_service import AlarmService
+from app.services.device_location_history_service import device_location_history_service
 from app.services.track_simplify_service import track_simplify_service
 from app.utils.config_manager import (
     get_stationary_reminder_enabled,
@@ -148,11 +149,30 @@ class DeviceService:
             result["device_id"] = result.pop("id", None)
         return result
 
-    def get_devices(self) -> List[dict]:
+    def get_devices(self, include_trajectory: bool = True) -> List[dict]:
         """获取所有设备"""
         devices = []
-        for doc in devices_collection.find():
+        projection = None if include_trajectory else {"trajectory": 0}
+        for doc in devices_collection.find({}, projection):
             devices.append(self._serialize_device(doc))
+        return devices
+
+    def get_devices_with_trajectory(self, hours: int = 24, start_time: str | None = None, end_time: str | None = None) -> List[dict]:
+        """获取带轨迹的设备列表，并尽量在 MongoDB 侧按时间裁剪轨迹数组。"""
+        history_docs = device_location_history_service.get_devices_with_points(hours, start_time, end_time)
+        devices = []
+        for history_doc in history_docs:
+            history_device_id = str(history_doc.get("device_id") or "")
+            device = devices_collection.find_one({
+                "$or": [
+                    {"device_id": history_device_id},
+                    {"device_code": history_device_id},
+                    {"id": history_device_id},
+                ]
+            }) or {}
+            merged = {**device, **history_doc}
+            merged["trajectory"] = history_doc.get("trajectory") or []
+            devices.append(self._serialize_device(merged))
         return devices
 
     def get_device_by_id(self, device_id: str) -> Optional[dict]:
@@ -572,9 +592,6 @@ class DeviceService:
         
 
 
-        point_data = point.model_dump()
-
-
         devices_collection.update_one(
 
 
@@ -582,9 +599,6 @@ class DeviceService:
 
 
             {
-
-
-                "$push": {"trajectory": point_data},
 
 
                 "$set": {
@@ -615,6 +629,8 @@ class DeviceService:
 
 
         updated_device = devices_collection.find_one({"device_id": device_id})
+        if updated_device:
+            device_location_history_service.add_point(updated_device, point)
 
 
         if updated_device:
@@ -679,6 +695,8 @@ class DeviceService:
 
 
             return []
+
+        return device_location_history_service.get_device_points(device_id, hours)
 
 
 

@@ -1,24 +1,78 @@
-import os
+﻿import os
 import json
-from datetime import date
+from datetime import date, datetime
 
-# 配置文件路径
+# 閰嶇疆鏂囦欢璺緞
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "system_config.json")
 ENV_FILE = os.path.join(os.path.dirname(CONFIG_FILE), ".env")
+SYSTEM_SETTINGS_COLLECTION = "system_settings"
+SYSTEM_SETTINGS_KEY = "global"
 
-def get_system_settings() -> dict:
-    """获取系统设置"""
+
+def _read_json_settings() -> dict:
     config = {}
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
         except Exception as e:
-            print(f"读取配置文件失败: {e}")
+            print(f"璇诲彇閰嶇疆鏂囦欢澶辫触: {e}")
     return config
 
+
+def _read_mongo_settings() -> dict:
+    try:
+        from app.core.database import get_mongo_collection
+
+        doc = get_mongo_collection(SYSTEM_SETTINGS_COLLECTION).find_one(
+            {"key": SYSTEM_SETTINGS_KEY},
+            {"_id": 0},
+        )
+        if doc and isinstance(doc.get("settings"), dict):
+            return doc["settings"]
+    except Exception as e:
+        print(f"璇诲彇MongoDB绯荤粺璁剧疆澶辫触: {e}")
+    return {}
+
+
+def save_system_settings_to_mongo(settings: dict, updated_by: str | None = None) -> bool:
+    try:
+        from app.core.database import get_mongo_collection
+
+        now = datetime.utcnow()
+        get_mongo_collection(SYSTEM_SETTINGS_COLLECTION).update_one(
+            {"key": SYSTEM_SETTINGS_KEY},
+            {
+                "$set": {
+                    "key": SYSTEM_SETTINGS_KEY,
+                    "settings": settings or {},
+                    "updated_at": now,
+                    "updated_by": updated_by or "system",
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+        return True
+    except Exception as e:
+        print(f"淇濆瓨MongoDB绯荤粺璁剧疆澶辫触: {e}")
+        return False
+
+def get_system_settings() -> dict:
+    config = _read_mongo_settings()
+    if config:
+        return config
+
+    config = _read_json_settings()
+    if config:
+        save_system_settings_to_mongo(config)
+    return config
+
+
 def get_fence_setting(key: str, default=None):
-    """获取围栏相关设置"""
+    """鑾峰彇鍥存爮鐩稿叧璁剧疆"""
     settings = get_system_settings()
     return settings.get(key, default)
 
@@ -71,15 +125,14 @@ def get_env_setting(key: str, default: str = "") -> str:
     return default
 
 def get_fence_detection_interval() -> int:
-    """获取围栏检测间隔（秒），默认3秒"""
     return _coerce_int(get_fence_setting('fenceDetectionInterval', 3), 3, min_value=1)
 
+
 def get_fence_grace_period() -> int:
-    """获取越界判定延迟（秒），默认0秒"""
     return _coerce_int(get_fence_setting('fenceGracePeriod', 0), 0, min_value=0)
 
+
 def get_fence_alarm_silence_minutes() -> int:
-    """获取告警静默时间（分钟），默认1分钟"""
     return _coerce_int(get_fence_setting('fenceAlarmSilenceMinutes', 1), 1, min_value=0)
 
 def get_fence_default_radius() -> float:
@@ -114,6 +167,10 @@ def get_alarm_retention_days() -> int:
     """Get alarm record retention days."""
     return _coerce_int(get_fence_setting('alarmRetentionDays', 30), 30, min_value=1)
 
+def get_dashboard_alarm_stat_days() -> int:
+    """Get dashboard alarm statistics/display window in calendar days."""
+    return _coerce_int(get_fence_setting('dashboardAlarmStatDays', 7), 7, min_value=1, max_value=365)
+
 def get_safety_production_days() -> int:
     """Return manually configured safety production days plus elapsed calendar days."""
     settings = get_system_settings()
@@ -142,6 +199,8 @@ def get_log_level_filter() -> str:
 
 def get_log_category_enabled(target_type: str) -> bool:
     """Return whether a log target type should be recorded."""
+    if str(target_type or '').lower() == 'audit' and not _coerce_bool(get_fence_setting('logAuditEnabled', True), True):
+        return False
     key_map = {
         'alarm': 'logAlarm',
         'login': 'logLogin',
@@ -154,6 +213,18 @@ def get_log_category_enabled(target_type: str) -> bool:
     }
     key = key_map.get(str(target_type or '').lower(), 'logOperation')
     return _coerce_bool(get_fence_setting(key, True), True)
+
+def get_log_audit_enabled() -> bool:
+    return _coerce_bool(get_fence_setting('logAuditEnabled', True), True)
+
+def get_log_diff_enabled() -> bool:
+    return _coerce_bool(get_fence_setting('logDiffEnabled', True), True)
+
+def get_log_error_report_enabled() -> bool:
+    return _coerce_bool(get_fence_setting('logErrorReport', True), True)
+
+def get_log_auto_compress_enabled() -> bool:
+    return _coerce_bool(get_fence_setting('logAutoCompress', False), False)
 
 def get_log_export_encoding() -> str:
     """Get CSV export encoding."""
@@ -213,3 +284,5 @@ def get_face_recognition_enabled() -> bool:
     if isinstance(setting_value, str):
         return setting_value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(setting_value)
+
+

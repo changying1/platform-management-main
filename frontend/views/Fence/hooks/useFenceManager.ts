@@ -34,6 +34,20 @@ export const useFenceManager = () => {
 
   const text = (value: any) => String(value ?? "").trim();
   const normalize = (value: any) => text(value).toLowerCase();
+  const deviceSnapshot = (items: FenceDevice[]) =>
+    JSON.stringify(items.map((item) => [
+      item.device_id,
+      item.name,
+      item.lat,
+      item.lng,
+      item.status,
+      item.company,
+      item.project,
+      item.grid,
+      item.grid_id,
+      item.holder,
+      item.holderPhone,
+    ]));
 
   const gridNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -41,7 +55,7 @@ export const useFenceManager = () => {
     const visit = (nodes: OrganizationTreeNode[]) => {
       nodes.forEach(node => {
         const nodeType = normalize(node.type);
-        if (nodeType === "grid" || nodeType === "safety_office") {
+        if (nodeType === "grid") {
           [node.unit_id, node.grid_id, node.id].forEach(id => {
             const key = text(id);
             if (key) map.set(key, node.name);
@@ -152,7 +166,7 @@ export const useFenceManager = () => {
           return changed ? next : prev;
         });
 
-        setDevices(data);
+        setDevices((prev) => deviceSnapshot(prev) === deviceSnapshot(data) ? prev : data);
       } catch (err) {
         console.error("拉取设备数据失败:", err);
       }
@@ -166,9 +180,20 @@ export const useFenceManager = () => {
   // ============================
   //  过滤
   // ============================
-  const filteredFences = fences.filter(fence => {
+  const matchesProject = useCallback((item: { project?: string; project_id?: string | number | null }, selectedProject: string) => {
+    const selected = text(selectedProject);
+    if (!selected) return true;
+    const normalizedSelected = selected.replace(/^PRJ-/i, "");
+    return (
+      text(item.project) === selected ||
+      text(item.project_id) === selected ||
+      text(item.project_id) === normalizedSelected
+    );
+  }, []);
+
+  const filteredFences = useMemo(() => fences.filter(fence => {
     if (filter.company && fence.company !== filter.company) return false;
-    if (filter.project && fence.project !== filter.project) return false;
+    if (filter.project && !matchesProject(fence, filter.project)) return false;
     if (filter.grid && !sameGrid(fence, filter.grid)) return false;
     if (filter.severity && fence.severity !== filter.severity) return false;
     if (filter.keyword) {
@@ -185,9 +210,9 @@ export const useFenceManager = () => {
       ], filter.keyword);
     }
     return true;
-  });
+  }), [devices, fences, filter.company, filter.grid, filter.keyword, filter.project, filter.severity, getGridName, matchesKeyword, matchesProject, sameGrid]);
 
-  const filteredDevices = devices.map(device => {
+  const filteredDevices = useMemo(() => devices.map(device => {
     const manual = manualPositions[device.device_id];
     if (manual) {
       return { ...device, lat: manual.lat, lng: manual.lng };
@@ -195,7 +220,7 @@ export const useFenceManager = () => {
     return device;
   }).filter(device => {
     if (filter.company && device.company !== filter.company) return false;
-    if (filter.project && device.project !== filter.project) return false;
+    if (filter.project && !matchesProject(device as any, filter.project)) return false;
     if (filter.grid && !sameGrid(device, filter.grid)) return false;
     if (filter.keyword) {
       return matchesKeyword([
@@ -208,7 +233,7 @@ export const useFenceManager = () => {
       ], filter.keyword);
     }
     return true;
-  });
+  }), [devices, filter.company, filter.grid, filter.keyword, filter.project, getGridName, manualPositions, matchesKeyword, matchesProject, sameGrid]);
 
   const updateDevicePosition = useCallback((deviceId: string, lat: number, lng: number) => {
     setManualPositions(prev => {
@@ -248,7 +273,7 @@ export const useFenceManager = () => {
   }, []);
 
   // 统计数据
-  const stats = {
+  const stats = useMemo(() => ({
     totalFences: fences.length,
     activeFences: fences.filter(f => {
       const now = new Date();
@@ -259,7 +284,7 @@ export const useFenceManager = () => {
     totalDevices: devices.length,
     onlineDevices: devices.filter(d => d.status === "online").length,
     violations: 0,
-  };
+  }), [devices, fences]);
 
   // ============================
   //  围栏操作 —— 调后端接口

@@ -16,6 +16,15 @@
       var alarmAudioCtx = null;
       var alarmOscillator = null;
       var alarmBeepInterval = null;
+      var lastAlarmSoundAt = 0;
+
+      function getSystemSettings() {
+        try {
+          return JSON.parse(localStorage.getItem('systemSettings') || '{}') || {};
+        } catch(e) {
+          return {};
+        }
+      }
       
       function stopAlarmSound() {
         if (alarmBeepInterval) clearInterval(alarmBeepInterval);
@@ -27,6 +36,12 @@
       }
       
       function playAlarmSound(level, loop) {
+        var settings = getSystemSettings();
+        if (settings.alarmSound === false || settings.alarmSoundType === 'none') return;
+        var repeatMs = Math.max(0, Number(settings.alarmRepeatInterval || 0)) * 60 * 1000;
+        var now = Date.now();
+        if (repeatMs > 0 && now - lastAlarmSoundAt < repeatMs) return;
+        lastAlarmSoundAt = now;
         stopAlarmSound();
         if (level === 'low') return;
         try {
@@ -41,14 +56,14 @@
             gain.gain.value = alarmVolume;
             
             if (level === 'medium') {
-              osc.frequency.value = 600;
+              osc.frequency.value = settings.alarmSoundType === 'emergency' ? 850 : 600;
               osc.type = 'square';
               osc.start();
               setTimeout(function() { osc.stop(); }, 150);
             }
             
             if (level === 'high' || level === 'severe') {
-              osc.frequency.value = 1000;
+              osc.frequency.value = settings.alarmSoundType === 'emergency' ? 1200 : 1000;
               osc.type = 'square';
               osc.start();
               setTimeout(function() { osc.frequency.value = 800; }, 120);
@@ -66,10 +81,12 @@
       }
 
       function showFenceAlarm(deviceName, violationType, fenceName, level, alarmTitle) {
+        var settings = getSystemSettings();
         playAlarmSound(level || 'medium', true);
+        if (settings.alarmPopup === false) return;
         
         var borderGlow = document.createElement('div');
-        borderGlow.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9998;box-shadow:inset 0 0 100px 40px rgba(239,68,68,0.7),0 0 150px 50px rgba(239,68,68,0.5);animation:pulse 0.4s ease-in-out infinite alternate;';
+        borderGlow.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9998;box-shadow:inset 0 0 100px 40px rgba(239,68,68,0.7),0 0 150px 50px rgba(239,68,68,0.5);' + (settings.alarmSevereFlash === false ? '' : 'animation:pulse 0.4s ease-in-out infinite alternate;');
         document.body.appendChild(borderGlow);
 
         var overlay = document.createElement('div');

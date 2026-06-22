@@ -14,7 +14,13 @@ const detectBackendBaseUrl = (): string => {
   }
   
   // 2. 如果是通过 Vite dev server 访问的端口不是 9000，用相对路径走代理
-  const isDevServer = window.location.port === '3000';
+  const isLocalViteDevServer =
+    import.meta.env.DEV &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+    window.location.port !== '' &&
+    window.location.port !== '9000';
+  const isViteDevPort = import.meta.env.DEV && /^30\d\d$/.test(window.location.port);
+  const isDevServer = isLocalViteDevServer || isViteDevPort;
   if (isDevServer) {
     return '';
   }

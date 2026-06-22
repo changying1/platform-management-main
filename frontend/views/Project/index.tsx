@@ -12,9 +12,14 @@ export default function ProjectManagement() {
   const [showEditModal, setShowEditModal] = useState(false);
   const { formData, resetForm } = useProjectForm();
 
-  const handleEdit = () => {
-    if (logic.projectDetail) {
-      resetForm(logic.projectDetail);
+  const handleEdit = async (projectId: number) => {
+    const detail =
+      logic.expandedProjectId === projectId && logic.projectDetail
+        ? logic.projectDetail
+        : await logic.fetchProjectDetail(projectId);
+
+    if (detail) {
+      resetForm(detail);
       setShowEditModal(true);
     }
   };
@@ -30,6 +35,8 @@ export default function ProjectManagement() {
     if (logic.expandedProjectId) {
       logic.fetchProjectDetail(logic.expandedProjectId);
       logic.fetchProjectFences(logic.expandedProjectId);
+      logic.fetchProjectGrids(logic.expandedProjectId);
+      logic.fetchProjectTeams(logic.expandedProjectId);
     }
   };
 
@@ -78,8 +85,10 @@ export default function ProjectManagement() {
                 isExpanded={logic.expandedProjectId === project.id}
                 detail={logic.expandedProjectId === project.id ? logic.projectDetail : null}
                 fences={logic.expandedProjectId === project.id ? logic.projectFences : []}
+                grids={logic.expandedProjectId === project.id ? logic.projectGrids : []}
+                teams={logic.expandedProjectId === project.id ? logic.projectTeams : []}
                 onToggle={() => logic.toggleProject(project.id)}
-                onEdit={handleEdit}
+                onEdit={() => handleEdit(project.id)}
                 onDelete={() => logic.deleteProject(project.id)}
               />
             ))}

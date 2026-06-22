@@ -40,6 +40,8 @@ class GridUpdate(BaseModel):
 
 class GridOut(GridBase):
     id: str
+    project_name: Optional[str] = None
+    parent_name: Optional[str] = None
     created_at: str
     updated_at: str
 

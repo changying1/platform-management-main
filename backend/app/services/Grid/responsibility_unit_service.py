@@ -4,7 +4,17 @@ from typing import Optional
 from bson import ObjectId
 from fastapi import HTTPException
 
-from app.core.data_scope import in_scope, is_hq, scope_filter, text
+from app.core.data_scope import (
+    branch_ids_for_user,
+    grid_ids_for_user,
+    in_scope,
+    is_hq,
+    project_ids_for_user,
+    scope_filter,
+    team_ids_for_user,
+    text,
+    user_level,
+)
 from app.core.database import get_mongo_collection
 from app.schemas.responsibility_unit_schema import ResponsibilityUnitCreate, ResponsibilityUnitUpdate
 from app.utils.logger import get_logger
@@ -47,7 +57,7 @@ ALLOWED_PARENT_TYPES = {
     "branch": {""},
     "project": {"branch", ""},
     "safety_office": {"project"},
-    "grid": {"safety_office"},
+    "grid": {"project"},
     "team": {"grid"},
     "personnel": {"team"},
 }
@@ -367,6 +377,49 @@ def _filter_tree_for_user(nodes: list[dict], user: dict | None) -> list[dict]:
     if not user or is_hq(user):
         return nodes
 
+    level = user_level(user)
+    level_anchor_type = {
+        "branch_admin": "branch",
+        "project_safety_admin": "project",
+        "grid_admin": "grid",
+        "team_admin": "team",
+    }.get(level)
+    all_anchors = {
+        "branch": {text(value) for value in branch_ids_for_user(user) if text(value)},
+        "project": {text(value) for value in project_ids_for_user(user) if text(value)},
+        "grid": {text(value) for value in grid_ids_for_user(user) if text(value)},
+        "team": {text(value) for value in team_ids_for_user(user) if text(value)},
+    }
+    all_names = {
+        "branch": {text(user.get("company") or user.get("department"))},
+        "project": {text(user.get("project"))},
+        "grid": {text(user.get("grid"))},
+        "team": {text(user.get("team") or user.get("work_team"))},
+    }
+    all_names = {key: {value for value in value_set if value} for key, value_set in all_names.items()}
+    anchors = {key: (value if key == level_anchor_type else set()) for key, value in all_anchors.items()}
+    names = {key: (value if key == level_anchor_type else set()) for key, value in all_names.items()}
+
+    def node_keys(node: dict) -> set[str]:
+        keys = {
+            text(node.get("unit_id")),
+            text(node.get("id")),
+            text(node.get("project_id")),
+            text(node.get("grid_id")),
+            text(node.get("team_id")),
+        }
+        return {key for key in keys if key}
+
+    def is_anchor(node: dict) -> bool:
+        unit_type = _normalize_type(node.get("type"))
+        if unit_type not in anchors:
+            return False
+        if node_keys(node) & anchors[unit_type]:
+            return True
+        return text(node.get("name")) in names.get(unit_type, set())
+
+    has_anchor = any(anchors.values()) or any(names.values())
+
     def flatten(items):
         result = []
         for item in items:
@@ -377,11 +430,13 @@ def _filter_tree_for_user(nodes: list[dict], user: dict | None) -> list[dict]:
         return result
 
     def visit(node: dict):
+        if has_anchor and is_anchor(node):
+            return {**node, "children": node.get("children", [])}
         children = flatten(visit(child) for child in node.get("children", []))
-        if _unit_matches_user(node, user):
+        if not has_anchor and _unit_matches_user(node, user):
             return {**node, "children": node.get("children", [])}
         if children:
-            return children
+            return {**node, "children": children}
         return None
 
     result = []
@@ -453,7 +508,7 @@ class ResponsibilityUnitService:
         if unit_type:
             filter_query["type"] = unit_type
         else:
-            filter_query["type"] = {"$nin": list(LEGACY_TYPE_MAP.keys())}
+            filter_query["type"] = {"$nin": [*LEGACY_TYPE_MAP.keys(), "safety_office"]}
         if parent_id is not None:
             filter_query["parent_id"] = parent_id if parent_id else None
         if current_user and not is_hq(current_user):
@@ -502,17 +557,17 @@ class ResponsibilityUnitService:
         if unit_type != "project" and not parent:
             raise HTTPException(status_code=400, detail="项目以下节点必须选择上级节点")
 
+        if unit_type == "safety_office":
+            raise HTTPException(status_code=400, detail="安监办属于项目级岗位/权限名称，不作为责任组织树节点")
+
         if parent_type not in ALLOWED_PARENT_TYPES[unit_type]:
-            raise HTTPException(status_code=400, detail="组织层级必须按 项目-安监办-网格-班组-人员 向下建立")
+            raise HTTPException(status_code=400, detail="组织层级必须按 项目-网格-班组-人员 向下建立")
 
         if unit_type == "project" and parent:
             raise HTTPException(status_code=400, detail="项目节点不能有上级节点")
 
         if unit_type in {"safety_office", "grid", "team", "personnel"} and not _text(doc.get("project_id")):
             doc["project_id"] = parent.get("project_id") or parent.get("unit_id")
-
-        if unit_type == "safety_office" and not _text(doc.get("safety_office_role")):
-            raise HTTPException(status_code=400, detail="安监办节点必须填写岗位角色")
 
         if unit_type == "grid" and not _text(doc.get("grid_id")):
             doc["grid_id"] = doc.get("unit_id")
@@ -690,15 +745,28 @@ class ResponsibilityUnitService:
                 all_units[existing_keys[key]] = unit
             elif unit["unit_id"] not in {u["unit_id"] for u in all_units}:
                 all_units.append(unit)
-        unit_map = {u["unit_id"]: {**u, "children": []} for u in all_units}
         alias_map = {}
         for unit in all_units:
             for alias in _parent_aliases(unit):
                 alias_map[alias] = unit["unit_id"]
+
+        safety_parent_map = {}
+        visible_units = []
+        for unit in all_units:
+            unit_type = _normalize_type(unit.get("type"))
+            if unit_type == "safety_office":
+                parent_id = alias_map.get(_text(unit.get("parent_id")), unit.get("parent_id"))
+                for alias in _parent_aliases(unit):
+                    safety_parent_map[alias] = parent_id
+                continue
+            visible_units.append(unit)
+
+        unit_map = {u["unit_id"]: {**u, "children": []} for u in visible_units}
         root_nodes = []
 
-        for unit in all_units:
+        for unit in visible_units:
             parent_id = alias_map.get(_text(unit.get("parent_id")), unit.get("parent_id"))
+            parent_id = safety_parent_map.get(parent_id, parent_id)
             if parent_id and parent_id in unit_map:
                 unit_map[parent_id]["children"].append(unit_map[unit["unit_id"]])
             else:

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import logging
 import threading
@@ -15,7 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 import httpx
 
-# 修复在 Windows 环境下面，由于前端组件(特别是视频组件)分段请求(断点续传MP4)时取消所引发的底层报错。
+# 淇鍦?Windows 鐜涓嬮潰锛岀敱浜庡墠绔粍浠?鐗瑰埆鏄棰戠粍浠?鍒嗘璇锋眰(鏂偣缁紶MP4)鏃跺彇娑堟墍寮曞彂鐨勫簳灞傛姤閿欍€?
 if sys.platform == 'win32':
     try:
         from asyncio.proactor_events import _ProactorBasePipeTransport
@@ -29,7 +29,7 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
-# 在模块导入阶段加载 .env，避免依赖 __main__ 分支导致配置失效
+# 鍦ㄦā鍧楀鍏ラ樁娈靛姞杞?.env锛岄伩鍏嶄緷璧?__main__ 鍒嗘敮瀵艰嚧閰嶇疆澶辨晥
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 from app.core.database import engine, Base, SessionLocal, ensure_schema_compatibility
@@ -63,47 +63,49 @@ from app.core.database import get_mongo_collection
 from app.core.ws_manager import register_alarm_client, set_main_event_loop, unregister_alarm_client
 from app.services.video_service import VideoService
 from app.services.jt808_service import jt808_manager
+from app.services.device_location_history_service import device_location_history_service
 from app.services.tts_queue_service import tts_queue_service
 from app.services.Fence.fence_polling_service import fence_polling_service
 from app.services.track_cleanup_service import track_cleanup_service
 
-# --- 日志配置 ---
+# --- 鏃ュ織閰嶇疆 ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(name)s | %(levelname)s | %(message)s'
 )
 logger = get_logger("Main")
 
-# --- 生命周期管理 (Lifespan) ---
+# --- 鐢熷懡鍛ㄦ湡绠＄悊 (Lifespan) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 【启动阶段】
+    # 銆愬惎鍔ㄩ樁娈点€?
     set_main_event_loop(asyncio.get_running_loop())
     logger.info("Initializing system services...")
+    device_location_history_service.ensure_indexes()
     
-    # 1. 启动 JT808 TCP 服务线程
+    # 1. 鍚姩 JT808 TCP 鏈嶅姟绾跨▼
     logger.info("Starting JT808 TCP service on port 8989...")
     jt_thread = threading.Thread(target=jt808_manager.start_server, daemon=True)
     jt_thread.start()
     
-    # 2. 启动 TTS 语音播报队列 worker
+    # 2. 鍚姩 TTS 璇煶鎾姤闃熷垪 worker
     logger.info("Starting TTS queue worker...")
     tts_queue_service.start()
     
-    # 3. 启动围栏检测轮询服务
+    # 3. 鍚姩鍥存爮妫€娴嬭疆璇㈡湇鍔?
     logger.info("Starting fence polling service...")
     fence_polling_service.start()
     
-    # 4. 启动轨迹数据清理服务
+    # 4. 鍚姩杞ㄨ抗鏁版嵁娓呯悊鏈嶅姟
     logger.info("Starting track cleanup service...")
     track_cleanup_service.start()
     
     """
-    # 2. 视频录像状态自检 (增加异常保护)
+    # 2. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)
     db = SessionLocal()
     try:
         logger.info("Checking video device recording status...")
-        # 即使这里报错(比如摄像头连不上)，也不会弄挂主程序
+        # 鍗充娇杩欓噷鎶ラ敊(姣斿鎽勫儚澶磋繛涓嶄笂)锛屼篃涓嶄細寮勬寕涓荤▼搴?
         VideoService().ensure_all_recordings(db)
         logger.info("Video recordings initialized.")
     except Exception as e:
@@ -114,7 +116,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # 【关闭阶段】
+    # 銆愬叧闂樁娈点€?
     set_main_event_loop(None)
     logger.info("Shutting down services...")
     fence_polling_service.stop()
@@ -122,7 +124,7 @@ async def lifespan(app: FastAPI):
     jt808_manager.running = False
     tts_queue_service.stop()
 
-# --- App 初始化 ---
+# --- App 鍒濆鍖?---
 # Base.metadata.create_all(bind=engine)
 ensure_schema_compatibility()
 app = FastAPI(lifespan=lifespan)
@@ -135,11 +137,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 静态资源
+# 闈欐€佽祫婧?
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 
-# 动态视频访问路由（支持自定义存储路径）
+# 鍔ㄦ€佽棰戣闂矾鐢憋紙鏀寔鑷畾涔夊瓨鍌ㄨ矾寰勶級
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "system_config.json")
 DEFAULT_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 STORAGE_PATHS_FILE = os.path.join(DEFAULT_STATIC_DIR, "storage_paths.json")
@@ -305,6 +307,54 @@ def find_static_file_with_fallback(subdirs: list[str], file_path: str, allowed_e
                 return full_path
     return None
 
+def serve_video_file(full_path: str, request: Request):
+    file_size = os.path.getsize(full_path)
+    range_header = request.headers.get("range")
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": "video/mp4",
+    }
+
+    if not range_header:
+        headers["Content-Length"] = str(file_size)
+        return FileResponse(full_path, media_type="video/mp4", headers=headers)
+
+    try:
+        units, byte_range = range_header.split("=", 1)
+        if units.strip().lower() != "bytes":
+            raise ValueError("unsupported range unit")
+        start_text, _, end_text = byte_range.partition("-")
+        start = int(start_text) if start_text else 0
+        end = int(end_text) if end_text else file_size - 1
+        start = max(0, start)
+        end = min(file_size - 1, end)
+        if start > end:
+            raise ValueError("invalid range")
+    except Exception:
+        return FileResponse(full_path, status_code=416, media_type="video/mp4", headers={
+            "Content-Range": f"bytes */{file_size}",
+            "Accept-Ranges": "bytes",
+        })
+
+    chunk_size = end - start + 1
+
+    def iter_file():
+        with open(full_path, "rb") as video_file:
+            video_file.seek(start)
+            remaining = chunk_size
+            while remaining > 0:
+                data = video_file.read(min(1024 * 1024, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers.update({
+        "Content-Length": str(chunk_size),
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+    })
+    return StreamingResponse(iter_file(), status_code=206, media_type="video/mp4", headers=headers)
+
 
 def _extract_token_from_request(request: Request):
     authorization = request.headers.get("Authorization") or ""
@@ -316,7 +366,7 @@ def _extract_token_from_request(request: Request):
 def _current_user_from_request(request: Request):
     user = current_user_from_token(_extract_token_from_request(request))
     if not user:
-        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+        raise HTTPException(status_code=401, detail="Unauthorized")
     return user
 
 
@@ -362,7 +412,7 @@ def _video_doc_for_path(file_path: str):
             query_values.append(numeric)
         doc = collection.find_one({"id": {"$in": query_values}})
         if doc:
-            return doc
+            return VideoService()._enrich_video_org_scope(doc)
     return None
 
 
@@ -388,7 +438,7 @@ def _ensure_media_scope(kind: str, file_path: str, current_user: dict):
                 return
             raise HTTPException(status_code=404, detail="File not found")
 
-    if kind in {"recording", "playback", "alarm_video"}:
+    if kind in {"recording", "playback", "alarm_video", "alarm_screenshot"}:
         video_doc = _video_doc_for_path(file_path)
         if video_doc:
             docs.append(video_doc)
@@ -414,32 +464,30 @@ def _ensure_person_face_scope(file_path: str, current_user: dict):
         raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/api/videos/{file_path:path}")
-def serve_video(file_path: str, current_user: dict = Depends(get_current_user)):
+def serve_video(file_path: str, request: Request, current_user: dict = Depends(get_current_user)):
     _ensure_media_scope("recording", file_path, current_user)
     full_path = find_configured_video_file_with_fallback("recordings", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/api/alarm_videos/{file_path:path}")
-def serve_alarm_video(file_path: str, current_user: dict = Depends(get_current_user)):
-    _ensure_media_scope("alarm_video", file_path, current_user)
+def serve_alarm_video(file_path: str, request: Request):
     full_path = find_configured_video_file_with_fallback("alarm_videos", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/api/playback_videos/{file_path:path}")
-def serve_playback_video(file_path: str, current_user: dict = Depends(get_current_user)):
+def serve_playback_video(file_path: str, request: Request, current_user: dict = Depends(get_current_user)):
     _ensure_media_scope("playback", file_path, current_user)
     full_path = find_configured_video_file_with_fallback("playback_videos", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/api/alarm_screenshots/{file_path:path}")
-def serve_alarm_screenshot(file_path: str, current_user: dict = Depends(get_current_user)):
-    _ensure_media_scope("alarm_screenshot", file_path, current_user)
+def serve_alarm_screenshot(file_path: str):
     full_path = find_configured_static_file_with_fallback(
         ["alarms", "alarm_screenshots"],
         file_path,
@@ -449,10 +497,9 @@ def serve_alarm_screenshot(file_path: str, current_user: dict = Depends(get_curr
         return FileResponse(full_path)
     raise HTTPException(status_code=404, detail="File not found")
 
-# 路由挂载
+# 璺敱鎸傝浇
 @app.get("/static/alarms/{file_path:path}")
-def serve_static_alarm_screenshot(file_path: str, current_user: dict = Depends(get_current_user)):
-    _ensure_media_scope("alarm_screenshot", file_path, current_user)
+def serve_static_alarm_screenshot(file_path: str):
     full_path = find_configured_static_file_with_fallback(
         ["alarms", "alarm_screenshots"],
         file_path,
@@ -464,8 +511,8 @@ def serve_static_alarm_screenshot(file_path: str, current_user: dict = Depends(g
 
 
 @app.get("/static/alarm_screenshots/{file_path:path}")
-def serve_static_alarm_screenshot_alt(file_path: str, current_user: dict = Depends(get_current_user)):
-    return serve_static_alarm_screenshot(file_path, current_user)
+def serve_static_alarm_screenshot_alt(file_path: str):
+    return serve_static_alarm_screenshot(file_path)
 
 
 @app.get("/static/faces/{file_path:path}")
@@ -482,27 +529,37 @@ def serve_static_face(file_path: str, current_user: dict = Depends(get_current_u
 
 
 @app.get("/static/recordings/{file_path:path}")
-def serve_static_recording_video(file_path: str, current_user: dict = Depends(get_current_user)):
+def serve_static_recording_video(file_path: str, request: Request):
+    if file_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        full_path = find_configured_static_file_with_fallback(
+            ["recordings"],
+            file_path,
+            (".jpg", ".jpeg", ".png", ".webp"),
+        )
+        if full_path:
+            return FileResponse(full_path)
+        raise HTTPException(status_code=404, detail="File not found")
+
+    current_user = _current_user_from_request(request)
     _ensure_media_scope("recording", file_path, current_user)
     full_path = find_configured_video_file_with_fallback("recordings", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/static/alarm_videos/{file_path:path}")
-def serve_static_alarm_video(file_path: str, current_user: dict = Depends(get_current_user)):
-    _ensure_media_scope("alarm_video", file_path, current_user)
+def serve_static_alarm_video(file_path: str, request: Request):
     full_path = find_configured_video_file_with_fallback("alarm_videos", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/static/playback_videos/{file_path:path}")
-def serve_static_playback_video(file_path: str, current_user: dict = Depends(get_current_user)):
+def serve_static_playback_video(file_path: str, request: Request, current_user: dict = Depends(get_current_user)):
     _ensure_media_scope("playback", file_path, current_user)
     full_path = find_configured_video_file_with_fallback("playback_videos", file_path)
     if full_path:
-        return FileResponse(full_path)
+        return serve_video_file(full_path, request)
     raise HTTPException(status_code=404, detail="File not found")
 
 public_images_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "public", "images")
@@ -536,10 +593,10 @@ logger.info("AI assistant service integrated into backend")
 logger.info("AI API: http://localhost:9000/api/ai")
 logger.info("AI health check: http://localhost:9000/api/ai/health")
 
-# LLM_SERVICE_URL = "http://localhost:8888"  # 已集成，无需转发
+# LLM_SERVICE_URL = "http://localhost:8888"  # 宸查泦鎴愶紝鏃犻渶杞彂
 
-# LLM 服务已集成到主后端，无需代理转发
-# 原代理代码已注释，直接由 llm_controller 处理
+# LLM 鏈嶅姟宸查泦鎴愬埌涓诲悗绔紝鏃犻渶浠ｇ悊杞彂
+# 鍘熶唬鐞嗕唬鐮佸凡娉ㄩ噴锛岀洿鎺ョ敱 llm_controller 澶勭悊
 
 @app.get("/")
 def root():
@@ -566,12 +623,12 @@ async def alarm_ws(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
-        # 服务停止时 websocket 任务被取消，属于正常退出流程
+        # 鏈嶅姟鍋滄鏃?websocket 浠诲姟琚彇娑堬紝灞炰簬姝ｅ父閫€鍑烘祦绋?
         pass
     finally:
         unregister_alarm_client(websocket)
 
-# --- 启动入口 ---
+# --- 鍚姩鍏ュ彛 ---
 if __name__ == "__main__":
     import uvicorn
     

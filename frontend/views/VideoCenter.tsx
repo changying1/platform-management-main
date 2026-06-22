@@ -1,4 +1,4 @@
-  import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+﻿  import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
   import ReactDOM from 'react-dom';
   import Hls from 'hls.js';
   import {
@@ -29,6 +29,8 @@
 
   import VideoPlayer from "../src/components/VideoPlayer";
   import PTZControlPanel from "../src/components/PTZControlPanel";
+  import { unitApiClient, type ResponsibilityUnit, type UnitTreeNode } from "../src/api/responsibilityUnitApi";
+  import { getStoredScopeState, readStoredAuth } from "../src/utils/authScope";
   import {
     getAllVideos,
     deleteVideo,
@@ -142,11 +144,26 @@
     return String(value).trim();
   };
 
+  const isMeaningfulOption = (value: string): boolean => {
+    const text = value.trim();
+    return (
+      !!text &&
+      text !== "all" &&
+      text !== "-" &&
+      text !== "--" &&
+      text !== "??" &&
+      text !== "？？" &&
+      text !== "未知" &&
+      text !== "未知公司" &&
+      !/^[?？]+$/.test(text)
+    );
+  };
+
   const firstText = (source: unknown, keys: string[]): string => {
     const record = source as Record<string, unknown>;
     for (const key of keys) {
       const value = textOf(record?.[key]);
-      if (value) return value;
+      if (isMeaningfulOption(value)) return value;
     }
     return "";
   };
@@ -154,7 +171,7 @@
   const normalizeText = (value: unknown): string => textOf(value).toLowerCase();
 
   const getVideoCompany = (video: Video) =>
-    firstText(video, ["company", "department", "dept", "branch_name", "branchName"]);
+    firstText(video, ["company", "branch_name", "branchName"]);
 
   const getVideoProject = (video: Video) =>
     firstText(video, ["project", "project_name", "projectName"]);
@@ -167,6 +184,65 @@
 
   const getVideoDeviceType = (video: Video) =>
     firstText(video, ["device_type", "deviceType", "type"]);
+
+  const VIDEO_DEVICE_TYPE_LABELS: Record<string, string> = {
+    bullet_camera: "枪机",
+    dome_camera: "球机",
+    body_camera: "执法记录仪",
+    drone: "无人机",
+  };
+
+  const normalizeVideoDeviceType = (value: unknown): string => {
+    const raw = textOf(value);
+    if (!raw) return "";
+
+    const lower = raw.toLowerCase();
+    const compact = lower.replace(/[\s_-]+/g, "");
+
+    if (lower.includes("枪机") || compact === "bullet" || compact.includes("bullet") || compact.includes("gun")) {
+      return "bullet_camera";
+    }
+    if (
+      lower.includes("球机") ||
+      lower.includes("云台") ||
+      compact === "dome" ||
+      compact.includes("dome") ||
+      compact.includes("ptz") ||
+      compact.includes("ball")
+    ) {
+      return "dome_camera";
+    }
+    if (
+      lower.includes("执法记录仪") ||
+      lower.includes("记录仪") ||
+      compact === "bodycam" ||
+      compact.includes("bodycamera") ||
+      compact.includes("bodycam") ||
+      compact.includes("body")
+    ) {
+      return "body_camera";
+    }
+    if (lower.includes("无人机") || compact === "drone" || compact.includes("drone") || compact.includes("uav")) {
+      return "drone";
+    }
+
+    return "";
+  };
+
+  const getVideoDeviceTypeValue = (video: Video) =>
+    normalizeVideoDeviceType(getVideoDeviceType(video));
+
+  const getVideoDeviceTypeLabel = (value: string) =>
+    value === "all" ? "所有设备类型" : VIDEO_DEVICE_TYPE_LABELS[value] || value;
+
+  interface TeamOption {
+    team_id: string;
+    name: string;
+    project?: string;
+    project_id?: string;
+    grid_id?: string;
+    company?: string;
+  }
 
   const getVideoResponsible = (video: Video) =>
     firstText(video, [
@@ -192,10 +268,145 @@
 
   const buildOptions = (values: unknown[]) => {
     const unique = Array.from(
-      new Set(values.map(textOf).filter((value) => value && value !== "all"))
+      new Set(values.map(textOf).filter(isMeaningfulOption))
     );
     return ["all", ...unique];
   };
+
+  const flattenUnitTree = (nodes: UnitTreeNode[]): ResponsibilityUnit[] =>
+    nodes.flatMap(({ children, ...unit }) => [unit, ...flattenUnitTree(children || [])]);
+
+  const getUnitId = (unit?: Pick<ResponsibilityUnit, "unit_id" | "id">) =>
+    String(unit?.unit_id || unit?.id || "");
+
+  const unitMatchesId = (unit: ResponsibilityUnit | undefined, unitId?: string | number) => {
+    const target = String(unitId || "").trim();
+    return !!target && !!unit && [unit.unit_id, unit.id].map((value) => String(value || "")).includes(target);
+  };
+
+  const findUnitIn = (units: ResponsibilityUnit[], unitId?: string | number) =>
+    units.find((unit) => unitMatchesId(unit, unitId));
+
+  const findUnitByName = (units: ResponsibilityUnit[], type: ResponsibilityUnit["type"], name?: string) => {
+    const target = textOf(name);
+    return target ? units.find((unit) => unit.type === type && unit.name === target) : undefined;
+  };
+
+  const findProjectUnitFromLooseFields = (video: Video, units: ResponsibilityUnit[]) => {
+    const record = video as Record<string, unknown>;
+    const candidates = [
+      getVideoProject(video),
+      firstText(record, ["project_name", "projectName"]),
+      firstText(record, ["department", "dept"]),
+      firstText(record, ["company"]),
+    ];
+
+    for (const candidate of candidates) {
+      const unitByName = findUnitByName(units, "project", candidate);
+      if (unitByName) return unitByName;
+      const unitById = findUnitIn(units, candidate);
+      if (unitById?.type === "project") return unitById;
+    }
+
+    return undefined;
+  };
+
+  const getAncestorFromUnits = (
+    units: ResponsibilityUnit[],
+    unit: ResponsibilityUnit | undefined,
+    type: ResponsibilityUnit["type"],
+  ) => {
+    let current = unit;
+    while (current) {
+      if (current.type === type) return current;
+      current = findUnitIn(units, current.parent_id);
+    }
+    return undefined;
+  };
+
+  const resolveVideoUnit = (
+    video: Video,
+    units: ResponsibilityUnit[],
+    type: "branch" | "project" | "grid" | "team",
+  ) => {
+    const idKeys: Record<typeof type, string[]> = {
+      branch: ["branch_id"],
+      project: ["project_id"],
+      grid: ["grid_id", "gridId"],
+      team: ["team_id", "teamId"],
+    };
+    const nameGetters: Record<typeof type, (video: Video) => string> = {
+      branch: getVideoCompany,
+      project: getVideoProject,
+      grid: getVideoGrid,
+      team: getVideoTeam,
+    };
+    const record = video as Record<string, unknown>;
+    for (const key of idKeys[type]) {
+      const unit = findUnitIn(units, textOf(record[key]));
+      if (unit?.type === type) return unit;
+    }
+    const directName = findUnitByName(units, type, nameGetters[type](video));
+    if (directName) return directName;
+
+    if (type === "project") {
+      return findProjectUnitFromLooseFields(video, units);
+    }
+
+    return undefined;
+  };
+
+  const getVideoBranchFallback = (video: Video, units: ResponsibilityUnit[]) => {
+    const company = getVideoCompany(video);
+    if (!company) return "";
+
+    const unitById = findUnitIn(units, company);
+    if (unitById && unitById.type !== "branch") return "";
+    if (findUnitByName(units, "project", company)) return "";
+
+    return company;
+  };
+
+  const getVideoBranchUnit = (video: Video, units: ResponsibilityUnit[]) => {
+    const direct = resolveVideoUnit(video, units, "branch");
+    if (direct) return direct;
+    const project = resolveVideoUnit(video, units, "project");
+    if (project) return getAncestorFromUnits(units, project, "branch");
+    const grid = resolveVideoUnit(video, units, "grid");
+    if (grid) return getAncestorFromUnits(units, grid, "branch");
+    const team = resolveVideoUnit(video, units, "team");
+    return getAncestorFromUnits(units, team, "branch");
+  };
+
+  const getVideoScopedValue = (
+    video: Video,
+    units: ResponsibilityUnit[],
+    type: "branch" | "project" | "grid" | "team",
+  ) => {
+    if (type === "branch") {
+      const branch = getVideoBranchUnit(video, units);
+      return branch ? getUnitId(branch) : getVideoBranchFallback(video, units);
+    }
+
+    const unit = resolveVideoUnit(video, units, type);
+    return unit ? getUnitId(unit) : {
+      project: getVideoProject,
+      grid: getVideoGrid,
+      team: getVideoTeam,
+    }[type](video);
+  };
+
+  const getUnitOptionLabel = (value: string, units: ResponsibilityUnit[]) =>
+    value === "all" ? "" : findUnitIn(units, value)?.name || value;
+
+  const idMatches = (left: unknown, right: unknown) => {
+    const a = textOf(left);
+    const b = textOf(right);
+    if (!a || !b) return false;
+    return a === b || a.replace(/^PRJ-/i, "") === b.replace(/^PRJ-/i, "");
+  };
+
+  const getVideoCenterScope = () => getStoredScopeState(readStoredAuth());
 
   const getVideoSearchText = (video: Video) =>
     [
@@ -412,6 +623,7 @@
     const [activeAlgos, setActiveAlgos] = useState<string[]>([]); 
     const [algos, setAlgos] = useState<Array<{ id: string; name: string }>>([]);
     const [devices, setDevices] = useState<Video[]>([]);
+    const [orgUnits, setOrgUnits] = useState<ResponsibilityUnit[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
@@ -447,6 +659,7 @@
     const [currentDevice, setCurrentDevice] = useState<Video | null>(null);
     const [fullScreenStreamLoading, setFullScreenStreamLoading] = useState(false);
     const [fullScreenStreamError, setFullScreenStreamError] = useState<string | null>(null);
+    const videoCenterScope = useMemo(getVideoCenterScope, []);
 
     const handlePlayerError = useCallback((msg: string) => {
       setFullScreenStreamError(msg);
@@ -463,7 +676,11 @@
     const [selectedDevices, setSelectedDevices] = useState<number[]>([]);
     const [showDeviceSelector, setShowDeviceSelector] = useState(false);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
-    const [selectedProject, setSelectedProject] = useState<string>('all');
+    const [selectedProject, setSelectedProject] = useState<string>(
+      videoCenterScope.isProjectScope && (videoCenterScope.projectId || videoCenterScope.projectName)
+        ? (videoCenterScope.projectId || videoCenterScope.projectName)
+        : 'all'
+    );
     const [selectedGrid, setSelectedGrid] = useState<string>('all');
     const [selectedTeam, setSelectedTeam] = useState<string>('all');
     const [selectedDeviceType, setSelectedDeviceType] = useState('all');
@@ -484,32 +701,75 @@
     const aiCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const lastKeyboardSwitchRequestIdRef = useRef(0);
   const companies = useMemo(
-    () => buildOptions(devices.map(getVideoCompany)),
-    [devices]
+    () => buildOptions(devices.map((device) => getVideoScopedValue(device, orgUnits, "branch"))),
+    [devices, orgUnits]
   );
   const projects = useMemo(() => {
     const scopedDevices = devices.filter((device) =>
-      selectedCompany === 'all' || getVideoCompany(device) === selectedCompany
+      selectedCompany === 'all' || getVideoScopedValue(device, orgUnits, "branch") === selectedCompany
     );
-    return buildOptions(scopedDevices.map(getVideoProject));
-  }, [devices, selectedCompany]);
+    const projectOptions = buildOptions(scopedDevices.map((device) => getVideoScopedValue(device, orgUnits, "project")));
+    const scopedProjectValue = videoCenterScope.projectId || videoCenterScope.projectName;
+    if (videoCenterScope.isProjectScope && scopedProjectValue) {
+      return projectOptions.some((project) => idMatches(project, scopedProjectValue))
+        ? projectOptions
+        : ["all", scopedProjectValue, ...projectOptions.filter((project) => project !== "all")];
+    }
+    return projectOptions;
+  }, [devices, orgUnits, selectedCompany, videoCenterScope]);
   const grids = useMemo(() => {
     const scopedDevices = devices.filter((device) => {
-      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
-      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
+      if (selectedCompany !== 'all' && getVideoScopedValue(device, orgUnits, "branch") !== selectedCompany) return false;
+      if (selectedProject !== 'all' && !idMatches(getVideoScopedValue(device, orgUnits, "project"), selectedProject)) return false;
       return true;
     });
-    return buildOptions(scopedDevices.map(getVideoGrid));
-  }, [devices, selectedCompany, selectedProject]);
+    return buildOptions(scopedDevices.map((device) => getVideoScopedValue(device, orgUnits, "grid")));
+  }, [devices, orgUnits, selectedCompany, selectedProject]);
   const teams = useMemo(() => {
     const scopedDevices = devices.filter((device) => {
-      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
-      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
-      if (selectedGrid !== 'all' && getVideoGrid(device) !== selectedGrid) return false;
+      if (selectedCompany !== 'all' && getVideoScopedValue(device, orgUnits, "branch") !== selectedCompany) return false;
+      if (selectedProject !== 'all' && !idMatches(getVideoScopedValue(device, orgUnits, "project"), selectedProject)) return false;
+      if (selectedGrid !== 'all' && getVideoScopedValue(device, orgUnits, "grid") !== selectedGrid) return false;
       return true;
     });
-    return buildOptions(scopedDevices.map(getVideoTeam));
-  }, [devices, selectedCompany, selectedProject, selectedGrid]);
+    return buildOptions(scopedDevices.map((device) => getVideoScopedValue(device, orgUnits, "team")));
+  }, [devices, orgUnits, selectedCompany, selectedProject, selectedGrid]);
+  const deviceTypeOptions = useMemo(
+    () => buildOptions(devices.map(getVideoDeviceTypeValue)),
+    [devices]
+  );
+  const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTeams = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/team/teams`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Failed to load teams');
+        const data = await response.json();
+        if (cancelled) return;
+        setTeamOptions(
+          (Array.isArray(data) ? data : []).map((team: any) => ({
+            team_id: textOf(team.team_id ?? team.id ?? team.unit_id),
+            name: textOf(team.name ?? team.team_name ?? team.team_id ?? team.id),
+            project: textOf(team.project ?? team.project_name),
+            project_id: textOf(team.project_id ?? team.projectId),
+            grid_id: textOf(team.grid_id ?? team.gridId),
+            company: textOf(team.company ?? team.branch_name),
+          })).filter((team) => team.team_id && team.name)
+        );
+      } catch (error) {
+        console.warn('加载工队列表失败:', error);
+      }
+    };
+    loadTeams();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedCompany !== 'all' && !companies.includes(selectedCompany)) {
@@ -518,10 +778,22 @@
   }, [companies, selectedCompany]);
 
   useEffect(() => {
+    if (videoCenterScope.isProjectScope) return;
     if (selectedProject !== 'all' && !projects.includes(selectedProject)) {
       setSelectedProject('all');
     }
-  }, [projects, selectedProject]);
+  }, [projects, selectedProject, videoCenterScope.isProjectScope]);
+
+  useEffect(() => {
+    const scopedProjectValue = videoCenterScope.projectId || videoCenterScope.projectName;
+    if (!videoCenterScope.isProjectScope || !scopedProjectValue) return;
+    if (!idMatches(selectedProject, scopedProjectValue)) {
+      setSelectedProject(scopedProjectValue);
+      setSelectedGrid('all');
+      setSelectedTeam('all');
+      setCurrentPage(1);
+    }
+  }, [selectedProject, videoCenterScope]);
 
   useEffect(() => {
     if (selectedGrid !== 'all' && !grids.includes(selectedGrid)) {
@@ -534,6 +806,13 @@
       setSelectedTeam('all');
     }
   }, [teams, selectedTeam]);
+
+  useEffect(() => {
+    if (selectedDeviceType !== 'all' && !deviceTypeOptions.includes(selectedDeviceType)) {
+      setSelectedDeviceType('all');
+      setCurrentPage(1);
+    }
+  }, [deviceTypeOptions, selectedDeviceType]);
 
     const [newDeviceForm, setNewDeviceForm] = useState<VideoCreate>({
       name: "",
@@ -556,6 +835,42 @@
       status: "offline",
       remark: "",
     });
+
+    const getScopedTeamOptions = useCallback((form: Pick<VideoCreate, "project" | "project_id" | "grid_id" | "team" | "team_id">) => {
+      const projectValue = textOf(form.project_id || form.project);
+      const gridValue = textOf(form.grid_id);
+      let options = teamOptions.filter((team) => {
+        if (projectValue && team.project_id && !idMatches(team.project_id, projectValue)) return false;
+        if (projectValue && !team.project_id && team.project && !idMatches(team.project, projectValue)) return false;
+        if (gridValue && team.grid_id && !idMatches(team.grid_id, gridValue)) return false;
+        return true;
+      });
+      if (!options.length) options = teamOptions;
+
+      const currentId = textOf(form.team_id);
+      const currentName = textOf(form.team);
+      if (currentId && !options.some((team) => idMatches(team.team_id, currentId))) {
+        options = [{ team_id: currentId, name: currentName || currentId }, ...options];
+      } else if (currentName && !options.some((team) => team.name === currentName)) {
+        options = [{ team_id: currentId || currentName, name: currentName }, ...options];
+      }
+      return options;
+    }, [teamOptions]);
+
+    const applyTeamSelection = <T extends VideoCreate | VideoUpdate>(
+      form: T,
+      selectedTeamId: string,
+    ): T => {
+      if (!selectedTeamId) {
+        return { ...form, team_id: "", team: "" };
+      }
+      const team = teamOptions.find((item) => idMatches(item.team_id, selectedTeamId));
+      return {
+        ...form,
+        team_id: selectedTeamId,
+        team: team?.name || "",
+      };
+    };
 
     const currentWorkDurationSeconds = maximizedVideo
       ? workDurationByDevice[maximizedVideo.id] ?? getVideoWorkDurationSeconds(maximizedVideo)
@@ -1148,162 +1463,12 @@ useEffect(() => {
   const fetchDevices = async () => {
       try {
           setLoading(true);
-          
-          // ✅ DEBUG: 打印关键信息到控制台！
-          console.log('🌐 当前访问地址:', window.location.href);
-          console.log('🌐 当前端口:', window.location.port);
-          console.log('🌐 API_BASE_URL:', API_BASE_URL);
-          
-          const data = await getAllVideos();
-          console.log('✅ 视频设备返回数据:', data);
-          
-          // 根据设备名称绑定公司和项目
-          const devicesWithMapping = data.map(device => {
-              let company = '';
-              let project = '';
-              
-              const name = device.name || '';
-              
-              // 西安东站相关（带"东站"的）
-              if (name.includes('东站')) {
-                  company = '集团有限公司';
-                  project = '西安东站项目';
-              }
-              // 西安地铁8号线
-              else if (name.includes('地铁8号线') || name.includes('8号线')) {
-                  company = '集团有限公司';
-                  project = '西安地铁8号线';
-              }
-              // 咸阳机场T5
-              else if (name.includes('咸阳机场') || name.includes('T5')) {
-                  company = '集团有限公司';
-                  project = '咸阳机场T5航站楼';
-              }
-              // 北京地铁17号线
-              else if (name.includes('北京地铁17号线')) {
-                  company = '北京分公司';
-                  project = '北京地铁17号线';
-              }
-              // 北京丰台站改造
-              else if (name.includes('丰台站')) {
-                  company = '北京分公司';
-                  project = '北京丰台站改造';
-              }
-              // 上海浦东机场联络线
-              else if (name.includes('浦东机场')) {
-                  company = '上海分公司';
-                  project = '上海浦东机场联络线';
-              }
-              // 上海轨道交通市域线
-              else if (name.includes('市域线')) {
-                  company = '上海分公司';
-                  project = '上海轨道交通市域线';
-              }
-              // 广州白云站
-              else if (name.includes('白云站')) {
-                  company = '广州分公司';
-                  project = '广州白云站';
-              }
-              // 广湛高铁
-              else if (name.includes('广湛')) {
-                  company = '广州分公司';
-                  project = '广湛高铁广州段';
-              }
-              // 成都地铁18号线
-              else if (name.includes('成都地铁18号线')) {
-                  company = '成都分公司';
-                  project = '成都地铁18号线';
-              }
-              // 天府站
-              else if (name.includes('天府站')) {
-                  company = '成都分公司';
-                  project = '天府站综合交通枢纽';
-              }
-              // 武汉光谷
-              else if (name.includes('光谷')) {
-                  company = '武汉分公司';
-                  project = '武汉光谷综合体';
-              }
-              // 武汉地铁12号线
-              else if (name.includes('武汉地铁12号线')) {
-                  company = '武汉分公司';
-                  project = '武汉地铁12号线';
-              }
-              // 沈阳地铁4号线
-              else if (name.includes('沈阳地铁4号线')) {
-                  company = '沈阳分公司';
-                  project = '沈阳地铁4号线';
-              }
-              // 沈阳北站
-              else if (name.includes('沈阳北站')) {
-                  company = '沈阳分公司';
-                  project = '沈阳北站改造';
-              }
-              // 南京北站
-              else if (name.includes('南京北站')) {
-                  company = '南京分公司';
-                  project = '南京北站';
-              }
-              // 南京地铁11号线
-              else if (name.includes('南京地铁11号线')) {
-                  company = '南京分公司';
-                  project = '南京地铁11号线';
-              }
-              // 深圳前海
-              else if (name.includes('前海')) {
-                  company = '深圳分公司';
-                  project = '深圳前海枢纽';
-              }
-              // 深圳地铁13号线
-              else if (name.includes('深圳地铁13号线')) {
-                  company = '深圳分公司';
-                  project = '深圳地铁13号线';
-              }
-              // 重庆东站
-              else if (name.includes('重庆东站')) {
-                  company = '重庆分公司';
-                  project = '重庆东站';
-              }
-              // 重庆轨道交通27号线
-              else if (name.includes('重庆27号线')) {
-                  company = '重庆分公司';
-                  project = '重庆轨道交通27号线';
-              }
-              // 随机绑定（未匹配到的设备）
-              else {
-                  // 随机选择公司
-                  const companyList = [
-                      '集团有限公司', '北京分公司', '上海分公司', '广州分公司',
-                      '成都分公司', '武汉分公司', '沈阳分公司', '南京分公司', '深圳分公司', '重庆分公司'
-                  ];
-                  const randomCompany = companyList[Math.floor(Math.random() * companyList.length)];
-                  company = randomCompany;
-                  
-                  // 根据随机公司分配对应项目
-                  const projectMap: Record<string, string[]> = {
-                      '集团有限公司': ['西安东站项目', '西安地铁8号线', '咸阳机场T5航站楼'],
-                      '北京分公司': ['北京地铁17号线', '北京丰台站改造'],
-                      '上海分公司': ['上海浦东机场联络线', '上海轨道交通市域线'],
-                      '广州分公司': ['广州白云站', '广湛高铁广州段'],
-                      '成都分公司': ['成都地铁18号线', '天府站综合交通枢纽'],
-                      '武汉分公司': ['武汉光谷综合体', '武汉地铁12号线'],
-                      '沈阳分公司': ['沈阳地铁4号线', '沈阳北站改造'],
-                      '南京分公司': ['南京北站', '南京地铁11号线'],
-                      '深圳分公司': ['深圳前海枢纽', '深圳地铁13号线'],
-                      '重庆分公司': ['重庆东站', '重庆轨道交通27号线'],
-                  };
-                  const projectsForCompany = projectMap[randomCompany] || ['西安东站项目'];
-                  project = projectsForCompany[Math.floor(Math.random() * projectsForCompany.length)];
-              }
-              
-              return {
-                  ...device,
-                  company: getVideoCompany(device) || company,
-                  project: getVideoProject(device) || project
-              };
-          });
-          
-          setDevices(devicesWithMapping);
+          const [data, tree] = await Promise.all([
+            getAllVideos(),
+            unitApiClient.getTree().catch(() => []),
+          ]);
+          setOrgUnits(flattenUnitTree(tree));
+          setDevices(data);
           setError(null);
       } catch (e: any) {
           console.error('fetchDevices错误:', e);
@@ -1363,6 +1528,7 @@ useEffect(() => {
     };
 
     const handleCompanyChange = (value: string) => {
+      if (videoCenterScope.isProjectScope) return;
       setSelectedCompany(value);
       setSelectedProject('all');
       setSelectedGrid('all');
@@ -1371,6 +1537,7 @@ useEffect(() => {
     };
 
     const handleProjectChange = (value: string) => {
+      if (videoCenterScope.isProjectScope) return;
       setSelectedProject(value);
       setSelectedGrid('all');
       setSelectedTeam('all');
@@ -1393,15 +1560,14 @@ useEffect(() => {
       setCurrentPage(1);
     };
 
-    // 过滤后的设备列表（用于网格显示）
-  const filteredDevicesForGrid = useMemo(() => {
+    // 先应用公司/项目/网格/工队/类型/搜索筛选，设备选择弹层只在这个候选范围内二次筛选。
+  const deviceSelectorCandidates = useMemo(() => {
     return devices.filter((device) => {
-      if (selectedDevices.length > 0 && !selectedDevices.includes(device.id)) return false;
-      if (selectedCompany !== 'all' && getVideoCompany(device) !== selectedCompany) return false;
-      if (selectedProject !== 'all' && getVideoProject(device) !== selectedProject) return false;
-      if (selectedGrid !== 'all' && getVideoGrid(device) !== selectedGrid) return false;
-      if (selectedTeam !== 'all' && getVideoTeam(device) !== selectedTeam) return false;
-      if (selectedDeviceType !== 'all' && getVideoDeviceType(device) !== selectedDeviceType) return false;
+      if (selectedCompany !== 'all' && getVideoScopedValue(device, orgUnits, "branch") !== selectedCompany) return false;
+      if (selectedProject !== 'all' && !idMatches(getVideoScopedValue(device, orgUnits, "project"), selectedProject)) return false;
+      if (selectedGrid !== 'all' && getVideoScopedValue(device, orgUnits, "grid") !== selectedGrid) return false;
+      if (selectedTeam !== 'all' && getVideoScopedValue(device, orgUnits, "team") !== selectedTeam) return false;
+      if (selectedDeviceType !== 'all' && getVideoDeviceTypeValue(device) !== selectedDeviceType) return false;
 
       if (searchTerm) {
         const term = normalizeText(searchTerm);
@@ -1410,7 +1576,26 @@ useEffect(() => {
 
       return true;
     });
-  }, [devices, searchTerm, selectedCompany, selectedDeviceType, selectedDevices, selectedGrid, selectedProject, selectedTeam]);
+  }, [devices, orgUnits, searchTerm, selectedCompany, selectedDeviceType, selectedGrid, selectedProject, selectedTeam]);
+
+  const selectedCandidateIds = useMemo(
+    () => selectedDevices.filter((id) => deviceSelectorCandidates.some((device) => device.id === id)),
+    [deviceSelectorCandidates, selectedDevices]
+  );
+
+  useEffect(() => {
+    if (selectedDevices.length !== selectedCandidateIds.length) {
+      setSelectedDevices(selectedCandidateIds);
+    }
+  }, [selectedCandidateIds, selectedDevices]);
+
+    // 过滤后的设备列表（用于网格显示）
+  const filteredDevicesForGrid = useMemo(() => {
+    if (selectedCandidateIds.length === 0) {
+      return deviceSelectorCandidates;
+    }
+    return deviceSelectorCandidates.filter((device) => selectedCandidateIds.includes(device.id));
+  }, [deviceSelectorCandidates, selectedCandidateIds]);
 
   type VirtualCameraCell = {
     kind: "virtual";
@@ -1692,6 +1877,14 @@ useEffect(() => {
       username: newDeviceForm.username,
       password: newDeviceForm.password,
       remark: newDeviceForm.remark,
+      company: newDeviceForm.company || undefined,
+      branch_id: newDeviceForm.branch_id || undefined,
+      project: newDeviceForm.project || undefined,
+      project_id: newDeviceForm.project_id || undefined,
+      grid: newDeviceForm.grid || undefined,
+      grid_id: newDeviceForm.grid_id || undefined,
+      team: newDeviceForm.team || undefined,
+      team_id: newDeviceForm.team_id || undefined,
       // 萤石云字段
       platform_type: isEzviz ? "ezviz" : "onvif",
       access_source: isEzviz ? "cloud" : "local",
@@ -1722,6 +1915,14 @@ useEffect(() => {
         stream_url: device.rtsp_url || "",
         status: device.status,
         remark: device.remark || "",
+        company: device.company || "",
+        branch_id: device.branch_id || "",
+        project: device.project || "",
+        project_id: device.project_id || "",
+        grid: device.grid || device.grid_name || "",
+        grid_id: device.grid_id || "",
+        team: device.team || device.team_name || device.workTeam || device.work_team || "",
+        team_id: device.team_id || "",
       });
       setShowEditModal(true);
     };
@@ -1753,7 +1954,14 @@ useEffect(() => {
       e.stopPropagation();
       if (confirm(`确定删除设备 ID: ${id} 吗？`)) {
         try {
-          await deleteVideo(id);
+          const targetDevice = devices.find((device) => device.id === id);
+          await deleteVideo(id, {
+            name: targetDevice?.name,
+            company: targetDevice?.company,
+            project: targetDevice?.project,
+            grid: (targetDevice as any)?.grid,
+            team: targetDevice?.team,
+          });
           setDevices((prev) => prev.filter((d) => d.id !== id));
         } catch (err: any) {
           alert(`删除失败: ${err.message}`);
@@ -1950,31 +2158,33 @@ useEffect(() => {
               </div>
             </div>
 
-  {/* 公司筛选 */}
-  <select
-      value={selectedCompany}
-      onChange={(e) => handleCompanyChange(e.target.value)}
-      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
-  >
-      {companies.map(c => (
-          <option key={c} value={c}>
-              {c === 'all' ? '所有公司' : c}
-          </option>
-      ))}
-  </select>
+  {videoCenterScope.showCompanyFilter && (
+    <select
+        value={selectedCompany}
+        onChange={(e) => handleCompanyChange(e.target.value)}
+        className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+    >
+        {companies.map(c => (
+            <option key={c} value={c}>
+                {c === 'all' ? '所有公司' : getUnitOptionLabel(c, orgUnits)}
+            </option>
+        ))}
+    </select>
+  )}
 
-  {/* 项目筛选 */}
-  <select
-      value={selectedProject}
-      onChange={(e) => handleProjectChange(e.target.value)}
-      className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
-  >
-      {projects.map(p => (
-      <option key={p} value={p}>
-          {p === 'all' ? '所有项目' : p}
-      </option>
-  ))}
-  </select>
+  {videoCenterScope.showProjectFilter && (
+    <select
+        value={selectedProject}
+        onChange={(e) => handleProjectChange(e.target.value)}
+        className="w-28 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+    >
+        {projects.map(p => (
+        <option key={p} value={p}>
+            {p === 'all' ? '所有项目' : getUnitOptionLabel(p, orgUnits)}
+        </option>
+    ))}
+    </select>
+  )}
 
   {/* 网格筛选 */}
   <select
@@ -1984,7 +2194,7 @@ useEffect(() => {
   >
       {grids.map(g => (
           <option key={g} value={g}>
-              {g === 'all' ? '所有网格' : g}
+              {g === 'all' ? '所有网格' : getUnitOptionLabel(g, orgUnits)}
           </option>
       ))}
   </select>
@@ -1997,23 +2207,25 @@ useEffect(() => {
   >
       {teams.map(t => (
           <option key={t} value={t}>
-              {t === 'all' ? '所有工队' : t}
+              {t === 'all' ? '所有工队' : getUnitOptionLabel(t, orgUnits)}
           </option>
       ))}
   </select>
 
   {/* 设备类型筛选 */}
-  <select
-      value={selectedDeviceType}
-      onChange={(e) => handleDeviceTypeChange(e.target.value)}
-      className="w-32 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
-  >
-      <option value="all">所有设备类型</option>
-      <option value="bullet_camera">枪机</option>
-      <option value="dome_camera">球机</option>
-      <option value="body_camera">执法记录仪</option>
-      <option value="drone">无人机</option>
-  </select>
+  {deviceTypeOptions.length > 1 && (
+      <select
+          value={selectedDeviceType}
+          onChange={(e) => handleDeviceTypeChange(e.target.value)}
+          className="w-32 bg-slate-800/50 border border-slate-700 rounded-md px-2 py-1.5 text-sm"
+      >
+          {deviceTypeOptions.map((type) => (
+              <option key={type} value={type}>
+                  {getVideoDeviceTypeLabel(type)}
+              </option>
+          ))}
+      </select>
+  )}
 
   {/* 自定义设备选择按钮 */}
   <div className="relative">
@@ -2022,7 +2234,7 @@ useEffect(() => {
       className="device-selector-btn px-3 py-1.5 text-sm bg-cyan-500/20 text-cyan-300 rounded-md hover:bg-cyan-500/30 flex items-center gap-2"
   >
       <Camera size={14} />
-      选择设备 ({selectedDevices.length}/{devices.length})
+      选择设备 ({selectedCandidateIds.length}/{deviceSelectorCandidates.length})
   </button>
   </div>
 
@@ -2051,12 +2263,12 @@ useEffect(() => {
           <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-700">
               <span className="text-xs text-slate-400">选择要显示的摄像头</span>
               <div className="flex gap-2">
-                  <button onClick={() => setSelectedDevices(devices.map(d => d.id))} className="text-xs text-cyan-400">全选</button>
+                  <button onClick={() => setSelectedDevices(deviceSelectorCandidates.map(d => d.id))} className="text-xs text-cyan-400">全选</button>
                   <button onClick={() => setSelectedDevices([])} className="text-xs text-slate-400">清空</button>
               </div>
           </div>
           <div className="max-h-64 overflow-y-auto">
-              {devices.map(device => (
+              {deviceSelectorCandidates.map(device => (
                   <label key={device.id} className="flex items-center gap-2 p-2 hover:bg-slate-700 rounded cursor-pointer">
                       <input
                           type="checkbox"
@@ -2086,7 +2298,7 @@ useEffect(() => {
               <button
                 onClick={() => {
                   setSelectedCompany('all');
-                  setSelectedProject('all');
+                  setSelectedProject(videoCenterScope.isProjectScope && (videoCenterScope.projectId || videoCenterScope.projectName) ? (videoCenterScope.projectId || videoCenterScope.projectName) : 'all');
                   setSelectedGrid('all');
                   setSelectedTeam('all');
                   setSelectedDeviceType('all');
@@ -2331,6 +2543,21 @@ useEffect(() => {
                   <input className="w-full bg-slate-950/60 border border-blue-300/30 rounded p-2 text-sm focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/30 outline-none text-slate-100" value={newDeviceForm.stream_url || ""} onChange={(e) => setNewDeviceForm({ ...newDeviceForm, stream_url: e.target.value })} placeholder="示例：rtsp://账号:密码@192.168.1.100:554/..." />
                 </div>
                 <div className="col-span-2">
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">所属工队</label>
+                  <select
+                    className="w-full bg-slate-950/60 border border-blue-300/30 rounded p-2 text-sm focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/30 outline-none text-slate-100"
+                    value={newDeviceForm.team_id || ""}
+                    onChange={(e) => setNewDeviceForm(applyTeamSelection(newDeviceForm, e.target.value))}
+                  >
+                    <option value="">请选择工队</option>
+                    {getScopedTeamOptions(newDeviceForm).map((team) => (
+                      <option key={team.team_id} value={team.team_id}>
+                        {team.name}{team.project ? ` / ${team.project}` : ""}{team.grid_id ? ` / ${team.grid_id}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-span-2">
                   <label className="text-xs font-semibold text-slate-300 block mb-1">备注</label>
                   <input className="w-full bg-slate-950/60 border border-blue-300/30 rounded p-2 text-sm focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/30 outline-none text-slate-100" value={newDeviceForm.remark || ""} onChange={(e) => setNewDeviceForm({ ...newDeviceForm, remark: e.target.value })} placeholder="位置描述或其他信息" />
                 </div>
@@ -2375,6 +2602,21 @@ useEffect(() => {
                 <div className="col-span-2">
                   <label className="text-xs font-semibold text-gray-700 block mb-1">流地址（RTSP/HLS）</label>
                   <input className="w-full bg-slate-950/60 border border-blue-300/30 rounded p-2 text-sm focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/30 outline-none text-slate-100" value={editDeviceForm.stream_url || ""} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, stream_url: e.target.value })} placeholder="示例：rtsp://账号:密码@192.168.1.100:554/..." />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">所属工队</label>
+                  <select
+                    className="w-full bg-slate-950/60 border border-blue-300/30 rounded p-2 text-sm focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/30 outline-none text-slate-100"
+                    value={editDeviceForm.team_id || ""}
+                    onChange={(e) => setEditDeviceForm(applyTeamSelection(editDeviceForm, e.target.value))}
+                  >
+                    <option value="">请选择工队</option>
+                    {getScopedTeamOptions(editDeviceForm).map((team) => (
+                      <option key={team.team_id} value={team.team_id}>
+                        {team.name}{team.project ? ` / ${team.project}` : ""}{team.grid_id ? ` / ${team.grid_id}` : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs font-semibold text-slate-300 block mb-1">备注</label>
@@ -2509,3 +2751,4 @@ useEffect(() => {
         )}
       </div>
     );}
+

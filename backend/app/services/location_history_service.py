@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from app.services.Device.device_service import device_service
-from app.utils.logger import get_logger
+from app.services.Device.device_service import device_service
+from app.services.device_location_history_service import device_location_history_service
+from app.utils.logger import get_logger
 
 
 logger = get_logger("LocationHistoryService")
@@ -50,7 +51,12 @@ class LocationHistoryService:
             "count": N
         }
         """
-        trajectory = device_service.get_trajectory(device_id, 0)
+        trajectory = device_location_history_service.get_device_points(
+            device_id,
+            hours=hours,
+            start_time=start_time,
+            end_time=end_time,
+        )
 
         if start_time and end_time:
             start_dt = self._parse_timestamp(start_time)
@@ -94,7 +100,11 @@ class LocationHistoryService:
 
         返回结构对齐旧 SQL 版 `/location/devices/history` 语义.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        tracks = device_location_history_service.summarize_recent_tracks(days)
+        logger.info(f"Loaded {len(tracks)} device track summaries from MongoDB")
+        return {"tracks": tracks}
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         devices = device_service.get_devices()
         tracks = []
 

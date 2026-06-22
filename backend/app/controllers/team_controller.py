@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from app.schemas.team_schema import TeamCreate, TeamUpdate, TeamItem, TeamWithFences
 from app.services.Fence.team_service import team_service
 from app.core.security import get_current_user
+from app.core.data_scope import in_scope
+from app.core.permissions import require_permission
 from app.services.audit_log_service import write_audit_log
 
 router = APIRouter(prefix="/team", tags=["作业队"])
@@ -127,7 +129,20 @@ def get_team(team_id: str, current_user: dict = Depends(get_current_user)):
 
 @router.post("/add", response_model=TeamItem)
 def add_team(payload: TeamCreateRequest, current_user: dict = Depends(get_current_user)):
-    """创建作业队"""
+    require_permission(current_user, "team.create")
+    if not in_scope(
+        payload.model_dump(),
+        current_user,
+        project_fields=("project_id",),
+        grid_fields=("grid_id",),
+        team_fields=("team_id",),
+        branch_fields=(),
+        company_fields=("company",),
+        project_name_fields=("project",),
+        team_name_fields=("name",),
+    ):
+        raise HTTPException(status_code=403, detail="无权在该项目或网格下创建工队")
+    """创建作业队"""
     team_data = TeamCreate(
         name=payload.name,
         color=payload.color,
@@ -137,7 +152,10 @@ def add_team(payload: TeamCreateRequest, current_user: dict = Depends(get_curren
         grid_id=payload.grid_id,
         fence_ids=payload.fence_ids
     )
-    new_team = team_service.create_team(team_data)
+    try:
+        new_team = team_service.create_team(team_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     _write_team_log(
         current_user=current_user,
         action="添加工队",
@@ -160,7 +178,8 @@ def add_team(payload: TeamCreateRequest, current_user: dict = Depends(get_curren
 
 @router.put("/update/{team_id}", response_model=TeamItem)
 def update_team(team_id: str, payload: TeamUpdateRequest, current_user: dict = Depends(get_current_user)):
-    """更新作业队"""
+    require_permission(current_user, "team.edit")
+    """更新作业队"""
     team_data = TeamUpdate(
         name=payload.name,
         color=payload.color,
@@ -171,7 +190,10 @@ def update_team(team_id: str, payload: TeamUpdateRequest, current_user: dict = D
         fence_ids=payload.fence_ids
     )
     before = team_service.get_team_by_id(team_id, current_user=current_user)
-    updated_team = team_service.update_team(team_id, team_data, current_user=current_user)
+    try:
+        updated_team = team_service.update_team(team_id, team_data, current_user=current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not updated_team:
         raise HTTPException(status_code=404, detail="作业队不存在")
 
@@ -199,7 +221,8 @@ def update_team(team_id: str, payload: TeamUpdateRequest, current_user: dict = D
 
 @router.delete("/delete/{team_id}")
 def delete_team(team_id: str, current_user: dict = Depends(get_current_user)):
-    """删除作业队"""
+    require_permission(current_user, "team.delete")
+    """删除作业队"""
     before = team_service.get_team_by_id(team_id, current_user=current_user)
     success = team_service.delete_team(team_id, current_user=current_user)
     if not success:
@@ -218,7 +241,8 @@ def delete_team(team_id: str, current_user: dict = Depends(get_current_user)):
 
 @router.post("/{team_id}/fence/{fence_id}", response_model=TeamItem)
 def add_fence_to_team(team_id: str, fence_id: str, current_user: dict = Depends(get_current_user)):
-    """添加围栏到作业队"""
+    require_permission(current_user, "team.edit")
+    """添加围栏到作业队"""
     before = team_service.get_team_by_id(team_id, current_user=current_user)
     updated_team = team_service.add_fence_to_team(team_id, fence_id, current_user=current_user)
     if not updated_team:
@@ -249,7 +273,8 @@ def add_fence_to_team(team_id: str, fence_id: str, current_user: dict = Depends(
 
 @router.delete("/{team_id}/fence/{fence_id}", response_model=TeamItem)
 def remove_fence_from_team(team_id: str, fence_id: str, current_user: dict = Depends(get_current_user)):
-    """从作业队移除围栏"""
+    require_permission(current_user, "team.edit")
+    """从作业队移除围栏"""
     before = team_service.get_team_by_id(team_id, current_user=current_user)
     updated_team = team_service.remove_fence_from_team(team_id, fence_id, current_user=current_user)
     if not updated_team:

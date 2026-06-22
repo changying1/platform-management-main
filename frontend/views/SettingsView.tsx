@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getAuthHeaders } from '../src/api/config';
 import SmartMonitoringConfig from '../src/components/SmartMonitoringConfig';
 import { getAllVideos, type Video as MonitoringVideo } from '../src/api/videoApi';
@@ -40,6 +40,14 @@ import {
 // 设置分类
 type SettingsTab = 'alarm' | 'video' | 'fence' | 'smartMonitoring' | 'log' | 'account' | 'notification' | 'backup' | 'ai';
 
+const DEFAULT_VIDEO_STORAGE_FOLDERS = {
+  recordings: 'recordings',
+  alarm_videos: 'alarm_videos',
+  playback_videos: 'playback_videos',
+  temp_cache: 'temp_cache',
+  alarm_screenshots: 'alarm_screenshots',
+};
+
 // 设置数据结构
 interface SystemSettings {
   // 通用设置
@@ -59,6 +67,7 @@ interface SystemSettings {
   alarmRepeatInterval: number;
   alarmAutoResolve: boolean;
   alarmRetentionDays: number;
+  dashboardAlarmStatDays: number;
   safetyProductionDays: number;
   safetyProductionUpdatedDate?: string;
   alarmSevereFlash: boolean;
@@ -90,6 +99,13 @@ interface SystemSettings {
   videoSegmentMinutes: number;
   videoStorageType: 'local' | 'cloud' | 'hybrid';
   videoStoragePath: string;
+  videoStorageFolders: {
+    recordings: string;
+    alarm_videos: string;
+    playback_videos: string;
+    temp_cache: string;
+    alarm_screenshots: string;
+  };
   alarmVideoRetentionDays: number;
   alarmVideoSurroundMinutes: number;
   alarmScreenshotRetentionDays: number;
@@ -201,6 +217,8 @@ const adminPermissionOptions = [
   { value: 'dashboard', label: '仪表板' },
   { value: 'monitor', label: '视频监控' },
   { value: 'fence', label: '电子围栏' },
+  { value: 'grid', label: '网格管理' },
+  { value: 'team', label: '工队管理' },
   { value: 'device', label: '设备管理' },
   { value: 'personnel', label: '人员管理' },
   { value: 'alarm', label: '告警管理' },
@@ -270,6 +288,28 @@ function flattenPersons(nodes: OrgNode[]): PersonNode[] {
   return persons;
 }
 
+const getBackupType = (backup: any) => {
+  const filename = String(backup?.filename || '').toLowerCase();
+  const type = String(backup?.type || '').toLowerCase();
+  if (type === 'full' || filename.startsWith('full_backup_')) return 'full';
+  if (type === 'database' || type === 'mysql' || type === 'mongodb' || filename.startsWith('mongo_backup_') || filename.startsWith('mysql_backup_')) return 'database';
+  return 'config';
+};
+
+const getBackupTypeLabel = (backup: any) => {
+  const type = getBackupType(backup);
+  if (type === 'full') return '完整备份';
+  if (type === 'database') return '数据库备份';
+  return '系统设置备份';
+};
+
+const getBackupRestoreScope = (backup: any) => {
+  const type = getBackupType(backup);
+  if (type === 'full') return '覆盖数据库业务数据和系统设置';
+  if (type === 'database') return '覆盖数据库业务数据';
+  return '覆盖系统设置';
+};
+
 export default function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const [showCloudModal, setShowCloudModal] = useState(false);
@@ -283,6 +323,7 @@ export default function SettingsView() {
     path: '',
     name: ''
   });
+  const [editingBackupTargetIndex, setEditingBackupTargetIndex] = useState<number | null>(null);
   const [cloudConfig, setCloudConfig] = useState({
     type: 'oss',
     name: '',
@@ -294,12 +335,21 @@ export default function SettingsView() {
   });
   const [storagePaths, setStoragePaths] = useState<any[]>([]);
   const [storageStatus, setStorageStatus] = useState<any>(null);
+  const [backupTargets, setBackupTargets] = useState<any[]>([]);
   const [backupFiles, setBackupFiles] = useState<any[]>([
     { filename: 'full_backup_20250421_143022.tar.gz', date: '2025-04-21 14:30', size: '15.2 MB', type: '完整备份' },
     { filename: 'full_backup_20250420_220000.tar.gz', date: '2025-04-20 22:00', size: '14.8 MB', type: '定时备份' },
     { filename: 'full_backup_20250419_181533.tar.gz', date: '2025-04-19 18:15', size: '13.5 MB', type: '手动备份' },
   ]);
-  
+  const [backupAction, setBackupAction] = useState<{
+    key: 'database' | 'config' | 'full' | '';
+    status: 'idle' | 'running' | 'success' | 'error';
+    message: string;
+  }>({ key: '', status: 'idle', message: '' });
+  const [restoreTarget, setRestoreTarget] = useState<any | null>(null);
+  const [restoreRunning, setRestoreRunning] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
+
   useEffect(() => {
     fetch('/api/backup/storage/paths')
       .then(res => res.json())
@@ -307,6 +357,8 @@ export default function SettingsView() {
         console.log('加载存储路径:', paths);
         setStoragePaths(paths);
       });
+
+    refreshBackupTargets();
     
     fetch('/api/backup/list')
       .then(res => res.json())
@@ -340,6 +392,82 @@ export default function SettingsView() {
         console.log('刷新存储路径:', paths);
         setStoragePaths(paths);
       });
+  };
+
+  const refreshBackupTargets = () => {
+    fetch('/api/backup/targets')
+      .then(res => res.json())
+      .then(targets => {
+        console.log('刷新数据备份路径:', targets);
+        setBackupTargets(targets || []);
+      })
+      .catch(err => console.error('刷新数据备份路径失败:', err));
+  };
+
+  const refreshBackupFiles = () => {
+    fetch('/api/backup/list')
+      .then(res => res.json())
+      .then(files => {
+        if (files && files.length > 0) {
+          setBackupFiles(files);
+        }
+      })
+      .catch(err => console.error('刷新备份列表失败:', err));
+  };
+
+  const handleCreateBackup = async (
+    key: 'database' | 'config' | 'full',
+    endpoint: string,
+    label: string,
+  ) => {
+    if (backupAction.status === 'running') return;
+
+    setBackupAction({ key, status: 'running', message: `${label}中，请稍候...` });
+
+    try {
+      const response = await fetch(endpoint, { method: 'POST', headers: getAuthHeaders() });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.success === false) {
+        throw new Error(result?.message || result?.detail || `${label}失败`);
+      }
+
+      const filename = result?.filename ? `：${result.filename}` : '';
+      setBackupAction({ key, status: 'success', message: `${label}成功${filename}` });
+      refreshBackupFiles();
+    } catch (error) {
+      setBackupAction({
+        key,
+        status: 'error',
+        message: error instanceof Error ? error.message : `${label}失败`,
+      });
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    if (!restoreTarget || restoreRunning) return;
+    setRestoreRunning(true);
+    setRestoreResult(null);
+    try {
+      const response = await fetch('/api/backup/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ filename: restoreTarget.filename }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.success === false) {
+        throw new Error(result?.message || result?.detail || '恢复失败');
+      }
+      setRestoreResult({ status: 'success', message: result?.message || '备份恢复完成' });
+      setRestoreTarget(null);
+      refreshBackupFiles();
+    } catch (error) {
+      setRestoreResult({
+        status: 'error',
+        message: error instanceof Error ? error.message : '恢复失败',
+      });
+    } finally {
+      setRestoreRunning(false);
+    }
   };
 
   const handleDeleteStoragePath = (index: number) => {
@@ -394,6 +522,7 @@ export default function SettingsView() {
     alarmRepeatInterval: 5,
     alarmAutoResolve: false,
     alarmRetentionDays: 30,
+    dashboardAlarmStatDays: 7,
     safetyProductionDays: 0,
     safetyProductionUpdatedDate: '',
     alarmSevereFlash: true,
@@ -404,11 +533,12 @@ export default function SettingsView() {
     alarmOfflineEnabled: true,
     alarmEscalationEnabled: true,
     alarmEscalationMinutes: 5,
-    videoRetentionDays: 15,
+    videoRetentionDays: 360,
     videoQuality: 'high',
     videoSegmentMinutes: 30,
     videoStorageType: 'local',
     videoStoragePath: './backend/static',
+    videoStorageFolders: DEFAULT_VIDEO_STORAGE_FOLDERS,
     alarmVideoRetentionDays: 90,
     alarmVideoSurroundMinutes: 1,
     alarmScreenshotRetentionDays: 90,
@@ -463,11 +593,11 @@ export default function SettingsView() {
         maxConcurrentSessions: 3,
         
         // 各级管理员默认权限
-        hqAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm', 'system'],
-        branchAdminPermissions: ['dashboard', 'monitor', 'fence', 'device', 'personnel', 'alarm'],
-        projectAdminPermissions: ['dashboard', 'monitor', 'fence', 'device.view', 'personnel.view', 'alarm'],
-        gridAdminPermissions: ['dashboard', 'monitor', 'fence', 'device.view', 'personnel.view', 'alarm.view'],
-        teamAdminPermissions: ['dashboard', 'monitor.view', 'personnel.view', 'alarm.view'],
+        hqAdminPermissions: ['dashboard', 'monitor', 'fence', 'grid', 'team', 'device', 'personnel', 'alarm', 'system'],
+        branchAdminPermissions: ['dashboard', 'monitor', 'fence', 'grid', 'team', 'device', 'personnel', 'alarm'],
+        projectAdminPermissions: ['dashboard', 'monitor', 'fence', 'grid.view', 'team.view', 'device.view', 'personnel.view', 'alarm'],
+        gridAdminPermissions: ['dashboard', 'monitor', 'fence', 'grid.view', 'team.view', 'device.view', 'personnel.view', 'alarm.view'],
+        teamAdminPermissions: ['dashboard', 'monitor.view', 'team.view', 'personnel.view', 'alarm.view'],
 
     // AI 助手设置
   aiServiceUrl: '/api/ai',
@@ -540,6 +670,10 @@ export default function SettingsView() {
           setSettings(prev => ({ 
             ...prev, 
             ...config,
+            videoStorageFolders: {
+              ...DEFAULT_VIDEO_STORAGE_FOLDERS,
+              ...(config.videoStorageFolders || {}),
+            },
             aiAlarmLevelConfigs: config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs,
           }));
         }
@@ -627,6 +761,18 @@ export default function SettingsView() {
     }
   };
 
+  const updateVideoStorageFolder = (key: keyof SystemSettings['videoStorageFolders'], value: string) => {
+    const cleaned = value.replace(/[\\/:*?"<>|]/g, '').trim();
+    setSettings({
+      ...settings,
+      videoStorageFolders: {
+        ...DEFAULT_VIDEO_STORAGE_FOLDERS,
+        ...(settings.videoStorageFolders || {}),
+        [key]: cleaned,
+      },
+    });
+  };
+
   const handleSave = async () => {
     if (saving) return;
     setSaving(true);
@@ -672,6 +818,7 @@ export default function SettingsView() {
         alarmRepeatInterval: 5,
         alarmAutoResolve: false,
         alarmRetentionDays: 30,
+        dashboardAlarmStatDays: 7,
         safetyProductionDays: 0,
         safetyProductionUpdatedDate: new Date().toISOString().slice(0, 10),
         alarmSevereFlash: false,
@@ -693,11 +840,12 @@ export default function SettingsView() {
           { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
           { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
         ],
-        videoRetentionDays: 15,
+        videoRetentionDays: 360,
         videoQuality: 'high',
         videoSegmentMinutes: 30,
         videoStorageType: 'local',
         videoStoragePath: './backend/static',
+        videoStorageFolders: DEFAULT_VIDEO_STORAGE_FOLDERS,
         alarmVideoRetentionDays: 90,
         alarmVideoSurroundMinutes: 1,
         alarmScreenshotRetentionDays: 90,
@@ -1238,7 +1386,7 @@ export default function SettingsView() {
                       value={settings.videoRetentionDays}
                       onChange={(e) => setSettings({ ...settings, videoRetentionDays: Number(e.target.value) })}
                       min={1}
-                      max={90}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                     <p className="text-xs text-slate-500 mt-0.5">超过此天数的常规录像将被自动清理</p>
@@ -1287,7 +1435,7 @@ export default function SettingsView() {
                       value={settings.alarmVideoRetentionDays || 90}
                       onChange={(e) => setSettings({ ...settings, alarmVideoRetentionDays: Number(e.target.value) })}
                       min={7}
-                      max={365}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                   </div>
@@ -1311,7 +1459,7 @@ export default function SettingsView() {
                       value={settings.alarmScreenshotRetentionDays || 90}
                       onChange={(e) => setSettings({ ...settings, alarmScreenshotRetentionDays: Number(e.target.value) })}
                       min={7}
-                      max={365}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                   </div>
@@ -1334,7 +1482,16 @@ export default function SettingsView() {
                 
                 {/* 子文件夹说明 */}
                 <div className="bg-slate-900/50 rounded-lg p-3 space-y-2">
-                  <div className="text-xs text-slate-300 font-medium mb-1">文件存储结构：</div>
+                  <div className="flex items-center justify-between gap-3 mb-1">
+                    <div className="text-xs text-slate-300 font-medium">文件存储结构：</div>
+                    <button
+                      type="button"
+                      onClick={() => setSettings({ ...settings, videoStorageFolders: DEFAULT_VIDEO_STORAGE_FOLDERS })}
+                      className="text-xs text-cyan-300 hover:text-cyan-200 transition-colors"
+                    >
+                      恢复默认目录名
+                    </button>
+                  </div>
                   <div className="space-y-1.5 text-xs font-mono">
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">├──</span>
@@ -1345,44 +1502,77 @@ export default function SettingsView() {
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">│   ├──</span>
-                      <div>
-                        <span className="text-yellow-300">recordings/</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={(settings.videoStorageFolders || DEFAULT_VIDEO_STORAGE_FOLDERS).recordings}
+                          onChange={(e) => updateVideoStorageFolder('recordings', e.target.value)}
+                          className="w-56 max-w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-yellow-300 outline-none focus:border-cyan-400/60"
+                        />
+                        <span className="text-yellow-300 ml-1">/</span>
                         <span className="text-slate-400 ml-1">- 常规录像分段</span>
                         <div className="text-slate-500 ml-4">每30秒一段，按设备ID分文件夹存储</div>
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">│   ├──</span>
-                      <div>
-                        <span className="text-red-300">alarm_videos/</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={(settings.videoStorageFolders || DEFAULT_VIDEO_STORAGE_FOLDERS).alarm_videos}
+                          onChange={(e) => updateVideoStorageFolder('alarm_videos', e.target.value)}
+                          className="w-56 max-w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-red-300 outline-none focus:border-cyan-400/60"
+                        />
+                        <span className="text-red-300 ml-1">/</span>
                         <span className="text-slate-400 ml-1">- 告警视频</span>
                         <div className="text-slate-500 ml-4">AI检测到异常时自动保存的片段</div>
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">│   ├──</span>
-                      <div>
-                        <span className="text-purple-300">playback_videos/</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={(settings.videoStorageFolders || DEFAULT_VIDEO_STORAGE_FOLDERS).playback_videos}
+                          onChange={(e) => updateVideoStorageFolder('playback_videos', e.target.value)}
+                          className="w-56 max-w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-purple-300 outline-none focus:border-cyan-400/60"
+                        />
+                        <span className="text-purple-300 ml-1">/</span>
                         <span className="text-slate-400 ml-1">- 常态化回放</span>
                         <div className="text-slate-500 ml-4">按3小时窗口合并的归档视频</div>
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">│   ├──</span>
-                      <div>
-                        <span className="text-blue-300">temp_cache/</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={(settings.videoStorageFolders || DEFAULT_VIDEO_STORAGE_FOLDERS).temp_cache}
+                          onChange={(e) => updateVideoStorageFolder('temp_cache', e.target.value)}
+                          className="w-56 max-w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-blue-300 outline-none focus:border-cyan-400/60"
+                        />
+                        <span className="text-blue-300 ml-1">/</span>
                         <span className="text-slate-400 ml-1">- 临时缓存</span>
                         <div className="text-slate-500 ml-4">手动触发的临时录像，自动清理旧文件</div>
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="text-cyan-400 shrink-0">│   └──</span>
-                      <div>
-                        <span className="text-green-300">alarm_screenshots/</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={(settings.videoStorageFolders || DEFAULT_VIDEO_STORAGE_FOLDERS).alarm_screenshots}
+                          onChange={(e) => updateVideoStorageFolder('alarm_screenshots', e.target.value)}
+                          className="w-56 max-w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-green-300 outline-none focus:border-cyan-400/60"
+                        />
+                        <span className="text-green-300 ml-1">/</span>
                         <span className="text-slate-400 ml-1">- 告警截图</span>
                         <div className="text-slate-500 ml-4">告警发生时自动截取的图片</div>
                       </div>
                     </div>
+                  </div>
+                  <div className="text-xs text-slate-500 pt-1">
+                    仅支持单层文件夹名，不能包含 / \ : * ? " &lt; &gt; |；修改后点击保存会重启录像并使用新目录。
                   </div>
                 </div>
               </div>
@@ -1619,6 +1809,17 @@ export default function SettingsView() {
                         onChange={(e) => setSettings({ ...settings, alarmRetentionDays: Number(e.target.value) })}
                         min={7}
                         max={180}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">首页告警统计天数</label>
+                      <input
+                        type="number"
+                        value={settings.dashboardAlarmStatDays}
+                        onChange={(e) => setSettings({ ...settings, dashboardAlarmStatDays: Math.min(365, Math.max(1, Number(e.target.value) || 7)) })}
+                        min={1}
+                        max={365}
                         className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                       />
                     </div>
@@ -2573,46 +2774,181 @@ export default function SettingsView() {
           {/* 数据备份 */}
           {activeTab === 'backup' && (
             <div className="space-y-6">
-              {/* 自动备份设置 */}
+              <div className="bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 rounded-lg p-4 border border-cyan-500/30">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">数据库与系统设置备份路径</h3>
+                    <p className="text-xs text-slate-400 mt-1">数据库备份、系统设置备份、完整快照会保存到这里；下方显示当前实际绝对路径。</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingBackupTargetIndex(null);
+                      setLocalConfig({ path: '', name: '' });
+                      setShowLocalModal(true);
+                    }}
+                    className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                  >
+                    添加数据备份路径
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {backupTargets.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-sm">暂无数据备份路径，请添加保存目录</div>
+                  ) : (
+                    backupTargets.map((target: any, idx: number) => (
+                      <div key={idx} className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-lg p-3 bg-slate-900/50 border border-slate-700/50">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-white">{target.name || (idx === 0 ? '默认本地备份' : '本地备份路径')}</span>
+                            {idx === 0 && <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">默认</span>}
+                            <span className={`text-xs px-2 py-0.5 rounded ${target.enabled !== false ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-600/30 text-slate-400'}`}>{target.enabled !== false ? '已启用' : '已停用'}</span>
+                          </div>
+                          {target.absolute_path ? (
+                            <div className="text-xs text-slate-300 font-mono mt-1 break-all">保存位置：{target.absolute_path}</div>
+                          ) : (
+                            <div className="text-xs text-slate-300 font-mono mt-1 break-all">保存路径：{target.path}</div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => {
+                              fetch('/api/backup/storage/open', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path: target.absolute_path || target.path })
+                              });
+                            }}
+                            className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
+                          >
+                            打开目录
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingBackupTargetIndex(idx);
+                              setLocalConfig({
+                                name: target.name || (idx === 0 ? '默认本地备份' : '本地备份路径'),
+                                path: target.path || ''
+                              });
+                              setShowLocalModal(true);
+                            }}
+                            className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 cursor-pointer transition-all"
+                          >
+                            修改
+                          </button>
+                          {idx > 0 && (
+                            <button
+                              onClick={() => {
+                                if (confirm('确定删除此数据备份路径吗？')) {
+                                  fetch(`/api/backup/targets/${idx}`, { method: 'DELETE' })
+                                    .then(() => refreshBackupTargets());
+                                }
+                              }}
+                              className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 cursor-pointer transition-all"
+                            >
+                              删除
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-cyan-500/15 flex items-center justify-center shrink-0">
+                        <Database size={18} className="text-cyan-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">数据库备份设置</h3>
+                        <p className="text-xs text-slate-400 mt-1">备份人员、设备、告警、规则等业务数据，文件保存到备份目录。</p>
+                        <p className="text-xs text-cyan-300/80 mt-1">生成文件：mongo_backup_时间.json.gz</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleCreateBackup('database', '/api/backup/create/mysql', '数据库备份')}
+                      disabled={backupAction.status === 'running'}
+                      className="text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-cyan-500/20 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      {backupAction.status === 'running' && backupAction.key === 'database' ? '备份中...' : '立即备份数据库'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/15 flex items-center justify-center shrink-0">
+                        <FileText size={18} className="text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">系统设置备份</h3>
+                        <p className="text-xs text-slate-400 mt-1">只备份系统参数、权限、通知、存储路径等配置。</p>
+                        <p className="text-xs text-emerald-300/80 mt-1">生成文件：config_backup_时间.tar.gz</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button
+                        onClick={() => handleCreateBackup('config', '/api/backup/create/config', '系统设置备份')}
+                        disabled={backupAction.status === 'running'}
+                        className="text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-emerald-500/20 transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        {backupAction.status === 'running' && backupAction.key === 'config' ? '备份中...' : '仅备份系统设置'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
+                        <Database size={18} className="text-amber-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">完整备份</h3>
+                        <p className="text-xs text-slate-400 mt-1">同时备份数据库和系统设置，生成一个完整备份包。</p>
+                        <p className="text-xs text-amber-300/80 mt-1">生成文件：full_backup_时间.tar.gz</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleCreateBackup('full', '/api/backup/create/full', '完整备份')}
+                      disabled={backupAction.status === 'running'}
+                      className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:from-slate-600 disabled:to-slate-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-amber-500/30 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      {backupAction.status === 'running' && backupAction.key === 'full' ? '备份中...' : '备份数据库+系统设置'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {backupAction.status !== 'idle' && backupAction.message && (
+                <div className={`rounded-lg border px-4 py-3 text-sm ${
+                  backupAction.status === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : backupAction.status === 'error'
+                      ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                      : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
+                }`}>
+                  {backupAction.message}
+                </div>
+              )}
+
+              {/* 自动备份计划 */}
               <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-semibold text-white">自动备份设置</h3>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => {
-                        fetch('/api/backup/create/mysql', { method: 'POST' })
-                          .then(r => r.json())
-                          .then(r => console.log('MySQL备份结果:', r));
-                      }}
-                      className="text-sm bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-cyan-500/20 transition-all cursor-pointer"
-                    >
-                      备份数据库
-                    </button>
-                    <button
-                      onClick={() => {
-                        fetch('/api/backup/create/config', { method: 'POST' })
-                          .then(r => r.json())
-                          .then(r => console.log('配置备份结果:', r));
-                      }}
-                      className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-medium shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
-                    >
-                      备份配置
-                    </button>
-                    <button
-                      onClick={() => {
-                        fetch('/api/backup/create/full', { method: 'POST' })
-                          .then(r => r.json())
-                          .then(r => console.log('完整备份结果:', r));
-                      }}
-                      className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-amber-500/30 transition-all cursor-pointer"
-                    >
-                      完整备份
-                    </button>
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">自动备份计划</h3>
+                    <p className="text-xs text-slate-400 mt-1">后端服务运行时，按设定时间自动生成数据库备份，并按数量保留最新文件。</p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   <div className="flex items-center py-2">
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-4">
                       <div className="flex items-center gap-3">
                         <div>
                           <div className="text-sm text-white">自动备份</div>
@@ -2628,7 +2964,7 @@ export default function SettingsView() {
                         </label>
                       </div>
                       {settings.autoBackup && (
-                        <div className="flex items-center gap-3 ml-2 pl-4 border-l border-slate-700">
+                        <div className="flex flex-wrap items-center gap-3 ml-2 pl-4 border-l border-slate-700">
                           <div className="flex items-center gap-2">
                             <label className="text-sm text-slate-400">频率</label>
                             <select
@@ -2651,7 +2987,7 @@ export default function SettingsView() {
                             />
                           </div>
                           <div className="flex items-center gap-2">
-                            <label className="text-sm text-slate-400">保留</label>
+                            <label className="text-sm text-slate-400 whitespace-nowrap">最多保留</label>
                             <input
                               type="number"
                               value={settings.backupRetention}
@@ -2660,7 +2996,7 @@ export default function SettingsView() {
                               max={30}
                               className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-16"
                             />
-                            <span className="text-sm text-slate-400">份</span>
+                            <span className="text-sm text-slate-400 whitespace-nowrap">份最新备份</span>
                           </div>
                         </div>
                       )}
@@ -2669,12 +3005,15 @@ export default function SettingsView() {
                 </div>
               </div>
 
-              {/* 存储空间管理 */}
+              {/* 录像、截图存储清理设置 */}
               <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50 mt-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <HardDrive size={16} className="text-cyan-400" />
-                    <h3 className="text-sm font-semibold text-white">存储空间管理</h3>
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">录像、截图存储清理设置</h3>
+                      <p className="text-xs text-slate-400 mt-1">管理录像、告警视频、截图文件的容量预警和自动清理，不影响数据库备份文件。</p>
+                    </div>
                   </div>
                   {storageStatus && (
                     <button
@@ -2760,7 +3099,7 @@ export default function SettingsView() {
                   </div>
                 )}
                 
-                <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">最大存储容量(GB)</label>
                     <input
@@ -2772,7 +3111,7 @@ export default function SettingsView() {
                       step={50}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
-                    <p className="text-xs text-slate-500 mt-0.5">达到此容量将触发清理</p>
+                    <p className="text-xs text-slate-500 mt-0.5">录像和截图超过此容量后触发空间清理</p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">警告阈值(%)</label>
@@ -2784,7 +3123,7 @@ export default function SettingsView() {
                       max={90}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
-                    <p className="text-xs text-slate-500 mt-0.5">超过此比例发出警告</p>
+                    <p className="text-xs text-slate-500 mt-0.5">磁盘使用率超过此比例显示警告</p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">紧急阈值(%)</label>
@@ -2796,7 +3135,7 @@ export default function SettingsView() {
                       max={99}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
-                    <p className="text-xs text-slate-500 mt-0.5">超过此比例强制清理</p>
+                    <p className="text-xs text-slate-500 mt-0.5">磁盘使用率超过此比例触发紧急清理</p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">清理策略</label>
@@ -2809,14 +3148,20 @@ export default function SettingsView() {
                       <option value="space">仅按空间</option>
                       <option value="both">时间和空间</option>
                     </select>
-                    <p className="text-xs text-slate-500 mt-0.5">选择清理方式</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {(settings.storageCleanupStrategy || 'both') === 'age'
+                        ? '只删除超过保留天数的旧录像和旧截图'
+                        : (settings.storageCleanupStrategy || 'both') === 'space'
+                          ? '只在容量超限或磁盘紧急时删除旧文件'
+                          : '同时按保留天数和空间上限清理'}
+                    </p>
                   </div>
                 </div>
                 
                 <div className="flex items-center justify-between py-2 border-t border-slate-700/50">
                   <div>
-                    <div className="text-sm text-white">空间不足自动清理</div>
-                    <div className="text-xs text-slate-400">超过容量上限时自动删除旧文件</div>
+                    <div className="text-sm text-white">录像、截图自动清理</div>
+                    <div className="text-xs text-slate-400">开启后按所选清理策略自动删除旧录像和旧截图</div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -2830,115 +3175,14 @@ export default function SettingsView() {
                 </div>
               </div>
 
-              {/* 备份路径设置（数据生成时同步多写） */}
-              <div className="bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 rounded-lg p-4 border border-cyan-500/30 mt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">备份路径设置</h3>
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => {
-                        fetch('/api/backup/storage/open', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ path: './static' })
-                        })
-                          .then(r => r.json())
-                          .then(r => console.log('打开文件夹:', r));
-                      }}
-                      className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
-                    >
-                      打开录像存储
-                    </button>
-                    <button
-                      onClick={() => {
-                        console.log('点击了本地磁盘按钮');
-                        setShowLocalModal(true);
-                      }}
-                      className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-                    >
-                      添加本地路径
-                    </button>
-                    <button
-                      onClick={() => setShowCloudModal(true)}
-                      className="text-xs bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white px-3 py-1.5 rounded-lg transition-all"
-                    >
-                      添加云存储
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  {storagePaths.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">
-                      暂无备份路径，请点击上方按钮添加
-                    </div>
-                  ) : (
-                    storagePaths.map((sp: any, idx: number) => {
-                      const color = (sp.type === 'mirror' || sp.type === 'primary') ? 'cyan' : 'purple';
-                      const isPrimary = idx === 0;
-                      return (
-                        <div key={idx} className={`flex items-center justify-between rounded-lg p-3 transition-all ${isPrimary ? 'bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border-2 border-amber-500/50 shadow-lg shadow-amber-500/20' : 'bg-slate-800/50'}`}>
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isPrimary ? 'bg-amber-500/30 animate-pulse' : color === 'cyan' ? 'bg-cyan-500/20' : 'bg-purple-500/20'}`}>
-                            <span className={`text-lg font-bold ${isPrimary ? 'text-amber-400' : color === 'cyan' ? 'text-cyan-400' : 'text-purple-400'}`}>{isPrimary ? '主' : color === 'cyan' ? '本' : '云'}</span>
-                          </div>
-                          <div>
-                            <div className={`font-medium text-sm ${isPrimary ? 'text-amber-300' : 'text-white'}`}>{sp.name}</div>
-                            <div className={`text-xs ${isPrimary ? 'text-amber-400/70' : 'text-slate-400'}`}>{sp.path}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {(sp.type === 'mirror' || sp.type === 'primary') && (
-                            <button 
-                              onClick={() => {
-                                fetch('/api/backup/storage/open', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ path: sp.path })
-                                })
-                                  .then(r => r.json())
-                                  .then(r => console.log('打开文件夹:', r));
-                              }}
-                              className="text-xs px-2.5 py-1 rounded bg-slate-600 hover:bg-slate-500 text-slate-200 cursor-pointer transition-all"
-                            >
-                              打开文件夹
-                            </button>
-                          )}
-                          {isPrimary ? (
-                            <span className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold shadow-lg">当前主存储</span>
-                          ) : (
-                              <>
-                                <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded">已启用</span>
-                                <button 
-                                  onClick={() => handleSetPrimary(idx)}
-                                  className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 cursor-pointer transition-all"
-                                >
-                                  设为主存储
-                                </button>
-                              </>
-                            )}
-                            {!isPrimary && (
-                              <button 
-                                onClick={() => handleDeleteStoragePath(idx)}
-                                className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 cursor-pointer transition-all ml-2"
-                              >
-                                删除
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
 
               {/* 可恢复备份列表 */}
               <div className="bg-slate-800/30 rounded-lg p-4 border border-slate-700/50">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-semibold text-white">系统快照恢复</h3>
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">备份恢复</h3>
+                    <p className="text-xs text-slate-400 mt-1">查看已生成的数据库备份、系统设置备份或完整快照，并选择需要恢复的节点。</p>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={() => {
@@ -2967,7 +3211,7 @@ export default function SettingsView() {
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {backupFiles.length === 0 ? (
                     <div className="text-center py-8 text-slate-500 text-sm">
-                      暂无快照，请先去「数据备份」页面点击右上角「完整备份」生成
+                      暂无可恢复备份，请先在上方生成数据库备份、系统设置备份或完整备份
                     </div>
                   ) : (
                     backupFiles.map((bf: any, idx: number) => (
@@ -2978,20 +3222,13 @@ export default function SettingsView() {
                           </div>
                           <div>
                             <div className="text-sm text-white font-medium">{bf.filename}</div>
-                            <div className="text-xs text-slate-400">{bf.date} · {bf.size} · {bf.type}</div>
+                            <div className="text-xs text-slate-400">{bf.date} · {bf.size} · {getBackupTypeLabel(bf)} · {getBackupRestoreScope(bf)}</div>
                           </div>
                         </div>
                         <button 
                           onClick={() => {
-                            if (confirm('确认要恢复此备份吗？这将覆盖所有当前配置！')) {
-                              fetch('/api/backup/restore', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({filename: bf.filename})
-                              }).then(r => r.json()).then(r => {
-                              console.log('恢复结果:', r);
-                            });
-                            }
+                            setRestoreResult(null);
+                            setRestoreTarget(bf);
                           }}
                           className="text-sm bg-red-600 hover:bg-red-500 text-white px-5 py-1.5 rounded-lg font-bold shadow-lg shadow-red-500/30 transition-all cursor-pointer"
                       >
@@ -3001,9 +3238,22 @@ export default function SettingsView() {
                     ))
                   )}
                 </div>
-                
-                <div className="mt-3 text-xs text-amber-400/70">
-                  注意：恢复将覆盖：所有摄像头配置、告警规则、用户设置、系统日志、播放历史
+
+                {restoreResult && (
+                  <div className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
+                    restoreResult.status === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-red-500/10 border-red-500/30 text-red-300'
+                  }`}>
+                    {restoreResult.message}
+                  </div>
+                )}
+                 
+                <div className="mt-3 space-y-1 text-xs text-amber-400/80">
+                  <div>恢复范围说明：</div>
+                  <div>数据库备份：覆盖人员、设备、告警、规则等数据库业务数据。</div>
+                  <div>系统设置备份：覆盖系统参数、权限、通知、备份路径等配置。</div>
+                  <div>完整备份：同时覆盖数据库业务数据和系统设置。</div>
                 </div>
               </div>
 
@@ -3013,6 +3263,44 @@ export default function SettingsView() {
           {/* 高级设置 */}
         </div>
       </div>
+
+      {/* 修改密码弹窗 */}
+      {restoreTarget && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !restoreRunning && setRestoreTarget(null)}>
+          <div className="w-full max-w-md mx-4 rounded-2xl border border-red-400/30 bg-slate-900 shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-11 h-11 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0">
+                <AlertTriangle size={24} className="text-red-300" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold text-white">确认恢复备份</h3>
+                <p className="text-sm text-slate-400 mt-1 break-all">{restoreTarget.filename}</p>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-red-500/10 border border-red-500/25 px-4 py-3 text-sm text-red-100">
+              将{getBackupRestoreScope(restoreTarget)}。恢复后当前对应数据会被覆盖，请确认已经选择正确的备份文件。
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setRestoreTarget(null)}
+                disabled={restoreRunning}
+                className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 rounded-lg text-sm font-medium transition-all text-white"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleRestoreBackup}
+                disabled={restoreRunning}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:bg-slate-600 rounded-lg text-sm font-bold transition-all text-white"
+              >
+                {restoreRunning ? '恢复中...' : '确认恢复'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 修改密码弹窗 */}
       {showPasswordModal && (
@@ -3345,9 +3633,12 @@ export default function SettingsView() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]">
           <div className="bg-slate-900 rounded-2xl border border-slate-700 p-6 w-full max-w-md mx-4 shadow-2xl">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-white">添加本地备份路径</h3>
+              <h3 className="text-lg font-bold text-white">{editingBackupTargetIndex === null ? '添加数据备份路径' : '修改数据备份路径'}</h3>
               <button 
-                onClick={() => setShowLocalModal(false)}
+                onClick={() => {
+                  setShowLocalModal(false);
+                  setEditingBackupTargetIndex(null);
+                }}
                 className="text-slate-400 hover:text-white text-xl"
               >
                 ×
@@ -3359,7 +3650,7 @@ export default function SettingsView() {
                 <label className="block text-sm text-slate-300 mb-2">显示名称</label>
                 <input 
                   type="text"
-                  placeholder="例如：D盘备份存储"
+                  placeholder="例如：D盘数据备份"
                   value={localConfig.name}
                   onChange={(e) => setLocalConfig({...localConfig, name: e.target.value})}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500"
@@ -3367,7 +3658,7 @@ export default function SettingsView() {
               </div>
 
               <div>
-                <label className="block text-sm text-slate-300 mb-2">存储路径</label>
+                  <label className="block text-sm text-slate-300 mb-2">备份保存路径</label>
                 <div className="flex gap-2">
                   <input 
                     type="text"
@@ -3410,26 +3701,30 @@ export default function SettingsView() {
 
             <div className="flex gap-3 mt-6">
               <button 
-                onClick={() => setShowLocalModal(false)}
+                onClick={() => {
+                  setShowLocalModal(false);
+                  setEditingBackupTargetIndex(null);
+                }}
                 className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all text-white"
               >
                 取消
               </button>
               <button 
                 onClick={() => {
-                  console.log('点击添加备份路径，参数：', localConfig);
+                  console.log('点击添加数据备份路径，参数：', localConfig);
                   
                   if (!localConfig.name || !localConfig.path) {
                     console.log('请填写完整配置');
                     return;
                   }
                   
-                  fetch('/api/backup/storage/paths', {
-                    method: 'POST',
+                  const isEditing = editingBackupTargetIndex !== null;
+                  fetch(isEditing ? `/api/backup/targets/${editingBackupTargetIndex}` : '/api/backup/targets', {
+                    method: isEditing ? 'PUT' : 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                       ...localConfig,
-                      type: 'mirror'
+                      type: 'local'
                     })
                   })
                   .then(r => {
@@ -3450,8 +3745,9 @@ export default function SettingsView() {
                       const r = JSON.parse(text);
                       console.log('添加结果：', r);
                       setShowLocalModal(false);
+                      setEditingBackupTargetIndex(null);
                       setLocalConfig({ path: '', name: '' });
-                      refreshStoragePaths();
+                      refreshBackupTargets();
                     } catch (e) {
                       console.error('后端返回格式错误');
                     }
@@ -3463,7 +3759,7 @@ export default function SettingsView() {
                 disabled={!localConfig.name || !localConfig.path}
                 className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${localConfig.name && localConfig.path ? 'bg-cyan-600 hover:bg-cyan-500 text-white cursor-pointer' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
               >
-                ✅ 添加镜像
+                {editingBackupTargetIndex === null ? '添加数据备份路径' : '保存修改'}
               </button>
             </div>
           </div>
@@ -3625,5 +3921,3 @@ export default function SettingsView() {
     </div>
   );
 }
-
-

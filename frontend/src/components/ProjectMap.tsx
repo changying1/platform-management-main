@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import AMapLoader from '@amap/amap-jsapi-loader';
+import { API_BASE_URL, getAuthHeaders } from '../api/config';
+import { boundsCenter, latLngToAmapPath, toGridAreas, type GridArea } from '../utils/gridAreas';
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "ab3044412b12b8deb9da741c6739be1d";
 const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || "65a74edbb64d47769637df170a5da117";
@@ -30,6 +32,7 @@ interface ProjectMapProps {
         deviceCount?: number;
     };
     height?: string;
+    showGridAreas?: boolean;
 }
 
 const LOCATION_TYPES = new Set([
@@ -62,11 +65,20 @@ const isOnlineLocationDevice = (device: MapDevice) => {
     return isOnline && LOCATION_TYPES.has(deviceType);
 };
 
-export const ProjectMap: React.FC<ProjectMapProps> = ({ project, height = "100%" }) => {
+const distanceKm = (a: [number, number], b: [number, number]) => {
+    const latDistance = (a[0] - b[0]) * 111;
+    const lngDistance = (a[1] - b[1]) * 111 * Math.cos((((a[0] + b[0]) / 2) * Math.PI) / 180);
+    return Math.sqrt(latDistance * latDistance + lngDistance * lngDistance);
+};
+
+const projectCenterAsLatLng = (center: [number, number]): [number, number] => [Number(center[1]), Number(center[0])];
+
+export const ProjectMap: React.FC<ProjectMapProps> = ({ project, height = "100%", showGridAreas = true }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<any>(null);
     const amapRef = useRef<any>(null);
     const [mapReady, setMapReady] = React.useState(false);
+    const [gridAreas, setGridAreas] = React.useState<GridArea[]>([]);
 
     useEffect(() => {
         let cancelled = false;
@@ -107,6 +119,43 @@ export const ProjectMap: React.FC<ProjectMapProps> = ({ project, height = "100%"
     }, []);
 
     useEffect(() => {
+        if (!showGridAreas) {
+            setGridAreas([]);
+            return;
+        }
+
+        let stopped = false;
+        const loadGridAreas = async () => {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/grids/`, {
+                    headers: getAuthHeaders(),
+                    credentials: 'include',
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (stopped) return;
+                const allAreas = toGridAreas(Array.isArray(data) ? data : []);
+                const sameProjectAreas = allAreas.filter((area) => String(area.project_id || '') === String(project.id));
+                if (sameProjectAreas.length > 0) {
+                    setGridAreas(sameProjectAreas);
+                    return;
+                }
+
+                const projectCenter = projectCenterAsLatLng(project.center);
+                setGridAreas(allAreas.filter((area) => distanceKm(projectCenter, boundsCenter(area.bounds)) <= 30));
+            } catch (error) {
+                console.warn('Failed to load grid areas for project map', error);
+                if (!stopped) setGridAreas([]);
+            }
+        };
+
+        loadGridAreas();
+        return () => {
+            stopped = true;
+        };
+    }, [project.id, showGridAreas]);
+
+    useEffect(() => {
         if (!mapReady || !mapRef.current || !amapRef.current) return;
 
         const AMap = amapRef.current;
@@ -132,14 +181,68 @@ export const ProjectMap: React.FC<ProjectMapProps> = ({ project, height = "100%"
             (map as any)._overlays.push(polygon);
         }
 
-        let textPosition = project.center;
-        if (project.area_boundary && project.area_boundary.length >= 3) {
-            const sum = project.area_boundary.reduce<[number, number]>(
-                (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
-                [0, 0]
-            );
-            textPosition = [sum[0] / project.area_boundary.length, sum[1] / project.area_boundary.length];
-        }
+        if (showGridAreas) gridAreas.forEach((area) => {
+            const color = "#22d3ee";
+            const polygon = new AMap.Polygon({
+                path: latLngToAmapPath(area.bounds),
+                strokeColor: color,
+                strokeOpacity: 0.95,
+                strokeWeight: 3,
+                fillColor: color,
+                fillOpacity: 0.22,
+                zIndex: 40,
+                bubble: true,
+                clickable: true,
+            });
+
+            polygon.on("mouseover", () => {
+                const center = boundsCenter(area.bounds);
+                const infoWindow = new AMap.InfoWindow({
+                    content: `
+                        <div style="padding:8px 12px;min-width:150px;">
+                            <div style="font-weight:700;margin-bottom:4px;">${area.name}</div>
+                            <div style="font-size:12px;color:#64748b;">网格区域 ${area.grid_id || ""}</div>
+                        </div>
+                    `,
+                    offset: new AMap.Pixel(0, -8),
+                });
+                infoWindow.open(map, [center[1], center[0]]);
+                (map as any)._currentInfoWindow = infoWindow;
+            });
+            polygon.on("mouseout", () => {
+                (map as any)._currentInfoWindow?.close?.();
+            });
+
+            map.add(polygon);
+            (map as any)._overlays.push(polygon);
+
+            const center = boundsCenter(area.bounds);
+            const labelMarker = new AMap.Marker({
+                position: [center[1], center[0]],
+                content: `
+                    <div style="
+                        background: rgba(8, 145, 178, 0.92);
+                        color: #ffffff;
+                        font-size: 12px;
+                        font-weight: 800;
+                        padding: 4px 10px;
+                        border-radius: 999px;
+                        border: 2px solid rgba(255,255,255,.9);
+                        box-shadow: 0 6px 16px rgba(0,0,0,.35);
+                        white-space: nowrap;
+                        pointer-events: none;
+                    ">
+                        ${area.name}
+                    </div>
+                `,
+                offset: new AMap.Pixel(0, -28),
+                zIndex: 80,
+            });
+            map.add(labelMarker);
+            (map as any)._overlays.push(labelMarker);
+        });
+
+        const textPosition = project.center;
 
         const verticalText = project.name
             .split('')
@@ -206,10 +309,8 @@ export const ProjectMap: React.FC<ProjectMapProps> = ({ project, height = "100%"
             (map as any)._overlays.push(marker);
         });
 
-        if (project.area_boundary && project.area_boundary.length >= 3) {
-            map.setFitView();
-        }
-    }, [mapReady, project]);
+        map.setZoomAndCenter(project.zoom_level || 16, project.center);
+    }, [gridAreas, mapReady, project, showGridAreas]);
 
     return <div ref={mapContainerRef} style={{ width: "100%", height, borderRadius: "8px", overflow: "hidden" }} />;
 };

@@ -19,7 +19,7 @@ interface GridOption { grid_id: string; name: string; project_id?: string }
 interface TeamOption { team_id: string; name: string; project?: string }
 interface PersonnelOption { id: string; username: string; project?: string; team?: string; workTeam?: string }
 
-const unitTypes: UnitType[] = ['project', 'safety_office', 'grid', 'team'];
+const unitTypes: UnitType[] = ['project', 'grid', 'team'];
 const inputClass = 'w-full px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 disabled:opacity-50';
 
 const EMPTY_FORM = {
@@ -37,15 +37,13 @@ const EMPTY_FORM = {
 };
 
 const nextTypeByParent: Record<string, UnitType> = {
-  project: 'safety_office',
-  safety_office: 'grid',
+  project: 'grid',
   grid: 'team',
   team: 'personnel',
 };
 
 const allowedParentType: Record<string, string> = {
-  safety_office: 'project',
-  grid: 'safety_office',
+  grid: 'project',
   team: 'grid',
   personnel: 'team',
 };
@@ -107,7 +105,7 @@ export const UnitFormModal: React.FC<UnitFormModalProps> = ({
       return;
     }
 
-    const nextType = parentUnit ? nextTypeByParent[parentUnit.type || ''] || 'safety_office' : 'project';
+    const nextType = parentUnit ? nextTypeByParent[parentUnit.type || ''] || 'grid' : 'project';
     setFormData({
       ...EMPTY_FORM,
       type: nextType,
@@ -199,10 +197,6 @@ export const UnitFormModal: React.FC<UnitFormModalProps> = ({
     }
     if (formData.type !== 'project' && !effectiveParentId) {
       alert('项目以下节点必须选择上级节点');
-      return;
-    }
-    if (formData.type === 'safety_office' && !formData.safety_office_role.trim()) {
-      alert('安监办节点必须填写岗位角色');
       return;
     }
     if (formData.type === 'grid' && !formData.grid_id.trim()) {
@@ -323,7 +317,7 @@ export const UnitFormModal: React.FC<UnitFormModalProps> = ({
           )}
 
           <Field label="节点名称" required>
-            <input value={formData.name} disabled={formData.type !== 'safety_office'} onChange={handleChange} name="name" required className={inputClass} placeholder="选择对象后自动带出" />
+            <input value={formData.name} disabled onChange={handleChange} name="name" required className={inputClass} placeholder="选择对象后自动带出" />
           </Field>
 
           <div className="grid grid-cols-1 gap-4">
@@ -331,12 +325,6 @@ export const UnitFormModal: React.FC<UnitFormModalProps> = ({
               <input value={formData.project_id} disabled className={inputClass} placeholder="由项目或上级节点自动带出" />
             </Field>
           </div>
-
-          {formData.type === 'safety_office' && (
-            <Field label="安监办岗位" required>
-              <input name="safety_office_role" value={formData.safety_office_role} onChange={handleChange} className={inputClass} placeholder="主任、常务副主任、副主任、安监专务" />
-            </Field>
-          )}
 
           <label className="flex items-center gap-2 cursor-pointer mb-6">
             <input type="checkbox" name="is_under_construction" checked={formData.is_under_construction} onChange={handleChange} className="w-4 h-4 rounded border-white/20 bg-white/10 text-cyan-500 focus:ring-cyan-500" />
