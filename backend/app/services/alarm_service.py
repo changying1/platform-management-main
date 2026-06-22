@@ -735,7 +735,13 @@ class AlarmService:
                 enabled_key = "notifySevereBySms" if upgrade == "sms" else "notifySevereByCall"
                 if settings.get(enabled_key, True):
                     logger.info(f"Severe alarm escalation requested via {upgrade}: {alarm_data.get('id')}")
-                    notification_service.send_alarm_notification(alarm_data, recipients)
+                    result = notification_service.send_alarm_notification(alarm_data, recipients)
+                    if asyncio.iscoroutine(result):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(result)
+                        except RuntimeError:
+                            asyncio.run(result)
 
             # 优先兼容 upstream/main 里的 handle_alarm 通知方式
             handle_alarm = getattr(notification_service, "handle_alarm", None)

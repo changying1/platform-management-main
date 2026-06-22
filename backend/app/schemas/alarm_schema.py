@@ -16,6 +16,8 @@ class AlarmUpdate(BaseModel):
     status: str | None = None
     description: str | None = None
     severity: str | None = None
+    handler: str | None = None
+    remark: str | None = None
 
 class AlarmOut(AlarmCreate):
     id: int

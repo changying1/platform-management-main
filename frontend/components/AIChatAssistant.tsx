@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, Send, X, Trash2, Loader2, Settings, MessageSquare, AlertCircle } from 'lucide-react';
 import { getAuthHeaders } from '../src/api/config';
+import { alarmApi, AlarmResponse, LogResponse } from '../src/api/alarmApi';
 
 interface Message {
   id: number;
@@ -14,6 +15,183 @@ interface AISettings {
   kbName: string;
   enableRAG: boolean;
 }
+
+const isLatestLogQuestion = (text: string) => {
+  const question = String(text || '');
+  const hasLog = /日志|系统日志|操作记录|操作日志|log/i.test(question);
+  const asksLatest = /最近|最新|最后|上一条|刚刚|最近更新|最近汇总|汇总|一条|最近记录/.test(question);
+  return hasLog && asksLatest;
+};
+
+const formatLatestLogAnswer = (log: LogResponse) => {
+  const parts = [
+    '最近一条系统日志',
+    `操作行为：${log.action || '未知操作'}`,
+    `操作对象：${log.target_name || '未知对象'}`,
+    `类型：${log.target_type || '未知类型'}`,
+    `操作人：${log.operator || '未知操作人'}`,
+    `时间：${log.time || '未知时间'}`,
+  ];
+  const scope = [log.company, log.project, log.grid, log.team].filter(Boolean).join(' / ');
+  if (scope) parts.push(`所属单位：${scope}`);
+  if (log.details) parts.push(`详情：${log.details}`);
+  return parts.join('\n');
+};
+
+const isViolationCountQuestion = (text: string) => {
+  const question = String(text || '');
+  const hasViolation = /违规|违章|告警|报警|预警|隐患|风险/.test(question);
+  const asksCount = /多少|几个|数量|总数|共有|几起|几条/.test(question);
+  return hasViolation && asksCount;
+};
+
+const isViolationPeopleQuestion = (text: string) => {
+  const question = String(text || '');
+  const hasViolation = /违规|违章|告警|报警|预警|隐患|风险/.test(question);
+  const asksPeople = /谁|人员|违规人|责任人|负责人|名单|哪些人/.test(question);
+  return hasViolation && asksPeople;
+};
+
+const parseQuestionDays = (text: string) => {
+  const question = String(text || '');
+  if (/近七日|近7日|近七天|近7天|最近七日|最近7天|最近一周|本周/.test(question)) return 7;
+  if (/今日|今天|当天/.test(question)) return 1;
+  const match = question.match(/近\s*(\d+)\s*[日天]/);
+  return match ? Math.max(1, Number(match[1])) : undefined;
+};
+
+const getAlarmTime = (alarm: AlarmResponse) => {
+  const value = alarm.timestamp || alarm.handled_at || '';
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+};
+
+const alarmStatusText: Record<string, string> = {
+  pending: '待处理',
+  unresolved: '待处理',
+  open: '待处理',
+  active: '待处理',
+  resolved: '已处理',
+  handled: '已处理',
+  closed: '已处理',
+  ignored: '已忽略',
+};
+
+const alarmTypeText: Record<string, string> = {
+  fence_intrusion: '电子围栏闯入',
+  fence_exit: '电子围栏离开',
+  no_helmet: '未戴安全帽',
+  smoking: '吸烟',
+  fire: '火情',
+  fall: '跌倒',
+  danger_zone: '进入危险区域',
+};
+
+const toChineseAlarmText = (value?: string) => {
+  const text = String(value || '').trim();
+  if (!text) return '未知';
+  return alarmStatusText[text] || alarmTypeText[text] || text
+    .replace(/pending/gi, '待处理')
+    .replace(/resolved/gi, '已处理')
+    .replace(/_/g, ' ');
+};
+
+const formatViolationCountAnswer = (alarms: AlarmResponse[], question: string) => {
+  const days = parseQuestionDays(question);
+  let scoped = alarms;
+  let label = '当前权限范围内';
+
+  if (days) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    const startTime = start.getTime();
+    scoped = alarms.filter(alarm => getAlarmTime(alarm) >= startTime);
+    label = `近${days}日`;
+  }
+
+  const countBy = (items: AlarmResponse[], getter: (alarm: AlarmResponse) => string | undefined) => {
+    const result = new Map<string, number>();
+    items.forEach(item => {
+      const key = toChineseAlarmText(getter(item));
+      result.set(key, (result.get(key) || 0) + 1);
+    });
+    return Array.from(result.entries()).map(([key, count]) => `- ${key}：${count} 起`);
+  };
+
+  const lines = [
+    `${label}违规/告警统计`,
+    `总数：${scoped.length} 起`,
+  ];
+  const byStatus = countBy(scoped, alarm => alarm.status);
+  const byType = countBy(scoped, alarm => alarm.alarm_type || alarm.description);
+  if (byStatus.length) {
+    lines.push('按状态：');
+    lines.push(...byStatus);
+  }
+  if (byType.length) {
+    lines.push('按类型：');
+    lines.push(...byType);
+  }
+  return lines.join('\n');
+};
+
+const getAlarmPersonName = (alarm: AlarmResponse) => (
+  alarm.trigger_person_name ||
+  alarm.person_name ||
+  alarm.person_label ||
+  alarm.personnel_id ||
+  alarm.trigger_person_id ||
+  '未知'
+);
+
+const getAlarmOwnerName = (alarm: AlarmResponse) => {
+  const raw = alarm as any;
+  return raw.responsible_person_name || raw.owner_name || raw.handler || raw.manager_name || raw.responsible_person || '未记录';
+};
+
+const formatViolationPeopleAnswer = (alarms: AlarmResponse[], question: string) => {
+  const days = parseQuestionDays(question);
+  let scoped = alarms;
+  let label = '当前权限范围内';
+
+  if (days) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    const startTime = start.getTime();
+    scoped = alarms.filter(alarm => getAlarmTime(alarm) >= startTime);
+    label = `近${days}日`;
+  }
+
+  if (!scoped.length) {
+    return `${label}未查询到违规/告警记录。`;
+  }
+
+  const lines = [
+    `${label}违规/告警人员明细`,
+    `总数：${scoped.length} 起`,
+  ];
+
+  scoped
+    .sort((a, b) => getAlarmTime(b) - getAlarmTime(a))
+    .slice(0, 10)
+    .forEach((alarm, index) => {
+      const scope = [alarm.project || alarm.project_name, alarm.grid || alarm.grid_name, alarm.team || alarm.team_name].filter(Boolean).join(' / ') || '未记录';
+      lines.push(
+        `${index + 1}. 违规人员：${getAlarmPersonName(alarm)}`,
+        `   告警类型：${toChineseAlarmText(alarm.alarm_type || alarm.description)}`,
+        `   所属位置：${scope}`,
+        `   责任人：${getAlarmOwnerName(alarm)}`
+      );
+    });
+
+  if (scoped.length > 10) {
+    lines.push(`仅显示最近 10 起，其余 ${scoped.length - 10} 起可在告警列表查看。`);
+  }
+
+  return lines.join('\n');
+};
 
 const AIChatAssistant: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -147,6 +325,48 @@ const AIChatAssistant: React.FC = () => {
     setIsLoading(true);
 
     try {
+      if (isLatestLogQuestion(userMessage.content)) {
+        const logs = await alarmApi.getLogs(0, 100);
+        const sortedLogs = [...logs].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+        const assistantMessage: Message = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: sortedLogs.length
+            ? formatLatestLogAnswer(sortedLogs[0])
+            : '当前权限范围内没有查询到系统日志记录。',
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setConnectionStatus('connected');
+        return;
+      }
+
+      if (isViolationPeopleQuestion(userMessage.content)) {
+        const alarms = await alarmApi.getAlarms(undefined, undefined, 5000);
+        const assistantMessage: Message = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: formatViolationPeopleAnswer(alarms, userMessage.content),
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setConnectionStatus('connected');
+        return;
+      }
+
+      if (isViolationCountQuestion(userMessage.content)) {
+        const alarms = await alarmApi.getAlarms(undefined, undefined, 5000);
+        const assistantMessage: Message = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: formatViolationCountAnswer(alarms, userMessage.content),
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setConnectionStatus('connected');
+        return;
+      }
+
       console.log('正在连接到:', settings.serviceUrl);
       
       const response = await fetch(`${settings.serviceUrl}/chat`, {

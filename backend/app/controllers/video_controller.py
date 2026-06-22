@@ -23,6 +23,7 @@ from app.schemas.video_schema import (
 )
 from app.services.video_service import VideoService
 from app.utils.logger import get_logger
+from app.services.audit_log_service import write_audit_log
 import cv2
 import time
 import threading
@@ -76,6 +77,34 @@ def _default_scope_fields(current_user: dict) -> dict:
         "project": current_user.get("project"),
         "team": current_user.get("team") or current_user.get("work_team"),
     }
+
+
+def _video_audit_snapshot(video_obj) -> dict:
+    if not video_obj:
+        return {}
+    if isinstance(video_obj, dict):
+        return dict(video_obj)
+    if hasattr(video_obj, "model_dump"):
+        return video_obj.model_dump()
+    if hasattr(video_obj, "dict"):
+        return video_obj.dict()
+    return {
+        key: value
+        for key, value in vars(video_obj).items()
+        if not key.startswith("_")
+    }
+
+
+def _video_audit_name(video_obj, fallback: str = "") -> str:
+    snapshot = _video_audit_snapshot(video_obj)
+    return str(
+        snapshot.get("name")
+        or snapshot.get("device_name")
+        or snapshot.get("device_serial")
+        or snapshot.get("id")
+        or fallback
+        or "unknown"
+    )
 
 
 class AIMonitorRequest(BaseModel):
@@ -220,7 +249,20 @@ def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), curr
     and then creating a record in the database.
     """
     try:
-        return service.add_camera_to_media_server(db, camera, scope_fields=_default_scope_fields(current_user))
+        created = service.add_camera_to_media_server(db, camera, scope_fields=_default_scope_fields(current_user))
+        snapshot = _video_audit_snapshot(created)
+        write_audit_log(
+            current_user=current_user,
+            action="添加设备",
+            target_type="device",
+            target_name=_video_audit_name(snapshot),
+            after=snapshot,
+            company=snapshot.get("company"),
+            project=snapshot.get("project"),
+            grid=snapshot.get("grid") or snapshot.get("grid_name") or snapshot.get("grid_id"),
+            team=snapshot.get("team"),
+        )
+        return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -233,7 +275,20 @@ def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db), current_use
 def create_video(video: VideoCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """手动创建/添加视频设备"""
     try:
-        return service.create_video(db, video, scope_fields=_default_scope_fields(current_user))
+        created = service.create_video(db, video, scope_fields=_default_scope_fields(current_user))
+        snapshot = _video_audit_snapshot(created)
+        write_audit_log(
+            current_user=current_user,
+            action="添加设备",
+            target_type="device",
+            target_name=_video_audit_name(snapshot),
+            after=snapshot,
+            company=snapshot.get("company"),
+            project=snapshot.get("project"),
+            grid=snapshot.get("grid") or snapshot.get("grid_name") or snapshot.get("grid_id"),
+            team=snapshot.get("team"),
+        )
+        return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -265,19 +320,49 @@ def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest, current_u
 @router.put("/{video_id}", response_model=VideoOut)
 def update_video(video_id: int, video: VideoUpdate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """更新视频设备信息"""
-    _require_video_scope(video_id, current_user)
-    updated_video = service.update_video(db, video_id, video)
+    before = _require_video_scope(video_id, current_user)
+    before_snapshot = _video_audit_snapshot(before)
+    try:
+        updated_video = service.update_video(db, video_id, video)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not updated_video:
         raise HTTPException(status_code=404, detail="Video device not found")
+    snapshot = _video_audit_snapshot(updated_video)
+    write_audit_log(
+        current_user=current_user,
+        action="变更设备信息",
+        target_type="device",
+        target_name=_video_audit_name(snapshot, str(video_id)),
+        before=before_snapshot,
+        after=snapshot,
+        company=snapshot.get("company"),
+        project=snapshot.get("project"),
+        grid=snapshot.get("grid") or snapshot.get("grid_name") or snapshot.get("grid_id"),
+        team=snapshot.get("team"),
+    )
     return updated_video
 
 @router.delete("/{video_id}")
 def delete_video(video_id: int, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """删除视频设备"""
-    _require_video_scope(video_id, current_user)
+    before = _require_video_scope(video_id, current_user)
+    before_snapshot = _video_audit_snapshot(before)
     success = service.delete_video(db, video_id)
     if not success:
         raise HTTPException(status_code=404, detail="Video device not found")
+    write_audit_log(
+        current_user=current_user,
+        action="删除设备",
+        target_type="device",
+        target_name=_video_audit_name(before_snapshot, str(video_id)),
+        before=before_snapshot,
+        company=before_snapshot.get("company"),
+        project=before_snapshot.get("project"),
+        grid=before_snapshot.get("grid") or before_snapshot.get("grid_name") or before_snapshot.get("grid_id"),
+        team=before_snapshot.get("team"),
+        level="warning",
+    )
     return {"status": "success"}
 
 class BatchUpdateOrgRequest(BaseModel):

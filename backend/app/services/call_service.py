@@ -6,14 +6,70 @@ from typing import BinaryIO
 from fastapi import HTTPException
 from pymongo import DESCENDING, ReturnDocument
 
+from app.core.data_scope import in_scope, is_hq
 from app.core.database import get_mongo_collection, get_next_sequence
-from app.services.tts_queue_service import tts_queue_service
+from app.services.tts_queue_service import (
+    STATUS_ACKED,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RETRY_WAIT,
+    STATUS_SENDING,
+    tts_queue_service,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger("GroupCallService")
 
 STATUS_ACTIVE = "ACTIVE"
 STATUS_ENDED = "ENDED"
+
+DEVICE_SCOPE_KWARGS = {
+    "project_fields": ("project_id",),
+    "grid_fields": ("grid_id",),
+    "team_fields": ("team_id",),
+    "branch_fields": ("branch_id",),
+    "company_fields": ("company", "department"),
+    "project_name_fields": ("project",),
+    "team_name_fields": ("team", "workTeam", "work_team", "install_location"),
+}
+
+TARGET_LOOKUP_FIELDS = (
+    "id",
+    "device_id",
+    "device_code",
+    "device_serial",
+    "phone_num",
+    "holderPhone",
+    "stream_url",
+    "terminal_id",
+    "terminalId",
+    "terminal_no",
+    "terminalNo",
+    "device_no",
+    "deviceNo",
+    "imei",
+)
+
+
+def _text(value) -> str:
+    return str(value or "").strip()
+
+
+def _target_variants(value) -> list:
+    raw = _text(value)
+    if not raw:
+        return []
+
+    variants = [raw]
+    trimmed = raw.lstrip("0")
+    if trimmed and trimmed != raw:
+        variants.append(trimmed)
+
+    for item in list(variants):
+        if item.isdigit():
+            variants.append(int(item))
+
+    return list(dict.fromkeys(variants))
 
 
 class GroupCallService:
@@ -54,8 +110,116 @@ class GroupCallService:
             "status": session.get("status", STATUS_ACTIVE),
         }
 
-    def initiate_call(self, initiator_id: int, member_ids: list[int]) -> dict:
+    def _is_unrestricted_user(self, user: dict | None) -> bool:
+        return not user or is_hq(user)
+
+    def _find_device_for_target(self, target_phone: str | int | None) -> dict | None:
+        variants = _target_variants(target_phone)
+        if not variants:
+            return None
+
+        query = {"$or": [{field: {"$in": variants}} for field in TARGET_LOOKUP_FIELDS]}
+        for collection_name in ("device", "sql_devices"):
+            device = get_mongo_collection(collection_name).find_one(query)
+            if device:
+                return device
+        return None
+
+    def _target_in_scope(self, target_phone: str | int | None, user: dict | None) -> bool:
+        if self._is_unrestricted_user(user):
+            return True
+
+        device = self._find_device_for_target(target_phone)
+        return bool(device and in_scope(device, user, **DEVICE_SCOPE_KWARGS))
+
+    def _ensure_targets_in_scope(self, target_phones: list[str], user: dict | None) -> list[str]:
+        unique_phones: list[str] = []
+        seen = set()
+        for phone in target_phones:
+            normalized = _text(phone)
+            if normalized and normalized not in seen:
+                unique_phones.append(normalized)
+                seen.add(normalized)
+
+        unauthorized = [
+            phone
+            for phone in unique_phones
+            if not self._target_in_scope(phone, user)
+        ]
+        if unauthorized:
+            preview = "、".join(unauthorized[:5])
+            suffix = "等" if len(unauthorized) > 5 else ""
+            raise HTTPException(status_code=403, detail=f"无权限操作终端 {preview}{suffix}")
+
+        return unique_phones
+
+    def _session_in_scope(self, session: dict | None, user: dict | None) -> bool:
+        if not session:
+            return False
+        if self._is_unrestricted_user(user):
+            return True
+        return any(
+            self._target_in_scope(member_id, user)
+            for member_id in session.get("member_ids", [])
+        )
+
+    def _empty_batch_response(self, batch_id: str, source: dict | None = None) -> dict:
+        source = source or {}
+        return {
+            "batch_id": batch_id,
+            "text": source.get("text", ""),
+            "request_source": source.get("request_source"),
+            "operator": source.get("operator"),
+            "created_at": source.get("created_at") or datetime.utcnow(),
+            "requested_count": 0,
+            "queued_count": 0,
+            "sending_count": 0,
+            "acked_count": 0,
+            "failed_count": 0,
+            "retry_wait_count": 0,
+            "jobs": [],
+        }
+
+    def _filter_batch_for_user(self, batch: dict, user: dict | None) -> dict:
+        if self._is_unrestricted_user(user):
+            return batch
+
+        jobs = [
+            job
+            for job in batch.get("jobs", [])
+            if self._target_in_scope(job.get("device_phone"), user)
+        ]
+        if not jobs:
+            return self._empty_batch_response(batch.get("batch_id", ""), batch)
+
+        def count(status: str) -> int:
+            return sum(1 for job in jobs if job.get("status") == status)
+
+        return {
+            **batch,
+            "requested_count": len(jobs),
+            "queued_count": count(STATUS_QUEUED),
+            "sending_count": count(STATUS_SENDING),
+            "acked_count": count(STATUS_ACKED),
+            "failed_count": count(STATUS_FAILED),
+            "retry_wait_count": count(STATUS_RETRY_WAIT),
+            "jobs": jobs,
+        }
+
+    def _voice_record_in_scope(self, record: dict, user: dict | None) -> bool:
+        if self._is_unrestricted_user(user):
+            return True
+        return any(
+            self._target_in_scope(phone, user)
+            for phone in record.get("target_phones", [])
+        )
+
+    def initiate_call(self, initiator_id: int, member_ids: list[int], user: dict | None = None) -> dict:
         normalized_members = self._normalize_member_ids(initiator_id, member_ids)
+        normalized_members = [
+            int(item)
+            for item in self._ensure_targets_in_scope([str(member_id) for member_id in normalized_members], user)
+        ]
         if not normalized_members:
             raise HTTPException(status_code=400, detail="At least one valid group member is required")
 
@@ -81,27 +245,36 @@ class GroupCallService:
         )
         return self._serialize_session(session)
 
-    def get_call(self, call_id: int) -> dict:
+    def get_call(self, call_id: int, user: dict | None = None) -> dict:
         session = self.collection.find_one({"id": int(call_id)})
-        if not session:
+        if not session or not self._session_in_scope(session, user):
             raise HTTPException(status_code=404, detail="Group call session not found")
         return self._serialize_session(session)
 
-    def list_calls(self, limit: int = 20, active_only: bool = False) -> list[dict]:
+    def list_calls(self, limit: int = 20, active_only: bool = False, user: dict | None = None) -> list[dict]:
         query = {}
         if active_only:
             query["status"] = STATUS_ACTIVE
 
+        query_limit = limit if self._is_unrestricted_user(user) else max(limit * 10, 100)
         sessions = list(
             self.collection
             .find(query)
             .sort([("start_time", DESCENDING), ("id", DESCENDING)])
-            .limit(limit)
+            .limit(query_limit)
         )
-        return [self._serialize_session(item) for item in sessions]
+        return [
+            self._serialize_session(item)
+            for item in sessions
+            if self._session_in_scope(item, user)
+        ][:limit]
 
-    def end_call(self, call_id: int) -> dict:
+    def end_call(self, call_id: int, user: dict | None = None) -> dict:
         now = datetime.utcnow()
+        existing = self.collection.find_one({"id": int(call_id)})
+        if not existing or not self._session_in_scope(existing, user):
+            raise HTTPException(status_code=404, detail="Group call session not found")
+
         session = self.collection.find_one_and_update(
             {"id": int(call_id)},
             {
@@ -128,7 +301,9 @@ class GroupCallService:
         max_retries: int = 3,
         request_source: str = "group_call",
         operator: str | None = None,
+        user: dict | None = None,
     ):
+        target_phones = self._ensure_targets_in_scope(target_phones, user)
         logger.info(f"Queueing JT808 TTS to {len(target_phones)} target(s)")
         return tts_queue_service.enqueue_batch(
             text=text,
@@ -139,11 +314,19 @@ class GroupCallService:
             operator=operator,
         )
 
-    def get_tts_batch(self, batch_id: str):
-        return tts_queue_service.get_batch(batch_id)
+    def get_tts_batch(self, batch_id: str, user: dict | None = None):
+        return self._filter_batch_for_user(tts_queue_service.get_batch(batch_id), user)
 
-    def list_tts_batches(self, limit: int = 20):
-        return tts_queue_service.list_batches(limit=limit)
+    def list_tts_batches(self, limit: int = 20, user: dict | None = None):
+        query_limit = limit if self._is_unrestricted_user(user) else max(limit * 10, 100)
+        batches = []
+        for batch in tts_queue_service.list_batches(limit=query_limit):
+            scoped_batch = self._filter_batch_for_user(batch, user)
+            if scoped_batch["requested_count"] > 0:
+                batches.append(scoped_batch)
+            if len(batches) >= limit:
+                break
+        return batches
 
     def _serialize_voice_record(self, record: dict) -> dict:
         return {
@@ -175,7 +358,9 @@ class GroupCallService:
         audio_mime_type: str | None = None,
         batch_id: str | None = None,
         operator: str | None = None,
+        user: dict | None = None,
     ) -> dict:
+        target_phones = self._ensure_targets_in_scope(target_phones, user)
         self.voice_record_dir.mkdir(parents=True, exist_ok=True)
 
         suffix = Path(original_filename or "").suffix.lower()
@@ -202,7 +387,7 @@ class GroupCallService:
             "from": operator or "群组通话",
             "from_role": "语音通话",
             "to_names": [str(item) for item in to_names if item],
-            "target_phones": [str(item) for item in target_phones if item],
+            "target_phones": target_phones,
             "transcript": transcript.strip(),
             "audio_url": f"/static/voice_records/{filename}",
             "audio_mime_type": audio_mime_type,
@@ -215,11 +400,16 @@ class GroupCallService:
         self.voice_record_collection.insert_one(record)
         return self._serialize_voice_record(record)
 
-    def list_voice_records(self, limit: int = 100) -> list[dict]:
+    def list_voice_records(self, limit: int = 100, user: dict | None = None) -> list[dict]:
+        query_limit = limit if self._is_unrestricted_user(user) else max(limit * 10, 100)
         records = list(
             self.voice_record_collection
             .find({})
             .sort([("created_at", DESCENDING), ("id", DESCENDING)])
-            .limit(limit)
+            .limit(query_limit)
         )
-        return [self._serialize_voice_record(record) for record in records]
+        return [
+            self._serialize_voice_record(record)
+            for record in records
+            if self._voice_record_in_scope(record, user)
+        ][:limit]

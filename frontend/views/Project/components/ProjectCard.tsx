@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Users,
+  UserRoundCog,
   Monitor,
   MapPin,
   ShieldAlert,
@@ -10,7 +11,7 @@ import {
   Edit2,
   Trash2,
 } from 'lucide-react';
-import { ProjectListItem, ProjectDetail, Fence } from '../types';
+import { ProjectListItem, ProjectDetail, Fence, Grid, Team } from '../types';
 
 interface ProjectCardProps {
   key?: React.Key;
@@ -18,6 +19,8 @@ interface ProjectCardProps {
   isExpanded: boolean;
   detail: ProjectDetail | null;
   fences: Fence[];
+  grids: Grid[];
+  teams: Team[];
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -28,6 +31,8 @@ export function ProjectCard({
   isExpanded,
   detail,
   fences,
+  grids,
+  teams,
   onToggle,
   onEdit,
   onDelete,
@@ -64,7 +69,11 @@ export function ProjectCard({
             </div>
             <div className="flex items-center gap-2 bg-yellow-500/15 px-3 py-2 rounded-lg border border-yellow-500/30">
               <MapPin size={18} className="text-yellow-400" />
-              <span className="text-white text-base font-medium">{project.region_count} 区域</span>
+              <span className="text-white text-base font-medium">{project.grid_count ?? 0} 网格</span>
+            </div>
+            <div className="flex items-center gap-2 bg-cyan-500/15 px-3 py-2 rounded-lg border border-cyan-500/30">
+              <UserRoundCog size={18} className="text-cyan-400" />
+              <span className="text-white text-base font-medium">{project.team_count ?? 0} 工队</span>
             </div>
             <div className="flex items-center gap-2 bg-red-500/15 px-3 py-2 rounded-lg border border-red-500/30">
               <ShieldAlert size={18} className="text-red-400" />
@@ -80,8 +89,7 @@ export function ProjectCard({
           <div className="flex gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={onEdit}
-              disabled={!isExpanded}
-              className="px-3 py-2 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-2 hover:bg-white/10 rounded-lg transition-colors"
               title="编辑项目"
             >
               <Edit2 size={18} className="text-blue-400" />
@@ -176,19 +184,48 @@ export function ProjectCard({
               <div>
                 <h4 className="text-white font-semibold mb-2 flex items-center gap-2">
                   <MapPin size={16} />
-                  项目区域 ({detail.regions.length})
+                  项目网格 ({grids.length})
                 </h4>
                 <div className="bg-white/5 rounded-lg p-3 max-h-40 overflow-y-auto">
-                  {detail.regions.length === 0 ? (
-                    <p className="text-gray-400 text-sm">暂无区域</p>
+                  {grids.length === 0 ? (
+                    <p className="text-gray-400 text-sm">暂无网格</p>
                   ) : (
                     <div className="space-y-2">
-                      {detail.regions.map((region) => (
-                        <div key={region.id} className="text-sm">
-                          <span className="text-white">{region.name}</span>
-                          {region.remark && (
-                            <p className="text-gray-400 text-xs mt-1">{region.remark}</p>
+                      {grids.map((grid) => (
+                        <div key={grid.id || grid.grid_id} className="text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-white">{grid.name || grid.grid_id}</span>
+                            <span className="text-gray-400 text-xs">{grid.grid_id}</span>
+                          </div>
+                          {grid.area !== undefined && grid.area !== null && (
+                            <p className="text-gray-400 text-xs mt-1">面积: {Number(grid.area).toFixed(2)} ha</p>
                           )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-white font-semibold mb-2 flex items-center gap-2">
+                  <UserRoundCog size={16} />
+                  项目工队 ({teams.length})
+                </h4>
+                <div className="bg-white/5 rounded-lg p-3 max-h-40 overflow-y-auto">
+                  {teams.length === 0 ? (
+                    <p className="text-gray-400 text-sm">暂无工队</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {teams.map((team) => (
+                        <div key={team.team_id || team.id || team.name} className="text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-white">{team.name || team.team_id}</span>
+                            <span className="text-gray-400 text-xs">{team.team_id}</span>
+                          </div>
+                          <p className="text-gray-400 text-xs mt-1">
+                            所属网格: {team.grid_id || '-'}
+                          </p>
                         </div>
                       ))}
                     </div>

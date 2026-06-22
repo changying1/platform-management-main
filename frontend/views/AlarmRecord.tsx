@@ -1,7 +1,8 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { hasStoredPermission } from '../src/utils/permissions';
+import { getStoredScopeState } from '../src/utils/authScope';
 import { 
   Bell, 
   ShieldAlert, 
@@ -15,7 +16,10 @@ import {
   Search,
   X,
   Filter,
-  ImageIcon
+  ImageIcon,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown
 } from 'lucide-react';
 
 // 告警记录类型
@@ -54,10 +58,27 @@ interface AlarmRecord {
   sourceType?: 'fence' | 'video';
 }
 
-type AlarmFilterTreeNode = {
-  id: string;
-  name: string;
-  projects: Array<{ name: string; teams: string[] }>;
+type AlarmSortKey =
+  | 'type'
+  | 'situation'
+  | 'level'
+  | 'person'
+  | 'device'
+  | 'location'
+  | 'branch'
+  | 'project'
+  | 'grid'
+  | 'team'
+  | 'status'
+  | 'time';
+
+type AlarmSortDirection = 'asc' | 'desc';
+
+const parseAlarmTimestamp = (timestamp?: string) => {
+  const raw = String(timestamp || '').trim();
+  if (!raw) return new Date(NaN);
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  return new Date(hasTimezone ? raw : `${raw}Z`);
 };
 
 const formatVideoTime = (time: number) => {
@@ -197,7 +218,27 @@ function AlarmPlaybackPlayer({ src, alarm }: { src: string; alarm: AlarmRecord }
     </div>
   );
 }
+
+const formatAlarmTimestamp = (timestamp?: string) => {
+  const date = parseAlarmTimestamp(timestamp);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+  });
+};
+
+const parseAlarmFilterDateTime = (value: string) => {
+  if (!value) return null;
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const normalizeAlarmSearchText = (value: unknown) =>
+  String(value ?? '').trim().toLowerCase();
+
 export default function AlarmRecords() {
+  const scopeState = getStoredScopeState();
   const [activeTab, setActiveTab] = useState<'all' | 'fence' | 'video'>('all');
   const [alarms, setAlarms] = useState<AlarmRecord[]>([]);
   const [stats, setStats] = useState({ total: 0, pending: 0, fence: 0, video: 0 });
@@ -206,23 +247,20 @@ export default function AlarmRecords() {
 const [searchKeyword, setSearchKeyword] = useState('');
 const [startDate, setStartDate] = useState<string>('');
 const [endDate, setEndDate] = useState<string>('');
-const [showDatePicker, setShowDatePicker] = useState(false); 
-const [datePickerPos, setDatePickerPos] = useState<{ top: number; left: number } | null>(null);
-const datePickerRef = useRef<HTMLDivElement>(null);
 const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
+const [processError, setProcessError] = useState('');
+const [isProcessingAlarm, setIsProcessingAlarm] = useState(false);
 const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 const [selectedVideoAlarm, setSelectedVideoAlarm] = useState<AlarmRecord | null>(null);
 const [processAction, setProcessAction] = useState<'resolved' | 'ignored'>('resolved');
 const canHandleAlarm = hasStoredPermission('alarm.handle');
-const [showFilterTree, setShowFilterTree] = useState(false);
 const [selectedCompany, setSelectedCompany] = useState<string>('all');
 const [selectedProject, setSelectedProject] = useState<string>('all');
+const [selectedGrid, setSelectedGrid] = useState<string>('all');
 const [selectedTeam, setSelectedTeam] = useState<string>('all');
-const [filterTreePos, setFilterTreePos] = useState<{ top: number; left: number } | null>(null);
-const filterTreeRef = useRef<HTMLDivElement>(null);
 const loadSeqRef = useRef(0);
 
 const formatAlarmCodeDate = (timestamp?: string) => {
@@ -250,6 +288,10 @@ const normalizeSearchText = (value: unknown) =>
     .replace(/[：:\s_-]+/g, '')
     .replace(/设备|device/g, '');
 
+const [sortConfig, setSortConfig] = useState<{ key: AlarmSortKey; direction: AlarmSortDirection }>({
+  key: 'time',
+  direction: 'desc',
+});
 const getAlarmSourceType = (item: AlarmResponse): 'fence' | 'video' => {
   const rawItem = item as any;
   const sourceType = String(rawItem.source_type || '').toLowerCase();
@@ -390,30 +432,6 @@ useEffect(() => {
   return () => window.removeEventListener('alarmAdded', handleAlarmAdded as EventListener);
 }, [activeTab]);
 
-  useEffect(() => {
-  const handleClickOutside = (event: MouseEvent) => {
-    if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
-      setShowDatePicker(false);
-    }
-  };
-  if (showDatePicker) {
-    document.addEventListener('mousedown', handleClickOutside);
-  }
-  return () => document.removeEventListener('mousedown', handleClickOutside);
-}, [showDatePicker]);
-
-useEffect(() => {
-  const handleClickOutside = (event: MouseEvent) => {
-    if (filterTreeRef.current && !filterTreeRef.current.contains(event.target as Node)) {
-      setShowFilterTree(false);
-    }
-  };
-  if (showFilterTree) {
-    document.addEventListener('mousedown', handleClickOutside);
-  }
-
-  return () => document.removeEventListener('mousedown', handleClickOutside);
-}, [showFilterTree]);
   const clearDateFilter = () => {
   setStartDate('');
   setEndDate('');
@@ -435,6 +453,75 @@ useEffect(() => {
     }
   };
 
+  const getAlarmTypeText = (alarm: AlarmRecord) => {
+    const raw = String(alarm.title || '').trim();
+    if (raw && raw !== '围栏告警' && raw !== '视频告警') return raw;
+    return alarm.type === 'fence' ? '电子围栏闯入' : '视频识别告警';
+  };
+
+  const getSituationText = (alarm: AlarmRecord) => {
+    const description = String(alarm.description || '').trim();
+    if (description && description !== alarm.title) return description;
+    const target = alarm.deviceName || alarm.personName || '未知对象';
+    const location = alarm.location && alarm.location !== '未提供位置' ? alarm.location : '';
+    return [target, location].filter(Boolean).join(' ');
+  };
+
+  const getAlarmDeviceText = (alarm: AlarmRecord) =>
+    [alarm.deviceName, alarm.deviceId ? `ID:${alarm.deviceId}` : ''].filter(Boolean).join(' / ') || '-';
+
+  const getAlarmPersonText = (alarm: AlarmRecord) => alarm.personName || '-';
+
+  const getAlarmLocationText = (alarm: AlarmRecord) =>
+    alarm.type === 'fence' && alarm.location && alarm.location !== '未提供位置' ? alarm.location : '-';
+
+  const getDefaultSortDirection = (key: AlarmSortKey): AlarmSortDirection => key === 'time' ? 'desc' : 'asc';
+
+  const handleSort = (key: AlarmSortKey) => {
+    setSortConfig(current => {
+      if (current.key !== key) return { key, direction: getDefaultSortDirection(key) };
+      return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+    });
+  };
+
+  const getSortValue = (alarm: AlarmRecord, key: AlarmSortKey) => {
+    const levelOrder = { high: 3, medium: 2, low: 1 };
+    const statusOrder = { pending: 3, resolved: 2, ignored: 1 };
+    switch (key) {
+      case 'type': return getAlarmTypeText(alarm);
+      case 'situation': return getSituationText(alarm);
+      case 'level': return levelOrder[alarm.level] || 0;
+      case 'person': return getAlarmPersonText(alarm);
+      case 'device': return getAlarmDeviceText(alarm);
+      case 'location': return getAlarmLocationText(alarm);
+      case 'branch': return alarm.branchName || '-';
+      case 'project': return alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-');
+      case 'grid': return alarm.gridName || '-';
+      case 'team': return alarm.team || '-';
+      case 'status': return statusOrder[alarm.status] || 0;
+      case 'time': return parseAlarmTimestamp(alarm.time).getTime() || 0;
+      default: return '';
+    }
+  };
+
+  const renderSortHeader = (key: AlarmSortKey, label: string, className: string) => {
+    const active = sortConfig.key === key;
+    const Icon = active ? (sortConfig.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <th className={className}>
+        <button
+          type="button"
+          onClick={() => handleSort(key)}
+          className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:text-cyan-300 ${active ? 'text-cyan-300' : 'text-slate-300'}`}
+          title={`点击按${label}排序`}
+        >
+          <span className="truncate">{label}</span>
+          <Icon size={13} className="shrink-0" />
+        </button>
+      </th>
+    );
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'bg-yellow-500/20 text-yellow-400';
@@ -454,6 +541,7 @@ const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignore
   setProcessingAlarm(alarm);
   setProcessAction(action);
   setProcessRemark('');
+  setProcessError('');
   setShowProcessModal(true);
 };
 
@@ -470,11 +558,13 @@ const openAlarmVideo = (alarm: AlarmRecord) => {
 };
 
 const handleConfirmProcess = async () => {
-  if (!processingAlarm) return;
+  if (!processingAlarm || isProcessingAlarm) return;
 
   const currentUser = localStorage.getItem('username') || '未知用户';
 
   try {
+    setIsProcessingAlarm(true);
+    setProcessError('');
     if (processAction === 'resolved') {
       await alarmApi.resolveAlarm(Number(processingAlarm.id), {
         handler: currentUser,
@@ -489,48 +579,85 @@ const handleConfirmProcess = async () => {
     }
 
     await loadAlarms();
+    window.dispatchEvent(new CustomEvent('alarmStatusChanged', {
+      detail: {
+        alarmId: processingAlarm.id,
+        deviceId: processingAlarm.deviceId,
+        sourceType: processingAlarm.sourceType,
+        status: processAction,
+      },
+    }));
 
     setShowProcessModal(false);
     setProcessingAlarm(null);
     setSelectedAlarm(null);
   } catch (error) {
     console.error('处理告警失败:', error);
+    setProcessError('处理失败，请检查后端服务或当前账号权限后重试。');
+  } finally {
+    setIsProcessingAlarm(false);
   }
 };
 
-  const companyTree: AlarmFilterTreeNode[] = Array.from(
-    alarms.reduce((map, alarm) => {
-      const projectName =
-        alarm.projectName ||
-        (alarm.projectId !== undefined && alarm.projectId !== null
-          ? `项目 ${alarm.projectId}`
-          : '未分配项目');
-      const companyName = alarm.branchName || '未分配分公司';
+  const getAlarmCompanyName = (alarm: AlarmRecord) => alarm.branchName || '未分配分公司';
+  const getAlarmProjectName = (alarm: AlarmRecord) =>
+    alarm.projectName ||
+    (alarm.projectId !== undefined && alarm.projectId !== null
+      ? `项目 ${alarm.projectId}`
+      : '未分配项目');
+  const getAlarmGridName = (alarm: AlarmRecord) => alarm.gridName || '未分配网格';
+  const getAlarmTeamName = (alarm: AlarmRecord) => alarm.team || '未分配工队';
+  const alarmMatchesKeyword = (alarm: AlarmRecord, keyword: string) => {
+    const terms = normalizeAlarmSearchText(keyword).split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return true;
 
-      if (!map.has(companyName)) {
-        map.set(companyName, {
-          id: companyName,
-          name: companyName,
-          projects: [],
-        });
-      }
+    const haystack = [
+      alarm.title,
+      alarm.description,
+      alarm.level,
+      alarm.status,
+      alarm.type,
+      alarm.sourceType,
+      alarm.deviceName,
+      alarm.deviceId,
+      alarm.location,
+      alarm.fenceId,
+      alarm.fenceName,
+      alarm.projectId,
+      getAlarmCompanyName(alarm),
+      getAlarmProjectName(alarm),
+      getAlarmGridName(alarm),
+      getAlarmTeamName(alarm),
+      alarm.personName,
+      getAlarmPersonText(alarm),
+      getAlarmDeviceText(alarm),
+      getAlarmLocationText(alarm),
+      getSituationText(alarm),
+      getAlarmTypeText(alarm),
+    ].map(normalizeAlarmSearchText).join(' ');
 
-      const entry = map.get(companyName)!;
-      let projectEntry = entry.projects.find((item) => item.name === projectName);
-      if (!projectEntry) {
-        projectEntry = { name: projectName, teams: [] as string[] };
-        entry.projects.push(projectEntry);
-      }
+    return terms.every((term) => haystack.includes(term));
+  };
 
-      if (alarm.team) {
-        if (!projectEntry.teams.includes(alarm.team)) {
-          projectEntry.teams.push(alarm.team);
-        }
-      }
-
-      return map;
-    }, new Map<string, AlarmFilterTreeNode>())
-  ).map(([, value]) => value);
+  const companyOptions = Array.from(new Set(alarms.map(getAlarmCompanyName))).filter(Boolean);
+  const projectOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .map(getAlarmProjectName)
+  )).filter(Boolean);
+  const gridOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .filter((alarm) => selectedProject === 'all' || getAlarmProjectName(alarm) === selectedProject)
+      .map(getAlarmGridName)
+  )).filter(Boolean);
+  const teamOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .filter((alarm) => selectedProject === 'all' || getAlarmProjectName(alarm) === selectedProject)
+      .filter((alarm) => selectedGrid === 'all' || getAlarmGridName(alarm) === selectedGrid)
+      .map(getAlarmTeamName)
+  )).filter(Boolean);
 
   const filteredAlarms = alarms.filter(alarm => {
     // 类型筛选
@@ -538,74 +665,57 @@ const handleConfirmProcess = async () => {
     // 状态筛选
     if (filterStatus !== 'all' && alarm.status !== filterStatus) return false;
     if (selectedCompany !== 'all') {
-      const companyName = alarm.branchName || '未分配分公司';
+      const companyName = getAlarmCompanyName(alarm);
       if (companyName !== selectedCompany) {
         return false;
       }
     }
 
     if (selectedProject !== 'all') {
-      const projectName =
-        alarm.projectName ||
-        (alarm.projectId !== undefined && alarm.projectId !== null
-          ? `项目 ${alarm.projectId}`
-          : '未分配项目');
+      const projectName = getAlarmProjectName(alarm);
       if (projectName !== selectedProject) {
+        return false;
+      }
+    }
+
+    if (selectedGrid !== 'all') {
+      if (getAlarmGridName(alarm) !== selectedGrid) {
         return false;
       }
     }
 
     // 工队筛选
     if (selectedTeam !== 'all') {
-      const searchableText = `${alarm.team || ''} ${alarm.gridName || ''} ${alarm.description} ${alarm.location}`;
-      if (!searchableText.includes(selectedTeam)) {
+      if (getAlarmTeamName(alarm) !== selectedTeam) {
         return false;
       }
     }
 
     // 关键词搜索
-    const keyword = normalizeSearchText(searchKeyword);
-    if (keyword) {
-      const statusText = getStatusText(alarm.status);
-      const levelText = getLevelText(alarm.level);
-      const searchableValues = [
-        alarm.alarmCode,
-        alarm.id,
-        alarm.title,
-        alarm.alarmType,
-        alarm.description,
-        alarm.deviceName,
-        alarm.deviceId,
-        alarm.location,
-        alarm.personName,
-        alarm.personnelId,
-        alarm.branchName,
-        alarm.projectName,
-        alarm.gridName,
-        alarm.team,
-        statusText,
-        levelText,
-        alarm.time,
-      ];
-      const normalizedValues = searchableValues.map(normalizeSearchText);
-      const matchesKeyword = normalizedValues.some(value => value.includes(keyword));
-      const deviceLikeNumber = normalizeSearchText(searchKeyword).match(/^\d+$/)?.[0];
-      const matchesNumeric =
-        !!deviceLikeNumber &&
-        (alarm.deviceId === deviceLikeNumber || alarm.id.includes(deviceLikeNumber));
-
-      if (!matchesKeyword && !matchesNumeric) return false;
-    }
+    if (!alarmMatchesKeyword(alarm, searchKeyword)) return false;
     
     // 日期范围筛选
-    const alarmDate = new Date(alarm.time);
-    if (startDate && alarmDate < new Date(startDate)) return false;
-    if (endDate) {
-      const endDateTime = new Date(endDate);
-      endDateTime.setHours(23, 59, 59, 999);
-      if (alarmDate > endDateTime) return false;
-    }
+    const alarmDate = parseAlarmTimestamp(alarm.time);
+    const filterStart = parseAlarmFilterDateTime(startDate);
+    const filterEnd = parseAlarmFilterDateTime(endDate);
+    if (filterStart && alarmDate < filterStart) return false;
+    if (filterEnd && alarmDate > filterEnd) return false;
     return true;
+  });
+
+  const sortedAlarms = [...filteredAlarms].sort((a, b) => {
+    const aValue = getSortValue(a, sortConfig.key);
+    const bValue = getSortValue(b, sortConfig.key);
+    let result = 0;
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      result = aValue - bValue;
+    } else {
+      result = String(aValue).localeCompare(String(bValue), 'zh-CN', {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    }
+    return sortConfig.direction === 'asc' ? result : -result;
   });
 
   return (
@@ -696,199 +806,79 @@ const handleConfirmProcess = async () => {
             <option value="resolved">已处理</option>
             <option value="ignored">已忽略</option>
           </select>
-          {/* 树形筛选按钮 */}
-<div className="relative">
-<button
-  onClick={(e) => {
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
-    setFilterTreePos({ top: rect.bottom + 8, left: rect.left });
-    setShowFilterTree(!showFilterTree);
-  }}
-  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
-      selectedCompany !== 'all' || selectedProject !== 'all'
-        ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-        : 'bg-slate-800 border border-slate-700 text-slate-400 hover:border-slate-600'
-    }`}
-  >
-    <Filter size={14} />
-    <span>
-      {selectedCompany !== 'all' && selectedProject !== 'all'
-        ? `${selectedCompany} / ${selectedProject}`
-        : selectedCompany !== 'all'
-          ? selectedCompany
-          : selectedProject !== 'all'
-            ? selectedProject
-            : '分公司/项目'}
-    </span>
-  </button>
-  
-{showFilterTree && filterTreePos && createPortal(
-  <div 
-    className="fixed z-[9999] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[260px]"
-    style={{ top: filterTreePos.top, left: filterTreePos.left }}
-    ref={filterTreeRef}
-  >
-    <div className="space-y-3">
-      <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-        <span className="text-sm font-medium text-white">筛选</span>
-        <button
-          onClick={() => {
-            setSelectedCompany('all');
-            setSelectedProject('all');
-            setSelectedTeam('all');
-            setShowFilterTree(false);
-          }}
-          className="text-xs text-cyan-400 hover:text-cyan-300"
-        >
-          清除筛选
-        </button>
-      </div>
-      
-      {companyTree.map(company => (
-        <div key={company.id} className="space-y-2">
-          <button
-            onClick={() => {
-              setSelectedCompany(selectedCompany === company.id ? 'all' : company.id);
-              setSelectedProject('all');
-              setSelectedTeam('all');
-            }}
-            className={`w-full text-left px-2 py-1.5 rounded-lg text-sm transition-all ${
-              selectedCompany === company.id
-                ? 'bg-cyan-500/20 text-cyan-300'
-                : 'text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            📁 {company.name}
-          </button>
-          {selectedCompany === company.id && (
-            <div className="ml-4 space-y-1 border-l border-cyan-400/30 pl-2">
-              {company.projects.map((project: { name: string; teams: string[] }) => (
-                <div key={project.name} className="space-y-1">
-                  <button
-                    onClick={() => {
-                      setSelectedProject(selectedProject === project.name ? 'all' : project.name);
-                      setSelectedTeam('all');
-                    }}
-                    className={`w-full text-left px-2 py-1 rounded-lg text-xs transition-all ${
-                      selectedProject === project.name
-                        ? 'bg-cyan-500/20 text-cyan-300'
-                        : 'text-slate-400 hover:bg-slate-700'
-                    }`}
-                  >
-                    📂 {project.name}
-                  </button>
-                  {selectedProject === project.name && (
-                    <div className="ml-4 space-y-1 border-l border-cyan-400/30 pl-2">
-                      {project.teams.map(team => (
-                        <button
-                          key={team}
-                          onClick={() => setSelectedTeam(selectedTeam === team ? 'all' : team)}
-                          className={`w-full text-left px-2 py-0.5 rounded-lg text-xs transition-all ${
-                            selectedTeam === team
-                              ? 'bg-orange-500/20 text-orange-300'
-                              : 'text-slate-500 hover:bg-slate-700'
-                          }`}
-                        >
-                          👥 {team}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-      
-      <div className="flex gap-2 pt-2 border-t border-slate-700">
-        <button
-          onClick={() => setShowFilterTree(false)}
-          className="flex-1 py-1.5 bg-cyan-500 hover:bg-cyan-600 rounded-lg text-xs transition-all"
-        >
-          确定
-        </button>
-      </div>
-    </div>
-  </div>,
-  document.body
-)}
-</div>
+          {/* 四级单位筛选 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {scopeState.showCompanyFilter && (
+              <select
+                value={selectedCompany}
+                onChange={(e) => {
+                  setSelectedCompany(e.target.value);
+                  setSelectedProject('all');
+                  setSelectedGrid('all');
+                  setSelectedTeam('all');
+                }}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+              >
+                <option value="all">所有分公司</option>
+                {companyOptions.map((company) => <option key={company} value={company}>{company}</option>)}
+              </select>
+            )}
+            {scopeState.showProjectFilter && (
+              <select
+                value={selectedProject}
+                onChange={(e) => {
+                  setSelectedProject(e.target.value);
+                  setSelectedGrid('all');
+                  setSelectedTeam('all');
+                }}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+              >
+                <option value="all">所有项目</option>
+                {projectOptions.map((project) => <option key={project} value={project}>{project}</option>)}
+              </select>
+            )}
+            <select
+              value={selectedGrid}
+              onChange={(e) => {
+                setSelectedGrid(e.target.value);
+                setSelectedTeam('all');
+              }}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+            >
+              <option value="all">所有网格</option>
+              {gridOptions.map((grid) => <option key={grid} value={grid}>{grid}</option>)}
+            </select>
+            <select
+              value={selectedTeam}
+              onChange={(e) => setSelectedTeam(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+            >
+              <option value="all">所有工队</option>
+              {teamOptions.map((team) => <option key={team} value={team}>{team}</option>)}
+            </select>
+          </div>
 
-{/* 日期区间筛选 */}
-<div className="relative">
-<button
-onClick={(e) => {
-  const rect = (e.target as HTMLElement).getBoundingClientRect();
-  // 让日期选择器左边和按钮左边对齐
-  setDatePickerPos({ top: rect.bottom + 8, left: rect.left });
-  setShowDatePicker(!showDatePicker);
-}}
-  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
-      startDate || endDate
-        ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-        : 'bg-slate-800 border border-slate-700 text-slate-400 hover:border-slate-600'
-    }`}
-  >
-    <Calendar size={14} />
-    <span>
-      {startDate && endDate 
-        ? `${startDate} ~ ${endDate}`
-        : startDate 
-          ? `≥ ${startDate}`
-          : endDate 
-            ? `≤ ${endDate}`
-            : '按日期筛选'}
-    </span>
-  </button>
-  
-{/* 日期选择器 - 使用 Portal 渲染到 body */}
-{showDatePicker && datePickerPos && createPortal(
-  <div 
-    className="fixed z-[9999] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[280px]"
-    style={{ 
-      top: datePickerPos.top, 
-      left: datePickerPos.left,
-    }}
-    ref={datePickerRef}
-  >
-    <div className="space-y-3">
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">开始日期</label>
-        <input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
-        />
-      </div>
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">结束日期</label>
-        <input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
-        />
-      </div>
-      <div className="flex gap-2 pt-2">
-        <button
-          onClick={clearDateFilter}
-          className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs transition-all"
-        >
-          清除
-        </button>
-        <button
-          onClick={() => setShowDatePicker(false)}
-          className="flex-1 py-1.5 bg-cyan-500 hover:bg-cyan-600 rounded-lg text-xs transition-all"
-        >
-          确定
-        </button>
-      </div>
-    </div>
-  </div>,
-  document.body
-)}
+{/* 时间范围筛选 */}
+<div className="flex items-center gap-2">
+  <Calendar size={14} className="text-slate-400" />
+  <input
+    type="datetime-local"
+    step="60"
+    value={startDate}
+    onChange={(e) => setStartDate(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+  />
+  <span className="text-slate-500">-</span>
+  <input
+    type="datetime-local"
+    step="60"
+    value={endDate}
+    onChange={(e) => setEndDate(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+  />
+  {(startDate || endDate) && (
+    <button onClick={clearDateFilter} className="px-2 py-1 text-sm text-cyan-400">清除</button>
+  )}
 </div>
 
           {/* 搜索框 */}
@@ -908,20 +898,26 @@ onClick={(e) => {
       {/* 告警列表 - 表格型 */}
       <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-700/50 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px] table-fixed">
+          <table className="w-full table-fixed">
             <thead className="border-b border-blue-400/20 bg-slate-800/50">
               <tr>
-                <th className="w-[150px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">报警编号</th>
-                <th className="w-[310px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">告警信息</th>
-                <th className="w-[150px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">处置</th>
-                <th className="w-[300px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">组织链路</th>
-                <th className="w-[260px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">对象信息</th>
-                <th className="w-[140px] px-4 py-3.5 text-left text-sm font-semibold text-slate-300">时间</th>
-                <th className="w-[180px] px-4 py-3.5 text-right text-sm font-semibold text-slate-300">操作</th>
+                {renderSortHeader('type', '类型', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('situation', '情况描述', 'w-[14%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('level', '等级', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('person', '告警对象', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('device', '告警设备', 'w-[13%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('location', '告警地点', 'w-[10%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('branch', '分公司', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('project', '项目', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('grid', '网格', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('team', '工队', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('status', '处置', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('time', '告警时间', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                <th className="w-[4%] px-3 py-3 text-right text-sm font-semibold text-slate-300">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
-              {filteredAlarms.map(alarm => (
+              {sortedAlarms.map(alarm => (
                 <tr 
                    key={alarm.recordKey} 
                    onClick={() => setSelectedAlarm(alarm)}
@@ -929,80 +925,85 @@ onClick={(e) => {
                      alarm.status === 'pending' ? 'bg-red-500/5' : ''
                    }`}
                  >
-                   <td className="px-4 py-4">
-                     <div className="text-sm text-cyan-300 font-medium">{alarm.alarmCode}</div>
-                     <div className="text-xs text-slate-500 mt-1">ID: {alarm.id}</div>
-                   </td>
-                   <td className="px-4 py-4 align-top">
-                     <div className="flex items-center gap-2">
-                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                   <td className="px-3 py-3 align-top">
+                     <div className="flex items-center gap-2 min-w-0">
+                       <div className={`w-8 h-8 rounded-lg flex shrink-0 items-center justify-center ${
                          alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
                        }`}>
                          {alarm.type === 'fence' ? (
-                           <ShieldAlert size={15} className="text-blue-400" />
+                           <ShieldAlert size={16} className="text-blue-400" />
                          ) : (
-                           <Video size={15} className="text-purple-400" />
+                           <Video size={16} className="text-purple-400" />
                          )}
                        </div>
-                       <div>
-                         <div className="text-base text-white font-medium truncate" title={alarm.alarmType}>{alarm.alarmType}</div>
-                         <div className="text-sm text-slate-400 mt-1 max-w-[260px] truncate">{alarm.description}</div>
-                       </div>
+                       <span className="truncate text-base font-semibold text-white" title={getAlarmTypeText(alarm)}>
+                         {getAlarmTypeText(alarm)}
+                       </span>
                      </div>
                    </td>
-                   <td className="px-4 py-4 align-top">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`text-xs px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
+                   <td className="px-3 py-3 align-top">
+                     <div
+                       className="text-base leading-7 text-slate-300 overflow-hidden"
+                       style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+                       title={getSituationText(alarm)}
+                     >
+                       {getSituationText(alarm)}
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                      <span className={`text-sm px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
                         {getLevelText(alarm.level)}
                       </span>
-                      <span className={`text-xs px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
-                        {getStatusText(alarm.status)}
-                      </span>
-                    </div>
                    </td>
-                   <td className="px-4 py-4 align-top">
-                     <div className="space-y-1.5 text-sm">
-                       <div className="truncate text-slate-200" title={alarm.branchName || '-'}>
-                         <span className="text-slate-500">分：</span>{alarm.branchName || '-'}
-                       </div>
-                       <div className="truncate text-slate-200" title={alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}>
-                         <span className="text-slate-500">项：</span>{alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}
-                       </div>
-                       <div className="flex flex-wrap gap-1">
-                         <span className="max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/25" title={alarm.gridName || '-'}>
-                           {alarm.gridName || '-'}
-                         </span>
-                         <span className="max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30" title={alarm.team || '-'}>
-                           {alarm.team || '-'}
-                         </span>
-                       </div>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmPersonText(alarm)}>
+                       {getAlarmPersonText(alarm)}
                      </div>
                    </td>
-                   <td className="px-4 py-4 align-top">
-                     <div className="space-y-1.5 text-sm text-slate-300">
-                       <div className="flex items-center gap-1 truncate" title={alarm.personName || '-'}>
-                         <User size={14} className="shrink-0 text-slate-500" />
-                         <span className="truncate">{alarm.personName || '-'}</span>
-                       </div>
-                       <div className="flex items-center gap-1 truncate" title={alarm.deviceName}>
-                         <Video size={14} className="shrink-0 text-slate-500" />
-                         <span className="truncate">{alarm.deviceName}</span>
-                       </div>
-                       <div className="flex items-center gap-1 truncate" title={alarm.location}>
-                         <MapPin size={14} className="shrink-0 text-slate-500" />
-                         <span className="truncate">{alarm.location}</span>
-                       </div>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmDeviceText(alarm)}>
+                       {getAlarmDeviceText(alarm)}
                      </div>
                      <div className="text-xs text-slate-500 mt-1">设备ID: {alarm.deviceId || '-'}</div>
                    </td>
-                   <td className="px-4 py-4 align-top">
-                     <div className="flex items-start gap-1 text-sm text-slate-300">
-                       <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
-                       <span className="leading-5">{new Date(alarm.time).toLocaleString()}</span>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmLocationText(alarm)}>
+                       {getAlarmLocationText(alarm)}
                      </div>
                    </td>
-                   <td className="px-4 py-4 text-right align-top">
-                    <div className="flex flex-wrap justify-end gap-2">
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.branchName || '-'}>
+                       {alarm.branchName || '-'}
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}>
+                       {alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.gridName || '-'}>
+                       {alarm.gridName || '-'}
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.team || '-'}>
+                       {alarm.team || '-'}
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                     <span className={`text-sm px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
+                       {getStatusText(alarm.status)}
+                     </span>
+                   </td>
+                   <td className="px-3 py-3 align-top">
+                     <div className="flex items-start gap-1 text-sm text-slate-300">
+                       <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
+                       <span className="leading-5">{formatAlarmTimestamp(alarm.time)}</span>
+                     </div>
+                   </td>
+                   <td className="px-3 py-3 text-right align-top">
+                    <div className="flex flex-wrap justify-end gap-1.5">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
@@ -1115,7 +1116,7 @@ onClick={(e) => {
                 </div>
                 <div>
                   <span className="text-slate-400">发生时间：</span>
-                  <span className="text-slate-200">{new Date(selectedAlarm.time).toLocaleString()}</span>
+                  <span className="text-slate-200">{formatAlarmTimestamp(selectedAlarm.time)}</span>
                 </div>
                 <div>
                   <span className="text-slate-400">所属分公司：</span>
@@ -1287,18 +1288,25 @@ onClick={(e) => {
             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
           />
         </div>
+        {processError && (
+          <div className="mt-3 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {processError}
+          </div>
+        )}
       </div>
       
       <div className="flex gap-3 mt-6">
         <button
           onClick={handleConfirmProcess}
-          className="flex-1 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 rounded-lg text-sm font-medium transition-all"
+          disabled={isProcessingAlarm}
+          className="flex-1 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 disabled:from-slate-600 disabled:to-slate-600 disabled:text-slate-300 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-all"
         >
-          确认处理
+          {isProcessingAlarm ? '处理中...' : '确认处理'}
         </button>
         <button
           onClick={() => setShowProcessModal(false)}
-          className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all"
+          disabled={isProcessingAlarm}
+          className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-700/60 disabled:text-slate-500 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-all"
         >
           取消
         </button>

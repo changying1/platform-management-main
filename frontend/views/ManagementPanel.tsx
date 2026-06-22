@@ -42,8 +42,8 @@ const readPermissions = () => {
   }
 };
 
-const canUsePermission = (permissions: string[], code: string) => {
-  return permissions.includes(code);
+const canUsePermission = (permissions: string[], code: string | string[]) => {
+  return Array.isArray(code) ? code.some(item => permissions.includes(item)) : permissions.includes(code);
 };
 
 const readPermissionLevel = () => {
@@ -83,11 +83,11 @@ export default function ManagementPanel({ defaultTab = 'responsibility' }: Manag
 
   const permissions = readPermissions();
   const permissionLevel = readPermissionLevel();
-  const permissionByTab: Record<ManagementTab, string> = {
+  const permissionByTab: Record<ManagementTab, string | string[]> = {
     project: 'personnel.view',
-    responsibility: 'personnel.view',
-    grid: 'personnel.view',
-    team: 'personnel.view',
+    responsibility: ['grid.view', 'team.view'],
+    grid: 'grid.view',
+    team: 'team.view',
     person: 'personnel.view',
     device: 'device.view',
     camera: 'device.view',
@@ -104,8 +104,10 @@ export default function ManagementPanel({ defaultTab = 'responsibility' }: Manag
     { id: 'device' as ManagementTab, label: '设备管理', icon: HardDrive },
     { id: 'permission' as ManagementTab, label: '权限管理', icon: Shield },
   ];
+  const isHeadquarters = permissionLevel === 'headquarters_admin' || !permissionLevel;
   const visibleTabs = tabs.filter(tab =>
-    canUsePermission(permissions, permissionByTab[tab.id]) && canUseManagementTab(permissionLevel, tab.id)
+    (isHeadquarters || canUsePermission(permissions, permissionByTab[tab.id])) &&
+    canUseManagementTab(permissionLevel, tab.id)
   );
 
   useEffect(() => {

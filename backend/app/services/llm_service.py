@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+from app.utils.config_manager import get_system_settings
 
 try:
     from langchain_core.runnables import RunnablePassthrough, RunnableParallel
@@ -20,8 +21,24 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 VECTOR_DB_BASE = os.path.join(os.path.dirname(__file__), "..", "..", "LargeLanguageModel", "vector_db")
 
 
+def get_ai_service_url():
+    settings = get_system_settings()
+    configured = str(settings.get("aiServiceUrl") or "").strip()
+    if configured and not configured.startswith("/api"):
+        return configured.rstrip("/")
+    return OLLAMA_URL.rstrip("/")
+
+
+def get_vector_db_base():
+    settings = get_system_settings()
+    configured = str(settings.get("aiVectorDbPath") or "").strip()
+    if configured:
+        return configured
+    return VECTOR_DB_BASE
+
+
 def check_ollama_connection(base_url=None):
-    url = base_url or OLLAMA_URL
+    url = (base_url or get_ai_service_url()).rstrip("/")
     try:
         response = requests.get(f"{url}/api/tags", timeout=5)
         return response.status_code == 200
@@ -30,7 +47,7 @@ def check_ollama_connection(base_url=None):
 
 
 def get_available_models(base_url=None):
-    url = base_url or OLLAMA_URL
+    url = (base_url or get_ai_service_url()).rstrip("/")
     try:
         response = requests.get(f"{url}/api/tags", timeout=5)
         if response.status_code == 200:
@@ -42,10 +59,16 @@ def get_available_models(base_url=None):
 
 
 def select_best_model():
+    settings = get_system_settings()
+    configured_model = str(settings.get("aiModelName") or "").strip()
     if not check_ollama_connection():
         return None
     
     available_models = get_available_models()
+    if configured_model and configured_model in available_models:
+        return configured_model
+    if configured_model and not available_models:
+        return configured_model
     priority_models = [
         "qwen:7b",
         "DeepSeek-R1-Distill-Qwen-7B-F16:latest",
@@ -62,8 +85,27 @@ def select_best_model():
     return None
 
 
+def retrieve_rag_context(question, kb_name="default", service_url=None):
+    if not Chroma or not OllamaEmbeddings:
+        return ""
+    try:
+        persist_directory = os.path.join(get_vector_db_base(), kb_name or "default")
+        if not os.path.isdir(persist_directory):
+            return ""
+        embeddings = OllamaEmbeddings(base_url=service_url or get_ai_service_url(), model=select_best_model() or "qwen:7b")
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        docs = vector_store.similarity_search(str(question or ""), k=4)
+        snippets = [doc.page_content for doc in docs if getattr(doc, "page_content", None)]
+        if not snippets:
+            return ""
+        return "\n\n".join(snippets)[:8000]
+    except Exception:
+        return ""
+
+
 def create_llm_chain(chat_history=None, kb_name="default", enable_rag=False, system_context=None):
     chat_history = chat_history or []
+    service_url = get_ai_service_url()
     
     if not check_ollama_connection():
         raise Exception("Ollama 服务未启动，请先运行: ollama serve")
@@ -197,9 +239,14 @@ def create_llm_chain(chat_history=None, kb_name="default", enable_rag=False, sys
 
     def llm_chain(question):
         messages = []
+        prompt = system_prompt
+        if enable_rag:
+            rag_context = retrieve_rag_context(question, kb_name=kb_name, service_url=service_url)
+            if rag_context:
+                prompt += "\n\n[RAG knowledge base]\n" + rag_context
         
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        if prompt:
+            messages.append({"role": "system", "content": prompt})
         
         for msg in chat_history:
             if isinstance(msg, dict):
@@ -212,7 +259,7 @@ def create_llm_chain(chat_history=None, kb_name="default", enable_rag=False, sys
         
         try:
             response = requests.post(
-                f"{OLLAMA_URL}/api/chat",
+                f"{service_url}/api/chat",
                 json={
                     "model": selected_model,
                     "messages": messages,

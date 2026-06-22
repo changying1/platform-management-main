@@ -1,4 +1,4 @@
-import { API_BASE_URL, getAuthHeaders } from './config';
+import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from './config';
 
 const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
   const headers = new Headers(init.headers || {});
@@ -15,7 +15,7 @@ const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
 };
 
 export async function recognizeVideoTraffic(videoId: string | number): Promise<any> {
-  const response = await fetch(`${API_BASE_URL}/video/${videoId}/traffic/recognize`, {
+  const response = await authFetch(`${API_BASE_URL}/video/${videoId}/traffic/recognize`, {
     method: 'POST',
   });
   let data: any = null;
@@ -28,10 +28,41 @@ export async function recognizeVideoTraffic(videoId: string | number): Promise<a
   return data;
 }
 
+const writeDeviceAuditLog = async (payload: {
+  action: string;
+  target_name: string;
+  details?: string;
+  company?: string;
+  project?: string;
+  grid?: string;
+  team?: string;
+  extra?: Record<string, any>;
+}) => {
+  try {
+    await authFetch(`${API_BASE_URL}/logs/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operator: localStorage.getItem('username') || localStorage.getItem('userName') || 'admin',
+        target_type: 'device',
+        ...payload,
+      }),
+    });
+  } catch (error) {
+    console.warn('写入设备操作日志失败:', error);
+  }
+};
+
 // ✅ 🔥 内网穿透终极解决方案！每次调用都实时检测！
 // 不管本地开发还是远程内网穿透，100% 正确！
 const getApiBase = (): string => {
-  if (window.location.port === '3000') return '';
+  const isLocalViteDevServer =
+    import.meta.env.DEV &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+    window.location.port !== '' &&
+    window.location.port !== '9000';
+  const isViteDevPort = import.meta.env.DEV && /^30\d\d$/.test(window.location.port);
+  if (isLocalViteDevServer || isViteDevPort) return '';
   return `${window.location.protocol}//${window.location.host}`;
 };
 
@@ -88,6 +119,7 @@ export interface Video {
   stream_url?: string; // 后端可能返回 null
   rtsp_url?: string;
   stream_protocol?: 'ezopen' | 'hls' | 'rtmp' | 'flv';
+  device_type?: string;
   platform_type?: 'onvif' | 'ezviz' | string;
   access_source?: 'local' | 'cloud' | string;
   ptz_source?: 'onvif' | 'ezviz' | string;
@@ -158,6 +190,7 @@ export interface VideoCreate {
   stream_url?: string; // 改为可选，允许为空
   rtsp_url?: string;
   stream_protocol?: 'ezopen' | 'hls' | 'rtmp' | 'flv';
+  device_type?: string;
   platform_type?: 'onvif' | 'ezviz' | string;
   access_source?: 'local' | 'cloud' | string;
   ptz_source?: 'onvif' | 'ezviz' | string;
@@ -266,6 +299,9 @@ export interface SavedPlaybackVideo {
   name: string;
   size_bytes: number;
   duration_seconds?: number;
+  start_time?: string;
+  end_time?: string;
+  created_at?: string;
   updated_at: string;
   web_path: string;
   recording_path?: string;
@@ -277,8 +313,6 @@ export interface SavedPlaybackVideo {
   alarm_type?: string;
   description?: string;
   recording_status?: string;
-  start_time?: string;
-  end_time?: string;
   alarm_second?: number;
 }
 
@@ -384,7 +418,18 @@ export async function createVideo(videoData: VideoCreate): Promise<Video> {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to create video');
   }
-  return response.json();
+  const created = await response.json();
+  await writeDeviceAuditLog({
+    action: '添加设备',
+    target_name: created.name || videoData.name || `视频设备 ${created.id || ''}`,
+    details: `添加设备 - ${created.name || videoData.name || created.id || ''}`,
+    company: created.company || videoData.company,
+    project: created.project || videoData.project,
+    grid: (created as any).grid || (videoData as any).grid,
+    team: created.team || videoData.team,
+    extra: { deviceId: created.id, after: created },
+  });
+  return created;
 }
 
 /** 更新视频设备信息 (补充缺失的方法) */
@@ -398,7 +443,18 @@ export async function updateVideo(id: number, videoData: VideoUpdate): Promise<V
     const error = await response.json();
     throw new Error(error.detail || 'Failed to update video');
   }
-  return response.json();
+  const updated = await response.json();
+  await writeDeviceAuditLog({
+    action: '变更设备信息',
+    target_name: updated.name || videoData.name || `视频设备 ${id}`,
+    details: `变更设备信息 - ${updated.name || videoData.name || id}`,
+    company: updated.company || videoData.company,
+    project: updated.project || videoData.project,
+    grid: (updated as any).grid || (videoData as any).grid,
+    team: updated.team || videoData.team,
+    extra: { deviceId: id, after: updated },
+  });
+  return updated;
 }
 
 /** 控制摄像头云台方向 */
@@ -425,7 +481,10 @@ export async function ptzControl(
 }
 
 /** 删除指定的视频设备 */
-export async function deleteVideo(videoId: number): Promise<{ status: string }> {
+export async function deleteVideo(
+  videoId: number,
+  context: { name?: string; company?: string; project?: string; grid?: string; team?: string } = {}
+): Promise<{ status: string }> {
   const response = await authFetch(`${API_BASE_URL}/video/${videoId}`, {
     method: 'DELETE',
   });
@@ -433,7 +492,18 @@ export async function deleteVideo(videoId: number): Promise<{ status: string }> 
     const error = await response.json();
     throw new Error(error.detail || 'Failed to delete video');
   }
-  return response.json();
+  const result = await response.json();
+  await writeDeviceAuditLog({
+    action: '删除设备',
+    target_name: context.name || `视频设备 ${videoId}`,
+    details: `删除设备 - ${context.name || videoId}`,
+    company: context.company,
+    project: context.project,
+    grid: context.grid,
+    team: context.team,
+    extra: { deviceId: videoId, before: context },
+  });
+  return result;
 }
 
 export async function getVideoMonitoringSummaries(): Promise<VideoMonitoringSummary[]> {
@@ -564,6 +634,7 @@ export async function addCameraViaRTSP(cameraData: {
   latitude?: number;
   longitude?: number;
   remark?: string;
+  device_type?: string;
   stream_protocol?: 'ezopen' | 'hls' | 'rtmp' | 'flv';
   platform_type?: 'onvif' | 'ezviz' | string;
   access_source?: 'local' | 'cloud' | string;
@@ -586,7 +657,18 @@ export async function addCameraViaRTSP(cameraData: {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to add camera via RTSP');
   }
-  return response.json();
+  const created = await response.json();
+  await writeDeviceAuditLog({
+    action: '添加设备',
+    target_name: created.name || cameraData.name || `视频设备 ${created.id || ''}`,
+    details: `添加设备 - ${created.name || cameraData.name || created.id || ''}`,
+    company: created.company || (cameraData as any).company,
+    project: created.project || (cameraData as any).project,
+    grid: (created as any).grid || (cameraData as any).grid,
+    team: created.team || (cameraData as any).team,
+    extra: { deviceId: created.id, after: created },
+  });
+  return created;
 }
 /** 持续云台移动-开始（按下时调用） */
 export async function ptzStartControl(
@@ -1227,12 +1309,13 @@ const fixPlaybackUrl = (v: any): any => {
   // 浏览器自己会用当前页面的协议 + 域名 + 端口
   const processValue = (value: any): any => {
     if (typeof value === 'string') {
-      if (value.includes('/static/')) {
+      if (value.includes('/static/') || value.includes('/api/videos/') || value.includes('/api/alarm_videos/') || value.includes('/api/alarm_screenshots/') || value.includes('/api/playback_videos/')) {
         let path = value;
         // 去掉所有域名，只留相对路径！100% 兼容！
         path = path.replace(/https?:\/\/[^\/]+/g, '');
-        console.log(`🎬 路径适配: ${value} → ${path}`);
-        return path;
+        const finalUrl = withAuthTokenParam(getApiUrl(path));
+        console.log(`媒体路径适配: ${value} -> ${finalUrl}`);
+        return finalUrl;
       }
     } else if (Array.isArray(value)) {
       return value.map(processValue);

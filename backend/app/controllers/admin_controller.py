@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from app.core.database import get_db, get_mongo_collection
 from app.schemas.admin_schema import UserCreate, UserUpdate, UserOut
 from app.services.admin_service import AdminService
-from app.utils.config_manager import get_safety_production_days
+from app.utils.config_manager import get_safety_production_days, get_system_settings as load_system_settings, save_system_settings_to_mongo
 import os
 import json
 from datetime import date
@@ -29,6 +29,10 @@ PERMISSION_MODULE_CODES = {
     "monitor": ["monitor.playback", "monitor.track", "monitor.voice", "monitor.camera"],
     "monitor.view": ["monitor.playback", "monitor.track", "monitor.camera"],
     "fence": ["fence.view", "fence.create", "fence.edit", "fence.delete"],
+    "grid": ["grid.view", "grid.create", "grid.edit", "grid.delete"],
+    "grid.view": ["grid.view"],
+    "team": ["team.view", "team.create", "team.edit", "team.delete"],
+    "team.view": ["team.view"],
     "device": ["device.view", "device.create", "device.edit", "device.delete"],
     "device.view": ["device.view"],
     "personnel": ["personnel.view", "personnel.create", "personnel.edit", "personnel.delete"],
@@ -105,13 +109,19 @@ def _user_target_name(user) -> str:
 
 
 def _settings_snapshot() -> dict:
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return load_system_settings()
+
+
+def _current_user_label(current_user: dict | None) -> str:
+    if not current_user:
+        return "system"
+    return str(
+        current_user.get("username")
+        or current_user.get("full_name")
+        or current_user.get("name")
+        or current_user.get("id")
+        or "system"
+    )
 
 
 def _normalize_safety_production_settings(settings: dict, previous: dict) -> dict:
@@ -136,6 +146,7 @@ def _normalize_safety_production_settings(settings: dict, previous: dict) -> dic
 
 VIDEO_RESTART_SETTING_KEYS = {
     "videoStoragePath",
+    "videoStorageFolders",
     "videoStorageType",
     "videoSegmentMinutes",
     "videoRetentionDays",
@@ -279,13 +290,7 @@ def get_subordinates(user_id: int, db=Depends(get_db), current_user: dict = Depe
 
 @router.get("/settings")
 def get_system_settings(current_user: dict = Depends(require_settings_manager)):
-    config = {}
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-        except:
-            pass
+    config = load_system_settings()
     config["safetyProductionDays"] = get_safety_production_days()
     config.setdefault("safetyProductionUpdatedDate", date.today().isoformat())
     return config
@@ -295,6 +300,7 @@ def save_system_settings(settings: dict = Body(...), db=Depends(get_db), current
     try:
         before_settings = _settings_snapshot()
         settings = _normalize_safety_production_settings(settings, before_settings)
+        mongo_saved = save_system_settings_to_mongo(settings, _current_user_label(current_user))
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
 
@@ -322,7 +328,7 @@ def save_system_settings(settings: dict = Body(...), db=Depends(get_db), current
         )
         
         message = "设置已保存，所有录像已重启并使用新路径" if restarted_recordings else "设置已保存"
-        return {"success": True, "message": message, "recordingsRestarted": restarted_recordings}
+        return {"success": True, "message": message, "recordingsRestarted": restarted_recordings, "mongoSaved": mongo_saved}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存失败: {str(e)}")
 

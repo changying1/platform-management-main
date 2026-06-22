@@ -122,6 +122,10 @@ class ProjectCreate(ProjectBase):
 
     region_ids: List[int] = []
 
+    grid_ids: List[str] = []
+
+    team_ids: List[str] = []
+
 
 
 class ProjectUpdate(BaseModel):
@@ -146,6 +150,10 @@ class ProjectUpdate(BaseModel):
 
     region_ids: Optional[List[int]] = None
 
+    grid_ids: Optional[List[str]] = None
+
+    team_ids: Optional[List[str]] = None
+
 
 
 class ProjectResponse(ProjectBase):
@@ -155,6 +163,10 @@ class ProjectResponse(ProjectBase):
     id: int
 
     branch_id: Optional[int] = None
+
+    grid_ids: List[str] = []
+
+    team_ids: List[str] = []
 
     users: List[UserBasic] = []
 
@@ -178,6 +190,8 @@ class ProjectListItem(ProjectBase):
     user_count: int
     device_count: int
     region_count: int
+    grid_count: int = 0
+    team_count: int = 0
     fence_count: int
     alarm_count: int = 0
 

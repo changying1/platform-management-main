@@ -9,6 +9,7 @@ from app.utils.config_manager import (
     get_max_concurrent_sessions,
     get_password_expire_days,
 )
+from app.services.permission_service import get_permissions_for_level
 
 
 SESSION_TTL_HOURS = 12
@@ -114,6 +115,7 @@ def _user_to_current_user(user: dict) -> dict:
         "department_id": _normalize_department_id(user.get("department_id")),
         "username": user.get("username"),
         "permission_level": permission_level,
+        "permissions": get_permissions_for_level(permission_level),
         "company": user.get("company") or user.get("department") or "",
         "department": user.get("department") or "",
         "branch_id": user.get("branch_id") or user.get("department_id") or "",

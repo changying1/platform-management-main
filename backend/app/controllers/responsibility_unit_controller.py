@@ -10,6 +10,7 @@ from app.schemas.responsibility_unit_schema import (
 )
 from app.services.Grid.responsibility_unit_service import responsibility_unit_service
 from app.services.audit_log_service import write_audit_log
+from app.core.permissions import require_permission
 
 router = APIRouter(prefix="/api/responsibility-units", tags=["Responsibility Unit Management"])
 
@@ -43,6 +44,14 @@ def _require_unit_scope(unit: dict | None, current_user: dict):
 
 def _unit_type(unit: dict | None) -> str:
     return str((unit or {}).get("type") or "").strip()
+
+
+def _permission_subject(unit_type: str) -> str:
+    if unit_type == "team":
+        return "team"
+    if unit_type == "grid":
+        return "grid"
+    raise HTTPException(status_code=403, detail="该责任节点类型不支持在此处维护")
 
 
 def _unit_name(unit: dict | None, fallback: str = "") -> str:
@@ -127,6 +136,7 @@ def get_unit(unit_id: str, current_user: dict = Depends(get_current_user)):
 @router.post("/", response_model=ResponsibilityUnitOut)
 def create_unit(data: ResponsibilityUnitCreate, current_user: dict = Depends(get_current_user)):
     _require_responsibility_manager(current_user)
+    require_permission(current_user, f"{_permission_subject(str(data.type))}.create")
     if data.parent_id:
         _require_unit_scope(responsibility_unit_service.get_unit_by_id(data.parent_id), current_user)
     created = responsibility_unit_service.create_unit(data)
@@ -146,6 +156,7 @@ def update_unit(unit_id: str, data: ResponsibilityUnitUpdate, current_user: dict
     _require_responsibility_manager(current_user)
     before = responsibility_unit_service.get_unit_by_id(unit_id)
     _require_unit_scope(before, current_user)
+    require_permission(current_user, f"{_permission_subject(_unit_type(before))}.edit")
     updated = responsibility_unit_service.update_unit(unit_id, data)
 
     if not updated:
@@ -168,6 +179,7 @@ def delete_unit(unit_id: str, current_user: dict = Depends(get_current_user)):
     _require_responsibility_manager(current_user)
     before = responsibility_unit_service.get_unit_by_id(unit_id)
     _require_unit_scope(before, current_user)
+    require_permission(current_user, f"{_permission_subject(_unit_type(before))}.delete")
     success = responsibility_unit_service.delete_unit(unit_id)
 
     if not success:
@@ -188,7 +200,9 @@ def delete_unit(unit_id: str, current_user: dict = Depends(get_current_user)):
 @router.post("/{unit_id}/move-up")
 def move_up(unit_id: str, current_user: dict = Depends(get_current_user)):
     _require_responsibility_manager(current_user)
-    _require_unit_scope(responsibility_unit_service.get_unit_by_id(unit_id), current_user)
+    unit = responsibility_unit_service.get_unit_by_id(unit_id)
+    _require_unit_scope(unit, current_user)
+    require_permission(current_user, f"{_permission_subject(_unit_type(unit))}.edit")
     result = responsibility_unit_service.move_up(unit_id)
     if not result:
         raise HTTPException(status_code=404, detail="责任单元不存在")
@@ -198,7 +212,9 @@ def move_up(unit_id: str, current_user: dict = Depends(get_current_user)):
 @router.post("/{unit_id}/move-down")
 def move_down(unit_id: str, current_user: dict = Depends(get_current_user)):
     _require_responsibility_manager(current_user)
-    _require_unit_scope(responsibility_unit_service.get_unit_by_id(unit_id), current_user)
+    unit = responsibility_unit_service.get_unit_by_id(unit_id)
+    _require_unit_scope(unit, current_user)
+    require_permission(current_user, f"{_permission_subject(_unit_type(unit))}.edit")
     result = responsibility_unit_service.move_down(unit_id)
     if not result:
         raise HTTPException(status_code=404, detail="责任单元不存在")
@@ -212,7 +228,9 @@ def change_parent(
     current_user: dict = Depends(get_current_user),
 ):
     _require_responsibility_manager(current_user)
-    _require_unit_scope(responsibility_unit_service.get_unit_by_id(unit_id), current_user)
+    unit = responsibility_unit_service.get_unit_by_id(unit_id)
+    _require_unit_scope(unit, current_user)
+    require_permission(current_user, f"{_permission_subject(_unit_type(unit))}.edit")
     _require_unit_scope(responsibility_unit_service.get_unit_by_id(new_parent_id), current_user)
     result = responsibility_unit_service.change_parent(unit_id, new_parent_id)
     if not result:

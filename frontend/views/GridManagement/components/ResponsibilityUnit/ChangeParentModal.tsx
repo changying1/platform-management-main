@@ -13,7 +13,6 @@ interface ChangeParentModalProps {
 
 const parentTypeRules: Partial<Record<UnitType, UnitType[]>> = {
   project: ['branch'],
-  safety_office: ['project'],
   grid: ['project'],
   team: ['grid'],
 };

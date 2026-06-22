@@ -36,7 +36,7 @@ import {
 import { usePlaybackStore } from "../src/playbackStore";
 import { SavedPlayback, Device } from "../src/playback";
 import { TrackMap } from '../src/components/TrackMap';
-// ✅ 新增：导入真实 API
+// 鉁?鏂板锛氬鍏ョ湡瀹?API
 import {
   getAllVideos,
   getRecordingVideos,
@@ -44,17 +44,18 @@ import {
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
 import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from "../src/api/config";
+import { getStoredScopeState, isHeadquartersScope, readStoredAuth } from "../src/utils/authScope";
 
-// ✅ 轨迹API配置（从TrackPlayback.tsx迁移）
+// 鉁?杞ㄨ抗API閰嶇疆锛堜粠TrackPlayback.tsx杩佺Щ锛?
 const TRACK_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
 
-// ✅ 轨迹设备类型（适配MongoDB数据结构）
+// 鉁?杞ㄨ抗璁惧绫诲瀷锛堥€傞厤MongoDB鏁版嵁缁撴瀯锛?
 interface TrackDevice {
   _id?: { $oid?: string };
   device_id: string;
   name: string;
-  holder?: string;           // 人员姓名（适配数据库字段）
-  person_name?: string;      // 兼容旧字段
+  holder?: string;           // 浜哄憳濮撳悕锛堥€傞厤鏁版嵁搴撳瓧娈碉級
+  person_name?: string;      // 鍏煎鏃у瓧娈?
   lat?: number;
   lng?: number;
   company?: string;
@@ -65,12 +66,12 @@ interface TrackDevice {
   lastUpdate?: string;
   createdAt?: string;
   updatedAt?: string;
-  trajectory?: TrajectoryPoint[];  // 轨迹直接在设备文档中
+  trajectory?: TrajectoryPoint[];  // 杞ㄨ抗鐩存帴鍦ㄨ澶囨枃妗ｄ腑
   remark?: string;
   type?: string;
 }
 
-// ✅ 轨迹点类型（从TrackPlayback.tsx迁移）
+// 鉁?杞ㄨ抗鐐圭被鍨嬶紙浠嶵rackPlayback.tsx杩佺Щ锛?
 interface TrajectoryPoint {
   lat: number;
   lng: number;
@@ -79,12 +80,12 @@ interface TrajectoryPoint {
   direction?: number;
 }
 
- // 新增：主Tab类型
+ // 鏂板锛氫富Tab绫诲瀷
 type MainTabType = 'video' | 'track' | 'voice';
 type TabType = 'all' | 'manual' | 'alarm';
 
 
-// 新增：轨迹点类型
+// 鏂板锛氳建杩圭偣绫诲瀷
 interface TrackPoint {
   lat: number;
   lng: number;
@@ -92,7 +93,7 @@ interface TrackPoint {
   speed?: number;
 }
 
-// 新增：轨迹记录类型
+// 鏂板锛氳建杩硅褰曠被鍨?
 interface TrackRecord {
   id: string;
   deviceId: string;
@@ -100,14 +101,27 @@ interface TrackRecord {
   
   holder: string;
   company: string;
+  branch_id?: string;
   project: string;
+  project_id?: string;
+  grid?: string;
   team: string;
   startTime: string;
   endTime: string;
   points: TrackPoint[];
 }
 
-// 新增：通话记录类型
+type TrackOrgNode = {
+  id: string;
+  name: string;
+  projects: Array<{
+    id: string;
+    name: string;
+    teams: string[];
+  }>;
+};
+
+// 鏂板锛氶€氳瘽璁板綍绫诲瀷
 interface VoiceRecord {
   id: string;
   type: 'broadcast' | 'group' | 'private';
@@ -119,6 +133,10 @@ interface VoiceRecord {
   audioUrl?: string;
   transcript?: string;
   batchId?: string | null;
+  company?: string;
+  project?: string;
+  grid?: string;
+  team?: string;
 }
 
 interface TtsQueueJob {
@@ -169,12 +187,13 @@ function getVoiceRecordType(source?: string | null): VoiceRecord['type'] {
 }
 
 function createVoiceRecordFromBatch(batch: TtsBatchResponse): VoiceRecord {
+  const jobs = Array.isArray(batch.jobs) ? batch.jobs : [];
   return {
     id: batch.batch_id,
     type: getVoiceRecordType(batch.request_source),
     from: batch.operator || '群组通话',
     fromRole: '语音转文本播报',
-    toNames: batch.jobs.map((job) => job.device_name || job.device_phone),
+    toNames: jobs.map((job) => job.device_name || job.device_phone).filter(Boolean),
     startTime: batch.created_at,
     duration: Math.max(1, Math.ceil((batch.text || '').length / 4)),
     transcript: batch.text,
@@ -205,7 +224,7 @@ function createVoiceRecordFromResponse(record: VoiceRecordResponse): VoiceRecord
     type: record.type || 'group',
     from: record.from || '群组通话',
     fromRole: record.from_role || '语音通话',
-    toNames: record.to_names || [],
+    toNames: toTextArray(record.to_names),
     startTime: record.created_at,
     duration: Math.max(1, record.duration || 1),
     audioUrl,
@@ -213,7 +232,7 @@ function createVoiceRecordFromResponse(record: VoiceRecordResponse): VoiceRecord
     batchId: record.batch_id,
   };
 }
-// 扩展 alarmInfo 类型，添加 screenshot 字段
+// 鎵╁睍 alarmInfo 绫诲瀷锛屾坊鍔?screenshot 瀛楁
 interface ExtendedAlarmInfo {
   type: string;
   msg: string;
@@ -229,9 +248,10 @@ interface ExtendedAlarmInfo {
   };
 }
 
-// 扩展 SavedPlayback 类型（覆盖 alarmInfo）
+// 鎵╁睍 SavedPlayback 绫诲瀷锛堣鐩?alarmInfo锛?
 interface ExtendedSavedPlayback extends SavedPlayback {
   alarmInfo?: ExtendedAlarmInfo;
+  thumbnail?: string;
   grid?: string;
   grid_id?: string;
   grid_name?: string;
@@ -264,23 +284,94 @@ const firstText = (source: Record<string, any> | undefined | null, keys: string[
   return '';
 };
 
+const isInvalidOrgValue = (value: unknown) => {
+  const text = asText(value);
+  if (!text) return true;
+  const normalized = text.toLowerCase();
+  return ['?', '??', '???', 'null', 'undefined', 'unknown', '未知', '未匹配', '-', '--'].includes(normalized);
+};
+
+const cleanOrgValue = (value: unknown) => {
+  const text = asText(value);
+  return isInvalidOrgValue(text) ? '' : text;
+};
+
 const normalizeSearch = (value: unknown) => asText(value).toLowerCase();
 
+const toTextArray = (value: unknown) =>
+  Array.isArray(value) ? value.map(item => asText(item)).filter(Boolean) : [];
+
+const toVideoUrl = (path: unknown) => {
+  const rawPath = asText(path);
+  if (!rawPath) return '';
+  if (rawPath.startsWith('blob:') || rawPath.startsWith('data:')) {
+    return rawPath;
+  }
+
+  if (
+    rawPath.startsWith('/static/alarm_videos/') ||
+    rawPath.startsWith('/static/alarms/') ||
+    rawPath.startsWith('/static/alarm_screenshots/') ||
+    rawPath.startsWith('/api/alarm_videos/') ||
+    rawPath.startsWith('/api/alarm_screenshots/')
+  ) {
+    return getApiUrl(rawPath);
+  }
+
+  if (rawPath.startsWith('/static/')) {
+    return withAuthTokenParam(getApiUrl(rawPath));
+  }
+
+  if (/^(https?:)?\/\//i.test(rawPath)) {
+    return withAuthTokenParam(rawPath);
+  }
+
+  const url = `${API_BASE_URL}${rawPath.startsWith('/') ? '' : '/'}${rawPath}`;
+  return withAuthTokenParam(url);
+};
+
+const withMediaCacheKey = (url: string, key?: unknown) => {
+  const cacheKey = asText(key);
+  if (!url || !cacheKey) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${encodeURIComponent(cacheKey)}`;
+};
+
+const getScreenshotUrl = (shot: any) => {
+  const rawPath =
+    shot?.alarmInfo?.screenshot?.url ||
+    shot?.alarmInfo?.screenshot?.thumbnail ||
+    shot?.alarmInfo?.screenshotUrl ||
+    shot?.web_path ||
+    shot?.thumbnail_path ||
+    shot?.thumbnail ||
+    shot?.url ||
+    '';
+
+  return rawPath ? toVideoUrl(rawPath) : '';
+};
+
+const getPlaybackEventTime = (item: any) =>
+  item?.event_at || item?.alarm_at || item?.start_time || item?.created_at || item?.updated_at || '';
+
 const getDeviceCompany = (device: Partial<Device> | Record<string, any>) =>
-  firstText(device as Record<string, any>, ['company', 'companyName', 'branch_name', 'branch_id']);
+  cleanOrgValue(firstText(device as Record<string, any>, ['company', 'companyName', 'branch_name']));
 
 const getDeviceProject = (device: Partial<Device> | Record<string, any>) =>
-  firstText(device as Record<string, any>, ['project', 'projectName', 'project_name', 'project_id']);
+  cleanOrgValue(firstText(device as Record<string, any>, ['project', 'projectName', 'project_name']));
 
 const getDeviceGrid = (device: Partial<Device> | Record<string, any>) =>
-  firstText(device as Record<string, any>, ['grid', 'grid_name', 'gridName', 'grid_id']);
+  cleanOrgValue(firstText(device as Record<string, any>, ['grid', 'grid_name', 'gridName']));
 
 const getDeviceTeam = (device: Partial<Device> | Record<string, any>) =>
-  firstText(device as Record<string, any>, ['team', 'team_name', 'teamName', 'workTeam', 'work_team', 'team_id']);
+  cleanOrgValue(firstText(device as Record<string, any>, ['team', 'team_name', 'teamName', 'workTeam', 'work_team']));
 
 const playbackMatchesSearch = (playback: ExtendedSavedPlayback, keyword: string) => {
   const normalizedKeyword = normalizeSearch(keyword);
   if (!normalizedKeyword) return true;
+  const alarmFields = playback.type === 'alarm'
+    ? [playback.alarmInfo?.msg, playback.alarmInfo?.type, playback.alarmInfo?.personnel]
+    : [];
   return [
     playback.deviceName,
     playback.holder,
@@ -288,11 +379,284 @@ const playbackMatchesSearch = (playback: ExtendedSavedPlayback, keyword: string)
     playback.projectName || playback.project,
     playback.gridName || playback.grid,
     playback.teamName || playback.team,
-    playback.alarmInfo?.msg,
-    playback.alarmInfo?.type,
-    playback.alarmInfo?.personnel,
+    ...alarmFields,
   ].some(field => normalizeSearch(field).includes(normalizedKeyword));
 };
+
+type VoiceSortField = 'from' | 'receiver' | 'category' | 'time' | 'kind';
+type TrackSortField = 'type' | 'holder' | 'device' | 'coord' | 'description' | 'company' | 'project' | 'org' | 'time';
+type SortDirection = 'asc' | 'desc';
+interface VoiceSortState {
+  field: VoiceSortField;
+  direction: SortDirection;
+}
+interface TrackSortState {
+  field: TrackSortField;
+  direction: SortDirection;
+}
+
+const getDeviceMatchKeys = (device: Partial<Device> | Record<string, any>) => [
+  firstText(device as Record<string, any>, ['id', 'device_id', 'deviceId']),
+  firstText(device as Record<string, any>, ['name', 'device_name', 'deviceName']),
+  firstText(device as Record<string, any>, ['phone_num', 'phoneNum', 'device_phone', 'devicePhone', 'holderPhone']),
+]
+  .flatMap((value) => {
+    const normalized = normalizeSearch(value);
+    const locatorMatch = normalized.match(/^定位器[-_ ]?(.+)$/);
+    return locatorMatch ? [normalized, locatorMatch[1]] : [normalized];
+  })
+  .filter(Boolean);
+
+const findReceiverDevice = (receiver: string, devices: Device[]) => {
+  const normalized = normalizeSearch(receiver);
+  const locatorMatch = normalized.match(/^定位器[-_ ]?(.+)$/);
+  const receiverKeys = [normalized, locatorMatch?.[1]].filter(Boolean);
+
+  return devices.find(device => {
+    const deviceKeys = getDeviceMatchKeys(device as Record<string, any>);
+    return receiverKeys.some(receiverKey =>
+      deviceKeys.some(deviceKey => deviceKey === receiverKey)
+    );
+  });
+};
+
+const attachScopedVoiceOrg = (voice: VoiceRecord, devices: Device[], requireDeviceMatch = true): VoiceRecord | null => {
+  const normalizedVoice = {
+    ...voice,
+    from: asText(voice.from) || '群组通话',
+    fromRole: asText(voice.fromRole) || '语音通话',
+    toNames: toTextArray(voice.toNames),
+    startTime: asText(voice.startTime),
+    duration: Math.max(1, Number(voice.duration) || 1),
+  };
+  const scopedReceivers = normalizedVoice.toNames
+    .map(receiver => ({ receiver, device: findReceiverDevice(receiver, devices) }))
+    .filter((item): item is { receiver: string; device: Device } => Boolean(item.device));
+
+  if (scopedReceivers.length === 0) {
+    return requireDeviceMatch ? null : normalizedVoice;
+  }
+
+  const matchedDevice = scopedReceivers[0].device;
+
+  return {
+    ...normalizedVoice,
+    toNames: requireDeviceMatch ? scopedReceivers.map(item => item.receiver) : normalizedVoice.toNames,
+    company: getDeviceCompany(matchedDevice),
+    project: getDeviceProject(matchedDevice),
+    grid: getDeviceGrid(matchedDevice),
+    team: getDeviceTeam(matchedDevice),
+  };
+};
+
+const getVoiceReceiverText = (voice: VoiceRecord) => toTextArray(voice.toNames).join(', ') || '';
+
+const getVoiceSortValue = (voice: VoiceRecord, field: VoiceSortField) => {
+  switch (field) {
+    case 'from': return normalizeSearch(voice.from);
+    case 'receiver': return normalizeSearch(getVoiceReceiverText(voice));
+    case 'category': return voice.type || '';
+    case 'kind': return voice.audioUrl ? `1-${voice.duration}` : '0-0';
+    default: return parseVoiceDateTime(voice.startTime).getTime();
+  }
+};
+
+const parseVoiceDateTime = (value: string) => {
+  if (!value) return new Date(NaN);
+  const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+  return new Date(normalized);
+};
+
+const formatVoiceDateTime = (value: string) => {
+  const date = parseVoiceDateTime(value);
+  if (Number.isNaN(date.getTime())) return value || '-';
+  const pad = (num: number) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+const getTrackSortValue = (track: TrackRecord, field: TrackSortField) => {
+  const points = Array.isArray(track.points) ? track.points : [];
+  const firstPoint = points[0];
+  switch (field) {
+    case 'type': return '轨迹回放';
+    case 'holder': return normalizeSearch(track.holder);
+    case 'device': return normalizeSearch(`${track.deviceName} ${track.deviceId}`);
+    case 'coord': return firstPoint ? Number(firstPoint.lat) * 1000 + Number(firstPoint.lng) : Number.NEGATIVE_INFINITY;
+    case 'description': return normalizeSearch(`${track.holder} ${track.project}`);
+    case 'company': return normalizeSearch(track.company);
+    case 'project': return normalizeSearch(track.project);
+    case 'org': return normalizeSearch(`${track.grid || ''} ${track.team || ''}`);
+    default: {
+      const time = new Date(track.startTime).getTime();
+      return Number.isNaN(time) ? 0 : time;
+    }
+  }
+};
+
+const parseDateFilterStart = (value: string) => {
+  if (!value) return null;
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseDateFilterEnd = (value: string) => {
+  if (!value) return null;
+  const date = new Date(value.length === 10 ? `${value}T23:59:59.999` : value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const textValue = (value: unknown) => String(value ?? "").trim();
+
+const buildScopeValues = (values: unknown[]) =>
+  Array.from(new Set(values.map((value) => textValue(value)).filter(Boolean)));
+
+const readProjectScope = () => {
+  const auth = readStoredAuth();
+  const storedScope = getStoredScopeState(auth);
+  const branchScopeValues = buildScopeValues([
+    localStorage.getItem("company"),
+    localStorage.getItem("branch"),
+    localStorage.getItem("department"),
+    localStorage.getItem("branch_name"),
+    localStorage.getItem("company_name"),
+    auth.company,
+    auth.branch,
+    auth.branch_name,
+    auth.companyName,
+    auth.department,
+    auth.department_name,
+    auth.branchName,
+  ]);
+  const projectScopeValues = buildScopeValues([
+    storedScope.projectName,
+    storedScope.projectId,
+    auth.project,
+    auth.project_id,
+    auth.project_name,
+    auth.projectName,
+  ]);
+
+  return {
+    ...storedScope,
+    branchScopeValues,
+    projectScopeValues,
+  };
+};
+
+const scopeValueMatches = (value: unknown, candidates: unknown[]) => {
+  const normalizedValue = textValue(value).toLowerCase();
+  if (!normalizedValue) return false;
+
+  return candidates.some((candidate) => textValue(candidate).toLowerCase() === normalizedValue);
+};
+
+const companyMatchesScope = (company: unknown, scope: ReturnType<typeof readProjectScope>) => {
+  if (!scope.isBranchScope || scope.branchScopeValues.length === 0) return true;
+  return scopeValueMatches(company, scope.branchScopeValues);
+};
+
+const branchIdMatchesScope = (branchId: unknown, scope: ReturnType<typeof readProjectScope>) => {
+  if (!scope.isBranchScope) return true;
+  const currentBranchId = textValue(scope.branchId);
+  const normalizedBranchId = textValue(branchId);
+  if (!currentBranchId || !normalizedBranchId) return false;
+  return normalizedBranchId === currentBranchId || normalizedBranchId.replace(/^BRANCH-/i, "") === currentBranchId.replace(/^BRANCH-/i, "");
+};
+
+const projectIdMatchesScope = (projectId: unknown, scope: ReturnType<typeof readProjectScope>) => {
+  const value = textValue(projectId);
+  if (!value) return false;
+  return scope.projectScopeValues.some((candidate) => {
+    const target = textValue(candidate);
+    return value === target || value.replace(/^PRJ-/i, "") === target.replace(/^PRJ-/i, "");
+  });
+};
+
+const projectMatchesScope = (project: unknown, scope: ReturnType<typeof readProjectScope>) => {
+  const value = textValue(project);
+  if (!value) return false;
+  return scope.projectScopeValues.some((candidate) => {
+    const target = textValue(candidate);
+    return value === target || value.replace(/^PRJ-/i, "") === target.replace(/^PRJ-/i, "");
+  });
+};
+
+const trackProjectMatchesSelection = (track: Record<string, any>, selectedProject: string) => {
+  if (selectedProject === 'all') return true;
+  const projectName = textValue(getDeviceProject(track));
+  const projectId = textValue(track.project_id);
+  const normalizedSelected = textValue(selectedProject);
+  if (!normalizedSelected) return true;
+  return (
+    projectName === normalizedSelected ||
+    projectId === normalizedSelected ||
+    projectId.replace(/^PRJ-/i, "") === normalizedSelected.replace(/^PRJ-/i, "")
+  );
+};
+
+const trackBelongsToScope = (track: Record<string, any>, scope: ReturnType<typeof readProjectScope>) => {
+  if (scope.isProjectScope) {
+    return projectIdMatchesScope(track.project_id, scope) || projectMatchesScope(getDeviceProject(track), scope);
+  }
+
+  if (scope.isBranchScope) {
+    return branchIdMatchesScope(track.branch_id, scope) || companyMatchesScope(getDeviceCompany(track), scope);
+  }
+
+  return true;
+};
+
+const buildTrackOrgTree = (items: Record<string, any>[]): TrackOrgNode[] => {
+  const companyMap = new Map<string, { id: string; name: string; projects: Map<string, { id: string; name: string; teams: Set<string> }> }>();
+
+  items.forEach((item) => {
+    const companyId = getDeviceCompany(item);
+    const projectId = getDeviceProject(item);
+    const teamName = getDeviceTeam(item);
+
+    if (!companyId || !projectId) return;
+
+    if (!companyMap.has(companyId)) {
+      companyMap.set(companyId, { id: companyId, name: companyId, projects: new Map() });
+    }
+
+    const company = companyMap.get(companyId)!;
+    if (!company.projects.has(projectId)) {
+      company.projects.set(projectId, { id: projectId, name: projectId, teams: new Set() });
+    }
+
+    if (teamName) {
+      company.projects.get(projectId)!.teams.add(teamName);
+    }
+  });
+
+  return Array.from(companyMap.values()).map((company) => ({
+    id: company.id,
+    name: company.name,
+    projects: Array.from(company.projects.values()).map((project) => ({
+      id: project.id,
+      name: project.name,
+      teams: Array.from(project.teams.values()),
+    })),
+  }));
+};
+
+const buildTrackOrgTreeFromDevices = (items: TrackDevice[], scope: ReturnType<typeof readProjectScope>): TrackOrgNode[] => {
+  const scopedDevices = items.filter((item) => trackBelongsToScope(item as Record<string, any>, scope));
+  return buildTrackOrgTree(scopedDevices as Record<string, any>[]);
+};
+
+const playbackMatchesProjectScope = (playback: ExtendedSavedPlayback, scope: ReturnType<typeof readProjectScope>) => {
+  if (!scope.isProjectScope) return true;
+  return [
+    playback.project,
+    playback.projectName,
+    (playback as any).project_id,
+    (playback as any).projectId,
+  ].some((value) => projectMatchesScope(value, scope));
+};
+
+const isGlobalPermissionScope = () => isHeadquartersScope();
 
   const selectStyle = `
     select {
@@ -312,8 +676,8 @@ const playbackMatchesSearch = (playback: ExtendedSavedPlayback, keyword: string)
     }
   `;
 
-  // 模拟设备列表（增加公司和项目信息）
- // 模拟设备列表（扩展到10个设备）
+  // 妯℃嫙璁惧鍒楄〃锛堝鍔犲叕鍙稿拰椤圭洰淇℃伅锛?
+ // 妯℃嫙璁惧鍒楄〃锛堟墿灞曞埌10涓澶囷級
 const mockDevices: Device[] = [
   { id: 1, name: '北门出入口摄像头', ip_address: '192.168.1.101', status: 'online', company: '中铁一局', project: '西安地铁8号线' },
   { id: 2, name: '南门施工区摄像头', ip_address: '192.168.1.102', status: 'online', company: '中铁一局', project: '西安地铁8号线' },
@@ -327,8 +691,8 @@ const mockDevices: Device[] = [
   { id: 10, name: '生活区监控', ip_address: '192.168.1.107', status: 'online', company: '中铁一局', project: '西安地铁8号线' },
 ];
 
-  // 模拟回放数据
-// 模拟回放数据 - 扩展到 50 条
+  // 妯℃嫙鍥炴斁鏁版嵁
+// 妯℃嫙鍥炴斁鏁版嵁 - 鎵╁睍鍒?50 条
 const mockPlaybacks: SavedPlayback[] = (() => {
   const devices = [
     { id: 1, name: '北门出入口摄像头', company: '中铁一局', project: '西安地铁8号线' },
@@ -356,11 +720,11 @@ const mockPlaybacks: SavedPlayback[] = (() => {
 
   const results: SavedPlayback[] = [];
   
-  // 生成过去30天的数据
+  // 鐢熸垚杩囧幓30澶╃殑鏁版嵁
   for (let i = 0; i < 50; i++) {
     const device = devices[i % devices.length];
-    const isAlarm = i % 3 !== 0; // 约2/3是报警记录
-    const daysAgo = Math.floor(i / 5); // 按时间分布
+    const isAlarm = i % 3 !== 0; // 绾?/3鏄姤璀﹁褰?
+    const daysAgo = Math.floor(i / 5); // 鎸夋椂闂村垎甯?
     const date = new Date();
     date.setDate(date.getDate() - daysAgo);
     date.setHours(9 + (i % 8), (i * 7) % 60, 0);
@@ -373,7 +737,7 @@ const mockPlaybacks: SavedPlayback[] = (() => {
     
 if (isAlarm) {
   const alarm = alarmTypes[i % alarmTypes.length];
-  // 报警发生在视频开始后的 5-55 秒之间
+  // 鎶ヨ鍙戠敓鍦ㄨ棰戝紑濮嬪悗鐨?5-55 绉掍箣闂?
   const alarmOffsetSeconds = 5 + (i % 50);
   const alarmDate = new Date(date.getTime() + alarmOffsetSeconds * 1000);
   
@@ -381,8 +745,8 @@ if (isAlarm) {
     type: alarm.type,
     msg: alarm.msg,
     score: 0.85 + (i % 15) / 100,
-    timestamp: alarmDate.toISOString(),  // 报警时间 = 视频开始 + 偏移秒数
-    personnel: alarm.personnel || `人员${i + 1}`,
+    timestamp: alarmDate.toISOString(),  // 鎶ヨ鏃堕棿 = 瑙嗛寮€濮?+ 鍋忕Щ绉掓暟
+    personnel: alarm.personnel || `浜哄憳${i + 1}`,
   };
 }
     
@@ -402,11 +766,11 @@ if (isAlarm) {
     });
   }
   
-  // 按时间倒序排列
+  // 鎸夋椂闂村€掑簭鎺掑垪
   return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 })();
 
-// 新增：模拟轨迹数据
+// 鏂板锛氭ā鎷熻建杩规暟鎹?
 const mockTrackRecords: TrackRecord[] = [
   {
     id: 'track1',
@@ -467,8 +831,16 @@ const mockTrackRecords: TrackRecord[] = [
   }
 ];
 
+const getScopedMockTrackRecords = () => {
+  if (!import.meta.env.DEV) return [];
 
-// 新增：模拟通话记录数据
+  const scope = readProjectScope();
+  if (scope.isHeadquartersScope) return mockTrackRecords;
+  return mockTrackRecords.filter((record) => trackBelongsToScope(record, scope));
+};
+
+
+// 鏂板锛氭ā鎷熼€氳瘽璁板綍鏁版嵁
 const mockVoiceRecords: VoiceRecord[] = [
   {
     id: 'voice1',
@@ -499,7 +871,7 @@ const mockVoiceRecords: VoiceRecord[] = [
   }
 ];
 
-// 新增：树形筛选数据（公司 -> 项目 -> 作业队，支持网格化属性）
+// 鏂板锛氭爲褰㈢瓫閫夋暟鎹紙鍏徃 -> 椤圭洰 -> 浣滀笟闃燂紝鏀寔缃戞牸鍖栧睘鎬э級
 const companyTree = [
   {
     id: '中铁一局',
@@ -510,14 +882,14 @@ const companyTree = [
       { id: 'grid_3', name: 'C区材料堆放', level: '区域', status: 'normal' },
     ],
     projects: [
-      { 
-        id: '西安地铁8号线', 
-        name: '西安地铁8号线', 
+      {
+        id: '西安地铁8号线',
+        name: '西安地铁8号线',
         grids: [
           { id: 'grid_8_1', name: '8号线-北门', level: '工点', status: 'normal' },
           { id: 'grid_8_2', name: '8号线-南门', level: '工点', status: 'normal' },
         ],
-        teams: ['施工一组', '施工二组', '施工三组'] 
+        teams: ['施工一组', '施工二组', '施工三组']
       }
     ]
   },
@@ -529,13 +901,13 @@ const companyTree = [
       { id: 'grid_s2', name: '盾构机区', level: '工点', status: 'normal' },
     ],
     projects: [
-      { 
-        id: '西安地铁10号线', 
-        name: '西安地铁10号线', 
+      {
+        id: '西安地铁10号线',
+        name: '西安地铁10号线',
         grids: [
           { id: 'grid_10_1', name: '10号线-隧道入口', level: '工点', status: 'normal' },
         ],
-        teams: ['掘进班', '支护班', '运输班'] 
+        teams: ['掘进班', '支护班', '运输班']
       }
     ]
   }
@@ -566,7 +938,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
   onPlaybackChange?: (playback: ExtendedSavedPlayback) => void;
 }>(
   ({ src, deviceName, type, playlist = [], currentPlayback, onPlaybackChange }, ref) => {
-    // ✅ 直接使用传入的 src（后端返回的真实视频路径）
+    // 鉁?鐩存帴浣跨敤浼犲叆鐨?src锛堝悗绔繑鍥炵殑鐪熷疄瑙嗛璺緞锛?
     const videoUrl = src;
     const containerRef = React.useRef<HTMLDivElement>(null);
     const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -579,10 +951,11 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
     const [showVolumeSlider, setShowVolumeSlider] = useState(false);
     const [alarmTimestamp, setAlarmTimestamp] = useState<number | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [loadError, setLoadError] = useState('');
 
     const getAlarmTimestamp = () => alarmTimestamp || 0;
 
-    // ✅ 全屏和ESC退出监听
+    // 鉁?鍏ㄥ睆鍜孍SC閫€鍑虹洃鍚?
     React.useEffect(() => {
       const handleFullscreenChange = () => {
         setIsFullscreen(!!document.fullscreenElement);
@@ -611,7 +984,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
       }
     };
 
-    // ✅ 上一个/下一个视频（使用真实播放列表）
+    // 鉁?涓婁竴涓?涓嬩竴涓棰戯紙浣跨敤鐪熷疄鎾斁鍒楄〃锛?
     const currentIndex = playlist.findIndex(p => p.id === currentPlayback?.id);
 
     const playPrevious = () => {
@@ -626,12 +999,12 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
       onPlaybackChange(playlist[newIndex]);
     };
 
-    // ✅ 修复下载（解决跨域问题）
+    // 鉁?淇涓嬭浇锛堣В鍐宠法鍩熼棶棰橈級
     const handleDownload = async () => {
       if (!currentPlayback || !videoUrl) return;
       
       try {
-        // ✅ 用 fetch + blob 真正下载（解决跨域）
+        // 鉁?鐢?fetch + blob 鐪熸涓嬭浇锛堣В鍐宠法鍩燂級
         const res = await fetch(videoUrl);
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
@@ -644,27 +1017,32 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
       } catch (e) {
-        console.error('下载失败:', e);
-        // ✅ 降级方案：在新标签页打开
+        console.error('涓嬭浇澶辫触:', e);
+        // 鉁?闄嶇骇鏂规锛氬湪鏂版爣绛鹃〉鎵撳紑
         window.open(videoUrl, '_blank');
       }
     };
 
-    // 监听视频事件
+    // 鐩戝惉瑙嗛浜嬩欢
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
 
-      // ✅ 每次换视频都重置状态，并加载第一帧作为封面
+      // 鉁?姣忔鎹㈣棰戦兘閲嶇疆鐘舵€侊紝骞跺姞杞界涓€甯т綔涓哄皝闈?
       setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+      setAlarmTimestamp(null);
+      setLoadError('');
+      video.load();
       
       const handleLoadedMetadata = () => {
-        // ✅ 使用视频真实时长（四舍五入避免小数）
+        // 鉁?浣跨敤瑙嗛鐪熷疄鏃堕暱锛堝洓鑸嶄簲鍏ラ伩鍏嶅皬鏁帮級
         const realDuration = Math.round(video.duration);
         setDuration(realDuration);
         
-        // ✅ 只有报警类型才显示红点
-        // 优先级：currentPlayback.alarmSecond（真实计算） > 固定 10秒 > 不显示
+        // 鉁?鍙湁鎶ヨ绫诲瀷鎵嶆樉绀虹孩鐐?
+        // 浼樺厛绾э細currentPlayback.alarmSecond锛堢湡瀹炶绠楋級 > 鍥哄畾 10绉?> 涓嶆樉绀?
         if (type === 'alarm') {
           const realAlarmSecond = Number((currentPlayback as any)?.alarmSecond);
           const fallbackAlarmSecond = Math.min(30, Math.max(0, realDuration / 2));
@@ -675,13 +1053,10 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         } else {
           setAlarmTimestamp(null);
         }
-        
-        // ✅ 加载视频第一帧作为封面
-        video.currentTime = 0.5;
       };
       
       const handleSeeked = () => {
-        // ✅ 封面帧加载完成后，确保初始状态是暂停
+        // 鉁?灏侀潰甯у姞杞藉畬鎴愬悗锛岀‘淇濆垵濮嬬姸鎬佹槸鏆傚仠
         if (video.currentTime < 1) {
           video.pause();
         }
@@ -691,8 +1066,9 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
       const handlePlay = () => setIsPlaying(true);
       const handlePause = () => setIsPlaying(false);
       const handleError = (e: any) => {
-        console.error('视频加载错误:', e);
-        console.error('视频URL:', videoUrl);
+        console.error('瑙嗛鍔犺浇閿欒:', e);
+        console.error('瑙嗛URL:', videoUrl);
+        setLoadError('视频加载失败，请检查文件或稍后重试');
       };
 
       video.addEventListener('timeupdate', handleTimeUpdate);
@@ -712,7 +1088,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
       };
     }, [videoUrl, type, currentPlayback]);
 
-    // 倍速选项
+    // 鍊嶉€熼€夐」
     const speedOptions = [
       { label: '0.25x', value: 0.25 }, { label: '0.5x', value: 0.5 },
       { label: '0.75x', value: 0.75 }, { label: '1x', value: 1 },
@@ -730,9 +1106,9 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 
     const togglePlay = () => {
       if (videoRef.current) {
-        // ✅ 直接用视频原生状态，避免 React 状态不一致
+        // 鉁?鐩存帴鐢ㄨ棰戝師鐢熺姸鎬侊紝閬垮厤 React 鐘舵€佷笉涓€鑷?
         if (videoRef.current.paused) {
-          videoRef.current.play().catch(e => console.error('播放失败:', e));
+          videoRef.current.play().catch(e => console.error('鎾斁澶辫触:', e));
         } else {
           videoRef.current.pause();
         }
@@ -766,7 +1142,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
       return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     };
 
-    // 截图方法
+    // 鎴浘鏂规硶
     const captureFrame = (): Promise<string> => {
       return new Promise((resolve) => {
         const video = videoRef.current;
@@ -782,13 +1158,13 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           ctx?.drawImage(video, 0, 0);
           resolve(canvas.toDataURL('image/jpeg', 0.8));
         } catch (err) {
-          console.error('截图失败:', err);
+          console.error('鎴浘澶辫触:', err);
           resolve('');
         }
       });
     };
 
-    // 跳转到指定秒数
+    // 璺宠浆鍒版寚瀹氱鏁?
     const seekTo = (seconds: number): Promise<void> => {
       return new Promise((resolve) => {
         const video = videoRef.current;
@@ -814,6 +1190,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
     return (
       <div ref={containerRef} className="relative w-full h-full bg-black group">
         <video
+          key={videoUrl}
           ref={videoRef}
           src={videoUrl}
           crossOrigin="anonymous"
@@ -823,7 +1200,13 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           preload="metadata"
         />
 
-        {/* 中央播放/暂停按钮 */}
+        {loadError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/70 px-6 text-center text-sm text-red-200">
+            {loadError}
+          </div>
+        )}
+
+        {/* 涓ぎ鎾斁/鏆傚仠鎸夐挳 */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <button
             onClick={togglePlay}
@@ -841,7 +1224,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           </button>
         </div>
 
-        {/* 左侧上一个按钮 */}
+        {/* 宸︿晶涓婁竴涓寜閽?*/}
         <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
           <button
             onClick={playPrevious}
@@ -853,7 +1236,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           </button>
         </div>
 
-        {/* 右侧下一个按钮 */}
+        {/* 鍙充晶涓嬩竴涓寜閽?*/}
         <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
           <button
             onClick={playNext}
@@ -865,10 +1248,12 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           </button>
         </div>
 
+
         {/* 自定义控制栏 */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-100">
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+
           <div className="px-4 py-3">
-            {/* 进度条 */}
+            {/* 杩涘害条*/}
             <div
               className="relative h-1.5 bg-white/30 rounded-full cursor-pointer mb-3"
               onClick={handleProgressClick}
@@ -891,16 +1276,16 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
             </div>
 
             <div className="flex items-center justify-between">
-              {/* 左边：播放控制 */}
+              {/* 宸﹁竟锛氭挱鏀炬帶鍒?*/}
               <div className="flex items-center gap-4">
-                {/* 上一个 */}
+                {/* 涓婁竴涓?*/}
                 <button onClick={playPrevious} className="text-white hover:text-cyan-400 transition-colors">
                   <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
                   </svg>
                 </button>
 
-                {/* 播放/暂停 */}
+                {/* 鎾斁/鏆傚仠 */}
                 <button onClick={togglePlay} className="text-white hover:text-cyan-400 transition-colors">
                   {isPlaying ? (
                     <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
@@ -913,22 +1298,22 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
                   )}
                 </button>
 
-                {/* 下一个 */}
+                {/* 涓嬩竴涓?*/}
                 <button onClick={playNext} className="text-white hover:text-cyan-400 transition-colors">
                   <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                   </svg>
                 </button>
 
-                {/* 时间 */}
+                {/* 鏃堕棿 */}
                 <span className="text-white text-xl font-mono ml-1">
                   {formatTime(currentTime)} / {formatTime(duration)}
                 </span>
               </div>
 
-              {/* 右边：音量、倍速、下载、全屏 */}
+              {/* 鍙宠竟锛氶煶閲忋€佸€嶉€熴€佷笅杞姐€佸叏灞?*/}
               <div className="flex items-center gap-9">
-                {/* 音量 */}
+                {/* 闊抽噺 */}
                 <div
                   className="relative"
                   onMouseEnter={() => setShowVolumeSlider(true)}
@@ -950,7 +1335,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
                     )}
                   </button>
 
-                  {/* 音量滑块 */}
+                  {/* 闊抽噺婊戝潡 */}
                   {showVolumeSlider && (
                     <>
                       <div
@@ -977,7 +1362,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
                   )}
                 </div>
 
-                {/* 倍速 */}
+                {/* 鍊嶉€?*/}
                 <div className="relative">
                   <button
                     onClick={() => setShowSpeedMenu(!showSpeedMenu)}
@@ -1009,15 +1394,15 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
                   )}
                 </div>
 
-                {/* 下载 */}
+                {/* 涓嬭浇 */}
                 <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="下载视频">
                   <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
                   </svg>
                 </button>
 
-                {/* 全屏 / 退出全屏 */}
-                <button onClick={toggleFullscreen} className="text-white hover:text-cyan-400 transition-colors" title={isFullscreen ? "退出全屏 (ESC)" : "全屏"}>
+                {/* 鍏ㄥ睆 / 閫€鍑哄叏灞?*/}
+                <button onClick={toggleFullscreen} className="text-white hover:text-cyan-400 transition-colors" title={isFullscreen ? "退出全屏(ESC)" : "全屏"}>
                   {isFullscreen ? (
                     <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
@@ -1039,15 +1424,15 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 
 //   const SimpleVideoPlayer = forwardRef<VideoPlayerRef, { src: string; deviceName: string }>(
 //   ({ src, deviceName }, ref) => {
-//     // 不同设备对应的不同测试视频
+//     // 涓嶅悓璁惧瀵瑰簲鐨勪笉鍚屾祴璇曡棰?
 //     const getVideoByDevice = (name: string) => {
 //       const videoList: Record<string, string> = {
-//         '北门出入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-//         '南门施工区摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-//         '西侧高空作业区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-//         '隧道入口摄像头': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-//         '盾构机监控': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
-//         '材料加工区': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '鍖楅棬鍑哄叆鍙ｆ憚鍍忓ご': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '鍗楅棬鏂藉伐鍖烘憚鍍忓ご': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '瑗夸晶楂樼┖浣滀笟鍖?: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '闅ч亾鍏ュ彛鎽勫儚澶?: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '鐩炬瀯鏈虹洃鎺?: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+//         '鏉愭枡鍔犲伐鍖?: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
 //       };
 //       return videoList[name] || 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4';
 //     };
@@ -1068,7 +1453,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //     const getAlarmTimestamp = () => alarmTimestamp || 0;
 
 
-// // 扩展 SavedPlayback 类型，添加告警截图字段
+// // 鎵╁睍 SavedPlayback 绫诲瀷锛屾坊鍔犲憡璀︽埅鍥惧瓧娈?
 // interface AlarmScreenshot {
 //   id: string;
 //   url: string;
@@ -1077,14 +1462,14 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 // }
 
 
-//     // 获取当前播放列表（从父组件传入，这里用 mockPlaybacks 模拟）
+//     // 鑾峰彇褰撳墠鎾斁鍒楄〃锛堜粠鐖剁粍浠朵紶鍏ワ紝杩欓噷鐢?mockPlaybacks 妯℃嫙锛?
 //     const playlist = mockPlaybacks;
 //     const [currentIndex, setCurrentIndex] = useState(() => {
 //       const index = playlist.findIndex(p => p.deviceName === deviceName);
 //       return index !== -1 ? index : 0;
 //     });
 
-//     // 切换视频
+//     // 鍒囨崲瑙嗛
 //     const playPrevious = () => {
 //       const newIndex = currentIndex > 0 ? currentIndex - 1 : playlist.length - 1;
 //       setCurrentIndex(newIndex);
@@ -1098,7 +1483,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //     };
 
     
-//     // 监听视频事件
+//     // 鐩戝惉瑙嗛浜嬩欢
 //     useEffect(() => {
 //       const video = videoRef.current;
 //       if (!video) return;
@@ -1124,7 +1509,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //       };
 //     }, [currentIndex]);
 
-//     // 倍速选项
+//     // 鍊嶉€熼€夐」
 //     const speedOptions = [
 //       { label: '0.25x', value: 0.25 }, { label: '0.5x', value: 0.5 },
 //       { label: '0.75x', value: 0.75 }, { label: '1x', value: 1 },
@@ -1181,7 +1566,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //       return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 //     };
 
-//     // 截图方法
+//     // 鎴浘鏂规硶
 // const captureFrame = (): Promise<string> => {
 //   return new Promise((resolve) => {
 //     const video = videoRef.current;
@@ -1197,13 +1582,13 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //       ctx?.drawImage(video, 0, 0);
 //       resolve(canvas.toDataURL('image/jpeg', 0.8));
 //     } catch (err) {
-//       console.error('截图失败:', err);
+//       console.error('鎴浘澶辫触:', err);
 //       resolve('');
 //     }
 //   });
 // };
 
-//     // 跳转到指定秒数
+//     // 璺宠浆鍒版寚瀹氱鏁?
 //     const seekTo = (seconds: number): Promise<void> => {
 //       return new Promise((resolve) => {
 //         const video = videoRef.current;
@@ -1239,7 +1624,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //           autoPlay
 //         />
         
-//             {/* 中央播放/暂停按钮 */}
+//             {/* 涓ぎ鎾斁/鏆傚仠鎸夐挳 */}
 //       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
 //         <button
 //           onClick={togglePlay}
@@ -1257,7 +1642,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //         </button>
 //       </div>
 
-//       {/* 左侧上一个按钮 */}
+//       {/* 宸︿晶涓婁竴涓寜閽?*/}
 //       <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
 //         <button
 //           onClick={playPrevious}
@@ -1269,7 +1654,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //         </button>
 //       </div>
 
-//       {/* 右侧下一个按钮 */}
+//       {/* 鍙充晶涓嬩竴涓寜閽?*/}
 //       <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
 //         <button
 //           onClick={playNext}
@@ -1281,10 +1666,10 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //         </button>
 //       </div>
 
-//         {/* 自定义控制栏 */}
+//         {/* 鑷畾涔夋帶鍒舵爮 */}
 //         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
 //           <div className="px-4 py-3">
-//             {/* 进度条 */}
+//             {/* 杩涘害条*/}
 //             <div 
 //               className="relative h-1.5 bg-white/30 rounded-full cursor-pointer mb-3"
 //               onClick={handleProgressClick}
@@ -1301,22 +1686,22 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //                 <div 
 //                   className="absolute w-3 h-3 bg-red-500 rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-lg ring-2 ring-red-500/50 animate-pulse"
 //                   style={{ left: `${(alarmTimestamp / duration) * 100}%` }}
-//                   title="报警发生时刻"
+//                   title="鎶ヨ鍙戠敓鏃跺埢"
 //                 />
 //               )}
 //             </div>
 
 //   <div className="flex items-center justify-between">
-//     {/* 左边：播放控制 */}
+//     {/* 宸﹁竟锛氭挱鏀炬帶鍒?*/}
 //     <div className="flex items-center gap-4">
-//       {/* 上一个 */}
+//       {/* 涓婁竴涓?*/}
 //       <button onClick={playPrevious} className="text-white hover:text-cyan-400 transition-colors">
 //         <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
 //           <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
 //         </svg>
 //       </button>
 
-//       {/* 播放/暂停 */}
+//       {/* 鎾斁/鏆傚仠 */}
 //       <button onClick={togglePlay} className="text-white hover:text-cyan-400 transition-colors">
 //         {isPlaying ? (
 //           <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
@@ -1329,22 +1714,22 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //         )}
 //       </button>
 
-//       {/* 下一个 */}
+//       {/* 涓嬩竴涓?*/}
 //       <button onClick={playNext} className="text-white hover:text-cyan-400 transition-colors">
 //         <svg className="w-9 h-9" fill="currentColor" viewBox="0 0 24 24">
 //           <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
 //         </svg>
 //       </button>
 
-//       {/* 时间 */}
+//       {/* 鏃堕棿 */}
 //       <span className="text-white text-xl  font-mono ml-1">
 //         {formatTime(currentTime)} / {formatTime(duration)}
 //       </span>
 //     </div>
 
-//     {/* 右边：音量、倍速、下载、全屏 */}
+//     {/* 鍙宠竟锛氶煶閲忋€佸€嶉€熴€佷笅杞姐€佸叏灞?*/}
 //     <div className="flex items-center gap-9">
-//   {/* 音量 */}
+//   {/* 闊抽噺 */}
 //   <div 
 //     className="relative"
 //     onMouseEnter={() => setShowVolumeSlider(true)}
@@ -1366,7 +1751,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //       )}
 //     </button>
     
-//     {/* 音量滑块 - 增加内边距和间隙，让鼠标移动过去不消失 */}
+//     {/* 闊抽噺婊戝潡 - 澧炲姞鍐呰竟璺濆拰闂撮殭锛岃榧犳爣绉诲姩杩囧幓涓嶆秷澶?*/}
 //     {showVolumeSlider && (
 //       <>
 //         <div 
@@ -1393,7 +1778,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //     )}
 //   </div>
 
-//       {/* 倍速 */}
+//       {/* 鍊嶉€?*/}
 //       <div className="relative">
 //         <button
 //           onClick={() => setShowSpeedMenu(!showSpeedMenu)}
@@ -1417,7 +1802,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //                   }`}
 //                 >
 //                   {option.label}
-//                   {currentSpeed === option.value && <span className="float-right">✓</span>}
+//                   {currentSpeed === option.value && <span className="float-right">鉁?/span>}
 //                 </button>
 //               ))}
 //             </div>
@@ -1425,14 +1810,14 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //         )}
 //       </div>
 
-//       {/* 下载 */}
-//       <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="下载视频">
+//       {/* 涓嬭浇 */}
+//       <button onClick={handleDownload} className="text-white hover:text-cyan-400 transition-colors" title="涓嬭浇瑙嗛">
 //         <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 //           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
 //         </svg>
 //       </button>
 
-//       {/* 全屏 */}
+//       {/* 鍏ㄥ睆 */}
 //       <button onClick={() => videoRef.current?.requestFullscreen()} className="text-white hover:text-cyan-400 transition-colors">
 //         <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 //           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -1443,7 +1828,7 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //           </div>
 //         </div>
 
-//         {/* 设备名称 */}
+//         {/* 璁惧鍚嶇О */}
 //         {/* <div className="absolute bottom-4 left-4 bg-black/70 px-3 py-1.5 rounded text-xs text-white/80 backdrop-blur pointer-events-none">
 //           <Camera size={12} className="inline mr-1" />
 //           {deviceName}
@@ -1452,26 +1837,25 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
 //     );
 //   });
 
-  // VideoCard 组件
+  // VideoCard 缁勪欢
 const VideoCard = ({ playback, onPlay, onShowScreenshot }: { 
   key?: any;
   playback: ExtendedSavedPlayback;
   onPlay: () => void;
   onShowScreenshot?: (playback: ExtendedSavedPlayback) => void | Promise<void>;
 }) => {
-    const videoRef = React.useRef<HTMLVideoElement>(null);
-    const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const [thumbnail, setThumbnail] = useState<string>('');
-    const [realDuration, setRealDuration] = useState<number>(playback.duration);
-    const [isLoading, setIsLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(false);
+    const [previewReady, setPreviewReady] = useState(false);
     const [loadError, setLoadError] = useState(false);
 
-    // ✅ 优先使用报警截图作为预览图，没有再从视频提取
     React.useEffect(() => {
-      // 1. 优先使用已有的报警截图
-      const existingScreenshot = playback.alarmInfo?.screenshotUrl || 
-                                playback.alarmInfo?.screenshot?.url || 
-                                playback.alarmInfo?.screenshot?.thumbnail;
+      setPreviewReady(false);
+      const existingScreenshot = playback.type === 'alarm'
+        ? playback.alarmInfo?.screenshotUrl || 
+          playback.alarmInfo?.screenshot?.url || 
+          playback.alarmInfo?.screenshot?.thumbnail
+        : playback.thumbnail || '';
       
       if (existingScreenshot) {
         setThumbnail(existingScreenshot);
@@ -1480,50 +1864,10 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
         return;
       }
 
-      // 2. 没有截图时，尝试从视频加载第一帧
-      const video = videoRef.current;
-      if (!video || !playback.filePath) {
-        setIsLoading(false);
-        setLoadError(true);
-        return;
-      }
-
-      const handleLoadedMetadata = () => {
-        setIsLoading(false);
-        setRealDuration(Math.round(video.duration));
-        video.currentTime = 0.1;
-      };
-
-      const handleSeeked = () => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = 320;
-        canvas.height = 90;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          setThumbnail(canvas.toDataURL('image/jpeg', 0.8));
-        }
-      };
-
-      const handleError = () => {
-        setIsLoading(false);
-        setLoadError(true);
-        console.error('视频加载失败:', playback.filePath);
-      };
-
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      video.addEventListener('seeked', handleSeeked);
-      video.addEventListener('error', handleError);
-
-      video.load();
-
-      return () => {
-        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        video.removeEventListener('seeked', handleSeeked);
-        video.removeEventListener('error', handleError);
-      };
-    }, [playback.filePath, playback.alarmInfo]);
+      setThumbnail('');
+      setIsLoading(false);
+      setLoadError(!playback.filePath);
+    }, [playback.filePath, playback.type, playback.alarmInfo]);
 
     const getThumbColor = (name: string) => {
       const colors = ['bg-red-500/20', 'bg-blue-500/20', 'bg-green-500/20', 'bg-yellow-500/20', 'bg-purple-500/20'];
@@ -1531,7 +1875,7 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
       return colors[index];
     };
 
-    // 生成备用封面颜色渐变
+    // 鐢熸垚澶囩敤灏侀潰棰滆壊娓愬彉
     const getGradientBackground = (name: string) => {
       const gradients = [
         'linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 100%)',
@@ -1544,13 +1888,19 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
       return gradients[index];
     };
 
+    const formatCardTime = (value?: string) => {
+      if (!value) return '';
+      const date = new Date(String(value).replace(' ', 'T'));
+      if (Number.isNaN(date.getTime())) return String(value).slice(11, 16);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+    };
+
+    const timeRangeLabel = `${formatCardTime(playback.startTime)}-${formatCardTime(playback.endTime)}`;
+
     return (
       <div className="relative w-full" style={{ paddingBottom: '28.125%' }}>
         <div className="absolute inset-0 rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md overflow-hidden cursor-pointer hover:border-cyan-400 transition-all group">
           <div className="relative w-full h-full bg-black overflow-hidden">
-            <video ref={videoRef} src={playback.filePath} crossOrigin="anonymous" className="hidden" preload="metadata" />
-            <canvas ref={canvasRef} className="hidden" />
-            
             <div 
               className={`absolute inset-0 w-full h-full bg-center ${!thumbnail ? getThumbColor(playback.deviceName) : ''}`}
               style={thumbnail ? { 
@@ -1562,22 +1912,22 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
                 background: getGradientBackground(playback.deviceName || '')
               }}
             >
-              {/* 加载中状态 */}
+              {/* 鍔犺浇涓姸鎬?*/}
               {isLoading && (
                 <div className="w-full h-full flex items-center justify-center bg-black/50">
                   <Loader2 size={32} className="text-cyan-400 animate-spin" />
                 </div>
               )}
               
-              {/* 无缩略图且未加载时显示图标 */}
-              {!thumbnail && !isLoading && (
+              {/* 鏃犵缉鐣ュ浘涓旀湭鍔犺浇鏃舵樉绀哄浘鏍?*/}
+              {!thumbnail && !previewReady && !loadError && (
                 <div className="w-full h-full flex flex-col items-center justify-center">
                   <VideoIcon size={40} className="text-white/60 mb-2" />
                   <span className="text-white/40 text-xs">{playback.deviceName || '视频'}</span>
                 </div>
               )}
 
-              {/* 加载失败提示 */}
+              {/* 鍔犺浇澶辫触鎻愮ず */}
               {loadError && !thumbnail && (
                 <div className="w-full h-full flex flex-col items-center justify-center bg-black/50">
                   <AlertCircle size={32} className="text-red-400 mb-2" />
@@ -1596,8 +1946,13 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
               <Play size={24} className="text-white" />
             </button>
 
+            <div className="absolute left-2 top-2 max-w-[72%] rounded bg-black/65 px-2 py-1 text-[11px] leading-none text-white/90 backdrop-blur-sm flex items-center gap-1 pointer-events-none">
+              <Camera size={11} className="shrink-0 text-cyan-200" />
+              <span className="truncate">{playback.deviceName || `设备 ${playback.deviceId || ''}`}</span>
+            </div>
+
             {playback.type === 'alarm' && (
-              <div className="absolute top-2 left-2 flex gap-2">
+              <div className="absolute top-8 left-2 flex gap-2">
                 <div className="px-2 py-0.5 bg-red-500/80 text-white text-xs rounded-full flex items-center gap-1">
                   <AlertCircle size={10} />
                   报警
@@ -1610,14 +1965,18 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
                   className="px-2 py-0.5 bg-blue-500/80 text-white text-xs rounded-full flex items-center gap-1 hover:bg-blue-600 transition-colors"
                 >
                   <Camera size={10} />
-                  告警截图
+                  报警截图
                 </button>
               </div>
             )}
 
+            <div className="absolute bottom-2 left-2 max-w-[68%] rounded bg-black/60 px-1.5 py-0.5 text-[11px] leading-none text-white/90 backdrop-blur-sm pointer-events-none">
+              <span className="truncate">{timeRangeLabel}</span>
+            </div>
+
             <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/60 text-white text-xs rounded">
               {(() => {
-                const sec = realDuration;
+                const sec = Math.max(0, Math.round(Number(playback.duration) || 0));
                 if (sec >= 3600) {
                   const h = Math.floor(sec / 3600);
                   const m = Math.floor((sec % 3600) / 60);
@@ -1635,8 +1994,49 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     );
   };
 
-      // ==================== 轨迹回放组件 ====================
-const TrackPlaybackContent = ({ 
+class PlaybackErrorBoundary extends React.Component<
+  { children: React.ReactNode; title: string },
+  { hasError: boolean; message: string }
+> {
+  state = { hasError: false, message: '' };
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || '页面数据异常' };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Playback render failed:', error);
+  }
+
+  componentDidUpdate(prevProps: { title: string }) {
+    if (prevProps.title !== this.props.title && this.state.hasError) {
+      this.setState({ hasError: false, message: '' });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex-1 rounded-xl border border-red-400/30 bg-red-500/10 p-6 text-red-100">
+          <div className="text-lg font-semibold">{this.props.title}加载异常</div>
+          <div className="mt-2 text-sm text-red-100/80">{this.state.message}</div>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, message: '' })}
+            className="mt-4 rounded-lg bg-red-400/20 px-4 py-2 text-sm text-red-50 hover:bg-red-400/30"
+          >
+            重新渲染
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+      // ==================== 杞ㄨ抗鍥炴斁缁勪欢 ====================
+const TrackPlaybackContent = ({
   filteredTracks, totalPages, currentPage, setCurrentPage,
   selectedTrack, setSelectedTrack,
   selectedCompany, setSelectedCompany,
@@ -1645,12 +2045,220 @@ const TrackPlaybackContent = ({
   searchKeyword, setSearchKeyword,
   showFilter, setShowFilter,
   dateRange, setDateRange,
-  companyTree
+  companyTree,
+  sortState, setSortState
 }: any) => {
-  // 重置筛选
+  const tracks = Array.isArray(filteredTracks) ? filteredTracks : [];
+  const companies = Array.isArray(companyTree) ? companyTree : [];
   const resetFilters = () => {
     setSelectedCompany('all');
     setSelectedProject('all');
+    setSelectedTeam('all');
+    setSearchKeyword('');
+  };
+
+  const activeFiltersCount = [selectedCompany !== 'all', selectedProject !== 'all', selectedTeam !== 'all', searchKeyword !== ''].filter(Boolean).length;
+  const selectedCompanyNode = companies.find((company: any) => company.id === selectedCompany);
+  const projectOptions = selectedCompany === 'all' ? companies.flatMap((company: any) => company.projects || []) : (selectedCompanyNode?.projects || []);
+  const teamOptions = projectOptions.filter((project: any) => selectedProject === 'all' || project.id === selectedProject).flatMap((project: any) => project.teams || []);
+  const formatTrackDateTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value || '-';
+    const pad = (num: number) => String(num).padStart(2, '0');
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+  const formatTrackTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    const pad = (num: number) => String(num).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+  const formatTrackDuration = (start: string, end: string) => {
+    const startTime = new Date(start).getTime();
+    const endTime = new Date(end).getTime();
+    if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime < startTime) return '-';
+    const minutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+    if (minutes < 60) return `${minutes}分钟`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest ? `${hours}小时${rest}分钟` : `${hours}小时`;
+  };
+  const formatCoord = (point?: TrackPoint) => {
+    if (!point) return '-';
+    return `${Number(point.lat).toFixed(6)}, ${Number(point.lng).toFixed(6)}`;
+  };
+  const renderTrackSortHeader = (field: TrackSortField, label: string, align: 'left' | 'right' = 'left') => {
+    const active = sortState.field === field;
+    const nextDirection: SortDirection = active && sortState.direction === 'asc' ? 'desc' : 'asc';
+    return (
+      <button
+        type="button"
+        onClick={() => setSortState({ field, direction: nextDirection })}
+        className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end text-right' : 'text-left'} ${active ? 'text-cyan-300' : 'text-white/70 hover:text-white'}`}
+      >
+        <span>{label}</span>
+        <span className="text-xs">{active ? (sortState.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="flex-1 overflow-hidden flex flex-col h-full">
+      <div className="relative z-20 mb-4 flex-shrink-0 rounded-xl border border-cyan-400/30 bg-slate-900/50 p-4 backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-[300px] flex-1 relative">
+            <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+            <input type="text" placeholder="搜索人员、设备..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-200" />
+          </div>
+          <div className="relative z-30">
+            <button onClick={() => setShowFilter(!showFilter)} className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 ${showFilter || activeFiltersCount > 0 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50' : 'bg-slate-800 text-slate-300 border border-slate-700'}`}>
+              <Filter size={14} />
+              <span>筛选</span>
+              {activeFiltersCount > 0 && <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500 rounded-full">{activeFiltersCount}</span>}
+            </button>
+            {showFilter && (
+              <div className="absolute top-full left-0 mt-2 w-[420px] max-h-[420px] overflow-y-auto bg-slate-900 border border-cyan-400/30 rounded-xl shadow-2xl z-[520] p-3">
+                <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
+                  <span className="text-sm font-medium text-white">筛选</span>
+                  <button onClick={resetFilters} className="text-xs text-cyan-400 hover:text-cyan-300">清除筛选</button>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {readProjectScope().showCompanyFilter && (
+                    <select value={selectedCompany} onChange={(e) => { setSelectedCompany(e.target.value); setSelectedProject('all'); setSelectedTeam('all'); }} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200">
+                      <option value="all">所有公司</option>
+                      {companies.map((company: any) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                    </select>
+                  )}
+                  {readProjectScope().showProjectFilter && (
+                    <select value={selectedProject} onChange={(e) => { setSelectedProject(e.target.value); setSelectedTeam('all'); }} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200">
+                      <option value="all">所有项目</option>
+                      {projectOptions.map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                    </select>
+                  )}
+                  <select value={selectedTeam} onChange={(e) => setSelectedTeam(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200">
+                    <option value="all">所有工队</option>
+                    {teamOptions.map((team: string) => <option key={team} value={team}>{team}</option>)}
+                  </select>
+                  <button onClick={() => setShowFilter(false)} className="w-full py-1.5 bg-cyan-500 rounded-lg text-xs text-slate-950 font-semibold">确定</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="datetime-local" step="60" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            <span className="text-slate-500">-</span>
+            <input type="datetime-local" step="60" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+          </div>
+          {activeFiltersCount > 0 && <button onClick={resetFilters} className="px-2 py-1 text-sm text-cyan-400">重置</button>}
+        </div>
+      </div>
+      <div className="relative z-0 flex-1 overflow-auto">
+        <div className="min-w-[1420px] overflow-hidden rounded-lg border border-white/10 bg-slate-950/35 shadow-[0_18px_46px_rgba(2,8,23,0.36)] backdrop-blur-sm">
+          <div className="grid grid-cols-[110px_210px_160px_230px_210px_170px_170px_140px_230px_110px] items-center gap-4 border-b border-white/10 bg-white/5 px-4 py-3 text-xs font-semibold text-white/70">
+            <div>{renderTrackSortHeader('type', '类型')}</div>
+            <div>{renderTrackSortHeader('holder', '轨迹对象')}</div>
+            <div>{renderTrackSortHeader('device', '定位设备')}</div>
+            <div>{renderTrackSortHeader('coord', '起点坐标')}</div>
+            <div>{renderTrackSortHeader('description', '情况描述')}</div>
+            <div>{renderTrackSortHeader('company', '分公司')}</div>
+            <div>{renderTrackSortHeader('project', '项目')}</div>
+            <div>{renderTrackSortHeader('org', '网格/工队')}</div>
+            <div>{renderTrackSortHeader('time', '轨迹时间')}</div>
+            <div className="text-right text-white/70">操作</div>
+          </div>
+          <div className="divide-y divide-white/5">
+            {tracks.map((track: TrackRecord) => {
+              const points = Array.isArray(track.points) ? track.points : [];
+              const holder = asText(track.holder) || '-';
+              const deviceName = asText(track.deviceName) || '-';
+              const company = asText(track.company) || '-';
+              const project = asText(track.project) || '-';
+              const grid = asText(track.grid) || '-';
+              const team = asText(track.team) || '-';
+              const safeTrack = { ...track, holder, deviceName, points };
+              return (
+                <div key={track.id} onClick={() => setSelectedTrack(safeTrack)} className="group grid grid-cols-[110px_210px_160px_230px_210px_170px_170px_140px_230px_110px] items-center gap-4 bg-slate-950/20 px-4 py-4 text-sm transition-all hover:bg-slate-800/55">
+                  <div>
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-blue-400/10 px-2.5 py-1 font-semibold text-blue-200 ring-1 ring-blue-300/20">
+                      <MapPin size={13} />
+                      轨迹回放
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold text-slate-50">{holder}</div>
+                    <div className="mt-1 truncate text-xs text-slate-400">工号/设备归属: {asText(track.deviceId) || '-'}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-slate-100" title={deviceName}>{deviceName}</div>
+                    <div className="mt-1 text-xs text-cyan-300/70">{points.length} 个轨迹点</div>
+                  </div>
+                  <div className="font-mono text-xs text-slate-300">{formatCoord(points[0])}</div>
+                  <div className="min-w-0">
+                    <div className="truncate text-slate-200" title={`${holder} 在 ${project} 的轨迹回放`}>{holder} 在 {project} 的轨迹回放</div>
+                    <div className="mt-1 text-xs text-slate-500">持续 {formatTrackDuration(track.startTime, track.endTime)}</div>
+                  </div>
+                  <div className="truncate text-slate-300" title={company}>{company}</div>
+                  <div className="truncate text-slate-300" title={project}>{project}</div>
+                  <div className="min-w-0">
+                    <div className="truncate text-slate-300" title={grid}>{grid}</div>
+                    <div className="mt-1 truncate text-xs text-slate-500" title={team}>{team}</div>
+                  </div>
+                  <div className="text-slate-300">
+                    <div>{formatTrackDateTime(track.startTime)}</div>
+                    <div className="mt-1 text-xs text-slate-500">至 {formatTrackTime(track.endTime)}</div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedTrack(safeTrack);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-cyan-300/20 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-all hover:border-cyan-300/40 hover:bg-cyan-400/20"
+                    >
+                      <Play size={13} />
+                      回放
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {tracks.length === 0 && <div className="text-center py-12 text-slate-400"><MapPin size={48} className="mx-auto mb-3 opacity-30" /><p>暂无轨迹记录</p></div>}
+      </div>
+      {totalPages > 1 && (
+        <div className="flex justify-center gap-3 mt-4 pt-3 border-t border-cyan-400/20 flex-shrink-0">
+          <button disabled={currentPage === 1} onClick={() => setCurrentPage((p: number) => Math.max(1, p - 1))} className="px-3 py-1 rounded bg-slate-800/50 text-slate-300 disabled:opacity-40">上一页</button>
+          <span className="text-sm text-slate-400">第 {currentPage} / {totalPages} 页</span>
+          <button disabled={currentPage === totalPages} onClick={() => setCurrentPage((p: number) => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded bg-slate-800/50 text-slate-300 disabled:opacity-40">下一页</button>
+        </div>
+      )}
+      {selectedTrack && <TrackMap points={Array.isArray(selectedTrack.points) ? selectedTrack.points : []} deviceName={asText(selectedTrack.deviceName)} holder={asText(selectedTrack.holder)} onClose={() => setSelectedTrack(null)} />}
+    </div>
+  );
+};
+const VoicePlaybackContent = ({
+  filteredVoices, totalPages, currentPage, setCurrentPage,
+  selectedVoice, setSelectedVoice,
+  searchKeyword, setSearchKeyword,
+  dateRange, setDateRange,
+  formatDuration, getVoiceTypeInfo,
+  voiceRecordsError,
+  selectedCompany, setSelectedCompany,
+  selectedProject, setSelectedProject,
+  selectedGrid, setSelectedGrid,
+  selectedTeam, setSelectedTeam,
+  voiceOrgTree,
+  sortState, setSortState
+}: any) => {
+  const voices = Array.isArray(filteredVoices) ? filteredVoices : [];
+  const orgTree = Array.isArray(voiceOrgTree) ? voiceOrgTree : [];
+  const selectedVoiceNames = selectedVoice ? toTextArray(selectedVoice.toNames) : [];
+  const resetFilters = () => {
+    setSelectedCompany('all');
+    setSelectedProject('all');
+    setSelectedGrid('all');
     setSelectedTeam('all');
     setSearchKeyword('');
     setDateRange({ start: '', end: '' });
@@ -1659,218 +2267,122 @@ const TrackPlaybackContent = ({
   const activeFiltersCount = [
     selectedCompany !== 'all',
     selectedProject !== 'all',
+    selectedGrid !== 'all',
     selectedTeam !== 'all',
-    searchKeyword !== ''
+    searchKeyword !== '',
+    dateRange.start !== '',
+    dateRange.end !== ''
   ].filter(Boolean).length;
-
-  return (
-    <div className="flex-1 overflow-hidden flex flex-col h-full">
-      {/* 筛选栏 */}
-      <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-4 mb-4 flex-shrink-0">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* 树形筛选按钮 */}
-          <div className="relative">
-            <button
-              onClick={() => setShowFilter(!showFilter)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                activeFiltersCount > 0
-                  ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
-                  : 'bg-slate-800 border border-slate-700 text-slate-400 hover:border-slate-600'
-              }`}
-            >
-              <Filter size={14} />
-              <span>筛选</span>
-              {activeFiltersCount > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500 rounded-full">{activeFiltersCount}</span>
-              )}
-            </button>
-            
-            {showFilter && (
-              <div className="absolute top-full left-0 mt-2 z-[400] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-4 min-w-[260px]">
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-                    <span className="text-sm font-medium text-white">筛选</span>
-                    <button onClick={resetFilters} className="text-xs text-cyan-400 hover:text-cyan-300">清除筛选</button>
-                  </div>
-                  {companyTree.map((company: any) => (
-                    <div key={company.id} className="space-y-2">
-                      <button
-                        onClick={() => {
-                          setSelectedCompany(selectedCompany === company.id ? 'all' : company.id);
-                          setSelectedProject('all');
-                          setSelectedTeam('all');
-                        }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg text-sm ${
-                          selectedCompany === company.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
-                        }`}
-                      >
-                        📁 {company.name}
-                      </button>
-                      {selectedCompany === company.id && company.projects.map((project: any) => (
-                        <div key={project.id} className="ml-4 space-y-1">
-                          <button
-                            onClick={() => {
-                              setSelectedProject(selectedProject === project.id ? 'all' : project.id);
-                              setSelectedTeam('all');
-                            }}
-                            className={`w-full text-left px-2 py-1 rounded-lg text-xs ${
-                              selectedProject === project.id ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-400 hover:bg-slate-700'
-                            }`}
-                          >
-                            📄 {project.name}
-                          </button>
-                          {selectedProject === project.id && project.teams.map((team: string) => (
-                            <button
-                              key={team}
-                              onClick={() => setSelectedTeam(selectedTeam === team ? 'all' : team)}
-                              className={`ml-4 w-[calc(100%-1rem)] text-left px-2 py-1 rounded-lg text-xs ${
-                                selectedTeam === team ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-500 hover:bg-slate-700'
-                              }`}
-                            >
-                              👥 {team}
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                  <button onClick={() => setShowFilter(false)} className="w-full py-1.5 bg-cyan-500 rounded-lg text-xs">确定</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 搜索框 */}
-          <div className="flex-1 min-w-[180px] relative">
-            <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
-            <input type="text" placeholder="搜索人员姓名、设备..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-200" />
-          </div>
-
-          {/* 日期筛选 */}
-          <div className="flex items-center gap-2">
-            <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
-            <span className="text-slate-500">-</span>
-            <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
-          </div>
-
-          {activeFiltersCount > 0 && (
-            <button onClick={resetFilters} className="px-2 py-1 text-sm text-cyan-400">重置</button>
-          )}
-        </div>
-      </div>
-
-      {/* 轨迹列表 */}
-      <div className="flex-1 overflow-auto space-y-3">
-        {filteredTracks.map((track: TrackRecord) => (
-          <div key={track.id} onClick={() => setSelectedTrack(track)} className="bg-slate-900/50 rounded-xl border border-slate-700/50 p-4 cursor-pointer hover:border-cyan-400/50 transition-all">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center"><MapPin size={20} className="text-blue-400" /></div>
-                <div>
-                  <div className="font-semibold text-white">{track.holder}</div>
-                  <div className="text-xs text-slate-400">{track.deviceName} · {track.company} / {track.project} / {track.team}</div>
-                  <div className="text-xs text-slate-500 mt-1">
-  {new Date(track.startTime).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} → 
-  {new Date(track.endTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · {track.points.length}个轨迹点
-</div>
-                </div>
-              </div>
-              <button className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg text-xs"><Play size={12} className="inline mr-1" />回放</button>
-            </div>
-          </div>
-        ))}
-        {filteredTracks.length === 0 && <div className="text-center py-12 text-slate-400"><MapPin size={48} className="mx-auto mb-3 opacity-30" /><p>暂无轨迹记录</p></div>}
-      </div>
-
-      {/* 分页 */}
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-3 mt-4 pt-3 border-t border-cyan-400/20 flex-shrink-0">
-          <button disabled={currentPage === 1} onClick={() => setCurrentPage((p: number) => Math.max(1, p - 1))} className="px-3 py-1 rounded bg-slate-800/50 text-slate-300 disabled:opacity-40">上一页</button>
-          <span className="text-sm text-slate-400">第 {currentPage} / {totalPages} 页</span>
-          <button disabled={currentPage === totalPages} onClick={() => setCurrentPage((p: number) => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded bg-slate-800/50 text-slate-300 disabled:opacity-40">下一页</button>
-        </div>
-      )}
-
-      {/* 轨迹地图弹窗 */}
-{selectedTrack && (
-<TrackMap
-  points={selectedTrack.points}
-  deviceName={selectedTrack.deviceName}
-  holder={selectedTrack.holder}
-  onClose={() => setSelectedTrack(null)}
-/>
-)}
-    </div>
-  );
-};
-
-
-// ==================== 语音回放组件 ====================
-const VoicePlaybackContent = ({ 
-  filteredVoices, totalPages, currentPage, setCurrentPage,
-  selectedVoice, setSelectedVoice,
-  searchKeyword, setSearchKeyword,
-  dateRange, setDateRange,
-  formatDuration, getVoiceTypeInfo,
-  voiceRecordsError
-}: any) => {
-  const [playingVoice, setPlayingVoice] = useState<VoiceRecord | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-
-  const resetFilters = () => {
-    setSearchKeyword('');
-    setDateRange({ start: '', end: '' });
+  const selectedHasAudio = Boolean(selectedVoice?.audioUrl);
+  const projectOptions = selectedCompany === 'all'
+    ? orgTree.flatMap((company: any) => Array.isArray(company.projects) ? company.projects : [])
+    : (orgTree.find((company: any) => company.id === selectedCompany)?.projects || []);
+  const gridOptions = projectOptions
+    .filter((project: any) => selectedProject === 'all' || project.id === selectedProject)
+    .flatMap((project: any) => project.grids || []);
+  const teamOptions = gridOptions
+    .filter((grid: any) => selectedGrid === 'all' || grid.id === selectedGrid)
+    .flatMap((grid: any) => grid.teams || []);
+  const renderSortHeader = (field: VoiceSortField, label: string, align: 'left' | 'right' = 'left') => {
+    const active = sortState.field === field;
+    const nextDirection: SortDirection = active && sortState.direction === 'asc' ? 'desc' : 'asc';
+    return (
+      <button
+        type="button"
+        onClick={() => setSortState({ field, direction: nextDirection })}
+        className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end text-right' : 'text-left'} ${active ? 'text-cyan-300' : 'text-white/70 hover:text-white'}`}
+      >
+        <span>{label}</span>
+        <span className="text-xs">{active ? (sortState.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
   };
 
-  const activeFiltersCount = [searchKeyword !== '', dateRange.start !== '', dateRange.end !== ''].filter(Boolean).length;
-
   return (
     <div className="flex-1 overflow-hidden flex flex-col h-full">
-      {/* 筛选栏 */}
       <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-4 mb-4 flex-shrink-0">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-[180px] relative">
+          <div className="min-w-[320px] flex-1 relative">
             <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
-            <input type="text" placeholder="搜索发起人、接收人..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-200" />
+            <input type="text" placeholder="搜索来源、接收对象..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-200" />
           </div>
           <div className="flex items-center gap-2">
-            <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            <input type="datetime-local" step="60" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
             <span className="text-slate-500">-</span>
-            <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            <input type="datetime-local" step="60" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
           </div>
-          {activeFiltersCount > 0 && <button onClick={resetFilters} className="px-2 py-1 text-sm text-cyan-400">重置</button>}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {readProjectScope().showCompanyFilter && (
+              <select value={selectedCompany} onChange={(event) => { setSelectedCompany(event.target.value); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); }} className="h-9 min-w-[140px] rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm text-slate-100 outline-none hover:border-cyan-400/40">
+                <option value="all">所有公司</option>
+                {orgTree.map((company: any) => <option key={company.id} value={company.id}>{company.name}</option>)}
+              </select>
+            )}
+            {readProjectScope().showProjectFilter && (
+              <select value={selectedProject} onChange={(event) => { setSelectedProject(event.target.value); setSelectedGrid('all'); setSelectedTeam('all'); }} className="h-9 min-w-[140px] rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm text-slate-100 outline-none hover:border-cyan-400/40">
+                <option value="all">所有项目</option>
+                {projectOptions.map((project: any) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            )}
+            <select value={selectedGrid} onChange={(event) => { setSelectedGrid(event.target.value); setSelectedTeam('all'); }} className="h-9 min-w-[140px] rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm text-slate-100 outline-none hover:border-cyan-400/40">
+              <option value="all">所有网格</option>
+              {gridOptions.map((grid: any) => <option key={grid.id} value={grid.id}>{grid.name}</option>)}
+            </select>
+            <select value={selectedTeam} onChange={(event) => setSelectedTeam(event.target.value)} className="h-9 min-w-[140px] rounded-lg border border-slate-700 bg-slate-800 px-3 text-sm text-slate-100 outline-none hover:border-cyan-400/40">
+              <option value="all">所有工队</option>
+              {teamOptions.map((team: any) => <option key={team.id} value={team.id}>{team.name}</option>)}
+            </select>
+            {activeFiltersCount > 0 && <button onClick={resetFilters} className="px-2 py-1 text-sm text-cyan-400">重置</button>}
+          </div>
         </div>
       </div>
 
-      {/* 通话记录列表 */}
-      <div className="flex-1 overflow-auto space-y-3">
-        {voiceRecordsError ? (
-          <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            {voiceRecordsError}
+      <div className="flex-1 overflow-auto">
+        {voiceRecordsError ? <div className="mb-2 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{voiceRecordsError}</div> : null}
+        <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950/35 shadow-[0_18px_46px_rgba(2,8,23,0.36)] backdrop-blur-sm">
+          <div className="grid grid-cols-[190px_minmax(360px,1fr)_170px_240px_230px] items-center gap-5 border-b border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/70">
+            <div>{renderSortHeader('from', '发起人')}</div>
+            <div>{renderSortHeader('receiver', '接收对象')}</div>
+            <div>{renderSortHeader('category', '通话类别')}</div>
+            <div>{renderSortHeader('time', '播报时间')}</div>
+            <div className="text-right">{renderSortHeader('kind', '播报类型 / 操作', 'right')}</div>
           </div>
-        ) : null}
-        {filteredVoices.map((voice: VoiceRecord) => {
-          const typeInfo = getVoiceTypeInfo(voice.type);
-          return (
-            <div key={voice.id} onClick={() => setSelectedVoice(voice)} className="bg-slate-900/50 rounded-xl border border-slate-700/50 p-4 cursor-pointer hover:border-cyan-400/50 transition-all">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">{typeInfo.icon}</div>
-                  <div>
-                    <div className="flex items-center gap-2"><span className={`text-xs px-2 py-0.5 rounded-full ${typeInfo.color}`}>{typeInfo.text}</span><span className="font-semibold text-white">{voice.from}</span><span className="text-slate-400 text-xs">→</span><span className="text-slate-300">{voice.toNames.join('、')}</span></div>
-                    <div className="text-xs text-slate-500 mt-1">{new Date(voice.startTime).toLocaleString()} · 时长: {formatDuration(voice.duration)}</div>
+          <div className="divide-y divide-white/5">
+            {voices.map((voice: VoiceRecord) => {
+              const typeInfo = getVoiceTypeInfo(voice.type);
+              const hasAudio = Boolean(voice.audioUrl);
+              const toNames = toTextArray(voice.toNames);
+              const receiverText = toNames.join(', ');
+              const receiverSummary = toNames.length > 2
+                ? `${toNames.slice(0, 2).join(', ')} 等 ${toNames.length} 人`
+                : (receiverText || '-');
+              return (
+                <div key={voice.id} onClick={() => setSelectedVoice(voice)} className="group grid grid-cols-[190px_minmax(360px,1fr)_170px_240px_230px] items-center gap-5 bg-slate-950/20 px-5 py-4 cursor-pointer transition-all hover:bg-slate-800/55">
+                  <div className="min-w-0"><div className="truncate text-base font-semibold text-slate-50">{asText(voice.from) || '-'}</div></div>
+                  <div className="min-w-0">
+                    <div className="truncate text-base text-slate-100" title={receiverText}>{receiverSummary}</div>
+                    {toNames.length > 2 ? <div className="mt-1.5 text-sm text-cyan-300/75">点击查看全部接收对象</div> : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-cyan-300">{typeInfo.icon}</div>
+                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 text-sm text-slate-300">{typeInfo.text}</span>
+                  </div>
+                  <div className="text-sm text-slate-300">{formatVoiceDateTime(voice.startTime)}</div>
+                  <div className="flex items-center justify-end gap-3">
+                    <div className="text-right">
+                      <span className={`inline-flex min-w-[60px] justify-center rounded-md px-3 py-1 text-sm font-semibold ring-1 ${hasAudio ? 'bg-emerald-400/10 text-emerald-300 ring-emerald-300/20' : 'bg-sky-400/10 text-sky-300 ring-sky-300/20'}`}>{hasAudio ? '语音' : '文字'}</span>
+                      {hasAudio ? <div className="mt-1.5 text-sm text-slate-500">{formatDuration(voice.duration)}</div> : null}
+                    </div>
+                    <button className="inline-flex items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-medium text-slate-200 transition-all hover:border-cyan-300/30 hover:bg-cyan-400/10 hover:text-cyan-100">{hasAudio ? <Volume2 size={14} /> : <Info size={14} />}{hasAudio ? '听录音' : '查看文字'}</button>
                   </div>
                 </div>
-                <button className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg text-xs"><Play size={12} className="inline mr-1" />播放</button>
-              </div>
-            </div>
-          );
-        })}
-        {filteredVoices.length === 0 && <div className="text-center py-12 text-slate-400"><Phone size={48} className="mx-auto mb-3 opacity-30" /><p>暂无通话记录</p></div>}
+              );
+            })}
+          </div>
+        </div>
+        {voices.length === 0 && <div className="text-center py-12 text-slate-400"><Phone size={48} className="mx-auto mb-3 opacity-30" /><p>暂无通话记录</p></div>}
       </div>
 
-      {/* 分页 */}
       {totalPages > 1 && (
         <div className="flex justify-center gap-3 mt-4 pt-3 border-t border-cyan-400/20 flex-shrink-0">
           <button disabled={currentPage === 1} onClick={() => setCurrentPage((p: number) => Math.max(1, p - 1))} className="px-3 py-1 rounded bg-slate-800/50 text-slate-300 disabled:opacity-40">上一页</button>
@@ -1879,34 +2391,20 @@ const VoicePlaybackContent = ({
         </div>
       )}
 
-      {/* 语音播放弹窗 */}
       {selectedVoice && (
         <div className="fixed inset-0 z-[300] bg-black/90 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 p-6 w-[500px]">
             <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">{getVoiceTypeInfo(selectedVoice.type).icon}</div><h3 className="text-xl font-bold text-white">{getVoiceTypeInfo(selectedVoice.type).text}通话</h3></div>
+              <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">{getVoiceTypeInfo(selectedVoice.type).icon}</div><h3 className="text-xl font-bold text-white">{selectedHasAudio ? '语音播报记录' : '文本播报记录'}</h3></div>
               <button onClick={() => setSelectedVoice(null)} className="p-1 hover:bg-slate-700 rounded"><X size={18} /></button>
             </div>
             <div className="space-y-3">
               <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">发起人</div><div className="text-white">{selectedVoice.from} ({selectedVoice.fromRole})</div></div>
-              <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">接收方</div><div className="text-white">{selectedVoice.toNames.join('、')}</div></div>
-              <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">通话时间</div><div className="text-white">{new Date(selectedVoice.startTime).toLocaleString()}</div></div>
-              {selectedVoice.transcript ? (
-                <div className="bg-slate-800/50 rounded-lg p-3">
-                  <div className="text-sm text-slate-400">语音转文本</div>
-                  <div className="mt-1 whitespace-pre-wrap text-white">{selectedVoice.transcript}</div>
-                </div>
-              ) : null}
-              {selectedVoice.audioUrl ? (
-                <audio controls src={selectedVoice.audioUrl} className="w-full" />
-              ) : null}
-              <div className="bg-slate-800/50 rounded-lg p-4">
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setIsPlaying(!isPlaying)} className="w-10 h-10 rounded-full bg-cyan-500 flex items-center justify-center">{isPlaying ? <Pause size={18} /> : <Play size={18} />}</button>
-                  <div className="flex-1"><div className="h-1.5 bg-slate-700 rounded-full"><div className="h-full bg-cyan-400 rounded-full" style={{ width: `${(currentTime / selectedVoice.duration) * 100}%` }} /></div><div className="flex justify-between text-xs text-slate-400 mt-1"><span>{formatDuration(currentTime)}</span><span>{formatDuration(selectedVoice.duration)}</span></div></div>
-                  <Volume2 size={18} className="text-slate-400" />
-                </div>
-              </div>
+              <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">接收方</div><div className="text-white">{selectedVoiceNames.join(', ') || '-'}</div></div>
+              <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">播报时间</div><div className="text-white">{formatVoiceDateTime(selectedVoice.startTime)}</div></div>
+              {selectedVoice.batchId ? <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">记录编号</div><div className="break-all text-white">{selectedVoice.batchId}</div></div> : null}
+              {selectedVoice.transcript ? <div className="bg-slate-800/50 rounded-lg p-3"><div className="text-sm text-slate-400">{selectedHasAudio ? '语音转文字' : '播报文字'}</div><div className="mt-1 whitespace-pre-wrap text-white">{selectedVoice.transcript}</div></div> : null}
+              {selectedHasAudio ? <div className="bg-slate-800/50 rounded-lg p-3"><div className="mb-2 text-sm text-slate-400">录音回放</div><audio controls src={selectedVoice.audioUrl} className="w-full" /></div> : <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">这是文本播报记录，只保存下发文字，不包含录音文件。</div>}
             </div>
             <div className="flex gap-3 mt-6"><button onClick={() => setSelectedVoice(null)} className="flex-1 py-2 bg-slate-700 rounded-lg">关闭</button></div>
           </div>
@@ -1916,91 +2414,23 @@ const VoicePlaybackContent = ({
   );
 };
 
-  // ✅ 辅助函数：将后端路径转换为可访问的 URL
-  const toVideoUrl = (webPath: string) => {
-    if (!webPath) return '';
-    if (webPath.startsWith('http://') || webPath.startsWith('https://')) {
-      return withAuthTokenParam(webPath);
-    }
-    return withAuthTokenParam(`${API_BASE_URL}${webPath.startsWith('/') ? '' : '/'}${webPath}`);
-  };
-
-  // ==============================================
-  // ✅ 报警视频+截图 纯文件名关联工具（不需要后端！）
-  // ==============================================
-
-  // 🎬 从报警视频文件名提取开始时间戳
-  // alarm_3158_358_20260407_120600_20260407_120630.mp4 → 开始时间
-  const disabledParseAlarmVideoStartTime = (filename: string): number => {
-    const match = filename.match(/alarm_\d+_\d+_(\d{8}_\d{6})_\d{8}_\d{6}\.mp4/);
-    if (!match) return 0;
-    const [, dateTime] = match;
-    const y = parseInt(dateTime.slice(0, 4));
-    const m = parseInt(dateTime.slice(4, 6)) - 1;
-    const d = parseInt(dateTime.slice(6, 8));
-    const h = parseInt(dateTime.slice(9, 11));
-    const min = parseInt(dateTime.slice(11, 13));
-    const s = parseInt(dateTime.slice(13, 15));
-    return Math.floor(new Date(y, m, d, h, min, s).getTime() / 1000);
-  };
-
-  // 🖼️ 从截图文件名提取时间戳
-  // 358_1775532666_6ef48f.jpg → Unix时间戳
-  const parseScreenshotTime = (filename: string): number => {
-    const match = filename.match(/\d+_(\d+)_\w+\.jpg/);
-    if (!match) return 0;
-    return parseInt(match[1]);
-  };
-
-  // 🔗 给报警视频找匹配的截图 + 计算报警在视频里的秒数位置
-  const disabledAlarmScreenshotBinding = (videoFilename: string, screenshotList: string[]) => {
-    const videoStart = disabledParseAlarmVideoStartTime(videoFilename);
-    if (!videoStart) return { screenshotUrl: '', alarmSecond: 10 };
-
-    // 在截图中找同设备、时间差在30秒内的
-    const bestMatch: string | null = null;
-
-    for (const screenshot of screenshotList) {
-      const screenshotTime = parseScreenshotTime(screenshot);
-      if (!screenshotTime) continue;
-      const diff = Math.abs(screenshotTime - videoStart);
-      void diff;
-      void screenshot;
-    }
-
-    // 报警在视频里的位置 = 截图时间 - 视频开始时间
-    const alarmSecond = bestMatch
-      ? Math.max(0, parseScreenshotTime(bestMatch) - videoStart)
-      : 10;
-
-    return {
-      screenshotUrl: bestMatch ? withAuthTokenParam(`${API_BASE_URL}/static/alarms/${bestMatch}`) : '',
-      alarmSecond,
-    };
-  };
-const getScreenshotUrl = (playback?: ExtendedSavedPlayback | null) => {
-  const alarmInfo = playback?.alarmInfo;
-  return (
-    alarmInfo?.screenshotUrl ||
-    alarmInfo?.screenshot?.url ||
-    alarmInfo?.screenshot?.thumbnail ||
-    ''
-  );
-};
 interface VideoPlaybackProps {
   initialTab?: 'video' | 'track' | 'voice';
 }
 
 export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
-    // ✅ 从 Store 取出操作函数
+    // 鉁?浠?Store 鍙栧嚭鎿嶄綔鍑芥暟
     const { removePlayback, clearAll } = usePlaybackStore();
+    const projectScope = readProjectScope();
 
-    // ✅ 修改1：设备列表改为真实数据
+    // 鉁?淇敼1锛氳澶囧垪琛ㄦ敼涓虹湡瀹炴暟鎹?
     const [devices, setDevices] = useState<Device[]>([]);
     const [loadingDevices, setLoadingDevices] = useState(false);
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
-    const [selectedProject, setSelectedProject] = useState<string>('all');
+    const [selectedProject, setSelectedProject] = useState<string>(
+      projectScope.isProjectScope && projectScope.projectValue ? projectScope.projectValue : 'all'
+    );
     const [selectedTeam, setSelectedTeam] = useState<string>('all');
     const [selectedGrid, setSelectedGrid] = useState<string>('all');
     const [selectedGridLevel, setSelectedGridLevel] = useState<string>('all');
@@ -2013,8 +2443,9 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
     const [showScreenshotModal, setShowScreenshotModal] = useState(false);
     const [selectedPlayback, setSelectedPlayback] = useState<ExtendedSavedPlayback | null>(null);
     const videoPlayerRef = useRef<VideoPlayerRef>(null);
+    const videoFiltersRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ 修改2：删除模拟数据，改用真实 API 数据
+  // 鉁?淇敼2锛氬垹闄ゆā鎷熸暟鎹紝鏀圭敤鐪熷疄 API 鏁版嵁
   const [recordingVideos, setRecordingVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
@@ -2023,13 +2454,13 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  // ✅ 40:9 更窄卡片，10列×4行 = 40个，刚好填满页面
+  // 鉁?40:9 鏇寸獎鍗＄墖锛?0鍒椕?琛?= 40涓紝鍒氬ソ濉弧椤甸潰
   const itemsPerPage = 40;
 
-    // 新增：主Tab状态
+    // 鏂板锛氫富Tab鐘舵€?
   const [mainTab, setMainTab] = useState<MainTabType>(initialTab || 'video');
   
-  // 新增：轨迹数据（从TrackPlayback.tsx迁移API逻辑）
+  // 鏂板锛氳建杩规暟鎹紙浠嶵rackPlayback.tsx杩佺ЩAPI閫昏緫锛?
   const [trackDevices, setTrackDevices] = useState<TrackDevice[]>([]);
   const [trackRecords, setTrackRecords] = useState<TrackRecord[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
@@ -2040,44 +2471,212 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   const [selectedTrackTeam, setSelectedTrackTeam] = useState<string>('all');
   const [trackSearchKeyword, setTrackSearchKeyword] = useState('');
   const [showTrackFilter, setShowTrackFilter] = useState(false);
-  // 默认日期范围：近一年
-const getDefaultTrackDateRange = () => {
+  const [trackSortState, setTrackSortState] = useState<TrackSortState>({ field: 'time', direction: 'desc' });
+const getTrackRetentionDaysFromLocal = () => {
+  try {
+    const settings = JSON.parse(localStorage.getItem('systemSettings') || '{}');
+    const days = Number(settings?.trackRetentionDays);
+    return Number.isFinite(days) && days > 0 ? days : 30;
+  } catch {
+    return 30;
+  }
+};
+
+const getDefaultTrackDateRange = (days: number = getTrackRetentionDaysFromLocal()) => {
   const end = new Date();
   const start = new Date();
-  start.setFullYear(start.getFullYear() - 1);
+  start.setDate(start.getDate() - Math.max(1, Math.floor(days)));
+  const toDateTimeLocalValue = (date: Date) => {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
   return {
-    start: start.toISOString().split('T')[0],
-    end: end.toISOString().split('T')[0],
+    start: toDateTimeLocalValue(start),
+    end: toDateTimeLocalValue(end),
   };
 };
 const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange());
+  const [trackRetentionDays, setTrackRetentionDays] = useState(getTrackRetentionDaysFromLocal());
   const [trackCurrentPage, setTrackCurrentPage] = useState(1);
+  const buildTrackRecord = (device: TrackDevice, deviceData: TrackDevice, hours: number): TrackRecord | null => {
+    const sourceTrajectory = Array.isArray(deviceData?.trajectory) ? deviceData.trajectory : [];
+    if (!sourceTrajectory.length) return null;
+    const resolvedDeviceId = String((deviceData as any).device_id || (deviceData as any).device_code || (device as any).device_id || (device as any).device_code || '');
+
+    let trajectory: TrajectoryPoint[] = sourceTrajectory.filter(point =>
+      Number.isFinite(Number(point?.lat)) &&
+      Number.isFinite(Number(point?.lng)) &&
+      Boolean(point?.timestamp)
+    );
+    if (hours > 0) {
+      const cutoffTime = new Date();
+      cutoffTime.setHours(cutoffTime.getHours() - hours);
+      trajectory = trajectory.filter(p => new Date(p.timestamp) >= cutoffTime);
+    }
+
+    if (trajectory.length === 0) return null;
+
+    return {
+      id: `track_${resolvedDeviceId}_${trajectory[0]?.timestamp || Date.now()}`,
+      deviceId: resolvedDeviceId,
+      deviceName: deviceData.name || device.name || '未知设备',
+      holder: deviceData.holder || deviceData.person_name || device.holder || '未知人员',
+      company: deviceData.company || device.company || '',
+      branch_id: firstText(deviceData as Record<string, any>, ['branch_id']) || firstText(device as Record<string, any>, ['branch_id']),
+      project: deviceData.project || device.project || '',
+      project_id: firstText(deviceData as Record<string, any>, ['project_id']) || firstText(device as Record<string, any>, ['project_id']),
+      grid: firstText(deviceData as Record<string, any>, ['grid', 'grid_name', 'gridName', 'grid_id']) || firstText(device as Record<string, any>, ['grid', 'grid_name', 'gridName', 'grid_id']),
+      team: deviceData.team || device.team || '',
+      startTime: trajectory[0]?.timestamp || new Date().toISOString(),
+      endTime: trajectory[trajectory.length - 1]?.timestamp || new Date().toISOString(),
+      points: trajectory.map(p => ({
+        lat: Number(p.lat),
+        lng: Number(p.lng),
+        time: p.timestamp,
+        speed: Number(p.speed) || 0,
+      })),
+    };
+  };
   
-  // 新增：语音数据
+  // 鏂板锛氳闊虫暟鎹?
   const [voiceRecords, setVoiceRecords] = useState<VoiceRecord[]>([]);
   const [voiceRecordsError, setVoiceRecordsError] = useState('');
   const [selectedVoice, setSelectedVoice] = useState<VoiceRecord | null>(null);
+  const [voiceScopeDevices, setVoiceScopeDevices] = useState<Device[]>([]);
   const [voiceSearchKeyword, setVoiceSearchKeyword] = useState('');
   const [voiceDateRange, setVoiceDateRange] = useState({ start: '', end: '' });
+  const [selectedVoiceCompany, setSelectedVoiceCompany] = useState<string>('all');
+  const [selectedVoiceProject, setSelectedVoiceProject] = useState<string>('all');
+  const [selectedVoiceGrid, setSelectedVoiceGrid] = useState<string>('all');
+  const [selectedVoiceTeam, setSelectedVoiceTeam] = useState<string>('all');
+  const [voiceSortState, setVoiceSortState] = useState<VoiceSortState>({ field: 'time', direction: 'desc' });
   const [voiceCurrentPage, setVoiceCurrentPage] = useState(1);
   const itemsPerPageTrackVoice = 10;
+  const lastTrackFetchKeyRef = useRef('');
+  const activeTrackFetchRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const closeVideoDropdowns = () => {
+      setShowCompanyDropdown(false);
+      setShowProjectDropdown(false);
+      setShowGridDropdown(false);
+      setShowTeamDropdown(false);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && videoFiltersRef.current?.contains(target)) return;
+      closeVideoDropdowns();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeVideoDropdowns();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTrackRetentionDays = async () => {
+      try {
+        const response = await fetch(getApiUrl('/admin/settings'), {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        });
+        const settings = await response.json().catch(() => null);
+        const days = Number(settings?.trackRetentionDays);
+
+        if (!cancelled && response.ok && Number.isFinite(days) && days > 0) {
+          setTrackRetentionDays(days);
+          setTrackDateRange(getDefaultTrackDateRange(days));
+        }
+      } catch (error) {
+        console.warn('鍔犺浇杞ㄨ抗淇濆瓨澶╂暟澶辫触锛屼娇鐢ㄦ湰鍦伴粯璁ゅ€?', error);
+      }
+    };
+
+    loadTrackRetentionDays();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadVoiceScopeDevices = async () => {
+      try {
+        const response = await fetch(`${TRACK_API_BASE_URL}/device/devices`, {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        });
+        const payload = await response.json().catch(() => null);
+        const deviceList = Array.isArray(payload) ? payload : (payload?.devices || []);
+        const normalizedDevices: Device[] = deviceList.map((item: any) => ({
+          id: item.id || item.raw_id || item.device_id || item.device_code || item.phone_num || item.holderPhone,
+          name: item.name || item.device_name || item.deviceName || item.device_id || '',
+          ip_address: item.ip_address || '',
+          status: item.status || '',
+          company: getDeviceCompany(item),
+          project: getDeviceProject(item),
+          grid: getDeviceGrid(item),
+          grid_id: item.grid_id || '',
+          grid_name: item.grid_name || item.grid || '',
+          team: getDeviceTeam(item),
+          team_id: item.team_id || '',
+          team_name: item.team_name || item.team || item.workTeam || item.work_team || '',
+          device_id: item.device_id,
+          device_code: item.device_code,
+          phone_num: item.phone_num,
+          holderPhone: item.holderPhone,
+        } as Device));
+
+        if (!cancelled) {
+          setVoiceScopeDevices(normalizedDevices);
+        }
+      } catch (error) {
+        console.error('加载通信记录设备范围失败:', error);
+        if (!cancelled) {
+          setVoiceScopeDevices([]);
+        }
+      }
+    };
+
+    loadVoiceScopeDevices();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const loadVoiceRecords = async () => {
       try {
         const [voiceResponse, textResponse] = await Promise.all([
-          fetch(getApiUrl('/call/voice-records?limit=100')),
-          fetch(getApiUrl('/call/tts/batches?limit=100')),
+          fetch(getApiUrl('/call/voice-records?limit=100'), {
+            headers: getAuthHeaders(),
+            credentials: 'include',
+          }),
+          fetch(getApiUrl('/call/tts/batches?limit=100'), {
+            headers: getAuthHeaders(),
+            credentials: 'include',
+          }),
         ]);
         const voicePayload = (await voiceResponse.json().catch(() => null)) as unknown;
         const textPayload = (await textResponse.json().catch(() => null)) as unknown;
 
         if (!voiceResponse.ok || !isVoiceRecordResponseList(voicePayload)) {
-          throw new Error('加载通信回放失败');
+          throw new Error('鍔犺浇閫氫俊鍥炴斁澶辫触');
         }
 
         if (!textResponse.ok || !isTtsBatchResponseList(textPayload)) {
-          throw new Error('鍔犺浇閫氫俊鍥炴斁澶辫触');
+          throw new Error('閸旂姾娴囬柅姘繆閸ョ偞鏂佹径杈Е');
         }
 
         const audioRecords = voicePayload.map(createVoiceRecordFromResponse);
@@ -2086,24 +2685,49 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
           .filter((batch) => !audioBatchIds.has(batch.batch_id))
           .map(createVoiceRecordFromBatch);
 
+        const requireVoiceDeviceMatch = !isGlobalPermissionScope();
+        const scopedRecords = [...audioRecords, ...textRecords]
+          .map(record => attachScopedVoiceOrg(record, voiceScopeDevices, requireVoiceDeviceMatch))
+          .filter((record): record is VoiceRecord => Boolean(record));
+
         setVoiceRecords(
-          [...audioRecords, ...textRecords].sort(
-            (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+          scopedRecords.sort(
+            (a, b) => parseVoiceDateTime(b.startTime).getTime() - parseVoiceDateTime(a.startTime).getTime()
           )
         );
         setVoiceRecordsError('');
       } catch (error) {
-        const message = error instanceof Error ? error.message : '加载通信回放失败';
+        const message = error instanceof Error ? error.message : '鍔犺浇閫氫俊鍥炴斁澶辫触';
         setVoiceRecordsError(message);
       }
     };
 
     loadVoiceRecords();
-  }, []);
-    // 获取所有公司列表
+  }, [voiceScopeDevices]);
+
+  useEffect(() => {
+    if (!projectScope.isProjectScope || !projectScope.projectValue) return;
+    if (selectedProject !== projectScope.projectValue) {
+      setSelectedProject(projectScope.projectValue);
+      setSelectedGrid('all');
+      setSelectedTeam('all');
+    }
+    setShowCompanyDropdown(false);
+    setShowProjectDropdown(false);
+  }, [projectScope.isProjectScope, projectScope.projectValue, selectedProject]);
+
+  useEffect(() => {
+    if (!projectScope.isProjectScope || !projectScope.projectValue) return;
+    if (selectedTrackProject !== projectScope.projectValue) {
+      setSelectedTrackProject(projectScope.projectValue);
+      setSelectedTrackTeam('all');
+    }
+    setSelectedTrackCompany('all');
+  }, [projectScope.isProjectScope, projectScope.projectValue, selectedTrackProject]);
+    // 鑾峰彇鎵€鏈夊叕鍙稿垪琛?
     const companies = ['all', ...new Set(devices.map(d => d.company).filter(Boolean))];
     
-    // 根据选中的公司获取项目列表
+    // 鏍规嵁閫変腑鐨勫叕鍙歌幏鍙栭」鐩垪琛?
   const getProjectsByCompany = () => {
   if (selectedCompany === 'all') {
     return ['all', ...new Set(devices.map(d => d.project).filter(Boolean))];
@@ -2118,24 +2742,29 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     const projects = getProjectsByCompany();
     const playbackFilterSources = [...devices, ...filteredPlaybacks];
     const companiesForFilter = ['all', ...new Set(playbackFilterSources.map(getDeviceCompany).filter(Boolean))];
-    const projectsForFilter = ['all', ...new Set(playbackFilterSources
-      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
-      .map(getDeviceProject)
-      .filter(Boolean))];
+  useEffect(() => {
+    if (selectedCompany !== 'all' && !companiesForFilter.includes(selectedCompany)) {
+      setSelectedCompany('all');
+    }
+  }, [selectedCompany, companiesForFilter.join('|')]);
+  const projectsForFilter = ['all', ...new Set(playbackFilterSources
+    .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+    .map(getDeviceProject)
+    .filter(Boolean))];
     const gridsForFilter = ['all', ...new Set(playbackFilterSources
-      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
-      .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject)
-      .map(getDeviceGrid)
-      .filter(Boolean))];
-    const teamsForFilter = ['all', ...new Set(playbackFilterSources
-      .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
-      .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject)
-      .filter(item => selectedGrid === 'all' || getDeviceGrid(item) === selectedGrid)
-      .map(getDeviceTeam)
-      .filter(Boolean))];
+    .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+    .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject || (projectScope.isProjectScope && projectMatchesScope(getDeviceProject(item), projectScope)))
+    .map(getDeviceGrid)
+    .filter(Boolean))];
+  const teamsForFilter = ['all', ...new Set(playbackFilterSources
+    .filter(item => selectedCompany === 'all' || getDeviceCompany(item) === selectedCompany)
+    .filter(item => selectedProject === 'all' || getDeviceProject(item) === selectedProject || (projectScope.isProjectScope && projectMatchesScope(getDeviceProject(item), projectScope)))
+    .filter(item => selectedGrid === 'all' || getDeviceGrid(item) === selectedGrid)
+    .map(getDeviceTeam)
+    .filter(Boolean))];
     const selectedGridLabel = selectedGrid === 'all' ? '' : gridsForFilter.find(grid => grid === selectedGrid) || selectedGrid;
 
-    // 初始化模拟数据
+    // 鍒濆鍖栨ā鎷熸暟鎹?
     // useEffect(() => {
     //   if (savedPlaybacks.length === 0) {
     //     mockPlaybacks.forEach(playback => {
@@ -2144,13 +2773,13 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     //   }
     // }, [savedPlaybacks.length, addPlayback]);
 
-      // ✅ 新增：加载真实设备列表
+      // 鉁?鏂板锛氬姞杞界湡瀹炶澶囧垪琛?
   useEffect(() => {
     const loadDevices = async () => {
       setLoadingDevices(true);
       try {
         const data = await getAllVideos();
-        // 转换为 Device 格式
+        // 杞崲涓?Device 鏍煎紡
         const deviceList: Device[] = data.map(v => ({
           id: v.id,
           name: v.name,
@@ -2166,9 +2795,9 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
           team_name: v.team_name || v.team || v.workTeam || v.work_team || '',
         }));
         setDevices(deviceList);
-        // ✅ 不默认选设备，一进来就是"全部设备"
+        // 鉁?涓嶉粯璁ら€夎澶囷紝涓€杩涙潵灏辨槸"鍏ㄩ儴璁惧"
       } catch (err) {
-        console.error('加载设备失败:', err);
+        console.error('鍔犺浇璁惧澶辫触:', err);
       } finally {
         setLoadingDevices(false);
       }
@@ -2176,9 +2805,9 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     loadDevices();
   }, []);
 
-  // ✅ 加载视频：两个API独立加载，互不影响！
+  // 鉁?鍔犺浇瑙嗛锛氫袱涓狝PI鐙珛鍔犺浇锛屼簰涓嶅奖鍝嶏紒
 useEffect(() => {
-  // ✅ 全部设备时，用第一个设备加载视频
+  // 鉁?鍏ㄩ儴璁惧鏃讹紝鐢ㄧ涓€涓澶囧姞杞借棰?
   const devicesToLoad = selectedDevice ? [selectedDevice] : devices;
   if (devicesToLoad.length === 0) {
     setRecordingVideos([]);
@@ -2190,7 +2819,7 @@ useEffect(() => {
   const loadVideos = async () => {
     setLoadingVideos(true);
     try {
-      // ✅ 等两个API都回来才一起更新状态！解决竞态！
+      // 鉁?绛変袱涓狝PI閮藉洖鏉ユ墠涓€璧锋洿鏂扮姸鎬侊紒瑙ｅ喅绔炴€侊紒
       const results = await Promise.all(devicesToLoad.map(async (device) => {
         try {
           const [recordings, alarms, screenshots] = await Promise.all([
@@ -2222,10 +2851,12 @@ useEffect(() => {
   loadVideos();
 }, [selectedDevice?.id, devices]);
 
-// ✅ 轨迹API调用（从TrackPlayback.tsx迁移）
-// 获取轨迹设备列表
+// 鉁?杞ㄨ抗API璋冪敤锛堜粠TrackPlayback.tsx杩佺Щ锛?
+// 鑾峰彇杞ㄨ抗璁惧鍒楄〃
 useEffect(() => {
   const fetchTrackDevices = async () => {
+    if (mainTab !== 'track') return;
+    if (trackDevices.length > 0) return;
     try {
       const res = await fetch(`${TRACK_API_BASE_URL}/device/devices`, {
         headers: getAuthHeaders(),
@@ -2234,109 +2865,104 @@ useEffect(() => {
       const data = await res.json();
       const deviceList: TrackDevice[] = Array.isArray(data) ? data : (data.devices || []);
       setTrackDevices(deviceList);
-      // 默认选择第一个设备
+      // 榛樿閫夋嫨绗竴涓澶?
       if (deviceList.length > 0 && !selectedTrackDevice) {
         setSelectedTrackDevice(deviceList[0]);
       }
     } catch (err) {
-      console.error('获取轨迹设备失败:', err);
+      console.error('鑾峰彇杞ㄨ抗璁惧澶辫触:', err);
       setTrackDevices([]);
     }
   };
   fetchTrackDevices();
-}, []);
+}, [mainTab, trackDevices.length]);
 
-// ✅ 获取所有设备的轨迹数据（真正向后端API请求数据）
-const fetchAllTrajectories = async (hours: number = 24) => {
+// 鉁?鑾峰彇鎵€鏈夎澶囩殑杞ㄨ抗鏁版嵁锛堢湡姝ｅ悜鍚庣API璇锋眰鏁版嵁锛?
+const fetchAllTrajectories = async (hours: number = 24, signal?: AbortSignal) => {
   setLoadingTracks(true);
   try {
-    // 获取所有设备的轨迹
-    const trackRecords: TrackRecord[] = [];
-    
-    for (const device of trackDevices) {
-      // 向后端发起API请求获取单个设备的轨迹数据
-      const res = await fetch(`${TRACK_API_BASE_URL}/device/${device.device_id}?hours=${hours}`, {
-        headers: getAuthHeaders(),
-        credentials: 'include',
-      });
-      const deviceData: TrackDevice = await res.json();
-      
-      if (deviceData && deviceData.trajectory && deviceData.trajectory.length > 0) {
-        // 根据时间范围筛选轨迹点
-        let trajectory: TrajectoryPoint[] = deviceData.trajectory;
-        
-        if (hours > 0) {
-          const cutoffTime = new Date();
-          cutoffTime.setHours(cutoffTime.getHours() - hours);
-          trajectory = deviceData.trajectory.filter(p => {
-            const pointTime = new Date(p.timestamp);
-            return pointTime >= cutoffTime;
-          });
-        }
-        
-        if (trajectory.length > 0) {
-          // 转换为 TrackRecord 格式（使用holder字段，适配数据库）
-          const trackRecord: TrackRecord = {
-            id: `track_${device.device_id}_${Date.now()}`,
-            deviceId: device.device_id,
-            deviceName: deviceData.name || device.name || '未知设备',
-            holder: deviceData.holder || deviceData.person_name || device.holder || '未知人员',
-            company: deviceData.company || device.company || '',
-            project: deviceData.project || device.project || '',
-            team: deviceData.team || device.team || '',
-            startTime: trajectory[0]?.timestamp || new Date().toISOString(),
-            endTime: trajectory[trajectory.length - 1]?.timestamp || new Date().toISOString(),
-            points: trajectory.map(p => ({
-              lat: p.lat,
-              lng: p.lng,
-              time: p.timestamp,
-              speed: p.speed,
-            })),
-          };
-          trackRecords.push(trackRecord);
-        }
-      }
-    }
-    
-    if (trackRecords.length > 0) {
+    const params = new URLSearchParams({ hours: String(hours) });
+    if (trackDateRange.start) params.set('start_time', new Date(trackDateRange.start).toISOString());
+    if (trackDateRange.end) params.set('end_time', new Date(trackDateRange.end).toISOString());
+    const res = await fetch(`${TRACK_API_BASE_URL}/device/trajectories?${params.toString()}`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    const devicesWithTrajectory: TrackDevice[] = Array.isArray(data) ? data : (data.devices || []);
+    const deviceById = new Map<string, TrackDevice>();
+    trackDevices.forEach(device => {
+      const primaryId = String((device as any).device_id || '');
+      const code = String((device as any).device_code || '');
+      if (primaryId) deviceById.set(primaryId, device);
+      if (code) deviceById.set(code, device);
+    });
+    const trackRecords = devicesWithTrajectory
+      .map(deviceData => {
+        const lookupId = String((deviceData as any).device_id || (deviceData as any).device_code || '');
+        return buildTrackRecord(deviceById.get(lookupId) || deviceData, deviceData, hours);
+      })
+      .filter((record): record is TrackRecord => Boolean(record));
+
+    if (!signal?.aborted) {
       setTrackRecords(trackRecords);
-    } else {
-      // 如果没有真实数据，使用mock数据兜底
-      setTrackRecords(mockTrackRecords);
     }
   } catch (err) {
+    if (signal?.aborted) return;
     console.error('获取轨迹失败:', err);
-    // 失败时使用mock数据兜底
-    setTrackRecords(mockTrackRecords);
+    setTrackRecords([]);
   } finally {
-    setLoadingTracks(false);
+    if (!signal?.aborted) setLoadingTracks(false);
   }
 };
-
-// ✅ 设备列表变化或日期范围变化时获取所有设备的轨迹
+// 设备列表或日期范围变化时获取轨迹
 useEffect(() => {
-  if (trackDevices.length > 0) {
-    let hours = 24;
-    if (trackDateRange.start && trackDateRange.end) {
-      const start = new Date(trackDateRange.start);
-      const end = new Date(trackDateRange.end);
-      const diff = Math.abs(end.getTime() - start.getTime());
-      hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
-    } else if (trackDateRange.start) {
-      const start = new Date(trackDateRange.start);
-      const end = new Date();
-      const diff = Math.abs(end.getTime() - start.getTime());
-      hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
-    }
-    fetchAllTrajectories(hours);
+  if (mainTab !== 'track' || trackDevices.length === 0) {
+    activeTrackFetchRef.current?.abort();
+    activeTrackFetchRef.current = null;
+    setLoadingTracks(false);
+    return;
   }
-}, [trackDevices, trackDateRange]);
-  // ✅ 真实API + 兜底，全部设备也有数据！
+
+  let hours = 24;
+  if (trackDateRange.start && trackDateRange.end) {
+    const start = new Date(trackDateRange.start);
+    const end = new Date(trackDateRange.end);
+    const diff = Math.abs(end.getTime() - start.getTime());
+    hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
+  } else if (trackDateRange.start) {
+    const start = new Date(trackDateRange.start);
+    const end = new Date();
+    const diff = Math.abs(end.getTime() - start.getTime());
+    hours = Math.ceil(diff / (1000 * 60 * 60)) || 24;
+  }
+  hours = Math.min(hours, Math.max(24, Math.ceil(trackRetentionDays * 24)));
+
+  const deviceKey = trackDevices.map(device => device.device_id).join(',');
+  const fetchKey = `${deviceKey}|${trackDateRange.start}|${trackDateRange.end}|${hours}`;
+  if (lastTrackFetchKeyRef.current === fetchKey) return;
+  lastTrackFetchKeyRef.current = fetchKey;
+
+  activeTrackFetchRef.current?.abort();
+  const controller = new AbortController();
+  activeTrackFetchRef.current = controller;
+  fetchAllTrajectories(hours, controller.signal).catch(error => {
+    if (!controller.signal.aborted) {
+      console.error('获取轨迹失败:', error);
+    }
+  });
+
+  return undefined;
+}, [mainTab, trackDevices, trackDateRange.start, trackDateRange.end, trackRetentionDays]);
+  // 鉁?鐪熷疄API + 鍏滃簳锛屽叏閮ㄨ澶囦篃鏈夋暟鎹紒
   useEffect(() => {
     const convertToSavedPlayback = (): ExtendedSavedPlayback[] => {
       const list: ExtendedSavedPlayback[] = [];
       
-      // ✅ 用第一个设备当默认（全部设备时也显示内容）
+      // 鉁?鐢ㄧ涓€涓澶囧綋榛樿锛堝叏閮ㄨ澶囨椂涔熸樉绀哄唴瀹癸級
       const getPlaybackDevice = (video: SavedPlaybackVideo) => {
         const attached = (video as any).__device as Device | undefined;
         return attached || selectedDevice || devices.find(device => device.id === Number((video as any).video_id)) || devices[0];
@@ -2354,6 +2980,7 @@ useEffect(() => {
           deviceName: baseDevice?.name || video.name || '未知设备',
           company: companyName,
           project: projectName,
+          project_id: baseDevice?.project_id || '',
           grid: gridName,
           grid_id: baseDevice?.grid_id || '',
           grid_name: baseDevice?.grid_name || gridName,
@@ -2371,55 +2998,102 @@ useEffect(() => {
           deviceKey: String(baseDevice?.id || ''),
         };
       };
-      
-      // 📹 优先用真实常规视频（可播放）
+
+      const getMatchedScreenshot = (video: SavedPlaybackVideo) => {
+        const screenshots = alarmScreenshots as any[];
+
+        if (!screenshots || screenshots.length === 0) {
+          return null;
+        }
+
+        const videoTime = new Date(getPlaybackEventTime(video)).getTime();
+        let best: any = null;
+        let bestDiff = Number.POSITIVE_INFINITY;
+
+        for (const shot of screenshots) {
+          const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
+
+          if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
+            continue;
+          }
+
+          const diff = Math.abs(shotTime - videoTime);
+
+          if (diff < bestDiff) {
+            best = shot;
+            bestDiff = diff;
+          }
+        }
+
+        if (best && bestDiff <= 5 * 60 * 1000) {
+          return best;
+        }
+
+        return screenshots[0] || null;
+      };
+
+      // 馃摴 浼樺厛鐢ㄧ湡瀹炲父瑙勮棰戯紙鍙挱鏀撅級
       recordingVideos.forEach(video => {
         const duration = video.duration_seconds || 300;
+        const startTime = video.start_time || getPlaybackEventTime(video);
+        const endTime = video.end_time || video.updated_at || getPlaybackEventTime(video);
+        const createdAt = video.created_at || getPlaybackEventTime(video);
         const basePlayback = createBasePlayback(video);
         list.push({
           id: `rec_${video.name}`,
           ...basePlayback,
           type: 'manual',
-          startTime: video.updated_at,
-          endTime: video.updated_at,
+          startTime,
+          endTime,
           duration: duration,
           filePath: toVideoUrl(video.web_path),
-          createdAt: video.updated_at,
+          thumbnail: video.thumbnail_path || video.thumbnail ? toVideoUrl(video.thumbnail_path || video.thumbnail) : '',
+          createdAt,
         });
       });
       
-      // 🚨 优先用真实报警视频（可播放）
-      // 🔗 自动解析文件名计算报警在视频里的秒数位置！
+      // 馃毃 浼樺厛鐢ㄧ湡瀹炴姤璀﹁棰戯紙鍙挱鏀撅級
+      // 馃敆 鑷姩瑙ｆ瀽鏂囦欢鍚嶈绠楁姤璀﹀湪瑙嗛閲岀殑绉掓暟浣嶇疆锛?
             
       alarmVideos.forEach(video => {
         const duration = video.duration_seconds || 60;
+        const startTime = video.start_time || getPlaybackEventTime(video);
+        const endTime = video.end_time || video.updated_at || getPlaybackEventTime(video);
+        const createdAt = video.created_at || getPlaybackEventTime(video);
         const basePlayback = createBasePlayback(video);
-        // ✅ 通过文件名计算：报警在视频里的第几秒
-        (() => {
-          const screenshots = [] as any[];
+
+        // 鉁?閫氳繃鏂囦欢鍚嶈绠楋細鎶ヨ鍦ㄨ棰戦噷鐨勭鍑犵
+        const matchedScreenshot = (() => {
+          const screenshots = alarmScreenshots as any[];
+
 
           if (!screenshots || screenshots.length === 0) {
             return null;
           }
 
-          const videoTime = new Date(video.updated_at).getTime();
+          const videoTime = new Date(getPlaybackEventTime(video)).getTime();
 
-          const best: any = null;
+          let best: any = null;
+          let bestDiff = Number.POSITIVE_INFINITY;
 
           for (const shot of screenshots) {
-            const shotTime = new Date(shot.updated_at).getTime();
+            const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
 
             if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
               continue;
             }
 
             const diff = Math.abs(shotTime - videoTime);
-
-            void diff;
+            if (diff < bestDiff) {
+              best = shot;
+              bestDiff = diff;
+            }
           }
 
-          // 允许 5 分钟内匹配；如果没有合适时间，也兜底取最新一张
-          if (best) {
+
+          // 鍏佽 5 鍒嗛挓鍐呭尮閰嶏紱濡傛灉娌℃湁鍚堥€傛椂闂达紝涔熷厹搴曞彇鏈€鏂颁竴寮?
+          if (best && bestDiff <= 5 * 60 * 1000) {
+
             return best;
           }
 
@@ -2431,42 +3105,75 @@ useEffect(() => {
           video.screenshot_path ||
           video.thumbnail_path ||
           video.thumbnail ||
+          matchedScreenshot?.web_path ||
+          matchedScreenshot?.thumbnail_path ||
+          matchedScreenshot?.thumbnail ||
+          matchedScreenshot?.url ||
           '';
 
-        const screenshotUrl = screenshotRawPath ? toVideoUrl(screenshotRawPath) : '';
+        const screenshotUrl = screenshotRawPath
+          ? withMediaCacheKey(toVideoUrl(screenshotRawPath), matchedScreenshot?.updated_at || matchedScreenshot?.name)
+          : '';
 
-        const alarmSecond = Math.max(0, Math.min(duration - 1, Number(video.alarm_second ?? 30)));
+
+        const alarmSecond = (() => {
+          const explicitAlarmSecond = Number(video.alarm_second);
+          if (Number.isFinite(explicitAlarmSecond)) {
+            return Math.max(0, Math.min(duration - 1, explicitAlarmSecond));
+          }
+
+          const videoStartTime = new Date(startTime).getTime();
+          const alarmTime = new Date((video as any).alarm_time || '').getTime();
+
+          if (!Number.isNaN(videoStartTime) && !Number.isNaN(alarmTime)) {
+            return Math.max(0, Math.min(duration - 1, Math.round((alarmTime - videoStartTime) / 1000)));
+          }
+
+          if (!matchedScreenshot) return 10;
+
+          const videoTime = new Date(getPlaybackEventTime(video)).getTime();
+          const shotTime = new Date(getPlaybackEventTime(matchedScreenshot)).getTime();
+
+          if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
+            return 10;
+          }
+
+          return Math.max(0, Math.min(duration - 1, Math.round((shotTime - videoTime) / 1000)));
+        })();
+
         list.push({
           id: `alarm_${video.alarm_id || video.name}`,
           ...basePlayback,
           type: 'alarm',
-          startTime: video.updated_at,
-          endTime: video.updated_at,
+          startTime,
+          endTime,
           duration: duration,
-          filePath: toVideoUrl(video.web_path),
-          createdAt: video.updated_at,
-          alarmSecond,  // ✅ 传给播放器！进度条红点在这里！
+          filePath: withMediaCacheKey(toVideoUrl(video.web_path), video.updated_at || video.name),
+          createdAt,
+          alarmSecond,  // 鉁?浼犵粰鎾斁鍣紒杩涘害鏉＄孩鐐瑰湪杩欓噷锛?
           alarmInfo: {
-            type: 'AI检测',
-            msg: '检测到异常行为',
+              type: 'AI检测',
+              msg: '检测到异常行为',
             score: 0.95,
-            timestamp: video.updated_at,
-            personnel: '未知',
+            timestamp: startTime,
+              personnel: '未知',
             screenshotUrl,
             screenshot: screenshotUrl
               ? {
                   id: String(video.alarm_id || video.name),
                   url: screenshotUrl,
                   thumbnail: screenshotUrl,
-                  timestamp: video.updated_at,
+
+                  timestamp: getPlaybackEventTime(matchedScreenshot) || getPlaybackEventTime(video),
+
                 }
               : undefined,
           },
         });
       });
       
-      // ✅ 终极兜底：如果报警视频 < 3条（API还没回来或失败）
-      // 就补充到至少3条，保证报警Tab永远不为空！
+      // 鉁?缁堟瀬鍏滃簳锛氬鏋滄姤璀﹁棰?< 3鏉★紙API杩樻病鍥炴潵鎴栧け璐ワ級
+      // 灏辫ˉ鍏呭埌鑷冲皯3鏉★紝淇濊瘉鎶ヨTab姘歌繙涓嶄负绌猴紒
       
       
       return list;
@@ -2474,13 +3181,13 @@ useEffect(() => {
     
     let list = convertToSavedPlayback();
     
-    // 没选设备时，才按公司/项目/作业队筛选
+    // 娌￠€夎澶囨椂锛屾墠鎸夊叕鍙?椤圭洰/浣滀笟闃熺瓫閫?
     if (!selectedDevice) {
       if (selectedCompany !== 'all') {
         list = list.filter(p => p.company === selectedCompany);
       }
       if (selectedProject !== 'all') {
-        list = list.filter(p => p.project === selectedProject);
+        list = list.filter(p => p.project === selectedProject || playbackMatchesProjectScope(p, projectScope));
       }
       if (selectedTeam !== 'all') {
         list = list.filter(p => p.teamKey === selectedTeam || p.team === selectedTeam);
@@ -2490,44 +3197,44 @@ useEffect(() => {
       }
     }
     
-    // 按Tab筛选
+    // 鎸塗ab绛涢€?
     if (activeTab === 'alarm') {
       list = list.filter(p => p.type === 'alarm');
     } else {
       list = list.filter(p => p.type === 'manual');
     }
     
-    // 按关键词搜索（支持多条件模糊搜索）
+    // 鎸夊叧閿瘝鎼滅储锛堟敮鎸佸鏉′欢妯＄硦鎼滅储锛?
     if (searchKeyword) {
       list = list.filter(p => playbackMatchesSearch(p, searchKeyword));
     }
     
-    // ✅ 最终按时间倒序排列（新的在前）
+    // 鉁?鏈€缁堟寜鏃堕棿鍊掑簭鎺掑垪锛堟柊鐨勫湪鍓嶏級
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     setFilteredPlaybacks(list);
   }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, selectedGrid, selectedTeam, devices]);
  
 
-// ✅ 分页计算 - 放在 useEffect 外面
+// 鉁?鍒嗛〉璁＄畻 - 鏀惧湪 useEffect 澶栭潰
 const totalPages = Math.ceil(filteredPlaybacks.length / itemsPerPage);
 const currentPagePlaybacks = filteredPlaybacks.slice(
   (currentPage - 1) * itemsPerPage,
   currentPage * itemsPerPage
 );
 
-// 筛选变化时重置页码
+// 绛涢€夊彉鍖栨椂閲嶇疆椤电爜
 useEffect(() => {
   setCurrentPage(1);
 }, [filteredPlaybacks.length, activeTab, selectedCompany, selectedProject, selectedGrid, selectedTeam, selectedDevice, searchKeyword]);
    
 
-    // 播放选中的回放
+    // 鎾斁閫変腑鐨勫洖鏀?
     const handlePlay = (playback: ExtendedSavedPlayback) => {
       setSelectedPlayback(playback);
     };
 
-    // 删除回放记录
+    // 鍒犻櫎鍥炴斁璁板綍
     const handleDelete = (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
       if (confirm('确定要删除这个回放记录吗？')) {
@@ -2538,15 +3245,15 @@ useEffect(() => {
       }
     };
 
-    // 清空所有记录
+    // 娓呯┖鎵€鏈夎褰?
     const handleClearAll = () => {
-      if (confirm('确定要清空所有回放记录吗？此操作不可恢复！')) {
+      if (confirm('确定要清空所有回放记录吗？此操作不可恢复。')) {
         clearAll();
         setSelectedPlayback(null);
       }
     };
 
-    // 格式化时间显示
+    // 鏍煎紡鍖栨椂闂存樉绀?
     const formatTime = (timeStr: string) => {
       const date = new Date(timeStr);
       return date.toLocaleString('zh-CN', {
@@ -2558,7 +3265,7 @@ useEffect(() => {
       });
     };
 
-    // 格式化时长
+    // 鏍煎紡鍖栨椂闀?
     const formatDuration = (seconds: number) => {
       const mins = Math.floor(seconds / 60);
       const secs = Math.floor(seconds % 60);
@@ -2578,25 +3285,191 @@ const getVoiceTypeInfo = (type: string) => {
   }
 };
 
-  // 轨迹筛选计算
-  const filteredTracks = trackRecords.filter(track => {
-    if (selectedTrackCompany !== 'all' && track.company !== selectedTrackCompany) return false;
-    if (selectedTrackProject !== 'all' && track.project !== selectedTrackProject) return false;
-    if (selectedTrackTeam !== 'all' && track.team !== selectedTrackTeam) return false;
-    if (trackSearchKeyword && !track.holder.includes(trackSearchKeyword) && !track.deviceName.includes(trackSearchKeyword)) return false;
-    if (trackDateRange.start && new Date(track.startTime) < new Date(trackDateRange.start)) return false;
-    if (trackDateRange.end && new Date(track.endTime) > new Date(trackDateRange.end)) return false;
+const enrichAlarmWithScreenshot = (playback: ExtendedSavedPlayback | null): ExtendedSavedPlayback | null => {
+  if (!playback || playback.type !== 'alarm') return playback;
+
+  const currentUrl = getScreenshotUrl(playback);
+  if (currentUrl) return playback;
+
+  const sameDeviceShots = (alarmScreenshots as any[]).filter((shot) => {
+    const shotDevice = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
+    const playbackDevice = String(playback.deviceId || playback.deviceKey || '').trim();
+    return !playbackDevice || !shotDevice || shotDevice === playbackDevice;
+  });
+
+  if (sameDeviceShots.length === 0) return playback;
+
+  const playbackTime = new Date(playback.alarmInfo?.timestamp || playback.startTime || playback.createdAt).getTime();
+  let bestShot = sameDeviceShots[0];
+  let bestDiff = Number.POSITIVE_INFINITY;
+
+  for (const shot of sameDeviceShots) {
+    const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
+    if (Number.isNaN(playbackTime) || Number.isNaN(shotTime)) continue;
+    const diff = Math.abs(shotTime - playbackTime);
+    if (diff < bestDiff) {
+      bestShot = shot;
+      bestDiff = diff;
+    }
+  }
+
+  const rawPath = bestShot?.web_path || bestShot?.thumbnail_path || bestShot?.thumbnail || bestShot?.url || '';
+  const screenshotUrl = rawPath ? withMediaCacheKey(toVideoUrl(rawPath), bestShot?.updated_at || bestShot?.name) : '';
+  if (!screenshotUrl) return playback;
+
+  return {
+    ...playback,
+    alarmInfo: {
+      ...(playback.alarmInfo || {
+        type: 'AI检测',
+        msg: '检测到异常行为',
+        score: 0.95,
+        timestamp: playback.startTime,
+        personnel: '未知',
+      }),
+      screenshotUrl,
+      screenshot: {
+        id: bestShot.name || bestShot.id || playback.id,
+        url: screenshotUrl,
+        thumbnail: screenshotUrl,
+        timestamp: getPlaybackEventTime(bestShot) || playback.alarmInfo?.timestamp || playback.startTime,
+      },
+    },
+  };
+};
+
+  // 杞ㄨ抗绛涢€夎绠?
+  const scopedTrackRecords = trackRecords.filter((track) => trackBelongsToScope(track, projectScope));
+  const trackOrgTree = buildTrackOrgTreeFromDevices(trackDevices, projectScope);
+
+  useEffect(() => {
+    const companyOptions = trackOrgTree.map((company) => company.id);
+    if (selectedTrackCompany !== 'all' && !companyOptions.includes(selectedTrackCompany)) {
+      setSelectedTrackCompany('all');
+    }
+  }, [selectedTrackCompany, trackOrgTree]);
+
+  useEffect(() => {
+    const projectOptions = (selectedTrackCompany === 'all'
+      ? trackOrgTree.flatMap((company) => company.projects || [])
+      : (trackOrgTree.find((company) => company.id === selectedTrackCompany)?.projects || [])
+    ).map((project) => project.id);
+
+    if (selectedTrackProject !== 'all' && !projectOptions.includes(selectedTrackProject)) {
+      setSelectedTrackProject('all');
+    }
+  }, [selectedTrackCompany, selectedTrackProject, trackOrgTree]);
+
+  useEffect(() => {
+    const projectOptions = selectedTrackCompany === 'all'
+      ? trackOrgTree.flatMap((company) => company.projects || [])
+      : (trackOrgTree.find((company) => company.id === selectedTrackCompany)?.projects || []);
+    const teamOptions = projectOptions
+      .filter((project) => selectedTrackProject === 'all' || project.id === selectedTrackProject)
+      .flatMap((project) => project.teams || []);
+
+    if (selectedTrackTeam !== 'all' && !teamOptions.includes(selectedTrackTeam)) {
+      setSelectedTrackTeam('all');
+    }
+  }, [selectedTrackCompany, selectedTrackProject, selectedTrackTeam, trackOrgTree]);
+
+  const filteredTracks = scopedTrackRecords.filter(track => {
+    const holder = asText(track.holder);
+    const deviceName = asText(track.deviceName);
+    if (selectedTrackCompany !== 'all' && asText(track.company) !== selectedTrackCompany) return false;
+    if (!trackProjectMatchesSelection(track, selectedTrackProject)) return false;
+    if (selectedTrackTeam !== 'all' && asText(track.team) !== selectedTrackTeam) return false;
+    if (trackSearchKeyword && !holder.includes(trackSearchKeyword) && !deviceName.includes(trackSearchKeyword)) return false;
+    const trackStart = new Date(track.startTime).getTime();
+    const trackEnd = new Date(track.endTime).getTime();
+    if (trackDateRange.start && trackEnd < new Date(trackDateRange.start).getTime()) return false;
+    if (trackDateRange.end && trackStart > new Date(trackDateRange.end).getTime()) return false;
     return true;
+  }).sort((a, b) => {
+    const aValue = getTrackSortValue(a, trackSortState.field);
+    const bValue = getTrackSortValue(b, trackSortState.field);
+    const direction = trackSortState.direction === 'asc' ? 1 : -1;
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      return (aValue - bValue) * direction;
+    }
+
+    return String(aValue).localeCompare(String(bValue), 'zh-CN') * direction;
   });
   const paginatedTracks = filteredTracks.slice((trackCurrentPage - 1) * itemsPerPageTrackVoice, trackCurrentPage * itemsPerPageTrackVoice);
   const trackTotalPages = Math.ceil(filteredTracks.length / itemsPerPageTrackVoice);
   
-  // 语音筛选计算
+  // 璇煶绛涢€夎绠?
+  const voiceOrgTree = (() => {
+    const companyMap = new Map<string, any>();
+
+    voiceRecords.forEach((voice) => {
+      if (!voice.company) return;
+      const companyId = voice.company;
+      const projectId = voice.project || '未匹配项目';
+      const gridId = voice.grid || '未匹配网格';
+      const teamId = voice.team || '未匹配工队';
+
+      if (!companyMap.has(companyId)) {
+        companyMap.set(companyId, { id: companyId, name: companyId, count: 0, projects: new Map<string, any>() });
+      }
+      const company = companyMap.get(companyId);
+      company.count += 1;
+
+      if (!company.projects.has(projectId)) {
+        company.projects.set(projectId, { id: projectId, name: projectId, count: 0, grids: new Map<string, any>() });
+      }
+      const project = company.projects.get(projectId);
+      project.count += 1;
+
+      if (!project.grids.has(gridId)) {
+        project.grids.set(gridId, { id: gridId, name: gridId, count: 0, teams: new Map<string, any>() });
+      }
+      const grid = project.grids.get(gridId);
+      grid.count += 1;
+
+      if (!grid.teams.has(teamId)) {
+        grid.teams.set(teamId, { id: teamId, name: teamId, count: 0 });
+      }
+      grid.teams.get(teamId).count += 1;
+    });
+
+    return Array.from(companyMap.values()).map((company) => ({
+      ...company,
+      projects: Array.from(company.projects.values()).map((project: any) => ({
+        ...project,
+        grids: Array.from(project.grids.values()).map((grid: any) => ({
+          ...grid,
+          teams: Array.from(grid.teams.values()),
+        })),
+      })),
+    }));
+  })();
+
   const filteredVoices = voiceRecords.filter(voice => {
-    if (voiceSearchKeyword && !voice.from.includes(voiceSearchKeyword) && !voice.toNames.some(n => n.includes(voiceSearchKeyword))) return false;
-    if (voiceDateRange.start && new Date(voice.startTime) < new Date(voiceDateRange.start)) return false;
-    if (voiceDateRange.end && new Date(voice.startTime) > new Date(voiceDateRange.end)) return false;
+    const voiceTime = parseVoiceDateTime(voice.startTime);
+    const filterStart = parseDateFilterStart(voiceDateRange.start);
+    const filterEnd = parseDateFilterEnd(voiceDateRange.end);
+    if (selectedVoiceCompany !== 'all' && voice.company !== selectedVoiceCompany) return false;
+    if (selectedVoiceProject !== 'all' && voice.project !== selectedVoiceProject) return false;
+    if (selectedVoiceGrid !== 'all' && (voice.grid || '未匹配网格') !== selectedVoiceGrid) return false;
+    if (selectedVoiceTeam !== 'all' && (voice.team || '未匹配工队') !== selectedVoiceTeam) return false;
+    const from = asText(voice.from);
+    const toNames = toTextArray(voice.toNames);
+    if (voiceSearchKeyword && !from.includes(voiceSearchKeyword) && !toNames.some(n => n.includes(voiceSearchKeyword))) return false;
+    if (filterStart && voiceTime < filterStart) return false;
+    if (filterEnd && voiceTime > filterEnd) return false;
     return true;
+  }).sort((a, b) => {
+    const aValue = getVoiceSortValue(a, voiceSortState.field);
+    const bValue = getVoiceSortValue(b, voiceSortState.field);
+    const direction = voiceSortState.direction === 'asc' ? 1 : -1;
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      return (aValue - bValue) * direction;
+    }
+
+    return String(aValue).localeCompare(String(bValue), 'zh-CN') * direction;
   });
   const paginatedVoices = filteredVoices.slice((voiceCurrentPage - 1) * itemsPerPageTrackVoice, voiceCurrentPage * itemsPerPageTrackVoice);
   const voiceTotalPages = Math.ceil(filteredVoices.length / itemsPerPageTrackVoice);
@@ -2604,22 +3477,22 @@ const getVoiceTypeInfo = (type: string) => {
 return (
   <div className="h-full flex flex-col gap-4 p-4 text-slate-100 bg-[radial-gradient(circle_at_12%_8%,rgba(56,189,248,0.20),transparent_32%),radial-gradient(circle_at_86%_2%,rgba(59,130,246,0.22),transparent_30%),linear-gradient(135deg,#020617,#0b1f3f_45%,#102a5e)]">
     
-    {/* ========== 监控回放内容（原有全部功能） ========== */}
+    {/* ========== 鐩戞帶鍥炴斁鍐呭锛堝師鏈夊叏閮ㄥ姛鑳斤級 ========== */}
     {mainTab === 'video' && (
       <>
 
-        {/* 根据状态显示不同内容 */}
+        {/* 鏍规嵁鐘舵€佹樉绀轰笉鍚屽唴瀹?*/}
         {!showPlayer ? (
-          /* 卡片网格视图 */
+          /* 鍗＄墖缃戞牸瑙嗗浘 */
           <div className="flex-1 overflow-hidden flex flex-col h-full">
             <div className="flex justify-between items-center mb-3 flex-shrink-0">
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-bold text-cyan-300">
                   监控视频
-                  <span className="text-sm text-slate-400 ml-2">(共{filteredPlaybacks.length}条记录)</span>
+                  <span className="text-sm text-slate-400 ml-2">（共 {filteredPlaybacks.length} 条记录）</span>
                 </h3>
                 
-                {/* 查看模式切换按钮 */}
+                {/* 鏌ョ湅妯″紡鍒囨崲鎸夐挳 */}
                 <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
                   <button
                     onClick={() => setActiveTab('manual')}
@@ -2646,9 +3519,9 @@ return (
                 </div>
               </div>
 
-                {/* 固定筛选栏：树状结构（公司 -> 项目/网格 -> 作业队/设备） */}
-                <div className="flex items-center gap-2 flex-1 ml-4">
-                  {/* 搜索框 */}
+                {/* 鍥哄畾绛涢€夋爮锛氭爲鐘剁粨鏋勶紙鍏徃 -> 椤圭洰/缃戞牸 -> 浣滀笟闃?璁惧锛?*/}
+                <div ref={videoFiltersRef} className="flex items-center gap-2 flex-1 ml-4">
+                  {/* 鎼滅储妗?*/}
                   <div className="relative w-[320px]">
                     <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
                     <input
@@ -2665,78 +3538,84 @@ return (
                     )}
                   </div>
 
-                  {/* 公司选择 */}
-                  <div className="relative">
-                    <button
-                      onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                        selectedCompany !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
-                      }`}
-                    >
-                      <Building2 size={14} />
-                      <span>{selectedCompany === 'all' ? '全部公司' : selectedCompany}</span>
-                      <ChevronDown size={12} />
-                    </button>
-                    {showCompanyDropdown && (
-                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
-                        <button
-                          onClick={() => { setSelectedCompany('all'); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowCompanyDropdown(false); }}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedCompany === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
-                        >
-                          全部公司
-                        </button>
-                        {companiesForFilter.filter(company => company !== 'all').map((company: string) => (
-                          <div key={company}>
-                            <button
-                              onClick={() => { setSelectedCompany(selectedCompany === company ? 'all' : company); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); }}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
-                                selectedCompany === company ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
-                              }`}
-                            >
-                              <span>{company}</span>
-                              <span className="text-xs text-slate-500">{playbackFilterSources.filter(item => getDeviceCompany(item) === company).length}条</span>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  {(projectScope.showCompanyFilter || projectScope.showProjectFilter) && (
+                    <>
+                      {projectScope.showCompanyFilter && (
+                        <div className="relative">
+                          <button
+                            onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                              selectedCompany !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            <Building2 size={14} />
+                            <span>{selectedCompany === 'all' ? '所有公司' : selectedCompany}</span>
+                            <ChevronDown size={12} />
+                          </button>
+                          {showCompanyDropdown && (
+                            <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
+                              <button
+                                onClick={() => { setSelectedCompany('all'); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowCompanyDropdown(false); }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedCompany === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                              >
+                                所有公司
+                              </button>
+                              {companiesForFilter.filter(company => company !== 'all').map((company: string) => (
+                                <div key={company}>
+                                  <button
+                                    onClick={() => { setSelectedCompany(selectedCompany === company ? 'all' : company); setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); }}
+                                    className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
+                                      selectedCompany === company ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                                    }`}
+                                  >
+                                    <span>{company}</span>
+                                    <span className="text-xs text-slate-500">{playbackFilterSources.filter(item => getDeviceCompany(item) === company).length}</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                  {/* 项目选择 */}
-                  <div className="relative">
-                    <button
-                      onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                        selectedProject !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
-                      }`}
-                    >
-                      <FolderTree size={14} />
-                      <span>{selectedProject === 'all' ? '全部项目' : selectedProject}</span>
-                      <ChevronDown size={12} />
-                    </button>
-                    {showProjectDropdown && (
-                      <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
-                        <button
-                          onClick={() => { setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowProjectDropdown(false); }}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedProject === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
-                        >
-                          全部项目
-                        </button>
-                        {projectsForFilter.filter(project => project !== 'all').map((project: string) => (
-                          <div key={project}>
-                            <button
-                              onClick={() => { setSelectedProject(selectedProject === project ? 'all' : project); setSelectedGrid('all'); setSelectedTeam('all'); }}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
-                                selectedProject === project ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
-                              }`}
-                            >
-                              <span>{project}</span>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                      {projectScope.showProjectFilter && (
+                        <div className="relative">
+                          <button
+                            onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                              selectedProject !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            <FolderTree size={14} />
+                            <span>{selectedProject === 'all' ? '所有项目' : selectedProject}</span>
+                            <ChevronDown size={12} />
+                          </button>
+                          {showProjectDropdown && (
+                            <div className="absolute top-full left-0 mt-1 z-[500] bg-slate-800 rounded-xl border border-cyan-400/30 shadow-2xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto">
+                              <button
+                                onClick={() => { setSelectedProject('all'); setSelectedGrid('all'); setSelectedTeam('all'); setShowProjectDropdown(false); }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-sm ${selectedProject === 'all' ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                              >
+                                所有项目
+                              </button>
+                              {projectsForFilter.filter(project => project !== 'all').map((project: string) => (
+                                <div key={project}>
+                                  <button
+                                    onClick={() => { setSelectedProject(selectedProject === project ? 'all' : project); setSelectedGrid('all'); setSelectedTeam('all'); }}
+                                    className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center justify-between ${
+                                      selectedProject === project ? 'bg-cyan-500/20 text-cyan-300' : 'text-slate-300 hover:bg-slate-700'
+                                    }`}
+                                  >
+                                    <span>{project}</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   <div className="relative">
                     <button
@@ -2803,27 +3682,27 @@ return (
     setShowPlayer(true);
   }}
 onShowScreenshot={async (playback) => {
-  console.log("1. 点击截图");
+  console.log("1. 鐐瑰嚮鎴浘");
   
-  // 先打开播放器
+  // 鍏堟墦寮€鎾斁鍣?
   setCurrentPlayback(playback);
   setShowPlayer(true);
   
-  // 等待播放器渲染完成
+  // 绛夊緟鎾斁鍣ㄦ覆鏌撳畬鎴?
   await new Promise(r => setTimeout(r, 100));
   
-  setSelectedAlarm(playback);
+  setSelectedAlarm(enrichAlarmWithScreenshot(playback));
   setShowScreenshotModal(true);
   
   if (videoPlayerRef.current) {
     const alarmTime = videoPlayerRef.current.getAlarmTimestamp();
-    console.log("2. 红点时间(秒):", alarmTime);
+    console.log("2. 绾㈢偣鏃堕棿(绉?:", alarmTime);
     
     if (alarmTime > 0) {
       await videoPlayerRef.current.seekTo(alarmTime);
       await new Promise(r => setTimeout(r, 200));
       const screenshotBase64 = await videoPlayerRef.current.captureFrame();
-      console.log("3. 截图完成, 长度:", screenshotBase64?.length);
+      console.log("3. 鎴浘瀹屾垚, 闀垮害:", screenshotBase64?.length);
       
       if (screenshotBase64 && screenshotBase64.length > 100 && playback.alarmInfo) {
         (playback.alarmInfo as any).screenshot = {
@@ -2840,7 +3719,7 @@ onShowScreenshot={async (playback) => {
 />
               ))}
               
-              {/* ✅ 补空窗口占位，保证永远填满 10×4=40 个位置，布局永远一致 */}
+              {/* 鉁?琛ョ┖绐楀彛鍗犱綅锛屼繚璇佹案杩滃～婊?10脳4=40 涓綅缃紝甯冨眬姘歌繙涓€鑷?*/}
               {Array.from({ length: Math.max(0, 40 - currentPagePlaybacks.length) }, (_, i) => (
                 <div 
                   key={`empty_${i}`} 
@@ -2850,7 +3729,7 @@ onShowScreenshot={async (playback) => {
               ))}
             </div>
 
-            {/* 分页控件 */}
+            {/* 鍒嗛〉鎺т欢 */}
             {totalPages > 1 && (
               <div className="flex justify-center items-center gap-3 mt-4 pt-3 border-t border-blue-400/20 flex-shrink-0">
                 <button
@@ -2906,41 +3785,41 @@ onShowScreenshot={async (playback) => {
             )}
           </div>
         ) : (
-          /* 播放器视图 - 左右布局 */
+          /* 鎾斁鍣ㄨ鍥?- 宸﹀彸甯冨眬 */
           <div className="flex-1 flex flex-col overflow-hidden h-full">
-            {/* 返回按钮行 */}
+            {/* 杩斿洖鎸夐挳琛?*/}
             <div className="flex items-center gap-3 mb-3 flex-shrink-0">
               <button 
                 onClick={() => setShowPlayer(false)}
                 className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 flex items-center gap-2"
               >
-                ← 返回列表
+                返回列表
               </button>
               <span className="text-slate-300">{currentPlayback?.deviceName}</span>
             </div>
             
-            {/* 左右内容区域 */}
+            {/* 宸﹀彸鍐呭鍖哄煙 */}
             <div className="flex-1 flex gap-4 overflow-hidden">
-              {/* 左侧：监控相关信息 */}
+              {/* 宸︿晶锛氱洃鎺х浉鍏充俊鎭?*/}
               <div className="w-72 flex-shrink-0 rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md overflow-y-auto p-4">
                 <h4 className="text-sm font-bold text-cyan-300 mb-3 flex items-center gap-2">
                   <Camera size={14} />
                   监控信息
                 </h4>
                 
-                {/* 设备信息 */}
+                {/* 璁惧淇℃伅 */}
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between border-b border-slate-700 pb-1">
                     <span className="text-slate-400">设备名称</span>
                     <span className="text-slate-200">{currentPlayback?.deviceName}</span>
                   </div>
                   <div className="flex justify-between border-b border-slate-700 pb-1">
-                    <span className="text-slate-400">所属公司</span>
-                    <span className="text-slate-200">{currentPlayback?.company || '未知'}</span>
+                      <span className="text-slate-400">所属公司</span>
+                      <span className="text-slate-200">{currentPlayback?.company || '未知'}</span>
                   </div>
                   <div className="flex justify-between border-b border-slate-700 pb-1">
-                    <span className="text-slate-400">所属项目</span>
-                    <span className="text-slate-200">{currentPlayback?.project || '未知'}</span>
+                      <span className="text-slate-400">所属项目</span>
+                      <span className="text-slate-200">{currentPlayback?.project || '未知'}</span>
                   </div>
                   <div className="flex justify-between border-b border-slate-700 pb-1">
                     <span className="text-slate-400">记录类型</span>
@@ -2962,8 +3841,8 @@ onShowScreenshot={async (playback) => {
                   </div>
                 </div>
                 
-                {/* 报警详情（如果是报警片段） */}
-                {currentPlayback?.alarmInfo && (
+                {/* 鎶ヨ璇︽儏锛堝鏋滄槸鎶ヨ鐗囨锛?*/}
+                {currentPlayback?.type === 'alarm' && currentPlayback?.alarmInfo && (
                   <>
                     <h4 className="text-sm font-bold text-red-300 mt-4 mb-2 flex items-center gap-2">
                       <AlertCircle size={14} />
@@ -2975,11 +3854,11 @@ onShowScreenshot={async (playback) => {
                         <span className="text-red-300">{currentPlayback.alarmInfo.type}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">违章人员</span>
+                        <span className="text-slate-400">违规人员</span>
                         <span className="text-red-300">{currentPlayback.alarmInfo.personnel || '未知'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">置信度</span>
+                          <span className="text-slate-400">置信度</span>
                         <span className="text-red-300">{((currentPlayback.alarmInfo.score || 0) * 100).toFixed(0)}%</span>
                       </div>
                       <div className="flex justify-between">
@@ -2993,7 +3872,7 @@ onShowScreenshot={async (playback) => {
                       <div className="mt-3 pt-3 border-t border-red-400/20">
                         <button
                           onClick={() => {
-                            setSelectedAlarm(currentPlayback);
+                            setSelectedAlarm(enrichAlarmWithScreenshot(currentPlayback));
                             setShowScreenshotModal(true);
                           }}
                           className="w-full px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-2"
@@ -3007,7 +3886,7 @@ onShowScreenshot={async (playback) => {
                 )}
               </div>
               
-              {/* 右侧：视频播放器 */}
+              {/* 鍙充晶锛氳棰戞挱鏀惧櫒 */}
               <div className="flex-1 rounded-lg border border-blue-400/30 bg-black/50 overflow-hidden">
                 {currentPlayback && (
 <SimpleVideoPlayer 
@@ -3027,8 +3906,9 @@ onShowScreenshot={async (playback) => {
       </>
     )}
 
-    {/* ========== 轨迹回放内容 ========== */}
+    {/* ========== 杞ㄨ抗鍥炴斁鍐呭 ========== */}
     {mainTab === 'track' && (
+      <PlaybackErrorBoundary title="轨迹回放">
       <TrackPlaybackContent 
         filteredTracks={paginatedTracks}
         totalPages={trackTotalPages}
@@ -3048,12 +3928,16 @@ onShowScreenshot={async (playback) => {
         setShowFilter={setShowTrackFilter}
         dateRange={trackDateRange}
         setDateRange={setTrackDateRange}
-        companyTree={companyTree}
+        companyTree={trackOrgTree}
+        sortState={trackSortState}
+        setSortState={setTrackSortState}
       />
+      </PlaybackErrorBoundary>
     )}
 
-    {/* ========== 语音回放内容 ========== */}
+    {/* ========== 璇煶鍥炴斁鍐呭 ========== */}
     {mainTab === 'voice' && (
+      <PlaybackErrorBoundary title="通话回放">
       <VoicePlaybackContent
         filteredVoices={paginatedVoices}
         totalPages={voiceTotalPages}
@@ -3068,17 +3952,29 @@ onShowScreenshot={async (playback) => {
         formatDuration={formatDuration}
         getVoiceTypeInfo={getVoiceTypeInfo}
         voiceRecordsError={voiceRecordsError}
+        selectedCompany={selectedVoiceCompany}
+        setSelectedCompany={setSelectedVoiceCompany}
+        selectedProject={selectedVoiceProject}
+        setSelectedProject={setSelectedVoiceProject}
+        selectedGrid={selectedVoiceGrid}
+        setSelectedGrid={setSelectedVoiceGrid}
+        selectedTeam={selectedVoiceTeam}
+        setSelectedTeam={setSelectedVoiceTeam}
+        voiceOrgTree={voiceOrgTree}
+        sortState={voiceSortState}
+        setSortState={setVoiceSortState}
       />
+      </PlaybackErrorBoundary>
     )}
 
-          {/* 告警截图弹窗 */}
+          {/* 鍛婅鎴浘寮圭獥 */}
       {showScreenshotModal && selectedAlarm && selectedAlarm.alarmInfo && (
         <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowScreenshotModal(false)}>
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center p-4 border-b border-cyan-400/30 bg-slate-900/50">
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
                 <AlertCircle size={20} className="text-red-400" />
-                告警详情
+                报警详情
               </h3>
               <button onClick={() => setShowScreenshotModal(false)} className="p-1 hover:bg-slate-700 rounded-lg">
                 <X size={20} className="text-slate-400" />
@@ -3091,7 +3987,7 @@ onShowScreenshot={async (playback) => {
 {getScreenshotUrl(selectedAlarm) ? (
   <img
     src={getScreenshotUrl(selectedAlarm)}
-    alt="告警截图"
+    alt="报警截图"
     className="w-full max-h-[420px] object-contain rounded-lg border border-cyan-400/30"
   />
 ) : (
@@ -3100,33 +3996,33 @@ onShowScreenshot={async (playback) => {
   </div>
 )}
                 </div>
-                <p className="text-xs text-slate-500 text-center mt-2">告警发生时刻截图</p>
+                <p className="text-xs text-slate-500 text-center mt-2">报警发生时刻截图</p>
               </div>
               
               <div className="flex-1 space-y-4">
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <div className="text-sm text-slate-400 mb-2">告警类型</div>
+                  <div className="text-sm text-slate-400 mb-2">报警类型</div>
                   <div className="text-lg font-semibold text-red-400">{selectedAlarm.alarmInfo.type}</div>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-slate-800/50 rounded-lg p-3">
-                    <div className="text-xs text-slate-400 mb-1">告警时间</div>
+                    <div className="text-xs text-slate-400 mb-1">报警时间</div>
                     <div className="text-sm text-white">{formatTime(selectedAlarm.alarmInfo.timestamp)}</div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3">
-                    <div className="text-xs text-slate-400 mb-1">置信度</div>
+                      <div className="text-xs text-slate-400 mb-1">置信度</div>
                     <div className="text-sm text-white">{((selectedAlarm.alarmInfo.score || 0) * 100).toFixed(0)}%</div>
                   </div>
                 </div>
                 
                 <div className="bg-slate-800/50 rounded-lg p-3">
-                  <div className="text-xs text-slate-400 mb-1">违章人员</div>
+                  <div className="text-xs text-slate-400 mb-1">违规人员</div>
                   <div className="text-sm text-white">{selectedAlarm.alarmInfo.personnel || '未知'}</div>
                 </div>
                 
                 <div className="bg-slate-800/50 rounded-lg p-3">
-                  <div className="text-xs text-slate-400 mb-1">告警描述</div>
+                  <div className="text-xs text-slate-400 mb-1">报警描述</div>
                   <div className="text-sm text-slate-200">{selectedAlarm.alarmInfo.msg}</div>
                 </div>
                 
@@ -3164,3 +4060,9 @@ onShowScreenshot={async (playback) => {
   </div>
 );
   } 
+
+
+
+
+
+

@@ -362,7 +362,7 @@ export default function SettingsView() {
     alarmOfflineEnabled: true,
     alarmEscalationEnabled: true,
     alarmEscalationMinutes: 5,
-    videoRetentionDays: 15,
+    videoRetentionDays: 360,
     videoQuality: 'high',
     videoSegmentMinutes: 30,
     videoStorageType: 'local',
@@ -605,7 +605,7 @@ export default function SettingsView() {
           { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
           { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
         ],
-        videoRetentionDays: 15,
+        videoRetentionDays: 360,
         videoQuality: 'high',
         videoSegmentMinutes: 30,
         videoStorageType: 'local',
@@ -1101,7 +1101,7 @@ export default function SettingsView() {
                       value={settings.videoRetentionDays}
                       onChange={(e) => setSettings({ ...settings, videoRetentionDays: Number(e.target.value) })}
                       min={1}
-                      max={90}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                     <p className="text-xs text-slate-500 mt-0.5">超过此天数的常规录像将被自动清理</p>
@@ -1150,7 +1150,7 @@ export default function SettingsView() {
                       value={settings.alarmVideoRetentionDays || 90}
                       onChange={(e) => setSettings({ ...settings, alarmVideoRetentionDays: Number(e.target.value) })}
                       min={7}
-                      max={365}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                   </div>
@@ -1174,7 +1174,7 @@ export default function SettingsView() {
                       value={settings.alarmScreenshotRetentionDays || 90}
                       onChange={(e) => setSettings({ ...settings, alarmScreenshotRetentionDays: Number(e.target.value) })}
                       min={7}
-                      max={365}
+                      max={3650}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
                   </div>
@@ -2502,7 +2502,7 @@ export default function SettingsView() {
                             />
                           </div>
                           <div className="flex items-center gap-2">
-                            <label className="text-sm text-slate-400">保留</label>
+                            <label className="text-sm text-slate-400 whitespace-nowrap">最多保留</label>
                             <input
                               type="number"
                               value={settings.backupRetention}
@@ -2511,7 +2511,7 @@ export default function SettingsView() {
                               max={30}
                               className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-16"
                             />
-                            <span className="text-sm text-slate-400">份</span>
+                            <span className="text-sm text-slate-400 whitespace-nowrap">份最新备份</span>
                           </div>
                         </div>
                       )}

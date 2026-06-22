@@ -396,6 +396,7 @@ class CameraCreateRequest(BaseModel):
 
 
     remark: Optional[str] = Field(None, description="备注信息 (可选)")
+    device_type: str = Field("bullet", description="摄像头类型: bullet/dome/bodycam/drone")
 
 
     stream_protocol: Optional[str] = Field(None, description="拉流协议偏好: ezopen/hls/rtmp/flv")

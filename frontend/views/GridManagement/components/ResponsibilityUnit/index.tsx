@@ -8,7 +8,7 @@ import {
   type ResponsibilityUnit,
   type UnitTreeNode,
 } from '../../../../src/api/responsibilityUnitApi';
-import { hasStoredPermission } from '../../../../src/utils/permissions';
+import { hasAnyStoredPermission, hasStoredPermission } from '../../../../src/utils/permissions';
 
 const flattenUnits = (nodes: UnitTreeNode[]): ResponsibilityUnit[] =>
   nodes.flatMap((node) => [node, ...flattenUnits(node.children || [])]);
@@ -28,9 +28,9 @@ export const ResponsibilityUnitView: React.FC = () => {
 
   const [isChangeParentOpen, setIsChangeParentOpen] = useState(false);
   const [changingUnit, setChangingUnit] = useState<ResponsibilityUnit | null>(null);
-  const canCreatePersonnel = hasStoredPermission('personnel.create');
-  const canEditPersonnel = hasStoredPermission('personnel.edit');
-  const canDeletePersonnel = hasStoredPermission('personnel.delete');
+  const canCreateUnit = hasAnyStoredPermission(['grid.create', 'team.create']);
+  const canEditUnit = hasAnyStoredPermission(['grid.edit', 'team.edit']);
+  const canDeleteUnit = hasAnyStoredPermission(['grid.delete', 'team.delete']);
 
   // 加载树形数据
   const loadTree = async () => {
@@ -224,7 +224,7 @@ export const ResponsibilityUnitView: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {canCreatePersonnel && (
+          {canCreateUnit && (
           <button
             onClick={handleCreateTop}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white font-medium hover:from-cyan-400 hover:to-blue-400 transition-colors"
@@ -252,9 +252,9 @@ export const ResponsibilityUnitView: React.FC = () => {
             onMoveDown={handleMoveDown}
             onChangeParent={handleChangeParent}
             onCreateChild={handleCreateChild}
-            canCreate={canCreatePersonnel}
-            canEdit={canEditPersonnel}
-            canDelete={canDeletePersonnel}
+            canCreate={canCreateUnit}
+            canEdit={canEditUnit}
+            canDelete={canDeleteUnit}
           />
         </div>
       )}
