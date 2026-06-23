@@ -8451,7 +8451,7 @@ class VideoService:
         duration = self._probe_segment_duration_seconds(file_path)
         if duration:
             return seg_start + timedelta(seconds=duration)
-        return seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+        return seg_start + timedelta(seconds=self._get_record_segment_seconds())
 
 
     def _is_segment_usable(self, file_path: str, min_age_seconds: int = 6) -> bool:
@@ -8476,7 +8476,7 @@ class VideoService:
 
                 if (datetime.now() - seg_start).total_seconds() < (
 
-                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
 
                     return False
 
@@ -9530,6 +9530,22 @@ class VideoService:
 
                 raise ValueError("Generated video file is empty")
 
+            actual_duration = self._probe_video_duration(final_output_path, timeout_seconds=8.0)
+            expected_duration = clip_duration
+            if output_type == "alarm" and actual_duration is not None:
+                min_duration_seconds = float(os.getenv("ALARM_VIDEO_MIN_DURATION_SECONDS", "8"))
+                min_duration_ratio = float(os.getenv("ALARM_VIDEO_MIN_DURATION_RATIO", "0.5"))
+                min_required = max(min_duration_seconds, expected_duration * min_duration_ratio)
+                min_required = min(min_required, max(0.0, expected_duration - 1.0))
+                if actual_duration < min_required:
+                    try:
+                        os.remove(final_output_path)
+                    except Exception:
+                        pass
+                    raise ValueError(
+                        f"报警视频时长过短: actual={actual_duration:.2f}s expected={expected_duration:.2f}s"
+                    )
+
 
 
             if output_type == "alarm":
@@ -9570,7 +9586,7 @@ class VideoService:
 
                 "end_time": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
 
-                "duration_seconds": int((end_dt - start_dt).total_seconds()),
+                "duration_seconds": int(round(actual_duration)) if actual_duration else int((end_dt - start_dt).total_seconds()),
 
                 "recording_path": self._to_static_web_path(final_output_path),
 
