@@ -1,6 +1,8 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
+import { getAlarmPlaybackVideos, type SavedPlaybackVideo } from '../src/api/videoApi';
+import { withAuthTokenParam } from '../src/api/config';
 import { hasStoredPermission } from '../src/utils/permissions';
 import { getStoredScopeState } from '../src/utils/authScope';
 import { 
@@ -288,6 +290,40 @@ const normalizeSearchText = (value: unknown) =>
     .replace(/[：:\s_-]+/g, '')
     .replace(/设备|device/g, '');
 
+const getAlarmVideoPathValue = (source: Record<string, any> | SavedPlaybackVideo | undefined | null) => {
+  if (!source) return '';
+  return String(
+    (source as any).recording_path ||
+    (source as any).video_url ||
+    (source as any).clip_url ||
+    (source as any).web_path ||
+    (source as any).url ||
+    ''
+  ).trim();
+};
+
+const resolveAlarmVideoUrl = (path?: string) => {
+  const rawPath = String(path || '').trim();
+  if (!rawPath) return '';
+  if (rawPath.startsWith('data:') || rawPath.startsWith('blob:')) return rawPath;
+  if (/^https?:\/\//i.test(rawPath)) return withAuthTokenParam(rawPath);
+  return toStaticUrl(rawPath);
+};
+
+const isPlaybackReadyStatus = (status?: string) => {
+  const normalized = String(status || '').toLowerCase();
+  return !normalized || ['success', 'completed', 'complete', 'done', 'ready'].includes(normalized);
+};
+
+const isPlaybackGeneratingStatus = (status?: string) =>
+  ['pending', 'processing'].includes(String(status || '').toLowerCase());
+
+const isPlaybackFailedStatus = (status?: string) =>
+  ['failed', 'error'].includes(String(status || '').toLowerCase());
+
+const findAlarmPlaybackVideo = (list: SavedPlaybackVideo[], alarmId: string) =>
+  list.find((item) => String(item.alarm_id ?? '') === String(alarmId));
+
 const [sortConfig, setSortConfig] = useState<{ key: AlarmSortKey; direction: AlarmSortDirection }>({
   key: 'time',
   direction: 'desc',
@@ -369,7 +405,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     gridName: gridName || undefined,
     team: team || undefined,
     snapshot: toStaticUrl(item.alarm_image_path || item.image_url || item.snapshot_url || rawItem.picture_url),
-    videoPath: toStaticUrl(item.recording_path || item.video_url || item.clip_url),
+    videoPath: resolveAlarmVideoUrl(getAlarmVideoPathValue(rawItem)),
     durationSeconds: item.duration_seconds || item.duration || rawItem.video_duration || rawItem.clip_duration,
     startTime: rawItem.start_time || rawItem.recording_start_time,
     endTime: rawItem.end_time || rawItem.recording_end_time,
@@ -545,16 +581,57 @@ const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignore
   setShowProcessModal(true);
 };
 
-const openAlarmVideo = (alarm: AlarmRecord) => {
-  if (!alarm.videoPath) return;
+const openAlarmVideo = async (alarm: AlarmRecord) => {
+  if (isPlaybackGeneratingStatus(alarm.recordingStatus)) {
+    alert('告警回放生成中');
+    return;
+  }
+
+  if (isPlaybackFailedStatus(alarm.recordingStatus)) {
+    alert(alarm.recordingError || '暂未找到该告警回放视频');
+    return;
+  }
+
+  let videoPath = alarm.videoPath;
+
+  if (!videoPath && isPlaybackReadyStatus(alarm.recordingStatus)) {
+    const deviceId = Number(alarm.deviceId);
+    if (!Number.isFinite(deviceId) || deviceId <= 0) {
+      alert('暂未找到该告警回放视频');
+      return;
+    }
+
+    try {
+      const videos = await getAlarmPlaybackVideos(deviceId, 120);
+      const matchedVideo = findAlarmPlaybackVideo(videos, alarm.id);
+      videoPath = resolveAlarmVideoUrl(getAlarmVideoPathValue(matchedVideo));
+    } catch (error) {
+      console.error('查询告警回放失败:', error);
+      alert('暂未找到该告警回放视频');
+      return;
+    }
+  }
+
+  if (!videoPath) {
+    alert('暂未找到该告警回放视频');
+    return;
+  }
+
+  const playableAlarm = { ...alarm, videoPath };
   console.log('[ALARM_RECORD_BINDING]', {
     alarm_id: alarm.id,
     snapshot: alarm.snapshot || '',
-    videoPath: alarm.videoPath,
+    videoPath,
     alarmSecond: alarm.alarmSecond,
   });
-  setSelectedVideoAlarm(alarm);
-  setPreviewVideo(alarm.videoPath);
+  setSelectedVideoAlarm(playableAlarm);
+  setPreviewVideo(videoPath);
+  setAlarms((current) =>
+    current.map((item) => item.id === alarm.id ? { ...item, videoPath } : item)
+  );
+  setSelectedAlarm((current) =>
+    current?.id === alarm.id ? { ...current, videoPath } : current
+  );
 };
 
 const handleConfirmProcess = async () => {
@@ -1017,16 +1094,18 @@ const handleConfirmProcess = async () => {
                         </button>
                       )}
 
-                      {alarm.videoPath && (
+                      {alarm.type === 'video' && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             openAlarmVideo(alarm);
                           }}
-                          className="px-2.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          disabled={isPlaybackGeneratingStatus(alarm.recordingStatus)}
+                          title={isPlaybackGeneratingStatus(alarm.recordingStatus) ? '告警回放生成中' : '查看告警回放'}
+                          className="px-2.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 disabled:bg-slate-700/40 disabled:text-slate-500 disabled:cursor-not-allowed text-purple-300 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <Video size={14} />
-                          视频
+                          {isPlaybackGeneratingStatus(alarm.recordingStatus) ? '告警回放生成中' : '告警回放'}
                         </button>
                       )}
 
@@ -1185,17 +1264,19 @@ const handleConfirmProcess = async () => {
                     </button>
                   </div>
                 )}
-                {selectedAlarm.videoPath && (
+                {selectedAlarm.type === 'video' && (
                   <div className="col-span-2">
-                    <span className="text-slate-400">报警视频：</span>
+                    <span className="text-slate-400">告警回放：</span>
                     <button
                       onClick={() => {
                         openAlarmVideo(selectedAlarm);
                       }}
-                      className="ml-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
+                      disabled={isPlaybackGeneratingStatus(selectedAlarm.recordingStatus)}
+                      title={isPlaybackGeneratingStatus(selectedAlarm.recordingStatus) ? '告警回放生成中' : '查看告警回放'}
+                      className="ml-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 disabled:bg-slate-700/40 disabled:text-slate-500 disabled:cursor-not-allowed text-purple-300 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1"
                     >
                       <Video size={14} />
-                      查看报警视频
+                      {isPlaybackGeneratingStatus(selectedAlarm.recordingStatus) ? '告警回放生成中' : '查看告警回放'}
                     </button>
                   </div>
                 )}
@@ -1363,7 +1444,7 @@ const handleConfirmProcess = async () => {
       </button>
 
       <div className="mb-3 pr-10">
-        <div className="text-base font-semibold text-white">报警视频</div>
+        <div className="text-base font-semibold text-white">告警回放</div>
         {selectedVideoAlarm && (
           <div className="mt-1 text-xs text-slate-400 break-all">
             alarm_id={selectedVideoAlarm.id} snapshot={selectedVideoAlarm.snapshot || '-'} videoPath={selectedVideoAlarm.videoPath || '-'} alarmSecond={selectedVideoAlarm.alarmSecond ?? '-'}

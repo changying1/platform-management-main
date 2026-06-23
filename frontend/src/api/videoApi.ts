@@ -308,6 +308,8 @@ export interface SavedPlaybackVideo {
   updated_at: string;
   web_path: string;
   recording_path?: string;
+  video_url?: string;
+  clip_url?: string;
   url?: string;
   alarm_image_path?: string;
   screenshot_path?: string;

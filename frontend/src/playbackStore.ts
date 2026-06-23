@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { SavedPlayback } from '../types/playback';
+import { SavedPlayback } from './playback';
 
 interface PlaybackStore {
   savedPlaybacks: SavedPlayback[];

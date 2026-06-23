@@ -6,6 +6,7 @@ export enum MenuKey {
   VOICE_PLAYBACK = 'voice_playback',
   VIDEOPLAYBACK = 'videoplayback',
   TRACK = 'track',
+  PROJECT = 'project',
   FENCE = 'fence',
   GROUP_CALL = 'group_call',
   ALARM = 'alarm',

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime
 
 
 from app.core.database import Base
@@ -86,6 +86,14 @@ class VideoDevice(Base):
 
 
     device_serial = Column(String(100), nullable=True, comment="萤石设备序列号")
+    sim_card_id = Column(String(100), nullable=True, comment="SIM卡卡号")
+    traffic_source = Column(String(20), nullable=True, comment="流量来源: hikiot/ocr")
+    traffic_sim_card_id = Column(String(100), nullable=True, comment="匹配到的流量卡号")
+    traffic_used_gb = Column(Float, nullable=True, comment="已用流量GB")
+    traffic_remaining_gb = Column(Float, nullable=True, comment="剩余流量GB")
+    traffic_total_gb = Column(Float, nullable=True, comment="总流量GB")
+    traffic_card_expired_at = Column(String(100), nullable=True, comment="流量卡过期时间")
+    traffic_ocr_updated_at = Column(DateTime, nullable=True, comment="流量更新时间")
 
 
     channel_no = Column(Integer, nullable=True, default=1, comment="萤石通道号")

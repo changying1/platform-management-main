@@ -214,6 +214,9 @@ TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_SNAPSH
 TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS", "5"))
 TRAFFIC_OCR_DEBUG_IMAGE_ENV = "TRAFFIC_OCR_DEBUG_IMAGE_PATH"
 BYTES_PER_GB = 1024 * 1024 * 1024
+HIKIOT_FLOW_CARD_PATH = "/flow/card/user/page"
+HIKIOT_FLOW_CARD_TIMEOUT_SECONDS = 10
+HIKIOT_DISPLAY_RESERVED_GB = float(os.getenv("HIKIOT_DISPLAY_RESERVED_GB", "0.5"))
 EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
 # 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
@@ -753,6 +756,8 @@ class VideoService:
 
         payload["ptz_source"] = payload.get("ptz_source") or "onvif"
 
+        payload["sim_card_id"] = payload.get("sim_card_id")
+
         payload["channel_no"] = payload.get("channel_no") or 1
 
         payload["supports_ptz"] = payload.get("supports_ptz", 1)
@@ -836,6 +841,7 @@ class VideoService:
             "ptz_source": doc.get("ptz_source"),
 
             "device_serial": doc.get("device_serial"),
+            "sim_card_id": as_text_or_none(doc.get("sim_card_id")),
 
             "channel_no": doc.get("channel_no", 1),
 
@@ -1768,6 +1774,221 @@ class VideoService:
         parsed, _ = self._parse_traffic_ocr_text_with_candidates(ocr_text)
         return parsed
 
+    def _get_hikiot_config(self) -> tuple[str, str, str, str]:
+        base_url = (
+            os.getenv("HIKIOT_BASE_URL")
+            or os.getenv("HIKIOT_API_BASE_URL")
+            or os.getenv("HIKIOT_FLOW_CARD_BASE_URL")
+            or ""
+        ).rstrip("/")
+        token = (
+            os.getenv("HIKIOT_AUTHORIZATION")
+            or os.getenv("HIKIOT_AUTHORIZATION_BEARER")
+            or os.getenv("HIKIOT_TOKEN")
+            or os.getenv("HIKIOT_ACCESS_TOKEN")
+            or ""
+        ).strip()
+        app_no = (os.getenv("HIKIOT_APP_NO") or os.getenv("HIKIOT_APPNO") or "").strip()
+        terminal = (os.getenv("HIKIOT_TERMINAL") or "").strip()
+        if not base_url:
+            raise ValueError("Hikiot API base url is not configured")
+        if not token:
+            raise ValueError("Hikiot Authorization token is not configured")
+        if not app_no:
+            raise ValueError("Hikiot appNo is not configured")
+        if not terminal:
+            raise ValueError("Hikiot terminal is not configured")
+        if not token.lower().startswith("bearer "):
+            token = f"Bearer {token}"
+        return base_url, token, app_no, terminal
+
+    def _fetch_hikiot_flow_cards(self) -> list[dict]:
+        base_url, authorization, app_no, terminal = self._get_hikiot_config()
+        url = f"{base_url}{HIKIOT_FLOW_CARD_PATH}"
+        headers = {
+            "Authorization": authorization,
+            "appNo": app_no,
+            "terminal": terminal,
+        }
+        response = requests.get(
+            url,
+            params={"page": 1, "size": 50, "groupId": 0},
+            headers=headers,
+            timeout=HIKIOT_FLOW_CARD_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ("records", "list", "rows"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
+
+    def _normalize_card_match_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _match_hikiot_flow_card(self, sim_card_id: Any, cards: list[dict]) -> Optional[dict]:
+        target = self._normalize_card_match_value(sim_card_id)
+        if not target:
+            return None
+        match_fields = ("cardId", "cardNo", "iccid", "simCardId", "id")
+        for card in cards or []:
+            if not isinstance(card, dict):
+                continue
+            for field in match_fields:
+                if self._normalize_card_match_value(card.get(field)) == target:
+                    return card
+        return None
+
+    def _parse_hikiot_flow_value_gb(self, value: Any) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            text = str(value).strip()
+            match = re.search(r"-?\d+(?:\.\d+)?", text)
+            if not match:
+                return None
+            return float(match.group(0))
+
+    def _extract_hikiot_total_flow_gb(self, card: dict) -> Optional[float]:
+        total_flow = card.get("totalFlow") if isinstance(card, dict) else None
+        if isinstance(total_flow, dict):
+            return self._parse_hikiot_flow_value_gb(total_flow.get("parsedValue"))
+        return self._parse_hikiot_flow_value_gb(total_flow)
+
+    def _get_hikiot_card_no(self, card: dict, fallback: Any = None) -> str:
+        for key in ("cardNo", "cardId", "iccid", "simCardId", "id"):
+            value = self._normalize_card_match_value(card.get(key) if isinstance(card, dict) else None)
+            if value:
+                return value
+        return self._normalize_card_match_value(fallback)
+
+    def _build_hikiot_traffic_summary_fields(
+        self,
+        *,
+        used_gb: Optional[float],
+        remaining_gb: Optional[float],
+        total_gb: Optional[float],
+        card_no: str,
+        expired_at: Any,
+    ) -> dict:
+        display_remaining_gb = (
+            max(0.0, float(remaining_gb) - HIKIOT_DISPLAY_RESERVED_GB)
+            if remaining_gb is not None
+            else None
+        )
+        weekly_quota_gb = float(total_gb) if total_gb is not None else 0.0
+        weekly_used_gb = float(used_gb) if used_gb is not None else 0.0
+        weekly_remaining_gb = display_remaining_gb if display_remaining_gb is not None else 0.0
+        traffic_status = "unknown"
+        if remaining_gb is not None:
+            traffic_status = "alarm" if remaining_gb <= TRAFFIC_ALARM_REMAINING_GB else "normal"
+        return {
+            "traffic_source": "hikiot",
+            "traffic_sim_card_id": card_no,
+            "traffic_card_expired_at": expired_at,
+            "traffic_ocr_text": "",
+            "traffic_status": traffic_status,
+            "traffic_limit_gb": total_gb,
+            "monthly_threshold_gb": total_gb,
+            "safety_buffer_gb": HIKIOT_DISPLAY_RESERVED_GB,
+            "traffic_reserved_gb": HIKIOT_DISPLAY_RESERVED_GB,
+            "alarm_threshold_gb": None,
+            "used_gb": used_gb,
+            "estimated_remaining_gb": display_remaining_gb,
+            "remaining_gb": display_remaining_gb,
+            "traffic_remaining_gb": remaining_gb,
+            "traffic_total_gb": total_gb,
+            "remaining_formula": "residualFlow - display_reserved_gb",
+            "weekly_quota_bytes": int(weekly_quota_gb * BYTES_PER_GB),
+            "weekly_used_bytes": int(weekly_used_gb * BYTES_PER_GB),
+            "weekly_remaining_bytes": int(weekly_remaining_gb * BYTES_PER_GB),
+            "weekly_quota_text": self._format_gb(total_gb) if total_gb is not None else "--",
+            "weekly_used_text": self._format_gb(used_gb) if used_gb is not None else "--",
+            "weekly_remaining_text": self._format_gb(display_remaining_gb) if display_remaining_gb is not None else "--",
+            "monthly_threshold_text": self._format_gb(total_gb) if total_gb is not None else "--",
+            "estimated_remaining_text": self._format_gb(display_remaining_gb) if display_remaining_gb is not None else "--",
+        }
+
+    def _refresh_hikiot_video_traffic(self, db: Session, video_id: int):
+        db_video = self._get_video_runtime_by_id(video_id)
+        if not db_video:
+            return None
+
+        sim_card_id = self._normalize_card_match_value(getattr(db_video, "sim_card_id", None))
+        if not sim_card_id:
+            return {"success": False, "message": "当前摄像头未绑定SIM卡"}
+
+        try:
+            cards = self._fetch_hikiot_flow_cards()
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+        except requests.RequestException as exc:
+            return {"success": False, "message": f"Hikiot flow card request failed: {exc}"}
+        except Exception as exc:
+            return {"success": False, "message": f"Hikiot flow card lookup failed: {exc}"}
+        card = self._match_hikiot_flow_card(sim_card_id, cards)
+        if not card:
+            return {"success": False, "message": "未找到当前摄像头绑定的SIM卡流量信息"}
+
+        used_gb = self._parse_hikiot_flow_value_gb(card.get("usedFlow"))
+        remaining_gb = self._parse_hikiot_flow_value_gb(card.get("residualFlow"))
+        total_gb = self._extract_hikiot_total_flow_gb(card)
+        expired_at = card.get("expiredTimes")
+        card_no = self._get_hikiot_card_no(card, sim_card_id)
+        now = datetime.utcnow()
+
+        updates = {
+            "traffic_used_gb": used_gb,
+            "traffic_remaining_gb": remaining_gb,
+            "traffic_total_gb": total_gb,
+            "traffic_card_expired_at": expired_at,
+            "traffic_source": "hikiot",
+            "traffic_sim_card_id": card_no,
+            "traffic_ocr_status": "hikiot",
+            "traffic_ocr_updated_at": now,
+        }
+        self._update_video_fields(video_id, updates)
+
+        refreshed = self._get_video_runtime_by_id(video_id) or db_video
+        fields = self._build_hikiot_traffic_summary_fields(
+            used_gb=used_gb,
+            remaining_gb=remaining_gb,
+            total_gb=total_gb,
+            card_no=card_no,
+            expired_at=expired_at,
+        )
+        status_summary = self._build_device_status_summary(db, refreshed)
+        return {
+            "success": True,
+            "message": "ok",
+            "device_id": refreshed.id,
+            "device_name": getattr(refreshed, "name", None),
+            "sim_card_id": sim_card_id,
+            "last_update_time": now,
+            "last_traffic_ocr_time": now,
+            "last_calculated_at": now,
+            "cycle_start_time": now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
+            "cycle_end_time": now,
+            **fields,
+            **status_summary,
+            "hikiot_card": {
+                "cardId": card.get("cardId"),
+                "cardNo": card.get("cardNo"),
+                "iccid": card.get("iccid"),
+                "simCardId": card.get("simCardId"),
+                "id": card.get("id"),
+            },
+        }
+
     def _get_stored_traffic_usage_gb(self, db_video: VideoDevice) -> tuple[Optional[float], str, Optional[datetime]]:
         used_gb = getattr(db_video, "traffic_used_gb", None)
         ocr_text = str(getattr(db_video, "traffic_ocr_text", "") or "")
@@ -2699,6 +2920,23 @@ class VideoService:
         db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
             return None
+        if getattr(db_video, "traffic_source", None) == "hikiot":
+            now = datetime.utcnow()
+            fields = self._build_hikiot_traffic_summary_fields(
+                used_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_used_gb", None)),
+                remaining_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_remaining_gb", None)),
+                total_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_total_gb", None)),
+                card_no=self._normalize_card_match_value(getattr(db_video, "traffic_sim_card_id", None)),
+                expired_at=getattr(db_video, "traffic_card_expired_at", None),
+            )
+            return {
+                "success": True,
+                "message": "Hikiot流量数据已存在，OCR结果未覆盖",
+                "device_id": video_id,
+                "last_update_time": getattr(db_video, "traffic_ocr_updated_at", None) or now,
+                "last_calculated_at": now,
+                **fields,
+            }
 
         parsed, candidates = self._parse_traffic_ocr_text_with_candidates(ocr_text)
         normalized_ocr_text = str(ocr_text or "").strip()
@@ -2893,9 +3131,14 @@ class VideoService:
         }
 
     def get_traffic_status(self, db: Session, video_id: int):
-        return self.get_monitoring_summary(db, video_id)
+        return self._refresh_hikiot_video_traffic(db, video_id)
 
     def recognize_video_traffic(self, db: Session, video_id: int):
+        result = self._refresh_hikiot_video_traffic(db, video_id)
+        if result is not None:
+            return result
+        return {"success": False, "message": "设备不存在"}
+
         print(f"[TrafficOCR] recognize start video_id={video_id}")
         db_video = self._get_video_runtime_by_id(video_id)
         if not db_video:
@@ -7087,6 +7330,7 @@ class VideoService:
             "ptz_source": (camera_data.ptz_source or "onvif"),
 
             "device_serial": camera_data.device_serial,
+            "sim_card_id": camera_data.sim_card_id,
 
             "channel_no": camera_data.channel_no or 1,
 

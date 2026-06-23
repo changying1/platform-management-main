@@ -177,6 +177,31 @@ class AIManager:
             rendered = f"{message} | args={args}"
         print(rendered)
 
+    def _format_detection_result(self, algo_key, is_alarm, details):
+        status = "alarm" if is_alarm else "ok"
+        alarm_type = self._extract_alarm_type(details) if is_alarm else ""
+        if alarm_type:
+            status = f"{status}({alarm_type})"
+        return f"{algo_key}:{status}"
+
+    def _emit_second_detection_log(self, mode, device_id, second_index, results, monitor_id=""):
+        if not results:
+            return
+
+        max_items = 6
+        short_results = list(results[:max_items])
+        if len(results) > max_items:
+            short_results.append(f"+{len(results) - max_items} more")
+
+        logger.info(
+            "[AI_DETECT_SECOND] mode={} device_id={} monitor_id={} second={} results={}",
+            mode,
+            device_id,
+            monitor_id or "-",
+            second_index,
+            ",".join(short_results),
+        )
+
     def _normalize_alarm_level(self, level) -> str:
         normalized = str(level or "").strip().lower()
         return {
@@ -321,6 +346,7 @@ class AIManager:
             print(f"☁️ 萤石抓图序列号: {ezviz_serial} | 通道: {ezviz_channel}")
 
         stop_event = threading.Event()
+        monitor_id = f"{device_id}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
         if monitor_mode == "rtsp":
             thread = threading.Thread(
                 target=self._monitor_loop,
@@ -330,7 +356,7 @@ class AIManager:
         else:
             thread = threading.Thread(
                 target=self._snapshot_monitor_loop,
-                args=(device_id, ezviz_serial, ezviz_channel, algo_type, stop_event),
+                args=(device_id, ezviz_serial, ezviz_channel, algo_type, stop_event, monitor_id),
                 daemon=True,
             )
 
@@ -338,14 +364,16 @@ class AIManager:
             "stop_event": stop_event,
             "thread": thread,
             "mode": monitor_mode,
+            "monitor_id": monitor_id,
         }
 
         thread.start()
         self._emit_alarm_log(
             "info",
-            "[ALARM_MONITOR_STARTED] device_id={} mode={} algo_type={} ai_rtsp_url={} record_rtsp_url={} ezviz_serial={} ezviz_channel={}",
+            "[ALARM_MONITOR_STARTED] device_id={} mode={} monitor_id={} algo_type={} ai_rtsp_url={} record_rtsp_url={} ezviz_serial={} ezviz_channel={}",
             device_id,
             monitor_mode,
+            monitor_id,
             algo_type,
             ai_rtsp_url or "",
             record_rtsp_url or "",
@@ -387,13 +415,14 @@ class AIManager:
         except Exception:
             return None
 
-    def _snapshot_monitor_loop(self, device_id, device_serial, channel_no, algo_type_str, stop_event):
+    def _snapshot_monitor_loop(self, device_id, device_serial, channel_no, algo_type_str, stop_event, monitor_id=""):
         active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
         # 萤石抓图接口开销较高，默认 1.2s 一帧，必要时可通过环境变量调优。
         interval_seconds = max(0.8, float(os.getenv("AI_EVZIZ_SNAPSHOT_INTERVAL_SECONDS", "1.0")))
 
         print(f"📸 萤石抓图检测启动: serial={device_serial}, channel={channel_no}, interval={interval_seconds}s")
 
+        started_at = time.time()
         while not stop_event.is_set():
             loop_started_at = time.time()
             frame = self._fetch_ezviz_snapshot_frame(device_serial, channel_no)
@@ -410,13 +439,16 @@ class AIManager:
                     break
                 continue
 
+            detection_results = []
             try:
                 for algo_key in active_algos:
                     if algo_key not in self.algo_handlers:
                         print(f"⚠️ 未识别算法类型: {algo_key}")
+                        detection_results.append(f"{algo_key}:unknown")
                         continue
 
                     is_alarm, details = self.algo_handlers[algo_key](frame)
+                    detection_results.append(self._format_detection_result(algo_key, is_alarm, details))
 
                     if is_alarm:
                         alarm_type = self._extract_alarm_type(details)
@@ -446,12 +478,28 @@ class AIManager:
             except Exception as logic_error:
                 print(f"⚠️ 抓图检测逻辑异常: {logic_error}")
 
+            elapsed_second = max(1, int(time.time() - started_at) + 1)
+            self._emit_second_detection_log("ezviz_snapshot", device_id, elapsed_second, detection_results, monitor_id)
             elapsed = time.time() - loop_started_at
             wait_seconds = max(0.0, interval_seconds - elapsed)
             if stop_event.wait(wait_seconds):
                 break
 
         print(f"--- 抓图监控线程已退出: {device_id} ---")
+
+        exit_reason = "stop_event_set" if stop_event.is_set() else "loop_ended"
+        self._emit_alarm_log(
+            "warning",
+            "[ALARM_SNAPSHOT_MONITOR_EXIT] device_id={} monitor_id={} serial={} channel={} reason={}",
+            device_id,
+            monitor_id or "-",
+            device_serial,
+            channel_no,
+            exit_reason,
+        )
+        monitor = self.active_monitors.get(str(device_id))
+        if monitor and monitor.get("stop_event") is stop_event:
+            self.active_monitors.pop(str(device_id), None)
 
     def get_device_rules(self, device_id):
         device_id = str(device_id)
@@ -483,8 +531,18 @@ class AIManager:
             return False
 
         print(f"--- 停止 AI 监控: {device_id} ---")
-        self.active_monitors[device_id]["stop_event"].set()
-        del self.active_monitors[device_id]
+        monitor = self.active_monitors.get(device_id) or {}
+        self._emit_alarm_log(
+            "warning",
+            "[ALARM_MONITOR_STOP_REQUESTED] device_id={} mode={} monitor_id={}",
+            device_id,
+            monitor.get("mode") or "",
+            monitor.get("monitor_id") or "",
+        )
+        stop_event = monitor.get("stop_event")
+        if stop_event:
+            stop_event.set()
+        self.active_monitors.pop(device_id, None)
         self._emit_alarm_log("info", "[ALARM_MONITOR_STOPPED] device_id={}", device_id)
         return True
 

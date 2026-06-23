@@ -80,6 +80,7 @@ class VideoBase(BaseModel):
 
 
     device_serial: Optional[str] = Field(None, description="萤石设备序列号")
+    sim_card_id: Optional[str] = Field(None, description="SIM卡卡号")
 
 
     channel_no: Optional[int] = Field(1, description="萤石通道号")
@@ -201,6 +202,7 @@ class VideoUpdate(BaseModel):
 
 
     device_serial: Optional[str] = None
+    sim_card_id: Optional[str] = None
 
 
     channel_no: Optional[int] = None
@@ -294,6 +296,7 @@ class VideoOut(VideoBase):
 
 
     device_serial: Optional[str] = None
+    sim_card_id: Optional[str] = None
 
 
     channel_no: Optional[int] = 1
@@ -412,6 +415,7 @@ class CameraCreateRequest(BaseModel):
 
 
     device_serial: Optional[str] = Field(None, description="萤石设备序列号")
+    sim_card_id: Optional[str] = Field(None, description="SIM卡卡号")
 
 
     channel_no: Optional[int] = Field(1, description="萤石通道号")
@@ -444,6 +448,7 @@ class StreamUrlResponse(BaseModel):
 
 
     device_serial: Optional[str] = None
+    sim_card_id: Optional[str] = None
 
 
     channel_no: Optional[int] = None

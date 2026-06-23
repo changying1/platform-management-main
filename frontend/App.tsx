@@ -1707,8 +1707,6 @@ export default function App() {
         return <FenceManagement />;
       case MenuKey.PROJECT:
         return <ProjectManagement />;
-      case MenuKey.TRACK:
-        return <TrackPlayback />;
       case MenuKey.SETTINGS:
         return <SettingsView />;
       case MenuKey.GROUP_CALL:

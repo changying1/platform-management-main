@@ -40,7 +40,7 @@ import { TrackMap } from '../src/components/TrackMap';
 import {
   getAllVideos,
   getRecordingVideos,
-  getAlarmVideosList,
+  getAlarmPlaybackVideos,
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
 import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from "../src/api/config";
@@ -2824,7 +2824,7 @@ useEffect(() => {
         try {
           const [recordings, alarms, screenshots] = await Promise.all([
             getRecordingVideos(device.id, selectedDevice ? 500 : 120),
-            getAlarmVideosList(device.id, selectedDevice ? 120 : 80),
+            getAlarmPlaybackVideos(device.id, selectedDevice ? 120 : 80),
             getAlarmScreenshots(device.id, selectedDevice ? 120 : 80),
           ]);
           const attachDevice = (item: SavedPlaybackVideo) => ({ ...item, __device: device });
