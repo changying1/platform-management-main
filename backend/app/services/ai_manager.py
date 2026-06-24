@@ -5,6 +5,7 @@ import os
 import uuid
 import re
 import json
+import copy
 import requests
 import subprocess
 import numpy as np
@@ -439,6 +440,7 @@ class AIManager:
                             )
                             continue
 
+                        details = self._normalize_alarm_details_for_frame(details, frame)
                         img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
                         self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
             except Exception as logic_error:
@@ -672,6 +674,7 @@ class AIManager:
                             )
                             continue
 
+                        details = self._normalize_alarm_details_for_frame(details, frame)
                         img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
                         self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
 
@@ -689,6 +692,7 @@ class AIManager:
     def _save_alarm_image(self, frame, device_id, details=None, alarm_trace_id: str | None = None):
         try:
             # 1. 如果有报警详情，先在图片上绘制报警框
+            details = self._normalize_alarm_details_for_frame(details, frame)
             draw_frame = frame.copy()
             boxes = []
             if details and isinstance(details, dict):
@@ -820,6 +824,101 @@ class AIManager:
 
         return ""
 
+    def _normalize_box_coords_for_frame(self, box, frame_shape):
+        if not isinstance(box, dict) or not frame_shape:
+            return None
+
+        try:
+            frame_h = int(frame_shape[0])
+            frame_w = int(frame_shape[1])
+        except Exception:
+            return None
+        if frame_w <= 0 or frame_h <= 0:
+            return None
+
+        raw_values = None
+        source_kind = "xyxy"
+        if isinstance(box.get("coords"), (list, tuple)) and len(box.get("coords")) >= 4:
+            raw_values = list(box.get("coords")[:4])
+        elif isinstance(box.get("bbox"), (list, tuple)) and len(box.get("bbox")) >= 4:
+            raw_values = list(box.get("bbox")[:4])
+            source_kind = "xywh"
+        elif all(k in box for k in ("x1", "y1", "x2", "y2")):
+            raw_values = [box.get("x1"), box.get("y1"), box.get("x2"), box.get("y2")]
+
+        if raw_values is None:
+            return None
+
+        try:
+            values = [float(v) for v in raw_values]
+        except (TypeError, ValueError):
+            return None
+        if any(not np.isfinite(v) for v in values):
+            return None
+
+        is_normalized = all(0.0 <= v <= 1.0 for v in values)
+
+        def scale_x(v):
+            return v * frame_w if is_normalized else v
+
+        def scale_y(v):
+            return v * frame_h if is_normalized else v
+
+        x1 = scale_x(values[0])
+        y1 = scale_y(values[1])
+        if source_kind == "xywh":
+            x2 = x1 + scale_x(values[2])
+            y2 = y1 + scale_y(values[3])
+        else:
+            x2 = scale_x(values[2])
+            y2 = scale_y(values[3])
+            if x2 <= x1 or y2 <= y1:
+                x2 = x1 + scale_x(values[2])
+                y2 = y1 + scale_y(values[3])
+
+        x1 = max(0.0, min(float(frame_w - 1), x1))
+        y1 = max(0.0, min(float(frame_h - 1), y1))
+        x2 = max(0.0, min(float(frame_w - 1), x2))
+        y2 = max(0.0, min(float(frame_h - 1), y2))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+        if (x2 - x1) < 2 or (y2 - y1) < 2:
+            return None
+
+        normalized_box = copy.deepcopy(box)
+        normalized_box["original_coords"] = list(raw_values)
+        normalized_box["coords"] = [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
+        normalized_box["coords_norm"] = [
+            x1 / frame_w,
+            y1 / frame_h,
+            x2 / frame_w,
+            y2 / frame_h,
+        ]
+        normalized_box["frame_width"] = frame_w
+        normalized_box["frame_height"] = frame_h
+        return normalized_box
+
+    def _normalize_alarm_details_for_frame(self, details, frame):
+        if not isinstance(details, dict) or frame is None:
+            return details
+
+        normalized_details = copy.deepcopy(details)
+        frame_shape = getattr(frame, "shape", None)
+        for key in ("boxes", "alarm_boxes"):
+            boxes = normalized_details.get(key)
+            if not isinstance(boxes, list):
+                continue
+            normalized_boxes = []
+            for box in boxes:
+                normalized_box = self._normalize_box_coords_for_frame(box, frame_shape)
+                if normalized_box is not None:
+                    normalized_boxes.append(normalized_box)
+            normalized_details[key] = normalized_boxes
+        if not normalized_details.get("boxes") and isinstance(normalized_details.get("alarm_boxes"), list):
+            normalized_details["boxes"] = normalized_details["alarm_boxes"]
+        return normalized_details
+
     def _draw_boxes_on_frame(self, frame, boxes):
         """
         在图片上绘制报警框和中文标注 (解决乱码问题)。
@@ -844,15 +943,39 @@ class AIManager:
                 # 极端情况回退默认
                 font = ImageFont.load_default()
 
-            for box in boxes:
-                coords = box.get("coords")
+            frame_h, frame_w = frame.shape[:2]
+
+            for raw_box in boxes:
+                box = raw_box if isinstance(raw_box, dict) else {}
+                coords_norm = box.get("coords_norm")
+                if isinstance(coords_norm, (list, tuple)) and len(coords_norm) >= 4:
+                    try:
+                        x1 = int(round(float(coords_norm[0]) * frame_w))
+                        y1 = int(round(float(coords_norm[1]) * frame_h))
+                        x2 = int(round(float(coords_norm[2]) * frame_w))
+                        y2 = int(round(float(coords_norm[3]) * frame_h))
+                    except (TypeError, ValueError):
+                        continue
+                else:
+                    normalized_box = self._normalize_box_coords_for_frame(box, frame.shape)
+                    if normalized_box is None:
+                        continue
+                    coords = normalized_box.get("coords")
+                    if not coords or len(coords) < 4:
+                        continue
+                    try:
+                        x1, y1, x2, y2 = [int(round(float(v))) for v in coords[:4]]
+                    except (TypeError, ValueError):
+                        continue
+
+                x1 = max(0, min(frame_w - 1, x1))
+                y1 = max(0, min(frame_h - 1, y1))
+                x2 = max(0, min(frame_w - 1, x2))
+                y2 = max(0, min(frame_h - 1, y2))
+                if x2 <= x1 or y2 <= y1:
+                    continue
                 label_type = box.get("type", "异常")
                 msg = box.get("msg", "")
-
-                if not coords or len(coords) < 4:
-                    continue
-
-                x1, y1, x2, y2 = map(int, coords)
 
                 # 绘制红色报警框 (线宽动态)
                 line_width = max(2, int(frame.shape[0] * 0.005))
@@ -878,15 +1001,28 @@ class AIManager:
                 # 绘制文字背景条
                 try:
                     # 使用 textbbox 获取文本尺寸 (Pillow 8.0+)
-                    bbox = draw.textbbox((x1, y1 - 10), display_text, font=font)
+                    bbox = draw.textbbox((0, 0), display_text, font=font)
+                    text_w = bbox[2] - bbox[0]
+                    text_h = bbox[3] - bbox[1]
+                    text_x = max(0, min(x1, max(0, frame_w - text_w - 10)))
+                    text_y = y1 - text_h - 10
+                    if text_y < 0:
+                        text_y = min(max(0, frame_h - text_h - 10), y2 + 5)
+                    text_y = max(0, text_y)
                     # 往上或往下绘制背景，防止文字出界 (简化始终画在框顶部附近，略带半透明)
-                    bg_rect = [bbox[0]-5, bbox[1]-5, bbox[2]+5, bbox[3]+5]
+                    bg_rect = [
+                        max(0, text_x - 5),
+                        max(0, text_y - 5),
+                        min(frame_w - 1, text_x + text_w + 5),
+                        min(frame_h - 1, text_y + text_h + 5),
+                    ]
                     draw.rectangle(bg_rect, fill=(255, 0, 0, 180))
                 except Exception:
-                    pass
+                    text_x = x1
+                    text_y = max(0, y1 - font_size - 10)
 
                 # 绘制白色文字
-                draw.text((x1, y1 - font_size - 10), display_text, font=font, fill=(255, 255, 255))
+                draw.text((text_x, text_y), display_text, font=font, fill=(255, 255, 255))
 
             # Pillow 转回 OpenCV
             return cv2.cvtColor(np.asarray(img_pil), cv2.COLOR_RGB2BGR)
@@ -1170,7 +1306,13 @@ class AIManager:
                 return
 
             clip_before_seconds, clip_after_seconds = self._get_alarm_clip_window_seconds()
-            mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
+            segment_seconds = RECORD_SEGMENT_SECONDS
+            if hasattr(self.video_service, "_get_record_segment_seconds"):
+                try:
+                    segment_seconds = self.video_service._get_record_segment_seconds()
+                except Exception:
+                    segment_seconds = RECORD_SEGMENT_SECONDS
+            mature_buffer = segment_seconds + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
             self._emit_alarm_log(
                 "info",
@@ -1213,6 +1355,21 @@ class AIManager:
                     )
                     recording_full_path = result.get("recording_full_path")
                     expected_alarm_second = (trigger_time - clip_start).total_seconds()
+                    duration_seconds = result.get("duration_seconds")
+                    try:
+                        duration_seconds = float(duration_seconds)
+                    except (TypeError, ValueError):
+                        duration_seconds = None
+
+                    def _clamp_alarm_second(value):
+                        try:
+                            second = int(round(float(value)))
+                        except (TypeError, ValueError):
+                            second = 0
+                        if duration_seconds and duration_seconds > 0:
+                            second = min(second, max(0, int(duration_seconds) - 1))
+                        return max(0, second)
+
                     final_alarm_second = int(round(expected_alarm_second))
                     match_score = None
                     alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
@@ -1245,6 +1402,7 @@ class AIManager:
                             final_alarm_second,
                             match_error,
                         )
+                    final_alarm_second = _clamp_alarm_second(final_alarm_second)
 
                     if boxes:
                         try:

@@ -79,6 +79,30 @@ const permissionTree: PermissionNode[] = [
     ]
   },
   {
+    id: 'grid',
+    name: '网格管理',
+    code: 'grid',
+    color: 'cyan',
+    children: [
+      { id: 'grid.view', name: '查看网格', code: 'grid.view' },
+      { id: 'grid.create', name: '添加网格', code: 'grid.create' },
+      { id: 'grid.edit', name: '编辑网格', code: 'grid.edit' },
+      { id: 'grid.delete', name: '删除网格', code: 'grid.delete' },
+    ]
+  },
+  {
+    id: 'team',
+    name: '工队管理',
+    code: 'team',
+    color: 'teal',
+    children: [
+      { id: 'team.view', name: '查看工队', code: 'team.view' },
+      { id: 'team.create', name: '添加工队', code: 'team.create' },
+      { id: 'team.edit', name: '编辑工队', code: 'team.edit' },
+      { id: 'team.delete', name: '删除工队', code: 'team.delete' },
+    ]
+  },
+  {
     id: 'personnel',
     name: '人员管理',
     code: 'personnel',
@@ -256,6 +280,7 @@ const colorMap: Record<string, string> = {
   cyan: 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400',
   purple: 'bg-purple-500/20 border-purple-500/30 text-purple-400',
   blue: 'bg-blue-500/20 border-blue-500/30 text-blue-400',
+  teal: 'bg-teal-500/20 border-teal-500/30 text-teal-400',
   green: 'bg-green-500/20 border-green-500/30 text-green-400',
   orange: 'bg-orange-500/20 border-orange-500/30 text-orange-400',
   red: 'bg-red-500/20 border-red-500/30 text-red-400',
@@ -343,9 +368,10 @@ interface PermissionCardProps {
   module: PermissionNode;
   checkedKeys: string[];
   onCheck: (code: string, checked: boolean) => void;
+  readonly?: boolean;
 }
 
-const PermissionCard: React.FC<PermissionCardProps> = ({ module, checkedKeys, onCheck }) => {
+const PermissionCard: React.FC<PermissionCardProps> = ({ module, checkedKeys, onCheck, readonly = false }) => {
   const colorClass = colorMap[module.color || 'gray'];
   
   return (
@@ -362,10 +388,11 @@ const PermissionCard: React.FC<PermissionCardProps> = ({ module, checkedKeys, on
         {module.children?.map(perm => {
           const isChecked = checkedKeys.includes(perm.code);
           return (
-            <label key={perm.code} className="flex items-center gap-2 cursor-pointer p-1.5 rounded hover:bg-slate-700/50 transition-colors">
+            <label key={perm.code} className={`flex items-center gap-2 p-1.5 rounded transition-colors ${readonly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:bg-slate-700/50'}`}>
               <input
                 type="checkbox"
                 checked={isChecked}
+                disabled={readonly}
                 onChange={(e) => onCheck(perm.code, e.target.checked)}
                 className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
               />
@@ -396,6 +423,7 @@ export default function PermissionManagement() {
   const allowedLevels = getAllowedLevels(currentPermissionLevel);
   const canUseRole = (role: Role) => allowedLevels.includes(role.level);
   const visibleRoles = accountRoles.filter(canUseRole);
+  const selectedRoleReadonly = selectedRole?.level === 'headquarters_admin';
 
   // 筛选角色树
   const filterRoleTree = (nodes: RoleTreeNode[]): RoleTreeNode[] => {
@@ -510,6 +538,7 @@ export default function PermissionManagement() {
 
   // 处理勾选
   const handleCheck = (code: string, checked: boolean) => {
+    if (selectedRoleReadonly) return;
     setCheckedPermissions(prev => 
       checked ? [...prev, code] : prev.filter(c => c !== code)
     );
@@ -519,6 +548,7 @@ export default function PermissionManagement() {
   // 保存权限
   const handleSave = async () => {
     if (!selectedRole) return;
+    if (selectedRoleReadonly) return;
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/api/permissions/roles/${selectedRole.level}`, {
@@ -544,6 +574,7 @@ export default function PermissionManagement() {
 
   // 重置权限
   const handleReset = () => {
+    if (selectedRoleReadonly) return;
     if (selectedRole) {
       const perms = defaultPermissions[selectedRole.level] || [];
       setCheckedPermissions(perms);
@@ -568,7 +599,7 @@ export default function PermissionManagement() {
           </h2>
         </div>
         <div className="flex gap-3">
-          {hasChanges && (
+          {hasChanges && !selectedRoleReadonly && (
             <button
               onClick={handleReset}
               className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm flex items-center gap-2 transition-colors"
@@ -579,11 +610,11 @@ export default function PermissionManagement() {
           )}
           <button
             onClick={handleSave}
-            disabled={saving || !selectedRole}
+            disabled={saving || !selectedRole || selectedRoleReadonly}
             className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50"
           >
             <Save size={14} />
-            {saving ? '保存中...' : '保存配置'}
+            {selectedRoleReadonly ? '内置全权限' : saving ? '保存中...' : '保存配置'}
           </button>
         </div>
       </div>
@@ -661,7 +692,9 @@ export default function PermissionManagement() {
                   权限配置
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  为「{selectedRole?.name || '请选择角色'}」分配模块权限
+                  {selectedRoleReadonly
+                    ? `「${selectedRole?.name}」是系统内置全权限，无需赋权`
+                    : `为「${selectedRole?.name || '请选择角色'}」分配模块权限`}
                 </p>
               </div>
               <div className="relative">
@@ -700,6 +733,7 @@ export default function PermissionManagement() {
                     module={module}
                     checkedKeys={checkedPermissions}
                     onCheck={handleCheck}
+                    readonly={selectedRoleReadonly}
                   />
                 ))}
               </div>

@@ -1,5 +1,6 @@
-// src/components/admin/LocationDeviceManagement.tsx
+﻿// src/components/admin/LocationDeviceManagement.tsx
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, Plus, Edit2, Trash2, X, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { deviceApi, type LocationDevice } from '../api/deviceApi';
@@ -383,9 +384,9 @@ export default function LocationDeviceManagement() {
         </table>
       </div>
 
-      {showModal && (
-        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[620px] p-6 shadow-2xl max-h-[90vh] overflow-auto">
+      {showModal && createPortal(
+        <div className="fixed inset-0 z-[1000] overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
+          <div className="mx-auto my-4 max-h-[calc(100vh-32px)] w-full max-w-[620px] overflow-auto rounded-lg border border-cyan-300/30 bg-slate-900 p-6 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold text-slate-100">{editingDeviceId ? '编辑定位装置' : '添加定位装置'}</h3>
               <button onClick={() => setShowModal(false)}><X size={20} /></button>
@@ -428,12 +429,13 @@ export default function LocationDeviceManagement() {
               <button onClick={() => { setShowModal(false); setEditingDeviceId(null); }} className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100">取消</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {showUploadModal && (
-        <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[800px] p-6 shadow-2xl max-h-[80vh] flex flex-col">
+      {showUploadModal && createPortal(
+        <div className="fixed inset-0 z-[1000] overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
+          <div className="mx-auto my-4 max-h-[calc(100vh-32px)] w-full max-w-[800px] overflow-hidden rounded-lg border border-cyan-300/30 bg-slate-900 p-6 shadow-2xl flex flex-col">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-slate-100">批量导入定位设备</h3>
               <button onClick={() => setShowUploadModal(false)}><X size={20} /></button>
@@ -465,8 +467,10 @@ export default function LocationDeviceManagement() {
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
 }
+

@@ -12,6 +12,7 @@ interface Camera {
   id: number;
   name: string;
   deviceCode: string;
+  sim_card_id?: string;
   channelNo?: number;          // 机器码/设备序列号
   location: string;
   company?: string;          // 所属分公司
@@ -21,10 +22,11 @@ interface Camera {
   projectId: number | string;
   projectName?: string;
   team?: string;              // 所属工队
+  teamId?: string;
   admin?: string;            // 管理员
   adminPhone?: string;       // 管理员电话
   status: 'online' | 'offline' | 'fault' | 'maintaining';
-  type: 'bullet' | 'dome' | 'bodycam' | 'drone' | 'thermal' | 'other';
+  type: 'bullet' | 'dome' | 'bodycam' | 'drone';
   remark?: string;
   rtspUrl?: string;
   lastMaintenance?: string;  // 最后维修时间
@@ -93,7 +95,16 @@ const getUnitNameFromId = (units: ResponsibilityUnit[], unitId?: string | number
 
 const isMeaningfulName = (value?: string | null) => {
   const text = String(value || '').trim();
-  return !!text && text !== '??' && text !== '-';
+  return (
+    !!text &&
+    text !== '??' &&
+    text !== '？？' &&
+    text !== '-' &&
+    text !== '--' &&
+    text !== '未知' &&
+    text !== '未知公司' &&
+    !/^[?？]+$/.test(text)
+  );
 };
 
 const resolveBranchNameForVideo = (video: Video, units: ResponsibilityUnit[]) => {
@@ -120,12 +131,9 @@ const unitBelongsToParent = (
 
 const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
   const name = video.name || '';
-  const platform = String(video.platform_type || video.stream_protocol || '').toLowerCase();
-  const type: Camera['type'] =
-    platform.includes('ezviz') || name.includes('球机') ? 'dome'
-    : name.includes('无人机') ? 'drone'
-    : name.includes('记录仪') ? 'bodycam'
-    : 'bullet';
+  const type = (['bullet', 'dome', 'bodycam', 'drone'].includes(String(video.device_type))
+    ? video.device_type
+    : 'bullet') as Camera['type'];
 
   const branchName = resolveBranchNameForVideo(video, units);
   const projectName = isMeaningfulName(video.project) ? video.project || '' : getUnitNameFromId(units, (video as any).project_id);
@@ -135,6 +143,7 @@ const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
     id: Number(video.id),
     name,
     deviceCode: video.device_serial || String(video.id),
+    sim_card_id: video.sim_card_id || '',
     channelNo: video.channel_no || 1,
     location: video.remark || '',
     company: branchName,
@@ -144,6 +153,7 @@ const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
     projectId: (video as any).project_id || 1,
     projectName,
     team: video.team || video.team_name || video.workTeam || video.work_team || '',
+    teamId: video.team_id || '',
     admin: video.username || '',
     adminPhone: '',
     status: video.status === 'online' ? 'online' : 'offline',
@@ -224,10 +234,11 @@ useEffect(() => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [showRepairModal, setShowRepairModal] = useState(false);
+const [showRepairModal, setShowRepairModal] = useState(false);
   const [repairCamera, setRepairCamera] = useState<Camera | null>(null);
   const [repairReason, setRepairReason] = useState('');
   const [editingItem, setEditingItem] = useState<Camera | null>(null);
+  const [formNotice, setFormNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -241,7 +252,7 @@ const canEditDevice = hasStoredPermission('device.edit');
 const canDeleteDevice = hasStoredPermission('device.delete');
   const types = ['all', ...new Set(cameras.map(c => c.type))];
   const statuses = ['all', 'online', 'offline', 'fault', 'maintaining'];
-  const companies = ['all', ...new Set(cameras.map(c => c.company).filter(Boolean))];
+  const companies = ['all', ...new Set(cameras.map(c => c.company).filter(isMeaningfulName))];
   const branchOptions = orgUnits.filter(unit => unit.type === 'branch');
   const allProjectOptions = orgUnits.filter(unit => unit.type === 'project');
   const selectedBranchId = editingItem?.companyId || '';
@@ -253,7 +264,17 @@ const canDeleteDevice = hasStoredPermission('device.delete');
   const filteredGridOptions = selectedProjectId
     ? gridOptions.filter(grid => String(grid.project_id || '') === selectedProjectId || unitBelongsToParent(grid, selectedProjectId, 'project'))
     : [];
-  const teams = ['all', ...new Set(cameras.map(c => c.team).filter(Boolean))];
+  const teamOptions = orgUnits.filter(unit => unit.type === 'team');
+  const filteredTeamOptions = teamOptions.filter(team => {
+    if (editingItem?.gridId) {
+      return String(team.grid_id || '') === String(editingItem.gridId) || unitBelongsToParent(team, editingItem.gridId, 'grid');
+    }
+    if (selectedProjectId) {
+      return String(team.project_id || '') === selectedProjectId || unitBelongsToParent(team, selectedProjectId, 'project');
+    }
+    return true;
+  });
+  const teams = ['all', ...new Set(cameras.map(c => c.team).filter(isMeaningfulName))];
 
   const filteredData = cameras.filter(c => {
     const matchesSearch = searchTerm === '' || 
@@ -294,8 +315,6 @@ const canDeleteDevice = hasStoredPermission('device.delete');
       dome: '球机摄像头', 
       bodycam: '执法记录仪', 
       drone: '无人机', 
-      helmet: '智能安全帽',
-      other: '其他'
     };
     return map[type] || type;
   };
@@ -479,7 +498,7 @@ const confirmImport = () => {
 
         {canCreateDevice && (
         <button
-          onClick={() => { setEditingItem(null); setShowModal(true); }}
+          onClick={() => { setFormNotice(null); setEditingItem({ sim_card_id: "" } as Camera); setShowModal(true); }}
           className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm"
         >
           <Plus size={14} /> 添加摄像头
@@ -544,7 +563,7 @@ const confirmImport = () => {
                   <div className="flex items-center justify-center gap-2">
                     {canEditDevice && (
                     <button 
-                      onClick={() => { setEditingItem(camera); setShowModal(true); }}
+                      onClick={() => { setFormNotice(null); setEditingItem(camera); setShowModal(true); }}
                       className="p-1 hover:bg-cyan-500/20 rounded text-cyan-400"
                       title="编辑"
                     >
@@ -564,7 +583,13 @@ const confirmImport = () => {
 <button 
   onClick={async () => {
     if (confirm('确定删除该摄像头吗？')) {
-      await deleteVideo(camera.id);
+      await deleteVideo(camera.id, {
+        name: camera.name,
+        company: camera.company,
+        project: camera.projectName,
+        grid: camera.grid,
+        team: camera.team,
+      });
       await fetchCameras();
     }
   }}
@@ -589,7 +614,7 @@ const confirmImport = () => {
               <h3 className="text-lg font-bold text-slate-100">
                 {editingItem?.id ? '编辑摄像头' : '添加摄像头'}
               </h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-200">
+              <button onClick={() => { setFormNotice(null); setShowModal(false); }} className="text-slate-400 hover:text-slate-200">
                 <X size={20} />
               </button>
             </div>
@@ -617,8 +642,6 @@ const confirmImport = () => {
                     <option value="dome">球机</option>
                     <option value="bodycam">执法记录仪</option>
                     <option value="drone">无人机</option>
-                    <option value="helmet">安全帽</option>
-                    <option value="other">其他</option>
                   </select>
                 </div>
               </div>
@@ -635,6 +658,17 @@ const confirmImport = () => {
                 <p className="text-xs text-slate-500 mt-1">萤石云4G摄像头的设备序列号</p>
               </div>
               
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">SIM卡卡号</label>
+                <input
+                  type="text"
+                  value={editingItem?.sim_card_id || ''}
+                  onChange={(e) => setEditingItem({ ...editingItem!, sim_card_id: e.target.value })}
+                  className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                  placeholder="请输入SIM卡卡号"
+                />
+              </div>
+
               <div>
   <label className="block text-sm text-slate-400 mb-1">通道号</label>
   <input
@@ -672,6 +706,8 @@ const confirmImport = () => {
                         projectName: '',
                         gridId: '',
                         grid: '',
+                        teamId: '',
+                        team: '',
                       });
                     }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
@@ -700,6 +736,8 @@ const confirmImport = () => {
                         projectName: project?.name || '',
                         grid: '',
                         gridId: '',
+                        teamId: '',
+                        team: '',
                       });
                     }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
@@ -726,6 +764,8 @@ const confirmImport = () => {
                         projectName: project?.name || editingItem?.projectName || '',
                         gridId: grid ? getUnitId(grid) : '',
                         grid: grid?.name || '',
+                        teamId: '',
+                        team: '',
                       });
                     }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
@@ -738,13 +778,32 @@ const confirmImport = () => {
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">所属工队</label>
-                  <input
-                    type="text"
-                    value={editingItem?.team || ''}
-                    onChange={(e) => setEditingItem({ ...editingItem!, team: e.target.value })}
+                  <select
+                    value={editingItem?.teamId || ''}
+                    onChange={(e) => {
+                      const team = findUnit(e.target.value);
+                      const grid = getAncestor(team, 'grid');
+                      const project = getAncestor(team, 'project');
+                      const branch = getAncestor(team, 'branch');
+                      setEditingItem({
+                        ...editingItem!,
+                        companyId: branch ? getUnitId(branch) : editingItem?.companyId,
+                        company: branch?.name || editingItem?.company || '',
+                        projectId: project ? getUnitId(project) : editingItem?.projectId || '',
+                        projectName: project?.name || editingItem?.projectName || '',
+                        gridId: grid ? getUnitId(grid) : editingItem?.gridId || '',
+                        grid: grid?.name || editingItem?.grid || '',
+                        teamId: team ? getUnitId(team) : '',
+                        team: team?.name || '',
+                      });
+                    }}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400"
-                    placeholder="如：土建工队/机电工队"
-                  />
+                  >
+                    <option value="">请选择工队</option>
+                    {filteredTeamOptions.map(team => (
+                      <option key={getUnitId(team)} value={getUnitId(team)}>{team.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">状态</label>
@@ -807,15 +866,26 @@ const confirmImport = () => {
               </div>
             </div>
             
-<div className="flex gap-3 mt-8">
+{formNotice && (
+  <div className={`mt-5 rounded-lg border px-4 py-3 text-sm ${
+    formNotice.type === 'success'
+      ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-300'
+      : 'bg-red-500/10 border-red-400/30 text-red-300'
+  }`}>
+    {formNotice.message}
+  </div>
+)}
+
+<div className="flex gap-3 mt-5">
   <button 
     onClick={async () => {
+      setFormNotice(null);
       if (!editingItem?.name) {
-        alert('请填写设备名称');
+        setFormNotice({ type: 'error', message: '请填写设备名称' });
         return;
       }
       if (!editingItem?.deviceCode) {
-        alert('请填写机器码');
+        setFormNotice({ type: 'error', message: '请填写机器码' });
         return;
       }
       
@@ -823,17 +893,20 @@ const confirmImport = () => {
         const payload = {
           name: editingItem.name,
           device_serial: editingItem.deviceCode,
+          sim_card_id: editingItem.sim_card_id || undefined,
           channel_no: editingItem.channelNo || 1,
           company: editingItem.company,
           branch_id: editingItem.companyId,
           project: editingItem.projectName,
           project_id: editingItem.projectId ? String(editingItem.projectId) : undefined,
-          grid: editingItem.grid,
-          grid_id: editingItem.gridId,
-          team: editingItem.team,
-          username: editingItem.admin,
+      grid: editingItem.grid,
+      grid_id: editingItem.gridId,
+      team: editingItem.team,
+      team_id: editingItem.teamId,
+      username: editingItem.admin,
           rtsp_url: editingItem.rtspUrl || `rtsp://ezopen://open.ys7.com/${editingItem.deviceCode}/${editingItem.channelNo || 1}`,
           stream_url: editingItem.rtspUrl || undefined,
+          device_type: editingItem.type || 'bullet',
           status: editingItem.status === 'online' ? 'online' : 'offline',
           remark: editingItem.remark || editingItem.location,
           platform_type: editingItem.type === 'dome' ? 'ezviz' : 'onvif',
@@ -849,14 +922,17 @@ const confirmImport = () => {
           await createVideo({ ...payload, port: 80 });
         }
         
-        alert('保存成功');
-        setShowModal(false);
-        setEditingItem(null);
         await fetchCameras();
+        setFormNotice({ type: 'success', message: '保存成功' });
+        window.setTimeout(() => {
+          setShowModal(false);
+          setEditingItem(null);
+          setFormNotice(null);
+        }, 600);
         // 可选：重新从后端获取列表
         // await fetchCameras();
       } catch (err) {
-        alert('保存失败');
+        setFormNotice({ type: 'error', message: '保存失败，请稍后重试' });
       }
     }}
     className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900"
@@ -865,6 +941,7 @@ const confirmImport = () => {
   </button>
   <button 
     onClick={() => {
+      setFormNotice(null);
       setShowModal(false);
       setEditingItem(null);
     }} 

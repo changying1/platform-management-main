@@ -7,6 +7,8 @@ ALL_PERMISSIONS = [
     "dashboard.view",
     "monitor.playback", "monitor.track", "monitor.voice", "monitor.camera",
     "fence.view", "fence.create", "fence.edit", "fence.delete",
+    "grid.view", "grid.create", "grid.edit", "grid.delete",
+    "team.view", "team.create", "team.edit", "team.delete",
     "device.view", "device.create", "device.edit", "device.delete",
     "personnel.view", "personnel.create", "personnel.edit", "personnel.delete",
     "alarm.view", "alarm.handle",
@@ -36,6 +38,8 @@ def get_role_permission_collection():
 
 def get_permissions_for_level(level: str | None) -> list[str]:
     permission_level = level or "project_safety_admin"
+    if permission_level == "headquarters_admin":
+        return list(ALL_PERMISSIONS)
     doc = get_role_permission_collection().find_one({"level": permission_level}, {"_id": 0})
     if doc and isinstance(doc.get("permissions"), list):
         permissions = [str(item) for item in doc["permissions"]]
@@ -49,7 +53,10 @@ def list_role_permissions() -> list[dict]:
     result = []
     for level, defaults in DEFAULT_ROLE_PERMISSIONS.items():
         doc = collection.find_one({"level": level}, {"_id": 0}) or {}
-        permissions = doc.get("permissions") if isinstance(doc.get("permissions"), list) else defaults
+        if level == "headquarters_admin":
+            permissions = ALL_PERMISSIONS
+        else:
+            permissions = doc.get("permissions") if isinstance(doc.get("permissions"), list) else defaults
         result.append({
             "level": level,
             "name": ROLE_NAMES.get(level, level),

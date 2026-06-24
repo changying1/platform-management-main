@@ -32,6 +32,22 @@ const formatAlarmTypeLabel = (alarmType?: string) => {
   return raw;
 };
 
+const parseAlarmTimestamp = (timestamp?: string) => {
+  const raw = String(timestamp || '').trim();
+  if (!raw) return new Date(NaN);
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  return new Date(hasTimezone ? raw : `${raw}Z`);
+};
+
+const formatAlarmTime = (timestamp?: string) => {
+  const date = parseAlarmTimestamp(timestamp);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+  });
+};
+
 export const useAlarms = () => {
   const [alarms, setAlarms] = useState<AlarmRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,12 +61,12 @@ export const useAlarms = () => {
   const [localLevels, setLocalLevels] = useState<Record<number, string>>({});
 
   const mapResponseToAlarm = (a: AlarmResponse): AlarmRecord => ({
-    id: `ALM-${new Date(a.timestamp).getFullYear()}${String(new Date(a.timestamp).getMonth() + 1).padStart(2, '0')}${String(new Date(a.timestamp).getDate()).padStart(2, '0')}-${String(a.id).padStart(3, '0')}`,
+    id: `ALM-${parseAlarmTimestamp(a.timestamp).getFullYear()}${String(parseAlarmTimestamp(a.timestamp).getMonth() + 1).padStart(2, '0')}${String(parseAlarmTimestamp(a.timestamp).getDate()).padStart(2, '0')}-${String(a.id).padStart(3, '0')}`,
     rawId: a.id,
     user: a.device_id,
     device: a.device_id,
     type: formatAlarmTypeLabel(a.alarm_type),
-    time: new Date(a.timestamp).toLocaleString(),
+    time: formatAlarmTime(a.timestamp),
     timestamp: a.timestamp,
     location: a.location || '未知位置',
     status: a.status as 'pending' | 'resolved',

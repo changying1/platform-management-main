@@ -8,11 +8,13 @@ from app.services.llm_service import (
     check_ollama_connection,
     get_available_models,
     create_llm_chain,
-    select_best_model
+    select_best_model,
+    get_vector_db_base,
 )
 from app.core.database import get_mongo_db
 from app.core.security import get_current_user
 from app.services.ai_data_query_service import build_ai_query_context
+from app.utils.config_manager import get_system_settings
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "LargeLanguageModel")
 DOCUMENTS_DIR = os.path.join(BASE_DIR, "Documents")
@@ -20,6 +22,12 @@ VECTOR_DB_DIR = os.path.join(BASE_DIR, "vector_db")
 
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 os.makedirs(VECTOR_DB_DIR, exist_ok=True)
+
+
+def get_vector_db_dir():
+    path = get_vector_db_base()
+    os.makedirs(path, exist_ok=True)
+    return path
 
 router = APIRouter(prefix="/api/ai", tags=["AI Chat"])
 
@@ -57,8 +65,11 @@ def health_check():
         test_models = []
         print(f"Direct test failed: {e}")
     
-    ollama_ok = check_ollama_connection()
-    models = get_available_models() if ollama_ok else []
+    settings = get_system_settings()
+    ai_service_url = settings.get("aiServiceUrl") or "http://localhost:11434"
+    ollama_base_url = ai_service_url if str(ai_service_url).startswith("http") else None
+    ollama_ok = check_ollama_connection(ollama_base_url)
+    models = get_available_models(ollama_base_url) if ollama_ok else []
     selected_model = select_best_model()
     
     print(f"DEBUG - Direct test: {test_ok}, LLM check: {ollama_ok}")
@@ -86,6 +97,23 @@ def chat_handler(
     current_user: dict = Depends(get_current_user),
     mongo_db=Depends(get_mongo_db),
 ):
+    try:
+        query_context = build_ai_query_context(
+            request.chat_data.prompt,
+            current_user,
+            mongo_db,
+        )
+        if query_context.get("direct_answer"):
+            return {
+                "status": "success",
+                "response": query_context["direct_answer"],
+                "history": request.chat_data.history,
+                "query_context": query_context,
+            }
+    except Exception as exc:
+        print(f"AI query context failed: {exc}")
+        query_context = None
+
     if not check_ollama_connection():
         return {
             "status": "warning",
@@ -122,23 +150,20 @@ def chat_handler(
         ]
 
         system_context = dict(request.chat_data.system_context or {})
-        query_context = build_ai_query_context(
-            request.chat_data.prompt,
-            current_user,
-            mongo_db,
-        )
-        if query_context.get("direct_answer"):
-            return {
-                "status": "success",
-                "response": query_context["direct_answer"],
-                "history": request.chat_data.history,
-                "query_context": query_context,
-            }
+        if query_context is None:
+            query_context = build_ai_query_context(
+                request.chat_data.prompt,
+                current_user,
+                mongo_db,
+            )
         system_context["query_context"] = query_context
+        settings = get_system_settings()
+        effective_kb_name = request.kb_config.kb_name or "default"
+        effective_enable_rag = request.kb_config.enable_rag or bool(settings.get("aiEnableRAG"))
         chain = create_llm_chain(
             history_dicts,
-            kb_name=request.kb_config.kb_name,
-            enable_rag=request.kb_config.enable_rag,
+            kb_name=effective_kb_name,
+            enable_rag=effective_enable_rag,
             system_context=system_context
         )
 
@@ -254,9 +279,10 @@ async def list_knowledge_bases():
     """获取所有知识库列表"""
     kb_list = ["default"]
     
-    if os.path.exists(VECTOR_DB_DIR):
-        for name in os.listdir(VECTOR_DB_DIR):
-            kb_path = os.path.join(VECTOR_DB_DIR, name)
+    vector_db_dir = get_vector_db_dir()
+    if os.path.exists(vector_db_dir):
+        for name in os.listdir(vector_db_dir):
+            kb_path = os.path.join(vector_db_dir, name)
             if os.path.isdir(kb_path) and name != "default":
                 kb_list.append(name)
     
@@ -274,7 +300,7 @@ async def create_knowledge_base(kb_name: str):
         raise HTTPException(status_code=400, detail="知识库名称不能为空")
     
     kb_name = kb_name.strip()
-    kb_path = os.path.join(VECTOR_DB_DIR, kb_name)
+    kb_path = os.path.join(get_vector_db_dir(), kb_name)
     
     if os.path.exists(kb_path):
         raise HTTPException(status_code=400, detail=f"知识库「{kb_name}」已存在")
@@ -297,7 +323,7 @@ async def delete_knowledge_base(kb_name: str):
     if kb_name == "default":
         raise HTTPException(status_code=400, detail="默认知识库不能删除")
     
-    kb_path = os.path.join(VECTOR_DB_DIR, kb_name)
+    kb_path = os.path.join(get_vector_db_dir(), kb_name)
     
     if not os.path.exists(kb_path):
         raise HTTPException(status_code=404, detail="知识库不存在")

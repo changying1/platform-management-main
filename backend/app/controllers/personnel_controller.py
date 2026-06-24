@@ -5,9 +5,11 @@ from app.services.personnel_service import PersonnelService
 import os
 import shutil
 from uuid import uuid4
+import logging
 
 router = APIRouter(prefix="/api/personnel", tags=["Personnel"])
 service = PersonnelService()
+logger = logging.getLogger(__name__)
 
 ROLE_RANK = {
     "team_admin": 1,
@@ -130,6 +132,15 @@ def upload_personnel_face(
     updated = service.update_face_image(personnel_id, face_image_url, current_user=current_user)
     if not updated:
         raise HTTPException(status_code=404, detail="Personnel not found")
+
+    try:
+        from app.services.ai_features.face_fusion import reload_face_service_database as reload_fusion_faces
+        from app.services.ai_features.face_recognition import reload_face_service_database as reload_recognition_faces
+
+        reload_fusion_faces()
+        reload_recognition_faces()
+    except Exception as exc:
+        logger.warning("Failed to reload face database after personnel face upload: %s", exc)
 
     return updated
 

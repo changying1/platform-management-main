@@ -1,5 +1,5 @@
 // components/FenceSidebar.tsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Trash2,
   Edit,
@@ -17,7 +17,7 @@ import {
   MapPin,
   UserRound
 } from "lucide-react";
-import { FenceData, FenceDevice, OrganizationTreeNode, WorkTeamData } from "../types";
+import { FenceData, FenceDevice, OrganizationTreeNode, WorkTeamData, getFenceDeviceAlarmKeys } from "../types";
 
 interface SidebarProps {
   fences: FenceData[];
@@ -39,6 +39,7 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
   violationTypes?: Record<string, any>;
   canDeleteFence?: boolean;
+  searchKeyword?: string;
   
 }
 
@@ -56,6 +57,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
   onDeleteFence, 
   violationTypes = {},
   canDeleteFence = false,
+  searchKeyword = "",
   selectedFence,
 }) => {
   const [activeTab, setActiveTab] = useState<"fence" | "device">("fence");
@@ -70,28 +72,141 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
   };
 
   const text = (value: unknown) => String(value ?? "").trim();
+  const normalize = (value: unknown) => text(value).toLowerCase();
+  const normalizedKeyword = normalize(searchKeyword);
+  const matchesKeyword = (fields: unknown[]) =>
+    !normalizedKeyword || fields.some((field) => normalize(field).includes(normalizedKeyword));
+  const getOrgType = (type: unknown) => normalize(type);
+  const getOrgId = (node: OrganizationTreeNode) => text(node.unit_id || node.id);
+  const hasGridScope = (item: { grid_id?: unknown; grid?: unknown; grid_name?: unknown }) =>
+    Boolean(text(item.grid_id) || text(item.grid) || text(item.grid_name));
+  const hasTeamScope = (item: { team_id?: unknown; team?: unknown; team_name?: unknown }) =>
+    Boolean(text(item.team_id) || text(item.team) || text(item.team_name));
+  const getGridKeys = (node: OrganizationTreeNode) =>
+    [node.grid_id, node.unit_id, node.id, node.name].map(text).filter(Boolean);
+  const sameNonEmpty = (left: unknown, right: unknown) => {
+    const a = text(left);
+    const b = text(right);
+    return Boolean(a && b && a === b);
+  };
+  const teamBelongsToGrid = (team: OrganizationTreeNode, grid: OrganizationTreeNode) => {
+    const teamGridKeys = [team.grid_id, (team as any).parent_grid_id, (team as any).grid, (team as any).grid_name]
+      .map(text)
+      .filter(Boolean);
+    if (teamGridKeys.length === 0) return false;
+    const gridKeys = getGridKeys(grid);
+    return teamGridKeys.some((key) => gridKeys.includes(key));
+  };
+  const normalizeOrgHierarchy = (
+    nodes: OrganizationTreeNode[],
+    parentNode?: OrganizationTreeNode,
+    parentType = "root"
+  ): OrganizationTreeNode[] => {
+    const normalized = nodes.flatMap((node) => {
+      const nodeType = getOrgType(node.type);
+      if (nodeType === "personnel") return [];
+      if (nodeType === "safety_office") {
+        return normalizeOrgHierarchy(node.children || [], parentNode, parentType);
+      }
+      return [{
+        ...node,
+        type: nodeType,
+        children: normalizeOrgHierarchy(node.children || [], node, nodeType),
+      }];
+    });
+
+    if (parentType === "grid" || parentType === "team") {
+      return normalized;
+    }
+
+    const grids = normalized
+      .filter((node) => getOrgType(node.type) === "grid")
+      .map((node) => ({ ...node, children: [...(node.children || [])] }));
+    const teams = normalized.filter((node) => getOrgType(node.type) === "team");
+    const others = normalized.filter((node) => {
+      const nodeType = getOrgType(node.type);
+      return nodeType !== "grid" && nodeType !== "team";
+    });
+
+    if (teams.length === 0) return normalized;
+
+    const unassignedTeams: OrganizationTreeNode[] = [];
+    for (const team of teams) {
+      const grid = grids.find((candidate) => teamBelongsToGrid(team, candidate));
+      if (grid) {
+        grid.children = [...(grid.children || []), team];
+      } else {
+        unassignedTeams.push(team);
+      }
+    }
+
+    if (unassignedTeams.length > 0) {
+      const parentId = parentNode ? getOrgId(parentNode) || text(parentNode.id) || text(parentNode.name) : "root";
+      grids.push({
+        id: `${parentId}__unassigned_grid`,
+        unit_id: `${parentId}__unassigned_grid`,
+        name: "未分配网格",
+        type: "grid",
+        parent_id: parentNode?.unit_id || parentNode?.id || null,
+        project_id: parentNode?.project_id || parentNode?.unit_id || parentNode?.id || null,
+        children: unassignedTeams,
+      });
+    }
+
+    return [...others, ...grids];
+  };
 
   const fenceMatchesNode = (fence: FenceData, node: OrganizationTreeNode) => {
-    const nodeType = text(node.type);
-    const nodeUnitId = text(node.unit_id || node.id);
+    const nodeType = getOrgType(node.type);
+    const nodeUnitId = getOrgId(node);
     if (!nodeUnitId) return false;
 
     if (nodeType === "branch") {
       return text(fence.branch_id) === nodeUnitId || text(fence.branch_id) === nodeUnitId.replace(/^BRANCH-/, "");
     }
     if (nodeType === "project") {
-      return text(fence.project_id) === nodeUnitId || text(fence.project_id) === text(node.project_id) || text(fence.project) === text(node.name);
+      const isProjectFence =
+        text(fence.project_id) === nodeUnitId ||
+        text(fence.project_id) === text(node.project_id) ||
+        text(fence.project) === text(node.name);
+      return isProjectFence && !hasGridScope(fence) && !hasTeamScope(fence as any);
     }
-    if (nodeType === "grid" || nodeType === "safety_office") {
-      return text(fence.grid_id) === nodeUnitId || text(fence.grid_id) === text(node.grid_id);
+    if (nodeType === "grid") {
+      return (sameNonEmpty(fence.grid_id, nodeUnitId) || sameNonEmpty(fence.grid_id, node.grid_id)) && !hasTeamScope(fence as any);
     }
     if (nodeType === "team") {
-      return text(fence.team_id) === nodeUnitId || text(fence.team_id) === text(node.team_id);
+      return sameNonEmpty(fence.team_id, nodeUnitId) || sameNonEmpty(fence.team_id, node.team_id);
     }
     return false;
   };
 
   const shouldShowOrgNode = (node: OrganizationTreeNode) => text(node.type) !== "personnel";
+
+  const deviceMatchesNode = (device: FenceDevice, node: OrganizationTreeNode) => {
+    const nodeType = getOrgType(node.type);
+    const nodeUnitId = getOrgId(node);
+    if (!nodeUnitId) return false;
+
+    if (nodeType === "branch") {
+      return text(device.company) === text(node.name);
+    }
+    if (nodeType === "project") {
+      const projectId = text((device as any).project_id);
+      const isProjectDevice = text(device.project) === text(node.name) || projectId === nodeUnitId || projectId === text(node.project_id);
+      return isProjectDevice && !hasGridScope(device) && !hasTeamScope(device as any);
+    }
+    if (nodeType === "grid") {
+      return sameNonEmpty(device.grid_id, nodeUnitId) ||
+        sameNonEmpty(device.grid_id, node.grid_id) ||
+        sameNonEmpty(device.grid || device.grid_name, node.name);
+    }
+    if (nodeType === "team") {
+      return sameNonEmpty((device as any).team_id, nodeUnitId) ||
+        sameNonEmpty((device as any).team_id, node.team_id) ||
+        sameNonEmpty((device as any).team || (device as any).team_name, node.name);
+    }
+    return false;
+  };
 
   const withFenceCounts = (nodes: OrganizationTreeNode[]): OrganizationTreeNode[] => {
     return nodes.flatMap((node) => {
@@ -99,7 +214,31 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
 
       const children = withFenceCounts(node.children || []);
       const directFences = fences.filter((fence) => fenceMatchesNode(fence, node));
+      const directDevices = devices.filter((device) => deviceMatchesNode(device, node));
+      const nodeMatchesSearch = matchesKeyword([
+        node.name,
+        node.unit_id,
+        node.id,
+        node.project_id,
+        node.grid_id,
+        node.team_id,
+        ...directFences.flatMap((fence) => [fence.name, fence.company, fence.project, fence.grid, fence.grid_name]),
+        ...directDevices.flatMap((device) => [device.name, device.device_id, device.holder, device.company, device.project, device.grid, device.grid_name]),
+      ]);
+      if (normalizedKeyword && !nodeMatchesSearch && children.length === 0 && directFences.length === 0) return [];
+
       const childCount = children.reduce((sum, child) => sum + (child.fenceCount || 0), 0);
+      const nodeType = getOrgType(node.type);
+      const isSyntheticUnassignedGrid = text(node.id).endsWith("__unassigned_grid") || text(node.unit_id).endsWith("__unassigned_grid");
+      if (
+        !normalizedKeyword &&
+        directFences.length === 0 &&
+        children.length === 0 &&
+        (nodeType === "team" || isSyntheticUnassignedGrid)
+      ) {
+        return [];
+      }
+
       return [{
         ...node,
         children,
@@ -109,7 +248,12 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     });
   };
 
-  const organizationNodes = withFenceCounts(organizationTree);
+  const organizationNodes = withFenceCounts(normalizeOrgHierarchy(organizationTree));
+
+  useEffect(() => {
+    if (!normalizedKeyword) return;
+    setActiveTab(fences.length === 0 && devices.length > 0 ? "device" : "fence");
+  }, [devices.length, fences.length, normalizedKeyword]);
 
   const toggleOrgNode = (nodeId: string) => {
     setExpandedOrgNodes(prev =>
@@ -120,7 +264,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
   const getNodeIcon = (type: string) => {
     if (type === "branch") return Building2;
     if (type === "project") return FolderTree;
-    if (type === "grid" || type === "safety_office") return MapPin;
+    if (type === "grid") return MapPin;
     if (type === "team") return Users;
     return UserRound;
   };
@@ -128,7 +272,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
   const getNodeColor = (type: string) => {
     if (type === "branch") return "text-cyan-300";
     if (type === "project") return "text-blue-300";
-    if (type === "grid" || type === "safety_office") return "text-violet-300";
+    if (type === "grid") return "text-violet-300";
     if (type === "team") return "text-amber-300";
     return "text-slate-400";
   };
@@ -138,6 +282,9 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     const lng = Number(device.lng);
     return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
   };
+
+  const isViolationDevice = (device: FenceDevice) =>
+    getFenceDeviceAlarmKeys(device).some((key) => Boolean(violationTypes?.[key]));
 
   const renderFenceCard = (fence: FenceData) => (
     <div
@@ -190,7 +337,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     const nodeId = text(node.unit_id || node.id);
     const children = node.children || [];
     const directFences = node.fences || [];
-    const isExpanded = expandedOrgNodes.includes(nodeId) || depth < 2;
+    const isExpanded = Boolean(normalizedKeyword) || expandedOrgNodes.includes(nodeId) || depth < 2;
     const Icon = getNodeIcon(text(node.type));
     const color = getNodeColor(text(node.type));
 
@@ -444,8 +591,8 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
 ) : (
   // 先把违规设备排前面
 [...devices].sort((a, b) => {
-  const aViolate = !!violationTypes?.[a.device_id];
-  const bViolate = !!violationTypes?.[b.device_id];
+  const aViolate = isViolationDevice(a);
+  const bViolate = isViolationDevice(b);
   return Number(bViolate) - Number(aViolate); // 违规 = 1，排在前面
 }).map(device => (
   <div
@@ -473,7 +620,7 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
         <div className="flex items-center gap-1.5">
           <div className="font-medium text-slate-200 text-sm">{device.name}</div>
           {/* 违规标记 */}
-          {violationTypes?.[device.device_id] && (
+          {isViolationDevice(device) && (
             <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" title="违规中"></span>
           )}
         </div>

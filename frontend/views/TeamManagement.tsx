@@ -39,9 +39,9 @@ const TeamManagement: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamItem | null>(null);
   const [formData, setFormData] = useState(emptyForm);
-  const canCreatePersonnel = hasStoredPermission('personnel.create');
-  const canEditPersonnel = hasStoredPermission('personnel.edit');
-  const canDeletePersonnel = hasStoredPermission('personnel.delete');
+  const canCreateTeam = hasStoredPermission('team.create');
+  const canEditTeam = hasStoredPermission('team.edit');
+  const canDeleteTeam = hasStoredPermission('team.delete');
 
   const loadTeams = async () => {
     try {
@@ -178,7 +178,7 @@ const TeamManagement: React.FC = () => {
           <UsersRound size={15} />
           <span className="text-sm">工队 {filteredTeams.length}</span>
         </div>
-        {canCreatePersonnel && (
+        {canCreateTeam && (
         <button
           onClick={openCreate}
           className="flex items-center gap-2 rounded-lg border border-cyan-500/50 bg-cyan-500/20 px-4 py-1.5 text-sm text-cyan-300 transition-colors hover:bg-cyan-500/30"
@@ -218,7 +218,7 @@ const TeamManagement: React.FC = () => {
                 <td className="px-4 py-3 text-sm text-slate-400">{team.fence_ids?.length || 0}</td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-2">
-                    {canEditPersonnel && (
+                    {canEditTeam && (
                     <button
                       onClick={() => openEdit(team)}
                       className="rounded-lg bg-yellow-500/10 p-2 text-yellow-400 hover:bg-yellow-500/20"
@@ -228,7 +228,7 @@ const TeamManagement: React.FC = () => {
                       <Edit2 size={15} />
                     </button>
                     )}
-                    {canDeletePersonnel && (
+                    {canDeleteTeam && (
                     <button
                       onClick={() => handleDelete(team)}
                       className="rounded-lg bg-red-500/10 p-2 text-red-400 hover:bg-red-500/20"

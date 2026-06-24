@@ -3,12 +3,20 @@ from app.utils.config_manager import get_face_recognition_enabled
 _face_service = None
 
 
-def get_face_service():
+def get_face_service():
     global _face_service
     if _face_service is None:
         from app.services.ai_features.face_service import FaceService
         _face_service = FaceService()
-    return _face_service
+    return _face_service
+
+
+def reload_face_service_database():
+    global _face_service
+    if _face_service is None:
+        return
+    _face_service._loaded = False
+    _face_service.ensure_loaded()
 
 
 def _center(coords):

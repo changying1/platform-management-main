@@ -97,6 +97,37 @@ def _to_out(doc: dict) -> dict:
     }
 
 
+def _first_text(*values) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _person_delete_details(person: dict) -> str:
+    parts = []
+    name = _first_text(person.get("name"), person.get("username"))
+    employee_id = _first_text(person.get("employeeId"), person.get("employee_id"))
+    company = _first_text(person.get("company"), person.get("dept"), person.get("department"))
+    project = _first_text(person.get("project"), person.get("projectName"), person.get("project_name"))
+    grid = _first_text(person.get("grid"), person.get("gridName"), person.get("grid_name"))
+    team = _first_text(person.get("team"), person.get("workTeam"), person.get("work_team"))
+    if name:
+        parts.append(f"人员：{name}")
+    if employee_id:
+        parts.append(f"工号：{employee_id}")
+    if company:
+        parts.append(f"所属公司：{company}")
+    if project:
+        parts.append(f"所属项目：{project}")
+    if grid:
+        parts.append(f"所属网格：{grid}")
+    if team:
+        parts.append(f"所属工队：{team}")
+    return "已删除人员" + (f"（{'；'.join(parts)}）" if parts else "")
+
+
 class PersonnelService:
     def __init__(self):
         self.collection = get_personnel_collection()
@@ -368,11 +399,13 @@ class PersonnelService:
                 target_type="person",
                 target_name=existing.get("name") or existing.get("username") or personnel_id,
                 before=existing,
+                details=_person_delete_details(existing),
                 company=existing.get("company") or existing.get("dept"),
                 project=existing.get("project"),
                 grid=existing.get("grid") or existing.get("gridName") or existing.get("grid_name") or existing.get("gridId") or existing.get("grid_id"),
                 team=existing.get("team") or existing.get("workTeam"),
                 level="warning",
+                allowed_fields=set(),
             )
             return True
 

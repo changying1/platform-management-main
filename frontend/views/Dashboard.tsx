@@ -389,7 +389,10 @@ const getDashboardScope = () => {
   const projectName = String(localStorage.getItem('project') || auth.project || '');
   const parsedProjectId = Number(rawProjectId);
   const projectId = rawProjectId !== '' && Number.isFinite(parsedProjectId) ? parsedProjectId : null;
-  const isProjectScope = permissionLevel === 'project_safety_admin';
+  const isProjectScope =
+    permissionLevel === 'project_safety_admin' ||
+    role === 'PROJECT' ||
+    role === 'PROJECT_SAFETY_ADMIN';
   const isNationalScope = permissionLevel
     ? permissionLevel === 'headquarters_admin'
     : role === 'HQ';
@@ -401,6 +404,41 @@ const getDashboardScope = () => {
     forcedProjectId: isProjectScope ? projectId : null,
     forcedProjectName: isProjectScope ? projectName : '',
   };
+};
+
+const getProjectId = (project: any): number | null => {
+  const raw = project?.id ?? project?.projectId ?? project?.project_id;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getProjectName = (project: any) =>
+  String(project?.name || project?.projectName || project?.project || '').trim();
+
+const resolveScopedProject = (projectList: any[], dashboardScope: ReturnType<typeof getDashboardScope>) => {
+  if (!dashboardScope.isProjectScope || !Array.isArray(projectList) || projectList.length === 0) {
+    return null;
+  }
+
+  if (dashboardScope.forcedProjectId) {
+    const matchedById = projectList.find((project) => getProjectId(project) === dashboardScope.forcedProjectId);
+    if (matchedById) return matchedById;
+  }
+
+  const forcedName = String(dashboardScope.forcedProjectName || '').trim();
+  if (forcedName) {
+    const exact = projectList.find((project) => getProjectName(project) === forcedName);
+    if (exact) return exact;
+
+    const fuzzy = projectList.find((project) => {
+      const name = getProjectName(project);
+      return name.includes(forcedName) || forcedName.includes(name);
+    });
+    if (fuzzy) return fuzzy;
+  }
+
+  return projectList[0];
 };
 
 const getDashboardHeaders = () => ({
@@ -788,11 +826,32 @@ const [avgDuration, setAvgDuration] = useState(0);
 
   // ✅ 与 yaokong-main 完全一致的视图切换！12个定位点全显示！
   // ✅ 只有告警列表用真实API数据！
+  const scopedProject = useMemo(() => {
+    if (dashboardOverview?.projectsById) {
+      const overviewProjects = Object.values(dashboardOverview.projectsById);
+      const projectFromOverview = resolveScopedProject(overviewProjects, dashboardScope);
+      if (projectFromOverview) return projectFromOverview;
+    }
+    return resolveScopedProject(projects, dashboardScope);
+  }, [
+    dashboardOverview,
+    dashboardScope.forcedProjectId,
+    dashboardScope.forcedProjectName,
+    dashboardScope.isProjectScope,
+    projects,
+  ]);
+
+  const effectiveSelectedProjectId = dashboardScope.isProjectScope
+    ? getProjectId(scopedProject) ?? dashboardScope.forcedProjectId
+    : selectedProjectId;
+
   const currentData = useMemo(() => {
     if (dashboardOverview) {
       let baseData = dashboardOverview.national;
-      if (selectedProjectId) {
-        baseData = dashboardOverview.projectsById?.[String(selectedProjectId)] || baseData;
+      if (effectiveSelectedProjectId) {
+        baseData = dashboardOverview.projectsById?.[String(effectiveSelectedProjectId)] || scopedProject || baseData;
+      } else if (dashboardScope.isProjectScope && scopedProject) {
+        baseData = scopedProject;
       } else if (selectedFilterBranchId !== "" && selectedFilterBranchId !== 0) {
         baseData = dashboardOverview.branchesById?.[String(selectedFilterBranchId)] || baseData;
       }
@@ -810,8 +869,8 @@ const [avgDuration, setAvgDuration] = useState(0);
     let baseData;
     
     // ✅ 项目模式 - 任何选中的项目都进入项目级视图（跳转到高德地图）
-    if (selectedProjectId && selectedProjectId !== "") {
-      const selectedProj = nationalData.projectsList.find(p => p.id === selectedProjectId);
+    if (effectiveSelectedProjectId) {
+      const selectedProj = nationalData.projectsList.find(p => p.id === effectiveSelectedProjectId);
       if (selectedProj) {
         baseData = {
           name: `${selectedProj.name}·详情`,
@@ -858,6 +917,9 @@ const [avgDuration, setAvgDuration] = useState(0);
         baseData = projectData;
       }
     }
+    else if (dashboardScope.isProjectScope) {
+      baseData = projectData;
+    }
     // 集团/总公司模式
     else if (selectedFilterBranchId === 0 || selectedFilterBranchId === 1) {
       baseData = headquartersData;
@@ -897,7 +959,15 @@ const [avgDuration, setAvgDuration] = useState(0);
         list: todayAlarms
       }
     };
-  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId, todayAlarms, globalSafetyDays]);
+  }, [
+    dashboardOverview,
+    dashboardScope.isProjectScope,
+    effectiveSelectedProjectId,
+    scopedProject,
+    selectedFilterBranchId,
+    todayAlarms,
+    globalSafetyDays,
+  ]);
     
 
     // ==================================================================
@@ -965,8 +1035,8 @@ const [avgDuration, setAvgDuration] = useState(0);
         
         // ========== 仅获取：今日告警详情（实时预警动态）==========
         let alarmsUrl = `${baseUrl}/api/dashboard/alarms/today`;
-        if (selectedProjectId) {
-          alarmsUrl = `${baseUrl}/api/dashboard/alarms/today?project_id=${selectedProjectId}`;
+        if (effectiveSelectedProjectId) {
+          alarmsUrl = `${baseUrl}/api/dashboard/alarms/today?project_id=${effectiveSelectedProjectId}`;
         } else if (selectedFilterBranchId) {
           alarmsUrl = `${baseUrl}/api/dashboard/alarms/today?branch_id=${selectedFilterBranchId}`;
         }
@@ -981,7 +1051,7 @@ const [avgDuration, setAvgDuration] = useState(0);
         console.error("fetch alarms failed:", e);
       }
     })();
-  }, [dashboardOverview, selectedProjectId, selectedFilterBranchId]);
+  }, [dashboardOverview, effectiveSelectedProjectId, selectedFilterBranchId]);
 
       useEffect(() => {
       const updateViewportUnits = () => {
@@ -999,11 +1069,14 @@ const [avgDuration, setAvgDuration] = useState(0);
 
     const filteredProjects = useMemo(() => {
       if (dashboardScope.isProjectScope) {
+        if (scopedProject) {
+          return [scopedProject];
+        }
         if (dashboardScope.forcedProjectId) {
-          return projects.filter((p) => String(p.id) === String(dashboardScope.forcedProjectId));
+          return projects.filter((p) => getProjectId(p) === dashboardScope.forcedProjectId);
         }
         if (dashboardScope.forcedProjectName) {
-          return projects.filter((p) => p.name === dashboardScope.forcedProjectName);
+          return projects.filter((p) => getProjectName(p) === dashboardScope.forcedProjectName);
         }
         return projects.length === 1 ? projects : [];
       }
@@ -1014,12 +1087,13 @@ const [avgDuration, setAvgDuration] = useState(0);
       dashboardScope.forcedProjectName,
       dashboardScope.isProjectScope,
       projects,
+      scopedProject,
       selectedFilterBranchId,
     ]);
 
     useEffect(() => {
       if (dashboardScope.isProjectScope) {
-        const projectId = dashboardScope.forcedProjectId || filteredProjects[0]?.id || null;
+        const projectId = effectiveSelectedProjectId || getProjectId(filteredProjects[0]) || null;
         if (projectId && selectedProjectId !== projectId) {
           setSelectedProjectId(projectId);
         }
@@ -1039,36 +1113,59 @@ const [avgDuration, setAvgDuration] = useState(0);
       dashboardScope.forcedProjectId,
       dashboardScope.forcedProjectName,
       dashboardScope.isProjectScope,
+      effectiveSelectedProjectId,
       filteredProjects,
       selectedProjectId,
     ]);
 
     const currentProject = useMemo(() => {
-      if (selectedProjectId === null || selectedProjectId === undefined || selectedProjectId === "") {
+      if (dashboardScope.isProjectScope && scopedProject) {
+        return scopedProject;
+      }
+      if (effectiveSelectedProjectId === null || effectiveSelectedProjectId === undefined) {
         return null;
       }
-      const projectId = String(selectedProjectId);
+      const projectId = String(effectiveSelectedProjectId);
       return (
         dashboardOverview?.projectsById?.[projectId] ||
         projects.find((p) => String(p.id) === projectId) ||
         currentData.projectsList?.find((p) => String(p.id) === projectId) ||
         null
       );
-    }, [currentData.projectsList, dashboardOverview, projects, selectedProjectId]);
+    }, [
+      currentData.projectsList,
+      dashboardOverview,
+      dashboardScope.isProjectScope,
+      effectiveSelectedProjectId,
+      projects,
+      scopedProject,
+    ]);
 
     const projectMapData = useMemo(() => {
       if (!currentProject) return null;
-      const parsePoint = (value: any): [number, number] => {
-        if (Array.isArray(value)) return [Number(value[0]), Number(value[1])];
+      const toFiniteNumber = (value: any) => {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) ? numberValue : null;
+      };
+      const parsePoint = (value: any): [number, number] | null => {
+        if (Array.isArray(value)) {
+          const lng = toFiniteNumber(value[0]);
+          const lat = toFiniteNumber(value[1]);
+          return lng !== null && lat !== null ? [lng, lat] : null;
+        }
         if (typeof value === "string" && value.trim()) {
           try {
             const parsed = JSON.parse(value);
-            if (Array.isArray(parsed)) return [Number(parsed[0]), Number(parsed[1])];
+            if (Array.isArray(parsed)) {
+              const lng = toFiniteNumber(parsed[0]);
+              const lat = toFiniteNumber(parsed[1]);
+              return lng !== null && lat !== null ? [lng, lat] : null;
+            }
           } catch {
-            // Fall back to longitude/latitude below.
+            return null;
           }
         }
-        return [Number(currentProject.longitude), Number(currentProject.latitude)];
+        return null;
       };
       const parseBoundary = (value: any): Array<[number, number]> => {
         if (!value) return [];
@@ -1085,10 +1182,16 @@ const [avgDuration, setAvgDuration] = useState(0);
               .filter((point: [number, number]) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
           : [];
       };
+      const projectLng = toFiniteNumber(currentProject.longitude ?? currentProject.lng);
+      const projectLat = toFiniteNumber(currentProject.latitude ?? currentProject.lat);
+      const projectDepartmentCenter =
+        projectLng !== null && projectLat !== null
+          ? [projectLng, projectLat] as [number, number]
+          : parsePoint(currentProject.center) || [108.9398, 34.3416] as [number, number];
       return {
         id: Number(currentProject.id || currentProject.projectId),
         name: currentProject.name || currentProject.projectName || "",
-        center: parsePoint(currentProject.center),
+        center: projectDepartmentCenter,
         zoom_level: Number(currentProject.zoom_level || 17),
         area_boundary: parseBoundary(currentProject.area_boundary),
         devices: currentProject.devices || [],
@@ -1096,9 +1199,9 @@ const [avgDuration, setAvgDuration] = useState(0);
       };
     }, [currentProject]);
       const isHQ = !selectedFilterBranchId;
-      const isBranch = selectedFilterBranchId && !selectedProjectId;
-      const isAllProjects = selectedFilterBranchId && selectedProjectId === null;
-      const isProject = selectedProjectId !== null && selectedProjectId !== undefined && selectedProjectId !== ""; //分公司等级
+      const isBranch = selectedFilterBranchId && !effectiveSelectedProjectId;
+      const isAllProjects = selectedFilterBranchId && effectiveSelectedProjectId === null;
+      const isProject = effectiveSelectedProjectId !== null && effectiveSelectedProjectId !== undefined; //分公司等级
 
     // ==================================================================
     // ECharts 配置
@@ -1230,8 +1333,8 @@ const [avgDuration, setAvgDuration] = useState(0);
   const mapOption = useMemo(() => {
 const projectPoints = projects
   .filter((p) => {
-    if (selectedProjectId) {
-      return String(p.id) === String(selectedProjectId) && p.longitude && p.latitude;
+    if (effectiveSelectedProjectId) {
+      return String(p.id) === String(effectiveSelectedProjectId) && p.longitude && p.latitude;
     }
     // 如果选择了分公司，只显示该分公司的项目
     if (selectedFilterBranchId) {
@@ -1326,7 +1429,7 @@ const projectPoints = projects
         },
       ],
     };
-  }, [branches, selectedCenter, currentMapName, projects, selectedFilterBranchId, selectedProjectId]);
+  }, [branches, selectedCenter, currentMapName, projects, selectedFilterBranchId, effectiveSelectedProjectId]);
 
     const deviceOption = useMemo(() => {
       const total = currentProject
@@ -1494,6 +1597,24 @@ const projectPoints = projects
       };
     }, [currentProject, projects]);
 
+    const overviewPersonnelTotal =
+      currentData.personnel ||
+      currentData.personnelStats?.total ||
+      currentData.personnelStats?.onSite ||
+      0;
+    const overviewFourthMetric =
+      currentData.level === 'headquarters' && !selectedFilterBranchId
+        ? currentData.teamCount || 0
+        : overviewPersonnelTotal;
+    const overviewFourthLabel =
+      currentData.level === 'headquarters' && !selectedFilterBranchId ? '工队' : '人员';
+    const projectPersonnelTotal =
+      currentProject?.userCount ||
+      currentData.personnel ||
+      currentData.personnelStats?.total ||
+      currentData.personnelStats?.onSite ||
+      0;
+
     const healthOption = useMemo(() => {
       const normal = branches.filter(
         (b) => b.status === "正常" || !b.status
@@ -1566,6 +1687,7 @@ const projectPoints = projects
 
         <div style={S.container}>
           {/* ====== 顶部筛选栏 ====== */}
+          {!dashboardScope.isProjectScope && (
           <div style={S.topBar}>
             {/* 左装饰线 */}
             <div style={S.decoLineLeft} />
@@ -1630,6 +1752,7 @@ const projectPoints = projects
             {/* 右装饰线 */}
             <div style={S.decoLineRight} />
           </div>
+          )}
 
           {/* ====== 三栏网格 ====== */}
           <div style={S.mainGrid}>
@@ -1692,8 +1815,10 @@ const projectPoints = projects
     <div style={S.coreStatItem}>
       <div style={S.coreStatIcon}><Users size={28} strokeWidth={1.5} color="#60a5fa" /></div>
       <div style={S.coreStatInfo}>
-        <div style={S.coreStatValue}>{currentData.teamCount || 0}</div>
-        <div style={S.coreStatLabel}>工队</div>
+        <div style={S.coreStatValue}>
+          {currentData.level === 'project' ? projectPersonnelTotal : overviewFourthMetric}
+        </div>
+        <div style={S.coreStatLabel}>{currentData.level === 'project' ? '人员' : overviewFourthLabel}</div>
       </div>
     </div>
   </div>
@@ -1960,40 +2085,13 @@ const projectPoints = projects
                   borderRight: "2px solid rgba(96,165,250,0.4)" 
                 }} />
 {/* 根据视图显示不同地图 */}
-{currentData.level === 'project' && currentProject ? (
+{currentData.level === 'project' && projectMapData ? (
   <>
-        {console.log('传给 ProjectMap 的 devices:', currentProject?.devices)}
+        {console.log('传给 ProjectMap 的 devices:', projectMapData.devices)}
     <ProjectMap 
-        project={{
-            id: currentProject.id,
-            name: currentProject.name,
-           center: (() => {
-    if (!currentProject.center) {
-        // 没有 center，用 longitude/latitude
-        return [currentProject.longitude, currentProject.latitude];
-    }
-    // 如果已经是数组，直接使用
-    if (Array.isArray(currentProject.center)) {
-        return currentProject.center;
-    }
-    // 如果是字符串，尝试解析
-    try {
-        return JSON.parse(currentProject.center);
-    } catch {
-        return [currentProject.longitude, currentProject.latitude];
-    }
-})(),
-            zoom_level: 17,
-            area_boundary: (() => {
-    if (!currentProject.area_boundary) return [];
-    if (Array.isArray(currentProject.area_boundary)) return currentProject.area_boundary;
-    try { return JSON.parse(currentProject.area_boundary); } 
-    catch { return []; }
-})(),
-devices: currentProject.devices || [], 
-            deviceCount: currentProject.deviceCount
-        }}
+        project={projectMapData}
         height="100%"
+        showGridAreas={!dashboardScope.isProjectScope}
     />
         </>
 ) : (
@@ -2179,9 +2277,9 @@ devices: currentProject.devices || [],
     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Bell size={22} strokeWidth={1.5} color="#ef4444" />
-        <span>近七日告警态势</span>
+        <span>近{currentData.alarms.recentDays || 7}日告警态势</span>
       </div>
-      {/* 近七日新增徽章 - 紧贴在标题后面 */}
+      {/* 告警新增徽章 - 紧贴在标题后面 */}
       <span style={{ 
         background: "rgba(239,68,68,0.2)",
         color: "#ef4444",
@@ -2202,7 +2300,7 @@ devices: currentProject.devices || [],
           background: "#ef4444",
           animation: "status-dot 2s infinite"
         }} />
-        近七日新增：{currentData.alarms.todayNew || 0}
+        近{currentData.alarms.recentDays || 7}日新增：{currentData.alarms.todayNew || 0}
       </span>
     </div>
     {/* 详情查看链接 - 放在最右侧 */}

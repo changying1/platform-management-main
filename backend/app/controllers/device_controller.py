@@ -79,6 +79,18 @@ def _unit_name_indexes() -> dict:
     }
 
 
+def _first_unit_for_project(collection_name: str, project_id: str) -> dict:
+    if not project_id:
+        return {}
+    try:
+        return get_mongo_collection(collection_name).find_one(
+            {"project_id": {"$in": [project_id, int(project_id) if project_id.isdigit() else project_id]}},
+            {"_id": 0},
+        ) or {}
+    except Exception:
+        return {}
+
+
 def _personnel_name_indexes() -> dict:
     try:
         collection = get_personnel_collection()
@@ -156,7 +168,7 @@ class TrajectoryPointRequest(BaseModel):
     direction: Optional[float] = None
 
 
-def _device_to_response(device: dict, unit_names: Optional[dict] = None) -> dict:
+def _device_to_response(device: dict, unit_names: Optional[dict] = None, include_trajectory: bool = True) -> dict:
     unit_names = unit_names or {}
     personnel_names = unit_names.get("personnel", {})
     branch_id = _text(device.get("branch_id"))
@@ -167,6 +179,17 @@ def _device_to_response(device: dict, unit_names: Optional[dict] = None) -> dict
     project_name = _text(device.get("project") or device.get("project_name")) or _name_from_index(project_id, unit_names.get("projects", {}))
     grid_name = _text(device.get("grid") or device.get("grid_name")) or _name_from_index(grid_id, unit_names.get("grids", {}))
     team_name = _text(device.get("team") or device.get("team_name") or device.get("workTeam") or device.get("work_team")) or _name_from_index(team_id, unit_names.get("teams", {}))
+    if project_id and not grid_name:
+        fallback_grid = _first_unit_for_project("grid", project_id)
+        grid_id = grid_id or _text(fallback_grid.get("grid_id") or fallback_grid.get("id"))
+        grid_name = _text(fallback_grid.get("name"))
+    if project_id and not team_name:
+        fallback_team = _first_unit_for_project("team", project_id)
+        team_id = team_id or _text(fallback_team.get("team_id") or fallback_team.get("id"))
+        team_name = _text(fallback_team.get("name"))
+        if not grid_id:
+            grid_id = _text(fallback_team.get("grid_id"))
+            grid_name = grid_name or _name_from_index(grid_id, unit_names.get("grids", {}))
     install_location = _text(device.get("install_location"))
     if team_name in DEVICE_USE_NAMES:
         install_location = install_location or team_name
@@ -238,7 +261,7 @@ def _device_to_response(device: dict, unit_names: Optional[dict] = None) -> dict
         "lastUpdate": str(last_update or ""),
         "createdAt": created_at,
         "updatedAt": updated_at,
-        "trajectory": device.get("trajectory") or [],
+        "trajectory": device.get("trajectory") or [] if include_trajectory else [],
     }
 
 
@@ -314,11 +337,11 @@ def get_devices(current_user: dict = Depends(get_current_user)):
     try:
         devices = [
             device
-            for device in device_service.get_devices()
+            for device in device_service.get_devices(include_trajectory=False)
             if _is_location_device(device) and _device_in_scope(device, current_user)
         ]
         unit_names = _unit_name_indexes()
-        return [_device_to_response(device, unit_names) for device in devices]
+        return [_device_to_response(device, unit_names, include_trajectory=False) for device in devices]
     except Exception as e:
         logger.error(f"获取设备列表失败: {e}")
         return []
@@ -329,14 +352,14 @@ def get_all_devices(current_user: dict = Depends(get_current_user)):
     """获取所有设备列表（与 fence/devices 兼容）"""
     devices = [
         device
-        for device in device_service.get_devices()
+        for device in device_service.get_devices(include_trajectory=False)
         if _is_location_device(device) and _device_in_scope(device, current_user)
     ]
     unit_names = _unit_name_indexes()
     result = []
 
     for device in devices:
-        result.append(_device_to_response(device, unit_names))
+        result.append(_device_to_response(device, unit_names, include_trajectory=False))
 
     for phone, dev_data in jt808_manager.device_store.items():
         lat = dev_data.get("last_latitude")
@@ -376,6 +399,28 @@ def get_all_devices(current_user: dict = Depends(get_current_user)):
     return result
 
 
+@router.get("/trajectories")
+def get_device_trajectories(
+    hours: int = 24,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """批量获取定位设备轨迹，供轨迹回放页面使用，避免前端逐个设备请求。"""
+    try:
+        safe_hours = max(1, min(int(hours or 24), 24 * 90))
+        devices = [
+            device
+            for device in device_service.get_devices_with_trajectory(safe_hours, start_time, end_time)
+            if _is_location_device(device) and _device_in_scope(device, current_user)
+        ]
+        unit_names = _unit_name_indexes()
+        return [_device_to_response(device, unit_names, include_trajectory=True) for device in devices]
+    except Exception as e:
+        logger.error(f"批量获取设备轨迹失败: {e}")
+        return []
+
+
 @router.get("/{device_id}", response_model=DeviceItem)
 def get_device(device_id: str, hours: Optional[int] = None, current_user: dict = Depends(get_current_user)):
     """根据device_id获取设备（支持按时间筛选轨迹）"""
@@ -396,6 +441,8 @@ def get_device(device_id: str, hours: Optional[int] = None, current_user: dict =
             if datetime.fromisoformat(point.get("timestamp", "").replace("Z", "+00:00")) >= cutoff_time
         ]
     
+    if hours is not None and hours > 0:
+        device["trajectory"] = device_service.get_trajectory(device_id, hours)
     return _device_to_response(device)
 
 
@@ -542,6 +589,7 @@ def add_trajectory(
         direction=payload.direction
     )
     updated_device = device_service.add_trajectory_point(device_id, point)
+    updated_device = updated_device or device_service.get_device_by_id(device_id)
     if not updated_device:
         raise HTTPException(status_code=404, detail="设备不存在")
     return _device_to_response(updated_device)

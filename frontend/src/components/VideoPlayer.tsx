@@ -12,6 +12,8 @@ const API_BASE_URL = detectBackendUrl();
 const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
 const MAX_RETRIES = 8;
 const RETRY_DELAY_MS = 1200;
+const TRAFFIC_OCR_FIRST_DELAY_MS = 10 * 1000;
+const TRAFFIC_OCR_AUTO_INTERVAL_MS = 60 * 60 * 1000;
 
 interface VideoPlayerProps {
   src: string;
@@ -28,6 +30,9 @@ interface MonitoringSummary {
   monthly_threshold_text?: string;
   estimated_remaining_text?: string;
   traffic_status?: string;
+  traffic_text?: string;
+  used_traffic_gb?: number | null;
+  traffic_value?: number | null;
   last_traffic_ocr_time?: string | null;
   last_calculated_at?: string | null;
   main_status?: string;
@@ -102,6 +107,57 @@ const formatUpdateTime = (value?: string | null): string => {
   });
 };
 
+const hasRecognizedTrafficValue = (summary?: MonitoringSummary | null): boolean => {
+  const text = summary?.traffic_text || summary?.weekly_used_text || '';
+  return !!text && text !== '--';
+};
+
+const formatTrafficGb = (value: unknown): string => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  return `${Math.max(0, numeric).toFixed(3).replace(/\.?0+$/, '')}GB`;
+};
+
+const normalizeRecognizeTrafficSummary = (data: any, previous: MonitoringSummary | null): MonitoringSummary => {
+  const trafficText =
+    data?.traffic_text ||
+    data?.traffic_ocr_text ||
+    data?.weekly_used_text ||
+    formatTrafficGb(data?.used_traffic_gb ?? data?.traffic_value);
+
+  return {
+    ...previous,
+    weekly_used_text: data?.weekly_used_text || trafficText,
+    weekly_quota_text: data?.weekly_quota_text || previous?.weekly_quota_text,
+    weekly_remaining_text: data?.weekly_remaining_text || previous?.weekly_remaining_text,
+    monthly_threshold_text: data?.monthly_threshold_text || previous?.monthly_threshold_text,
+    estimated_remaining_text: data?.estimated_remaining_text || previous?.estimated_remaining_text,
+    traffic_status: data?.traffic_status || previous?.traffic_status,
+    traffic_text: trafficText,
+    used_traffic_gb: data?.used_traffic_gb ?? previous?.used_traffic_gb ?? null,
+    traffic_value: data?.traffic_value ?? previous?.traffic_value ?? null,
+    last_traffic_ocr_time:
+      data?.last_update_time ||
+      data?.last_calculated_at ||
+      data?.last_traffic_ocr_time ||
+      previous?.last_traffic_ocr_time ||
+      null,
+    last_calculated_at: data?.last_calculated_at || data?.last_update_time || previous?.last_calculated_at || null,
+    main_status: data?.main_status || previous?.main_status,
+    status_tags: Array.isArray(data?.status_tags) ? data.status_tags : previous?.status_tags || [],
+  };
+};
+
+const formatBackendLocalTime = (value?: string | null): string => {
+  if (!value) return '--';
+  const raw = String(value).trim();
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const normalized = hasTimezone ? raw : `${raw.replace(' ', 'T')}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return raw.replace('T', ' ').slice(0, 19);
+  return date.toLocaleString('zh-CN', { hour12: false });
+};
+
 const extractErrorMessage = (error: unknown, fallback: string): string => {
   const err = error as any;
   if (err?.message) return String(err.message);
@@ -117,17 +173,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   const ezRef = useRef<any>(null);
   const retryCountRef = useRef(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trafficOcrFirstTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trafficOcrIntervalTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const initRef = useRef<(() => void) | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [monitoringSummary, setMonitoringSummary] = useState<MonitoringSummary | null>(null);
   const monitoringSummaryRef = useRef<MonitoringSummary | null>(null);
   const [trafficOcrStatus, setTrafficOcrStatus] = useState('等待识别');
   const [trafficRecognizing, setTrafficRecognizing] = useState(false);
+  const trafficRecognizingRef = useRef(false);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
       retryTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearTrafficOcrTimers = useCallback(() => {
+    if (trafficOcrFirstTimer.current) {
+      clearTimeout(trafficOcrFirstTimer.current);
+      trafficOcrFirstTimer.current = null;
+    }
+    if (trafficOcrIntervalTimer.current) {
+      clearInterval(trafficOcrIntervalTimer.current);
+      trafficOcrIntervalTimer.current = null;
     }
   }, []);
 
@@ -168,8 +238,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   }, [videoId]);
 
   const handleRecognizeTraffic = useCallback(async () => {
-    if (!videoId || trafficRecognizing) return;
+    if (!videoId || trafficRecognizing || trafficRecognizingRef.current) return;
 
+    trafficRecognizingRef.current = true;
     setTrafficRecognizing(true);
     setTrafficOcrStatus('后端识别中');
     console.info('[Traffic] recognize start', { videoId });
@@ -180,16 +251,46 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         throw new Error(result?.message || '识别失败');
       }
       console.info('[Traffic] recognize success', { videoId, result });
-      await fetchTrafficStatus();
+      const normalized = normalizeRecognizeTrafficSummary(result, monitoringSummaryRef.current);
+      monitoringSummaryRef.current = normalized;
+      setMonitoringSummary(normalized);
       setTrafficOcrStatus('识别完成');
     } catch (error) {
       const message = extractErrorMessage(error, '识别失败');
       console.error('[Traffic] recognize failed', { videoId, error });
       setTrafficOcrStatus(message);
     } finally {
+      trafficRecognizingRef.current = false;
       setTrafficRecognizing(false);
     }
-  }, [fetchTrafficStatus, trafficRecognizing, videoId]);
+  }, [trafficRecognizing, videoId]);
+
+  const autoRecognizeTraffic = useCallback(async () => {
+    if (!videoId || trafficRecognizingRef.current) {
+      console.info('[Traffic] auto recognize skipped', { videoId, reason: !videoId ? 'empty videoId' : 'recognizing' });
+      return;
+    }
+
+    trafficRecognizingRef.current = true;
+    setTrafficRecognizing(true);
+    console.info('[Traffic] auto recognize start', { videoId });
+
+    try {
+      const result: any = await recognizeVideoTraffic(videoId);
+      if (result?.success === false) {
+        throw new Error(result?.message || 'traffic recognize failed');
+      }
+      console.info('[Traffic] auto recognize success', { videoId, result });
+      const normalized = normalizeRecognizeTrafficSummary(result, monitoringSummaryRef.current);
+      monitoringSummaryRef.current = normalized;
+      setMonitoringSummary(normalized);
+    } catch (error) {
+      console.warn('[Traffic] auto recognize failed', { videoId, error });
+    } finally {
+      trafficRecognizingRef.current = false;
+      setTrafficRecognizing(false);
+    }
+  }, [videoId]);
 
   const cleanupPlayer = useCallback(() => {
     clearRetryTimer();
@@ -417,17 +518,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     fetchTrafficStatus();
   }, [fetchTrafficStatus]);
 
+  useEffect(() => {
+    clearTrafficOcrTimers();
+    if (!videoId) return;
+
+    trafficOcrFirstTimer.current = setTimeout(() => {
+      autoRecognizeTraffic();
+    }, TRAFFIC_OCR_FIRST_DELAY_MS);
+
+    trafficOcrIntervalTimer.current = setInterval(() => {
+      autoRecognizeTraffic();
+    }, TRAFFIC_OCR_AUTO_INTERVAL_MS);
+
+    return () => {
+      clearTrafficOcrTimers();
+    };
+  }, [autoRecognizeTraffic, clearTrafficOcrTimers, videoId]);
+
   const showNativeVideo = !(src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen');
   const shouldShowLogoFallback =
     connectionStatus === 'error' ||
     monitoringSummary?.main_status === 'offline' ||
     monitoringSummary?.status_tags?.includes('VIDEO_DEVICE_OFFLINE');
 
-  const hasCachedTraffic = hasRecognizedTraffic(monitoringSummary);
-  const usedText = hasCachedTraffic ? monitoringSummary?.weekly_used_text : '等待识别';
+  const hasCachedTraffic = hasRecognizedTrafficValue(monitoringSummary);
+  const usedText = hasCachedTraffic ? (monitoringSummary?.traffic_text || monitoringSummary?.weekly_used_text) : '等待识别';
   const thresholdText = monitoringSummary?.monthly_threshold_text || monitoringSummary?.weekly_quota_text || '30.00GB';
   const remainingText = monitoringSummary?.estimated_remaining_text || monitoringSummary?.weekly_remaining_text || '--';
-  const updateTimeText = formatUpdateTime(monitoringSummary?.last_traffic_ocr_time);
+  const updateTimeText = formatBackendLocalTime(monitoringSummary?.last_traffic_ocr_time);
   const isTrafficAlarm = monitoringSummary?.traffic_status === 'alarm';
 
   return (

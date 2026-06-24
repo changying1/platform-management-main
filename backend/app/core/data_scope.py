@@ -203,11 +203,12 @@ def project_ids_for_user(user: dict) -> list[str]:
         cache["project_ids"] = result
         return result
 
+    level = user_level(user)
     project_name = text(user.get("project"))
     query = None
     if project_name:
         query = {"name": project_name}
-    elif branch_ids_for_user(user):
+    elif level == "branch_admin" and branch_ids_for_user(user):
         query = {"branch_id": {"$in": branch_ids_for_user(user)}}
 
     if not query:

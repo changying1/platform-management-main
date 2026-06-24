@@ -118,6 +118,8 @@ def update_role_permissions(
     target_rank = ROLE_RANK.get(level, 0)
     if target_rank == 0:
         raise HTTPException(status_code=400, detail="unknown permission level")
+    if level == "headquarters_admin":
+        raise HTTPException(status_code=403, detail="总部管理员为系统内置全权限，不能修改")
     if current_rank < target_rank:
         raise HTTPException(status_code=403, detail="cannot assign a higher permission level")
     try:

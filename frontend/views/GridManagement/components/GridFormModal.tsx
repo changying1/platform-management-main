@@ -1,8 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { MapPin, Save, Search, X } from 'lucide-react';
-import L from 'leaflet';
-import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
+import AMapLoader from '@amap/amap-jsapi-loader';
 import type { Grid } from '../../../types';
 import { API_BASE_URL, getAuthHeaders } from '../../../src/api/config';
 
@@ -32,6 +30,8 @@ type ProjectOption = {
 };
 
 const DEFAULT_CENTER: LatLngTuple = [34.3416, 108.9398];
+const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || 'ab3044412b12b8deb9da741c6739be1d';
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || '65a74edbb64d47769637df170a5da117';
 
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
 
@@ -96,70 +96,127 @@ const parseBoundaryPoints = (value?: string): LatLngTuple[] => {
   }
 };
 
-const BoundaryDrawEvents: React.FC<{
-  points: LatLngTuple[];
-  onChange: (points: LatLngTuple[]) => void;
-}> = ({ points, onChange }) => {
-  useMapEvents({
-    click(event) {
-      onChange([...points, [Number(event.latlng.lat.toFixed(6)), Number(event.latlng.lng.toFixed(6))]]);
-    },
-  });
-  return null;
-};
-
-const MapFollower: React.FC<{ center: LatLngTuple; points: LatLngTuple[] }> = ({ center, points }) => {
-  const map = useMap();
-
-  useEffect(() => {
-    if (points.length >= 2) {
-      map.fitBounds(points, { padding: [24, 24], maxZoom: 18 });
-    } else {
-      map.setView(center, 16);
-    }
-  }, [center, map, points]);
-
-  return null;
-};
+const toAmapLngLat = ([lat, lng]: LatLngTuple): [number, number] => [lng, lat];
 
 const BoundaryDrawMap: React.FC<{
   center: LatLngTuple;
   points: LatLngTuple[];
   onChange: (points: LatLngTuple[]) => void;
 }> = ({ center, points, onChange }) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<any>(null);
+  const amapRef = React.useRef<any>(null);
+  const overlaysRef = React.useRef<any[]>([]);
+  const pointsRef = React.useRef(points);
+
   useEffect(() => {
-    window.setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+    pointsRef.current = points;
+  }, [points]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const initMap = async () => {
+      if (!containerRef.current || mapRef.current) return;
+      try {
+        if (!(window as any)._AMapSecurityConfig) {
+          (window as any)._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE };
+        }
+        const AMap = await AMapLoader.load({ key: AMAP_KEY, version: '2.0' });
+        if (cancelled) return;
+        amapRef.current = AMap;
+        mapRef.current = new AMap.Map(containerRef.current, {
+          zoom: 16,
+          center: toAmapLngLat(center),
+          viewMode: '2D',
+          layers: [
+            new AMap.TileLayer.Satellite(),
+            new AMap.TileLayer.RoadNet(),
+          ],
+        });
+        mapRef.current.on('click', (event: any) => {
+          const nextPoint: LatLngTuple = [
+            Number(event.lnglat.getLat().toFixed(6)),
+            Number(event.lnglat.getLng().toFixed(6)),
+          ];
+          onChange([...pointsRef.current, nextPoint]);
+        });
+      } catch (error) {
+        console.error('AMap init failed', error);
+      }
+    };
+
+    initMap();
+    return () => {
+      cancelled = true;
+      if (mapRef.current?.destroy) {
+        mapRef.current.destroy();
+        mapRef.current = null;
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || !amapRef.current) return;
+    const AMap = amapRef.current;
+    const map = mapRef.current;
+
+    overlaysRef.current.forEach((overlay) => map.remove(overlay));
+    overlaysRef.current = [];
+
+    const path = points.map(toAmapLngLat);
+    if (path.length >= 2) {
+      const polyline = new AMap.Polyline({
+        path,
+        strokeColor: '#22d3ee',
+        strokeOpacity: 1,
+        strokeWeight: 3,
+        strokeStyle: 'dashed',
+      });
+      map.add(polyline);
+      overlaysRef.current.push(polyline);
+    }
+
+    if (path.length >= 3) {
+      const polygon = new AMap.Polygon({
+        path,
+        strokeColor: '#06b6d4',
+        strokeOpacity: 1,
+        strokeWeight: 3,
+        fillColor: '#06b6d4',
+        fillOpacity: 0.25,
+      });
+      map.add(polygon);
+      overlaysRef.current.push(polygon);
+    }
+
+    path.forEach((position, index) => {
+      const marker = new AMap.Marker({
+        position,
+        content: `<div style="width:18px;height:18px;border-radius:50%;background:#06b6d4;border:3px solid white;box-shadow:0 0 8px rgba(6,182,212,.8);"></div>`,
+        offset: new AMap.Pixel(-9, -9),
+        zIndex: 90,
+      });
+      const label = new AMap.Marker({
+        position,
+        content: `<div style="background:#06b6d4;color:white;font-size:11px;font-weight:800;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;">${index + 1}</div>`,
+        offset: new AMap.Pixel(-10, -32),
+        zIndex: 91,
+      });
+      map.add(marker);
+      map.add(label);
+      overlaysRef.current.push(marker, label);
+    });
+
+    if (path.length >= 2) {
+      map.setFitView(overlaysRef.current, false, [24, 24, 24, 24], 18);
+    } else {
+      map.setZoomAndCenter(16, toAmapLngLat(center));
+    }
+  }, [center, points]);
 
   return (
     <div className="overflow-hidden rounded-lg border border-cyan-500/30 bg-slate-900">
-      <div className="h-64">
-        <MapContainer center={center} zoom={16} style={{ height: '100%', width: '100%' }}>
-          <MapFollower center={center} points={points} />
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <BoundaryDrawEvents points={points} onChange={onChange} />
-          {points.length >= 2 && (
-            <Polyline positions={points} pathOptions={{ color: '#22d3ee', weight: 3, dashArray: '6 4' }} />
-          )}
-          {points.length >= 3 && (
-            <Polygon
-              positions={points}
-              pathOptions={{ color: '#06b6d4', weight: 2, fillColor: '#06b6d4', fillOpacity: 0.22 }}
-            />
-          )}
-          {points.map((point, index) => (
-            <CircleMarker
-              key={`${point[0]}-${point[1]}-${index}`}
-              center={point}
-              radius={6}
-              pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#06b6d4', fillOpacity: 1 }}
-            />
-          ))}
-        </MapContainer>
-      </div>
+      <div ref={containerRef} className="h-64" />
     </div>
   );
 };
@@ -220,7 +277,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
       const branchNames = new Map<number, string>();
       branchList.forEach((branch) => {
         const id = toNumber(branch.id);
-        if (id !== null) branchNames.set(id, branch.name || `分公司 ${id}`);
+        if (id !== null) branchNames.set(id, branch.name || `鍒嗗叕鍙?${id}`);
       });
       basicProjects.forEach((project) => {
         const id = toNumber(project.branch_id);
@@ -228,7 +285,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
       });
       nextProjects.forEach((project) => {
         if (project.branch_id !== null && project.branch_id !== undefined && !branchNames.has(project.branch_id)) {
-          branchNames.set(project.branch_id, `分公司 ${project.branch_id}`);
+          branchNames.set(project.branch_id, `鍒嗗叕鍙?${project.branch_id}`);
         }
       });
 
@@ -241,7 +298,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
       }
     };
 
-    loadOptions().catch((error) => console.error('加载项目选项失败:', error));
+    loadOptions().catch((error) => console.error('鍔犺浇椤圭洰閫夐」澶辫触:', error));
   }, [isOpen]);
 
   useEffect(() => {
@@ -304,22 +361,32 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
     }));
   };
 
-  const handleMapSearch = async () => {
+  const handleAmapSearch = async () => {
     const keyword = mapSearch.trim();
     if (!keyword) return;
     try {
       setSearchingMap(true);
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(keyword)}`
-      );
-      const [result] = await response.json();
-      const lat = toNumber(result?.lat);
-      const lon = toNumber(result?.lon);
-      if (lat !== null && lon !== null) {
-        setMapCenter([lat, lon]);
-      } else {
-        alert('没有找到该位置');
+      if (!(window as any)._AMapSecurityConfig) {
+        (window as any)._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE };
       }
+      const AMap = await AMapLoader.load({ key: AMAP_KEY, version: '2.0' });
+      await new Promise<void>((resolve) => {
+        AMap.plugin(['AMap.PlaceSearch'], () => {
+          const placeSearch = new AMap.PlaceSearch({ city: '全国', pageSize: 1, extensions: 'base' });
+          placeSearch.search(keyword, (_status: string, result: any) => {
+            const poi = result?.poiList?.pois?.[0];
+            const location = poi?.location;
+            const lng = Number(location?.lng ?? location?.getLng?.());
+            const lat = Number(location?.lat ?? location?.getLat?.());
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              setMapCenter([lat, lng]);
+            } else {
+              alert('没有找到该位置');
+            }
+            resolve();
+          });
+        });
+      });
     } catch (error) {
       console.error(error);
       alert('地图搜索失败');
@@ -332,6 +399,10 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
     e.preventDefault();
     if (!formData.project_id.trim()) {
       alert('请选择所属项目');
+      return;
+    }
+    if (boundaryPoints.length < 3) {
+      alert('请在地图上至少点选 3 个点，绘制网格区域');
       return;
     }
 
@@ -349,7 +420,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="max-h-[88vh] w-[620px] overflow-hidden rounded-xl border border-white/20 bg-slate-800 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-blue-600/20 to-cyan-600/20 px-6 py-4">
-          <h3 className="text-xl font-bold text-white">{editGrid ? '编辑网格' : '新建网格'}</h3>
+          <h3 className="text-xl font-bold text-white">{editGrid ? '缂栬緫缃戞牸' : '鏂板缓缃戞牸'}</h3>
           <button
             onClick={onClose}
             className="rounded-lg p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
@@ -425,7 +496,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               onChange={handleChange}
               required
               className="w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
-              placeholder="如 1号隧道、2号桥梁、站房工程"
+              placeholder="如 1号隧道、桥梁二网格、站房施工区"
             />
           </div>
 
@@ -440,7 +511,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();
-                      handleMapSearch();
+                      handleAmapSearch();
                     }
                   }}
                   className="w-full rounded-md border border-white/15 bg-white/10 py-1.5 pl-9 pr-3 text-sm text-white placeholder-white/40 focus:border-cyan-400 focus:outline-none"
@@ -449,7 +520,7 @@ export const GridFormModal: React.FC<GridFormModalProps> = ({ isOpen, onClose, o
               </div>
               <button
                 type="button"
-                onClick={handleMapSearch}
+                onClick={handleAmapSearch}
                 disabled={searchingMap}
                 className="flex items-center gap-1 rounded-md border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >

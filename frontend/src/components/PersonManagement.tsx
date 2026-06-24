@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿import React, { useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useEffect, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Save, Loader, Users, Camera, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getAuthHeaders, withAuthTokenParam } from '../api/config';
@@ -118,6 +118,16 @@ const getCurrentPermissionLevel = () => {
 const canAssignPermission = (level: string) =>
   permissionRank[level] <= permissionRank[getCurrentPermissionLevel()];
 
+const isManagerPerson = (person: Person) => {
+  const level = person.permissionLevel || defaultPermissionByRole[person.role || ''] || '';
+  return Boolean(person.isResponsibilityPerson || (level && level !== 'headquarters_admin' ? !workerRoles.has(person.role || 'Worker') || level !== '' : level === 'headquarters_admin'));
+};
+
+const firstAssignableManagerRole = () => {
+  const preferredRoles = ['Branch Admin', 'Project Manager', 'Grid Admin', 'Team Admin', 'Safety Officer', 'HQ Manager'];
+  return preferredRoles.find(role => canAssignPermission(defaultPermissionByRole[role] || 'team_admin')) || 'Project Manager';
+};
+
 const buildAuthHeaders = (json = true) => {
   const headers: Record<string, string> = {
     ...getAuthHeaders(),
@@ -141,7 +151,13 @@ const InfoItem = ({ label, value }: { label: string; value?: string }) => (
 // 鉁?鍐呯綉绌块€忔櫤鑳介€傞厤锛?
 const detectBackendUrl = (): string => {
   if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
-  if (window.location.port === '3000') return '';
+  const isLocalViteDevServer =
+    import.meta.env.DEV &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+    window.location.port !== '' &&
+    window.location.port !== '9000';
+  const isViteDevPort = import.meta.env.DEV && /^30\d\d$/.test(window.location.port);
+  if (isLocalViteDevServer || isViteDevPort) return '';
   return `${window.location.protocol}//${window.location.host}`;
 };
 const API_BASE = detectBackendUrl();
@@ -239,11 +255,12 @@ const [viewingPerson, setViewingPerson] = useState<Person | null>(null);
 const [persons, setPersons] = useState<Person[]>(SQL_PERSONNEL);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCompany, setFilterCompany] = useState<string>('all');
+const [filterCompany, setFilterCompany] = useState<string>('all');
 const [filterProject, setFilterProject] = useState<string>('all');
 const [filterWorkTeam, setFilterWorkTeam] = useState<string>('all');
 const [filterWorkType, setFilterWorkType] = useState<string>('all');
 const [filterTeam, setFilterTeam] = useState<string>('all');
+const [personView, setPersonView] = useState<'general' | 'manager'>('general');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<Person | null>(null);
   const [loading, setLoading] = useState(false);
@@ -304,16 +321,20 @@ useEffect(() => {
 }, []);
 
 
+const managerCount = persons.filter(isManagerPerson).length;
+const generalCount = persons.length - managerCount;
+const viewPersons = persons.filter(person => personView === 'manager' ? isManagerPerson(person) : !isManagerPerson(person));
+
 // 鑾峰彇鎵€鏈夊敮涓€鐨勫垎鍏徃
-const companies = ['all', ...new Set(persons.map(p => p.company).filter(Boolean))];
+const companies = ['all', ...new Set(viewPersons.map(p => p.company).filter(Boolean))];
 // 鑾峰彇鎵€鏈夊敮涓€鐨勯」鐩?
-const projects = ['all', ...new Set(persons.map(p => p.project).filter(Boolean))];
+const projects = ['all', ...new Set(viewPersons.map(p => p.project).filter(Boolean))];
 // 鑾峰彇鎵€鏈夊敮涓€鐨勫伐闃?
-const workTeams = ['all', ...new Set(persons.map(p => p.workTeam).filter(Boolean))];
+const workTeams = ['all', ...new Set(viewPersons.map(p => p.workTeam).filter(Boolean))];
 // 鑾峰彇鎵€鏈夊敮涓€鐨勫伐绉?
-const workTypes = ['all', ...new Set(persons.map(p => p.workType).filter(Boolean))];
+const workTypes = ['all', ...new Set(viewPersons.map(p => p.workType).filter(Boolean))];
 // 鑾峰彇鎵€鏈夊敮涓€鐨勭彮缁?
-const teams = ['all', ...new Set(persons.map(p => p.team).filter(Boolean))];
+const teams = ['all', ...new Set(viewPersons.map(p => p.team).filter(Boolean))];
 
 const selectedProjectOptions = projectOptions.filter(project =>
   !editingItem?.branchId || String(project.branch_id || '') === String(editingItem.branchId)
@@ -342,7 +363,7 @@ const responsibilityTargetName = {
 }[responsibilityTargetLevel] || '';
 
 // 绛涢€夋暟鎹?
-const filteredData = persons.filter(p => {
+const filteredData = viewPersons.filter(p => {
   // 妯＄硦鎼滅储锛堝鍚嶃€佸伐鍙枫€佽韩浠借瘉鍙枫€佺數璇濓級
   const matchesSearch = searchTerm === '' || 
     p.name.includes(searchTerm) || 
@@ -467,6 +488,34 @@ const confirmImport = () => {
     />
   </div>
   
+  <div className="flex rounded-lg border border-slate-700 bg-slate-800/50 p-0.5">
+    {[
+      { value: 'general' as const, label: '一般人员', count: generalCount },
+      { value: 'manager' as const, label: '管理人员', count: managerCount },
+    ].map(option => (
+      <button
+        key={option.value}
+        type="button"
+        onClick={() => {
+          setPersonView(option.value);
+          setFilterCompany('all');
+          setFilterProject('all');
+          setFilterWorkTeam('all');
+          setFilterWorkType('all');
+          setFilterTeam('all');
+        }}
+        className={
+          'px-3 py-1.5 text-sm rounded-md transition-colors ' +
+          (personView === option.value
+            ? 'bg-cyan-500/25 text-cyan-200'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50')
+        }
+      >
+        {option.label} <span className="text-xs opacity-80">{option.count}</span>
+      </button>
+    ))}
+  </div>
+
   {/* 绛涢€変笅鎷夋 */}
   <select
     value={filterCompany}
@@ -564,6 +613,7 @@ const confirmImport = () => {
     {canCreatePersonnel && (
     <button
       onClick={() => {
+        const managerRole = personView === 'manager' ? firstAssignableManagerRole() : 'Worker';
         setEditingItem({
           id: '',
           name: '',
@@ -586,10 +636,10 @@ const confirmImport = () => {
           emergencyContact: '',
           avatar: '',
           faceFile: null,
-          role: 'Worker',
+          role: managerRole,
           loginUsername: '',
           loginPassword: '',
-          permissionLevel: '',
+          permissionLevel: defaultPermissionByRole[managerRole] || '',
           gridRole: '',
           gridIds: [],
           responsibilityUnitId: '',
@@ -599,7 +649,7 @@ const confirmImport = () => {
       className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm"
     >
       <Plus size={14} />
-      添加人员
+      {personView === 'manager' ? '添加管理人员' : '添加人员'}
     </button>
     )}
   </div>
@@ -608,7 +658,7 @@ const confirmImport = () => {
 {/* 筛选结果统计*/}
 <div className="flex justify-between items-center mb-3">
   <p className="text-sm text-slate-400">
-    共 <span className="text-cyan-400 font-bold">{filteredData.length}</span> 条记录
+    {personView === 'manager' ? '管理人员' : '一般人员'}共 <span className="text-cyan-400 font-bold">{filteredData.length}</span> 条记录
     {(filterCompany !== 'all' || filterProject !== 'all' || filterWorkTeam !== 'all' || filterWorkType !== 'all' || filterTeam !== 'all' || searchTerm) && (
       <span className="ml-2 text-xs">（已筛选）</span>
     )}
@@ -753,7 +803,7 @@ const confirmImport = () => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const imageUrl = URL.createObjectURL(file);
-                  setEditingItem({ ...editingItem!, avatar: imageUrl });
+                  setEditingItem({ ...editingItem!, avatar: imageUrl, faceFile: file });
                 }
                 e.target.value = '';
               }}
@@ -1037,7 +1087,7 @@ const confirmImport = () => {
     </select>
   </div>
   <div>
-    <label className="block text-sm text-slate-400 mb-1">绱ф€ヨ仈绯讳汉</label>
+    <label className="block text-sm text-slate-400 mb-1">紧急联系人</label>
     <input
       type="text"
       value={editingItem?.emergencyContact || ''}
@@ -1057,14 +1107,6 @@ const confirmImport = () => {
               alert('请填写姓名和工号');
               return;
             }
-            if (!editingItem.branchId || !editingItem.projectId) {
-              alert('请选择该人员所属的分公司和项目');
-              return;
-            }
-            if (!editingItem.teamId && !editingItem.isResponsibilityPerson) {
-              alert('未选择工队时，必须勾选对应层级责任人员');
-              return;
-            }
             const responsibilityPermission = editingItem.isResponsibilityPerson
               ? responsibilityTargetLevel === 'branch'
                 ? 'branch_admin'
@@ -1074,6 +1116,25 @@ const confirmImport = () => {
                   ? 'team_admin'
                   : 'project_safety_admin'
               : '';
+            const effectivePermissionLevel =
+              responsibilityPermission
+              || editingItem.permissionLevel
+              || defaultPermissionByRole[editingItem.role || '']
+              || '';
+            const needsProjectScope = !['headquarters_admin', 'branch_admin'].includes(effectivePermissionLevel);
+
+            if (!editingItem.branchId && effectivePermissionLevel !== 'headquarters_admin') {
+              alert('请选择该人员所属的分公司');
+              return;
+            }
+            if (needsProjectScope && !editingItem.projectId) {
+              alert('请选择该人员所属的项目');
+              return;
+            }
+            if (!editingItem.teamId && !editingItem.isResponsibilityPerson) {
+              alert('未选择工队时，必须勾选对应层级责任人员');
+              return;
+            }
             const createsLoginAccount = !workerRoles.has(editingItem.role || 'Worker') || Boolean(editingItem.isResponsibilityPerson);
             if (createsLoginAccount && (!editingItem.loginUsername || (!editingItem.id && !editingItem.loginPassword))) {
               alert('管理/责任人员必须填写登录账号和登录密码');
@@ -1179,7 +1240,7 @@ const confirmImport = () => {
               setEditingItem(null);
             } catch (error) {
               console.error(error);
-              alert(error instanceof Error ? error.message : '保存澶辫触');
+              alert(error instanceof Error ? error.message : '保存失败');
             } finally {
               setLoading(false);
             }
@@ -1196,7 +1257,7 @@ const confirmImport = () => {
           }} 
           className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100"
         >
-          鍙栨秷
+          取消
         </button>
         )}
       </div>
@@ -1233,13 +1294,31 @@ const confirmImport = () => {
             type="file"
             accept="image/*"
             style={{ display: 'none' }}
-            onChange={(e) => {
+            onChange={async (e) => {
               const file = e.target.files?.[0];
               if (file) {
                 const imageUrl = URL.createObjectURL(file);
                 const updatedPerson = { ...viewingPerson, avatar: imageUrl };
                 setViewingPerson(updatedPerson);
                 setPersons(persons.map(p => p.id === viewingPerson.id ? updatedPerson : p));
+                try {
+                  const formData = new FormData();
+                  formData.append('file', file);
+                  const uploadRes = await fetch(API_BASE + '/api/personnel/' + viewingPerson.id + '/face', {
+                    method: 'POST',
+                    headers: buildAuthHeaders(false),
+                    body: formData,
+                  });
+                  if (!uploadRes.ok) throw new Error('头像上传失败');
+                  const saved = mapApiToPerson(await uploadRes.json());
+                  setViewingPerson(saved);
+                  setPersons(prev => prev.map(p => p.id === saved.id ? saved : p));
+                } catch (error) {
+                  console.error(error);
+                  alert(error instanceof Error ? error.message : '头像上传失败');
+                  setViewingPerson(viewingPerson);
+                  setPersons(prev => prev.map(p => p.id === viewingPerson.id ? viewingPerson : p));
+                }
               }
               e.target.value = '';
             }}
