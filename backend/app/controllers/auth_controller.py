@@ -403,6 +403,30 @@ def login(req: LoginReq, response: Response):
     return payload
 
 
+@router.get("/me")
+def me(current_user: dict = Depends(get_current_user)):
+    permission_level = current_user.get("permission_level") or "project_safety_admin"
+    user_id = current_user.get("id")
+    return {
+        "userId": int(user_id) if user_id is not None else "",
+        "username": current_user.get("username") or "",
+        "full_name": current_user.get("full_name") or current_user.get("username") or "",
+        "role": current_user.get("role") or "",
+        "permission_level": permission_level,
+        "permissions": get_permissions_for_level(permission_level),
+        "department_id": current_user.get("department_id"),
+        "company": current_user.get("company") or current_user.get("department") or "",
+        "project": current_user.get("project") or "",
+        "project_id": current_user.get("project_id") or "",
+        "grid_id": current_user.get("grid_id") or "",
+        "grid_ids": current_user.get("grid_ids") or [],
+        "team_id": current_user.get("team_id") or "",
+        "team": current_user.get("team") or current_user.get("work_team") or "",
+        "must_change_password": bool(current_user.get("must_change_password")),
+        "password_expired": bool(current_user.get("password_expired")),
+    }
+
+
 @router.post("/change-password")
 def change_password(req: ChangePasswordReq, current_user: dict = Depends(get_current_user)):
     username = current_user.get("username")

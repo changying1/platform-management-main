@@ -5,12 +5,15 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -50,12 +53,14 @@ public class VoiceCallFragment extends Fragment {
     private TextView tvCurrentIdentity;
     private Button btnSwitchIdentity;
     private Button btnStartCall;
+    private EditText etContactSearch;
     private ProgressBar progressBar;
     private RecyclerView rvContacts;
 
     private final List<Contact> allContacts = new ArrayList<>();
     private final List<Contact> contacts = new ArrayList<>();
     private final Set<String> selectedIds = new HashSet<>();
+    private String searchKeyword = "";
     private ContactAdapter adapter;
     private ActivityResultLauncher<String> audioPermissionLauncher;
 
@@ -91,6 +96,7 @@ public class VoiceCallFragment extends Fragment {
         tvCurrentIdentity = view.findViewById(R.id.tv_current_identity);
         btnSwitchIdentity = view.findViewById(R.id.btn_switch_identity);
         btnStartCall = view.findViewById(R.id.btn_start_call);
+        etContactSearch = view.findViewById(R.id.et_contact_search);
         progressBar = view.findViewById(R.id.progress_bar);
         rvContacts = view.findViewById(R.id.rv_contacts);
 
@@ -99,7 +105,22 @@ public class VoiceCallFragment extends Fragment {
         rvContacts.setAdapter(adapter);
 
         btnStartCall.setOnClickListener(v -> startCallWithPermission());
-        btnSwitchIdentity.setOnClickListener(v -> showIdentityDialog());
+        btnSwitchIdentity.setVisibility(View.GONE);
+        etContactSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                searchKeyword = s == null ? "" : s.toString().trim().toLowerCase(Locale.ROOT);
+                applyContactFilter();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
 
         loadContacts();
         updateCurrentIdentity();
@@ -109,24 +130,21 @@ public class VoiceCallFragment extends Fragment {
     private void loadContacts() {
         progressBar.setVisibility(View.VISIBLE);
         AppVoiceCallApi api = ApiClient.get(requireContext()).create(AppVoiceCallApi.class);
-        api.getPersonnel().enqueue(new Callback<List<Map<String, Object>>>() {
+        api.getCallUsers().enqueue(new Callback<List<Map<String, Object>>>() {
             @Override
             public void onResponse(@NonNull Call<List<Map<String, Object>>> call, @NonNull Response<List<Map<String, Object>>> response) {
                 progressBar.setVisibility(View.GONE);
                 allContacts.clear();
                 if (response.isSuccessful() && response.body() != null) {
                     for (Map<String, Object> item : response.body()) {
-                        String id = valueOf(item.get("id"));
+                        String id = valueOf(firstNonEmpty(item.get("userId"), item.get("user_id")));
                         String name = valueOf(firstNonEmpty(item.get("username"), item.get("name")));
-                        String dept = valueOf(firstNonEmpty(item.get("dept"), item.get("company")));
-                        String role = valueOf(firstNonEmpty(item.get("role"), item.get("workType")));
+                        String dept = valueOf(firstNonEmpty(item.get("department"), item.get("company")));
+                        String role = valueOf(firstNonEmpty(item.get("role"), item.get("permissionLevel")));
                         if (!TextUtils.isEmpty(id) && !TextUtils.isEmpty(name)) {
                             allContacts.add(new Contact(id, name, dept, role));
                         }
                     }
-                }
-                if (allContacts.size() < 2) {
-                    addFallbackContacts();
                 }
                 applyContactFilter();
                 updateSelectionState();
@@ -136,7 +154,6 @@ public class VoiceCallFragment extends Fragment {
             public void onFailure(@NonNull Call<List<Map<String, Object>>> call, @NonNull Throwable t) {
                 progressBar.setVisibility(View.GONE);
                 allContacts.clear();
-                addFallbackContacts();
                 applyContactFilter();
                 updateSelectionState();
                 Toast.makeText(requireContext(), "人员加载失败，已使用示例联系人", Toast.LENGTH_SHORT).show();
@@ -176,12 +193,26 @@ public class VoiceCallFragment extends Fragment {
         String currentUserId = session.getUserId();
         contacts.clear();
         for (Contact contact : allContacts) {
-            if (!TextUtils.equals(contact.id, currentUserId)) {
+            if (!TextUtils.equals(contact.id, currentUserId) && matchesSearch(contact)) {
                 contacts.add(contact);
             }
         }
         selectedIds.remove(currentUserId);
         adapter.notifyDataSetChanged();
+    }
+
+    private boolean matchesSearch(Contact contact) {
+        if (TextUtils.isEmpty(searchKeyword)) {
+            return true;
+        }
+        return containsIgnoreCase(contact.id)
+                || containsIgnoreCase(contact.name)
+                || containsIgnoreCase(contact.dept)
+                || containsIgnoreCase(contact.role);
+    }
+
+    private boolean containsIgnoreCase(String value) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(searchKeyword);
     }
 
     private void showIdentityDialog() {
@@ -200,7 +231,6 @@ public class VoiceCallFragment extends Fragment {
                 .setTitle("选择当前测试身份")
                 .setItems(names, (dialog, which) -> {
                     Contact contact = allContacts.get(which);
-                    new SessionManager(requireContext()).saveTestUser(contact.id, contact.name);
                     selectedIds.remove(contact.id);
                     updateCurrentIdentity();
                     applyContactFilter();
@@ -243,8 +273,7 @@ public class VoiceCallFragment extends Fragment {
         String userId = session.getUserId();
         String nickname = session.getNickname();
         if (TextUtils.isEmpty(userId)) {
-            Toast.makeText(requireContext(), "请先选择当前测试身份", Toast.LENGTH_SHORT).show();
-            showIdentityDialog();
+            Toast.makeText(requireContext(), "请先登录", Toast.LENGTH_SHORT).show();
             return;
         }
         if (TextUtils.isEmpty(nickname)) {

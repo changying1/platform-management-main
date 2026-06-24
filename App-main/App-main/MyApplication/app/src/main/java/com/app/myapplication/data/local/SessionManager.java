@@ -17,6 +17,7 @@ public class SessionManager {
     private static final String K_NICK = "nickname";
     private static final String K_AVATAR = "avatar_url";
     private static final String K_ROLE = "role";
+    private static final String K_PERMISSION_LEVEL = "permission_level";
     private static final String K_PERMISSIONS = "permissions";
     private static final String K_USERNAME = "username";
 
@@ -60,6 +61,8 @@ public class SessionManager {
                 .putString(K_NICK, r.nickname == null ? "" : r.nickname)
                 .putString(K_AVATAR, r.avatarUrl == null ? "" : r.avatarUrl)
                 .putString(K_ROLE, r.role == null ? "" : r.role)
+                .putString(K_PERMISSION_LEVEL, r.permissionLevel == null ? "" : r.permissionLevel)
+                .putString(K_USERNAME, r.username == null ? "" : r.username)
                 .putString(K_PERMISSIONS, r.permissions == null ? "" : String.join(",", r.permissions))
                 .apply();
     }
@@ -83,7 +86,7 @@ public class SessionManager {
      * 获取用户角色级别
      */
     public String getPermissionLevel() {
-        return sp.getString(K_ROLE, "");
+        return sp.getString(K_PERMISSION_LEVEL, "");
     }
 
     /**

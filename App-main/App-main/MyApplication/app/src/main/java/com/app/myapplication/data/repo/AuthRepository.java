@@ -17,6 +17,11 @@ public class AuthRepository {
         void onError(String msg);
     }
 
+    public interface SessionCallback {
+        void onValid();
+        void onInvalid();
+    }
+
     private final Context context;
     private final SessionManager session;
 
@@ -27,6 +32,34 @@ public class AuthRepository {
 
     public boolean isLoggedIn() {
         return session.hasToken();
+    }
+
+    public void validateSession(SessionCallback cb) {
+        if (!session.hasToken()) {
+            cb.onInvalid();
+            return;
+        }
+
+        AuthApi api = ApiClient.get(context).create(AuthApi.class);
+        api.me().enqueue(new retrofit2.Callback<LoginResult>() {
+            @Override
+            public void onResponse(Call<LoginResult> call, Response<LoginResult> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    cb.onValid();
+                    return;
+                }
+                session.clear();
+                ApiClient.reset();
+                cb.onInvalid();
+            }
+
+            @Override
+            public void onFailure(Call<LoginResult> call, Throwable t) {
+                session.clear();
+                ApiClient.reset();
+                cb.onInvalid();
+            }
+        });
     }
 
     public void login(String username, String password, Callback cb) {
@@ -42,7 +75,13 @@ public class AuthRepository {
                     return;
                 }
                 if (result.nickname == null || result.nickname.trim().isEmpty()) {
-                    result.nickname = account;
+                    if (result.fullName != null && !result.fullName.trim().isEmpty()) {
+                        result.nickname = result.fullName.trim();
+                    } else if (result.username != null && !result.username.trim().isEmpty()) {
+                        result.nickname = result.username.trim();
+                    } else {
+                        result.nickname = account;
+                    }
                 }
                 session.saveSession(result);
                 ApiClient.reset();

@@ -184,6 +184,9 @@ class PersonnelOut(BaseModel):
     id: str
 
 
+    userId: Optional[str] = ""
+
+
     username: str
 
 

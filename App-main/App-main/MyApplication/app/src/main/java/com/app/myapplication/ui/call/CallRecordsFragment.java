@@ -6,6 +6,7 @@ import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -36,6 +37,7 @@ public class CallRecordsFragment extends Fragment {
     private RecyclerView rvRecords;
     private ProgressBar progressBar;
     private TextView tvEmpty;
+    private Button btnRefreshRecords;
     private final List<Object> items = new ArrayList<>();
     private RecordAdapter adapter;
 
@@ -54,18 +56,22 @@ public class CallRecordsFragment extends Fragment {
         rvRecords = view.findViewById(R.id.rv_records);
         progressBar = view.findViewById(R.id.progress_bar);
         tvEmpty = view.findViewById(R.id.tv_empty);
+        btnRefreshRecords = view.findViewById(R.id.btn_refresh_records);
 
         adapter = new RecordAdapter();
         rvRecords.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvRecords.setAdapter(adapter);
+        btnRefreshRecords.setOnClickListener(v -> loadRoomsAndRecords());
 
         loadRoomsAndRecords();
     }
 
     private void loadRoomsAndRecords() {
         progressBar.setVisibility(View.VISIBLE);
+        btnRefreshRecords.setEnabled(false);
         tvEmpty.setVisibility(View.GONE);
         items.clear();
+        adapter.notifyDataSetChanged();
 
         SessionManager session = new SessionManager(requireContext());
         String userId = session.getUserId();
@@ -98,6 +104,7 @@ public class CallRecordsFragment extends Fragment {
             @Override
             public void onResponse(@NonNull Call<List<AppVoiceRecord>> call, @NonNull Response<List<AppVoiceRecord>> response) {
                 progressBar.setVisibility(View.GONE);
+                btnRefreshRecords.setEnabled(true);
                 if (response.isSuccessful() && response.body() != null) {
                     items.addAll(response.body());
                 } else {
@@ -110,6 +117,7 @@ public class CallRecordsFragment extends Fragment {
             @Override
             public void onFailure(@NonNull Call<List<AppVoiceRecord>> call, @NonNull Throwable t) {
                 progressBar.setVisibility(View.GONE);
+                btnRefreshRecords.setEnabled(true);
                 tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
                 Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
             }

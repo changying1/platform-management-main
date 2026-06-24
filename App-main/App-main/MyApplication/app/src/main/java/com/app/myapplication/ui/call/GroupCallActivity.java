@@ -86,6 +86,7 @@ public class GroupCallActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        AppVoiceCallInviteService.stop(this);
         reconnectCallSocket();
         startInvitePolling();
     }
@@ -93,6 +94,8 @@ public class GroupCallActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         stopInvitePolling();
+        callSocket.close();
+        AppVoiceCallInviteService.start(this);
         super.onPause();
     }
 

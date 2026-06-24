@@ -113,6 +113,7 @@ def _user_to_current_user(user: dict) -> dict:
         "role": role,
         "department_id": _normalize_department_id(user.get("department_id")),
         "username": user.get("username"),
+        "full_name": user.get("full_name") or "",
         "permission_level": permission_level,
         "company": user.get("company") or user.get("department") or "",
         "department": user.get("department") or "",

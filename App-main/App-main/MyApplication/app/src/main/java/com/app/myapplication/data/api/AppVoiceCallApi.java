@@ -18,8 +18,8 @@ import retrofit2.http.Path;
 import retrofit2.http.Query;
 
 public interface AppVoiceCallApi {
-    @GET("api/personnel/")
-    Call<List<Map<String, Object>>> getPersonnel();
+    @GET("app/call/voice/users")
+    Call<List<Map<String, Object>>> getCallUsers();
 
     @POST("app/call/voice/rooms")
     Call<AppVoiceRoom> createRoom(@Body AppVoiceRoomCreateRequest body);

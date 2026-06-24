@@ -37,6 +37,33 @@ public class LoginViewModel extends AndroidViewModel {
         return repo.isLoggedIn();
     }
 
+    public void validateSession() {
+        if (!repo.isLoggedIn()) {
+            UiState idle = new UiState();
+            uiState.setValue(idle);
+            return;
+        }
+
+        UiState checking = new UiState();
+        checking.loading = true;
+        uiState.setValue(checking);
+
+        repo.validateSession(new AuthRepository.SessionCallback() {
+            @Override
+            public void onValid() {
+                UiState ok = new UiState();
+                ok.success = true;
+                uiState.postValue(ok);
+            }
+
+            @Override
+            public void onInvalid() {
+                UiState idle = new UiState();
+                uiState.postValue(idle);
+            }
+        });
+    }
+
     // 用户名+密码登录
     public void login(String username, String password) {
         UiState s = new UiState();

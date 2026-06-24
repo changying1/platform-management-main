@@ -7,16 +7,35 @@
 
     <TextView
         android:id="@+id/tv_title"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="18dp"
         android:layout_marginTop="18dp"
+        android:layout_marginEnd="12dp"
         android:text="App 语音记录"
         android:textColor="#17212B"
         android:textSize="18sp"
         android:textStyle="bold"
+        app:layout_constraintEnd_toStartOf="@id/btn_refresh_records"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <Button
+        android:id="@+id/btn_refresh_records"
+        android:layout_width="72dp"
+        android:layout_height="36dp"
+        android:layout_marginEnd="16dp"
+        android:backgroundTint="#0F766E"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="刷新"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        app:layout_constraintBottom_toBottomOf="@id/tv_title"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/tv_title" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rv_records"

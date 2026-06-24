@@ -182,6 +182,7 @@ public class VoiceRoomActivity extends AppCompatActivity {
                     Toast.makeText(VoiceRoomActivity.this, "加入语音房间失败", Toast.LENGTH_SHORT).show();
                     return;
                 }
+                AppVoiceCallInviteService.cancelInviteNotification(VoiceRoomActivity.this, roomId);
                 AgoraJoinInfo info = response.body();
                 bindRoom(info.room);
                 try {
