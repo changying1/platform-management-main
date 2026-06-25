@@ -100,7 +100,7 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         model_name="face",
         model_type="onnx",
         class_map={0: "face"},
-        alarm_labels=frozenset(),
+        alarm_labels=frozenset({"face"}),
         allowed_labels=frozenset({"face"}),
         enabled=True,
     ),
