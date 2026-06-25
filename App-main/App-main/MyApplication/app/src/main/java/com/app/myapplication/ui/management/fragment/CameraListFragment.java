@@ -92,6 +92,11 @@ public class CameraListFragment extends BaseManagementFragment {
                     }
                 } else {
                     android.util.Log.e("CameraList", "API error: " + response.code());
+                    if (response.code() == 401) {
+                        showToast("登录已失效，请重新登录");
+                    } else {
+                        showToast("获取设备失败: HTTP " + response.code());
+                    }
                 }
                 
                 adapter.notifyDataSetChanged();

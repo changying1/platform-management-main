@@ -1,5 +1,6 @@
 package com.app.myapplication.data.model;
 
+import com.google.gson.JsonElement;
 import com.google.gson.annotations.SerializedName;
 
 public class Alarm {
@@ -78,26 +79,61 @@ public class Alarm {
 
     private String imageUrl;
 
-    @SerializedName("video_url")
+    @SerializedName(value = "boxed_video_url", alternate = {"boxedVideoUrl"})
+    private String boxedVideoUrl;
+
+    @SerializedName(value = "annotated_video_url", alternate = {"annotatedVideoUrl"})
+    private String annotatedVideoUrl;
+
+    @SerializedName(value = "alarm_video_url", alternate = {"alarmVideoUrl"})
+    private String alarmVideoUrl;
+
+    @SerializedName(value = "alarm_video_path", alternate = {"alarmVideoPath"})
+    private String alarmVideoPath;
+
+    @SerializedName(value = "raw_video_path", alternate = {"rawVideoPath"})
+    private String rawVideoPath;
+
+    @SerializedName(value = "video_url", alternate = {"videoUrl"})
     private String videoUrl;
 
-    @SerializedName("clip_url")
+    @SerializedName(value = "clip_url", alternate = {"clipUrl"})
     private String clipUrl;
 
-    @SerializedName("duration_seconds")
-    private int durationSeconds;
+    @SerializedName(value = "duration_seconds", alternate = {"durationSeconds"})
+    private double durationSeconds;
 
-    @SerializedName("start_time")
+    @SerializedName(value = "video_duration", alternate = {"videoDuration", "duration", "clip_duration", "clipDuration"})
+    private Double videoDuration;
+
+    @SerializedName(value = "start_time", alternate = {"startTime"})
     private String startTime;
 
-    @SerializedName("recording_start_time")
+    @SerializedName(value = "recording_start_time", alternate = {"recordingStartTime"})
     private String recordingStartTime;
 
-    @SerializedName("end_time")
+    @SerializedName(value = "actual_clip_start", alternate = {"actualClipStart", "clip_start", "video_start_time", "videoStartTime"})
+    private String actualClipStart;
+
+    @SerializedName(value = "actual_clip_end", alternate = {"actualClipEnd", "clip_end", "video_end_time", "videoEndTime"})
+    private String actualClipEnd;
+
+    @SerializedName(value = "snapshot_time", alternate = {"snapshotTime", "image_time", "imageTime", "capture_time", "captureTime"})
+    private String snapshotTime;
+
+    @SerializedName(value = "end_time", alternate = {"endTime"})
     private String endTime;
 
-    @SerializedName("alarm_second")
-    private Integer alarmSecond;
+    @SerializedName(value = "alarm_second_by_snapshot", alternate = {"alarmSecondBySnapshot"})
+    private Double alarmSecondBySnapshot;
+
+    @SerializedName(value = "alarm_second", alternate = {"alarmSecond"})
+    private Double alarmSecond;
+
+    @SerializedName(value = "coords", alternate = {"coords_norm", "bbox", "bounding_box", "boxes", "detections", "detection_results"})
+    private JsonElement bboxPayload;
+
+    private String bboxJson;
 
     public Alarm() {
     }
@@ -303,13 +339,44 @@ public class Alarm {
     }
 
     public String getVideoUrl() {
-        if (videoUrl != null && !videoUrl.trim().isEmpty()) return videoUrl;
-        if (recordingPath != null && !recordingPath.trim().isEmpty()) return recordingPath;
-        return clipUrl;
+        return firstNonBlank(
+                boxedVideoUrl,
+                annotatedVideoUrl,
+                alarmVideoUrl,
+                videoUrl,
+                alarmVideoPath,
+                rawVideoPath,
+                recordingPath,
+                clipUrl
+        );
     }
 
     public void setVideoUrl(String videoUrl) {
         this.videoUrl = videoUrl;
+    }
+
+    public String getBoxedVideoUrl() {
+        return firstNonBlank(boxedVideoUrl, annotatedVideoUrl, alarmVideoUrl);
+    }
+
+    public void setBoxedVideoUrl(String boxedVideoUrl) {
+        this.boxedVideoUrl = boxedVideoUrl;
+    }
+
+    public void setAnnotatedVideoUrl(String annotatedVideoUrl) {
+        this.annotatedVideoUrl = annotatedVideoUrl;
+    }
+
+    public void setAlarmVideoUrl(String alarmVideoUrl) {
+        this.alarmVideoUrl = alarmVideoUrl;
+    }
+
+    public void setAlarmVideoPath(String alarmVideoPath) {
+        this.alarmVideoPath = alarmVideoPath;
+    }
+
+    public void setRawVideoPath(String rawVideoPath) {
+        this.rawVideoPath = rawVideoPath;
     }
 
     public String getClipUrl() {
@@ -320,11 +387,11 @@ public class Alarm {
         this.clipUrl = clipUrl;
     }
 
-    public int getDurationSeconds() {
-        return durationSeconds;
+    public double getDurationSeconds() {
+        return durationSeconds > 0 ? durationSeconds : (videoDuration == null ? 0 : videoDuration);
     }
 
-    public void setDurationSeconds(int durationSeconds) {
+    public void setDurationSeconds(double durationSeconds) {
         this.durationSeconds = durationSeconds;
     }
 
@@ -346,11 +413,75 @@ public class Alarm {
     }
 
     public Integer getAlarmSecond() {
-        return alarmSecond;
+        Double value = getAlarmSecondValue();
+        return value == null ? null : (int) Math.round(value);
     }
 
     public void setAlarmSecond(Integer alarmSecond) {
+        this.alarmSecond = alarmSecond == null ? null : alarmSecond.doubleValue();
+    }
+
+    public void setAlarmSecondValue(Double alarmSecond) {
         this.alarmSecond = alarmSecond;
+    }
+
+    public Double getAlarmSecondValue() {
+        if (alarmSecondBySnapshot != null) return alarmSecondBySnapshot;
+        return alarmSecond;
+    }
+
+    public void setAlarmSecondBySnapshot(Double alarmSecondBySnapshot) {
+        this.alarmSecondBySnapshot = alarmSecondBySnapshot;
+    }
+
+    public String getActualClipStart() {
+        return firstNonBlank(actualClipStart, getStartTime());
+    }
+
+    public void setActualClipStart(String actualClipStart) {
+        this.actualClipStart = actualClipStart;
+    }
+
+    public String getActualClipEnd() {
+        return firstNonBlank(actualClipEnd, endTime);
+    }
+
+    public void setActualClipEnd(String actualClipEnd) {
+        this.actualClipEnd = actualClipEnd;
+    }
+
+    public String getSnapshotTime() {
+        return firstNonBlank(snapshotTime, timestamp);
+    }
+
+    public void setSnapshotTime(String snapshotTime) {
+        this.snapshotTime = snapshotTime;
+    }
+
+    public boolean hasBoxedVideoUrl() {
+        return !firstNonBlank(boxedVideoUrl, annotatedVideoUrl, alarmVideoUrl).isEmpty();
+    }
+
+    public String getBboxJson() {
+        if (bboxJson != null && !bboxJson.trim().isEmpty()) return bboxJson;
+        return bboxPayload == null || bboxPayload.isJsonNull() ? "" : bboxPayload.toString();
+    }
+
+    public void setBboxJson(String bboxJson) {
+        this.bboxJson = bboxJson;
+    }
+
+    public boolean hasBbox() {
+        return !getBboxJson().isEmpty();
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty() && !"null".equalsIgnoreCase(value.trim())) {
+                return value;
+            }
+        }
+        return "";
     }
 
     public String getDisplayAlarmType() {

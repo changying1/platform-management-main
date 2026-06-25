@@ -11,7 +11,7 @@ public class AlarmProgressOverlayView extends View {
     private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private boolean visible;
-    private long alarmSecond;
+    private double alarmSecond;
     private long durationMs;
 
     public AlarmProgressOverlayView(Context context) {
@@ -31,7 +31,7 @@ public class AlarmProgressOverlayView extends View {
         setWillNotDraw(false);
     }
 
-    public void setAlarmMarker(boolean show, long alarmSecond, long durationMs) {
+    public void setAlarmMarker(boolean show, double alarmSecond, long durationMs) {
         this.visible = show;
         this.alarmSecond = Math.max(0, alarmSecond);
         this.durationMs = Math.max(0, durationMs);
@@ -44,7 +44,7 @@ public class AlarmProgressOverlayView extends View {
         super.onDraw(canvas);
         if (!visible || durationMs <= 0) return;
 
-        float ratio = Math.max(0f, Math.min(1f, (alarmSecond * 1000f) / durationMs));
+        float ratio = (float) Math.max(0d, Math.min(1d, (alarmSecond * 1000d) / durationMs));
         float leftPadding = dp(28);
         float rightPadding = dp(28);
         float x = leftPadding + ratio * Math.max(0, getWidth() - leftPadding - rightPadding);

@@ -91,7 +91,7 @@ public abstract class BaseManagementFragment extends Fragment {
         String token = sessionManager.getToken();
         if (token != null && !token.isEmpty()) {
             headers.put("X-Auth-Token", token);
-            headers.put("Authorization", "Bearer " + token);
+            headers.put("Authorization", sessionManager.getAuthorizationHeader());
         }
         headers.put("X-Role", sessionManager.getRole());
         headers.put("X-Username", sessionManager.getUsername());

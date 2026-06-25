@@ -264,6 +264,7 @@ const [selectedProject, setSelectedProject] = useState<string>('all');
 const [selectedGrid, setSelectedGrid] = useState<string>('all');
 const [selectedTeam, setSelectedTeam] = useState<string>('all');
 const loadSeqRef = useRef(0);
+const alarmLoadCountsRef = useRef({ raw: 0, normalized: 0 });
 
 const formatAlarmCodeDate = (timestamp?: string) => {
   const date = timestamp ? new Date(timestamp) : null;
@@ -282,6 +283,13 @@ const getLevelFromSeverity = (severity?: string): AlarmRecord['level'] => {
   if (['high', 'severe', 'critical', 'danger', '高危', '严重'].includes(normalized)) return 'high';
   if (['medium', 'warning', '一般', '中'].includes(normalized)) return 'medium';
   return 'low';
+};
+
+const normalizeAlarmStatus = (status?: string): AlarmRecord['status'] => {
+  const normalized = String(status || '').toLowerCase();
+  if (['resolved', 'processed', 'handled', 'done', 'closed', '已处理'].includes(normalized)) return 'resolved';
+  if (['ignored', 'ignore', 'not_required', '已忽略'].includes(normalized)) return 'ignored';
+  return 'pending';
 };
 
 const normalizeSearchText = (value: unknown) =>
@@ -391,10 +399,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     time: timestamp,
     level: getLevelFromSeverity(item.severity),
     severityRaw: item.severity || '',
-    status:
-      item.status === 'pending' || item.status === 'resolved' || item.status === 'ignored'
-        ? item.status
-        : 'pending',
+    status: normalizeAlarmStatus(item.status),
     location: locationText,
     deviceName: rawItem.device_name || rawItem.video_name || deviceId || '未知设备',
     deviceId,
@@ -425,30 +430,21 @@ const loadAlarms = async () => {
   const requestSeq = ++loadSeqRef.current;
   const requestedTab = activeTab;
   try {
-    const sourceType = requestedTab === 'all' ? undefined : requestedTab;
-    const [data, latestStats] = await Promise.all([
-      alarmApi.getAlarms(undefined, sourceType, 500),
-      alarmApi.getStats(),
-    ]);
+    const data = await alarmApi.getAlarms(undefined, undefined, 500);
     if (requestSeq !== loadSeqRef.current || requestedTab !== activeTab) return;
-    setStats(latestStats);
-    console.log('[AlarmRecord] loaded', {
-      tab: requestedTab,
-      sourceType,
-      total: data.length,
-      first: data.slice(0, 5).map((item) => ({
-        id: item.id,
-        source_type: item.source_type,
-        fence_id: item.fence_id,
-        alarm_type: item.alarm_type,
-      })),
-    });
     const mapped = data
-      .filter((item) => requestedTab === 'all' || getAlarmSourceType(item) === requestedTab)
       .map(mapAlarmFromApi)
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
+    alarmLoadCountsRef.current = { raw: data.length, normalized: mapped.length };
     setAlarms(mapped);
+    setStats({
+      total: mapped.length,
+      pending: mapped.filter((alarm) => alarm.status === 'pending').length,
+      fence: mapped.filter((alarm) => alarm.sourceType === 'fence').length,
+      video: mapped.filter((alarm) => alarm.sourceType === 'video').length,
+    });
+    console.log('[AlarmRecord] raw=', data.length, 'normalized=', mapped.length);
   } catch (error) {
     console.error('加载告警记录失败:', error);
   }
@@ -511,6 +507,13 @@ useEffect(() => {
   const getAlarmLocationText = (alarm: AlarmRecord) =>
     alarm.type === 'fence' && alarm.location && alarm.location !== '未提供位置' ? alarm.location : '-';
 
+  const displayValue = (value?: string | number | null) => {
+    const text = String(value ?? '').trim();
+    if (!text || ['-', 'string', 'null', 'undefined', '未知', '未提供位置'].includes(text)) return '-';
+    if (/^未分配/.test(text)) return '-';
+    return text;
+  };
+
   const getDefaultSortDirection = (key: AlarmSortKey): AlarmSortDirection => key === 'time' ? 'desc' : 'asc';
 
   const handleSort = (key: AlarmSortKey) => {
@@ -538,24 +541,6 @@ useEffect(() => {
       case 'time': return parseAlarmTimestamp(alarm.time).getTime() || 0;
       default: return '';
     }
-  };
-
-  const renderSortHeader = (key: AlarmSortKey, label: string, className: string) => {
-    const active = sortConfig.key === key;
-    const Icon = active ? (sortConfig.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
-    return (
-      <th className={className}>
-        <button
-          type="button"
-          onClick={() => handleSort(key)}
-          className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:text-cyan-300 ${active ? 'text-cyan-300' : 'text-slate-300'}`}
-          title={`点击按${label}排序`}
-        >
-          <span className="truncate">{label}</span>
-          <Icon size={13} className="shrink-0" />
-        </button>
-      </th>
-    );
   };
 
   const getStatusColor = (status: string) => {
@@ -780,6 +765,17 @@ const handleConfirmProcess = async () => {
     return true;
   });
 
+  useEffect(() => {
+    console.log(
+      '[AlarmRecord] raw=',
+      alarmLoadCountsRef.current.raw,
+      'normalized=',
+      alarmLoadCountsRef.current.normalized,
+      'filtered=',
+      filteredAlarms.length
+    );
+  }, [filteredAlarms.length]);
+
   const sortedAlarms = [...filteredAlarms].sort((a, b) => {
     const aValue = getSortValue(a, sortConfig.key);
     const bValue = getSortValue(b, sortConfig.key);
@@ -795,8 +791,18 @@ const handleConfirmProcess = async () => {
     return sortConfig.direction === 'asc' ? result : -result;
   });
 
+  const sortOptions: { key: AlarmSortKey; label: string }[] = [
+    { key: 'time', label: '告警时间' },
+    { key: 'level', label: '严重等级' },
+    { key: 'status', label: '处理状态' },
+    { key: 'type', label: '告警类型' },
+    { key: 'device', label: '告警设备' },
+    { key: 'project', label: '项目' },
+    { key: 'team', label: '工队' },
+  ];
+
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6 pb-28 xl:pr-24">
       {/* 标题 + 统计卡片 */}
       <div className="flex justify-between items-start mb-6">
         {/* 标题 */}
@@ -972,122 +978,132 @@ const handleConfirmProcess = async () => {
         </div>
       </div>
 
-      {/* 告警列表 - 表格型 */}
+      {/* 告警列表 - 卡片型 */}
       <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-700/50 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed">
-            <thead className="border-b border-blue-400/20 bg-slate-800/50">
-              <tr>
-                {renderSortHeader('type', '类型', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('situation', '情况描述', 'w-[14%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('level', '等级', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('person', '告警对象', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('device', '告警设备', 'w-[13%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('location', '告警地点', 'w-[10%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('branch', '分公司', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('project', '项目', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('grid', '网格', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('team', '工队', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('status', '处置', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('time', '告警时间', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                <th className="w-[4%] px-3 py-3 text-right text-sm font-semibold text-slate-300">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-700">
-              {sortedAlarms.map(alarm => (
-                <tr 
-                   key={alarm.recordKey} 
-                   onClick={() => setSelectedAlarm(alarm)}
-                   className={`hover:bg-slate-800/30 cursor-pointer transition-colors ${
-                     alarm.status === 'pending' ? 'bg-red-500/5' : ''
-                   }`}
-                 >
-                   <td className="px-3 py-3 align-top">
-                     <div className="flex items-center gap-2 min-w-0">
-                       <div className={`w-8 h-8 rounded-lg flex shrink-0 items-center justify-center ${
-                         alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
-                       }`}>
-                         {alarm.type === 'fence' ? (
-                           <ShieldAlert size={16} className="text-blue-400" />
-                         ) : (
-                           <Video size={16} className="text-purple-400" />
-                         )}
-                       </div>
-                       <span className="truncate text-base font-semibold text-white" title={getAlarmTypeText(alarm)}>
-                         {getAlarmTypeText(alarm)}
-                       </span>
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div
-                       className="text-base leading-7 text-slate-300 overflow-hidden"
-                       style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
-                       title={getSituationText(alarm)}
-                     >
-                       {getSituationText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                      <span className={`text-sm px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
-                        {getLevelText(alarm.level)}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-400/20 bg-slate-800/50 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <Filter size={15} className="text-cyan-400" />
+            <span>共 {filteredAlarms.length} 条</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-500">排序</span>
+            {sortOptions.map(({ key, label }) => {
+              const active = sortConfig.key === key;
+              const Icon = active ? (sortConfig.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleSort(key)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
+                    active
+                      ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
+                      : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-cyan-400/30 hover:text-cyan-200'
+                  }`}
+                  title={`点击按${label}排序`}
+                >
+                  {label}
+                  <Icon size={13} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-3 p-4 pb-8">
+          {sortedAlarms.map(alarm => {
+            const typeText = displayValue(getAlarmTypeText(alarm));
+            const situationText = displayValue(getSituationText(alarm));
+            const personText = displayValue(getAlarmPersonText(alarm));
+            const deviceName = displayValue(alarm.deviceName);
+            const deviceId = displayValue(alarm.deviceId);
+            const locationText = displayValue(alarm.location && alarm.location !== '未提供位置' ? alarm.location : getAlarmLocationText(alarm));
+            const companyText = displayValue(alarm.branchName);
+            const projectText = displayValue(alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : ''));
+            const gridText = displayValue(alarm.gridName);
+            const teamText = displayValue(alarm.team);
+
+            return (
+              <article
+                key={alarm.recordKey}
+                onClick={() => setSelectedAlarm(alarm)}
+                className={`group cursor-pointer rounded-lg border px-4 py-3 transition-all hover:border-cyan-400/35 hover:bg-slate-800/45 ${
+                  alarm.status === 'pending'
+                    ? 'border-red-400/20 bg-red-500/5'
+                    : 'border-slate-700/70 bg-slate-950/25'
+                }`}
+              >
+                <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_auto] lg:items-start">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                      alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                    }`}>
+                      {alarm.type === 'fence' ? (
+                        <ShieldAlert size={20} className="text-blue-400" />
+                      ) : (
+                        <Video size={20} className="text-purple-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-white" title={typeText}>
+                        {typeText}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        <span className={`rounded-full border px-2 py-0.5 text-xs ${getLevelColor(alarm.level)}`}>
+                          {getLevelText(alarm.level)}
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${getStatusColor(alarm.status)}`}>
+                          {getStatusText(alarm.status)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                      <div className="min-w-0 flex-1 text-slate-200" title={situationText}>
+                        <span className="text-slate-500">情况：</span>
+                        <span className="break-words">{situationText}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-slate-300">
+                        <User size={14} className="text-slate-500" />
+                        <span className="text-slate-500">对象</span>
+                        <span>{personText}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-slate-300">
+                        <Video size={14} className="text-slate-500" />
+                        <span className="text-slate-500">设备</span>
+                        <span>{deviceName}</span>
+                        <span className="text-slate-600">/</span>
+                        <span>ID:{deviceId}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin size={13} className="text-slate-500" />
+                        地点：<b className="font-normal text-slate-300">{locationText}</b>
                       </span>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmPersonText(alarm)}>
-                       {getAlarmPersonText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmDeviceText(alarm)}>
-                       {getAlarmDeviceText(alarm)}
-                     </div>
-                     <div className="text-xs text-slate-500 mt-1">设备ID: {alarm.deviceId || '-'}</div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmLocationText(alarm)}>
-                       {getAlarmLocationText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.branchName || '-'}>
-                       {alarm.branchName || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}>
-                       {alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.gridName || '-'}>
-                       {alarm.gridName || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.team || '-'}>
-                       {alarm.team || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <span className={`text-sm px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
-                       {getStatusText(alarm.status)}
-                     </span>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="flex items-start gap-1 text-sm text-slate-300">
-                       <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
-                       <span className="leading-5">{formatAlarmTimestamp(alarm.time)}</span>
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 text-right align-top">
-                    <div className="flex flex-wrap justify-end gap-1.5">
+                      <span>分公司：<b className="font-normal text-slate-300">{companyText}</b></span>
+                      <span>项目：<b className="font-normal text-slate-300">{projectText}</b></span>
+                      <span>网格：<b className="font-normal text-slate-300">{gridText}</b></span>
+                      <span>工队：<b className="font-normal text-slate-300">{teamText}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 lg:min-w-[360px] lg:items-end">
+                    <div className="flex items-center gap-1 text-xs text-slate-400">
+                      <Clock size={14} className="text-slate-500" />
+                      <span>{formatAlarmTimestamp(alarm.time)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setPreviewImage(alarm.snapshot!);
                           }}
-                          className="px-2.5 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="inline-flex items-center gap-1 rounded-lg bg-blue-500/20 px-3 py-1.5 text-xs font-medium text-blue-400 transition-all hover:bg-blue-500/30"
                         >
                           <ImageIcon size={14} />
                           截图
@@ -1102,10 +1118,10 @@ const handleConfirmProcess = async () => {
                           }}
                           disabled={isPlaybackGeneratingStatus(alarm.recordingStatus)}
                           title={isPlaybackGeneratingStatus(alarm.recordingStatus) ? '告警回放生成中' : '查看告警回放'}
-                          className="px-2.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 disabled:bg-slate-700/40 disabled:text-slate-500 disabled:cursor-not-allowed text-purple-300 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="inline-flex items-center gap-1 rounded-lg bg-purple-500/20 px-3 py-1.5 text-xs font-medium text-purple-300 transition-all hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:bg-slate-700/40 disabled:text-slate-500"
                         >
                           <Video size={14} />
-                          {isPlaybackGeneratingStatus(alarm.recordingStatus) ? '告警回放生成中' : '告警回放'}
+                          {isPlaybackGeneratingStatus(alarm.recordingStatus) ? '生成中' : '告警回放'}
                         </button>
                       )}
 
@@ -1115,12 +1131,13 @@ const handleConfirmProcess = async () => {
                             e.stopPropagation();
                             handleOpenProcessModal(alarm, 'resolved');
                           }}
-                          className="px-2.5 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="inline-flex items-center gap-1 rounded-lg bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-400 transition-all hover:bg-green-500/30"
                         >
                           <CheckCircle size={14} />
                           处理
                         </button>
                       )}
+
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
@@ -1129,16 +1146,16 @@ const handleConfirmProcess = async () => {
                             await loadAlarms();
                           }
                         }}
-                        className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm font-medium transition-all"
+                        className="inline-flex items-center rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-all hover:bg-red-500/30"
                       >
                         删除
                       </button>
                     </div>
-                  </td>
-                 </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
 
         {filteredAlarms.length === 0 && (

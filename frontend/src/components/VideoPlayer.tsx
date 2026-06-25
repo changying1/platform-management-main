@@ -21,6 +21,7 @@ interface VideoPlayerProps {
   accessToken?: string;
   videoId?: number;
   onError?: (error: string) => void;
+  showTrafficPanel?: boolean;
 }
 
 interface MonitoringSummary {
@@ -165,7 +166,7 @@ const extractErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, onError }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, onError, showTrafficPanel = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -581,40 +582,42 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
         </span>
       </div>
 
-      <div
-        className={`absolute bottom-4 right-4 z-10 rounded-md px-4 py-3 text-sm text-slate-100 min-w-[320px] shadow-lg border ${
-          isTrafficAlarm ? 'bg-rose-950/85 border-rose-300/50' : 'bg-slate-900/82 border-cyan-200/25'
-        }`}
-      >
-        {isTrafficAlarm && <div className="mb-2 text-[13px] font-bold text-rose-100">流量不足</div>}
-        <div className="flex items-center justify-between gap-8">
-          <span className="text-slate-200">已使用流量</span>
-          <span className="text-base font-bold text-cyan-100">{usedText}</span>
-        </div>
-        <div className="flex items-center justify-between gap-8 mt-2">
-          <span className="text-slate-200">流量阈值</span>
-          <span className="text-base font-bold text-white">{thresholdText}</span>
-        </div>
-        <div className="flex items-center justify-between gap-8 mt-2">
-          <span className="text-slate-200">估算剩余流量</span>
-          <span className="text-base font-bold text-white">{remainingText}</span>
-        </div>
-        <div className="flex items-center justify-between gap-8 mt-2 text-xs">
-          <span className="text-slate-300">更新时间</span>
-          <span className="font-semibold text-slate-100">{updateTimeText}</span>
-        </div>
-        <div className="mt-2 border-t border-white/10 pt-2 text-xs text-slate-300">
-          识别状态：{trafficOcrStatus}
-        </div>
-        <button
-          type="button"
-          onClick={handleRecognizeTraffic}
-          disabled={!videoId || trafficRecognizing}
-          className="mt-3 w-full rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+      {showTrafficPanel && (
+        <div
+          className={`absolute bottom-4 right-4 z-10 rounded-md px-4 py-3 text-sm text-slate-100 min-w-[320px] shadow-lg border ${
+            isTrafficAlarm ? 'bg-rose-950/85 border-rose-300/50' : 'bg-slate-900/82 border-cyan-200/25'
+          }`}
         >
-          {trafficRecognizing ? '后端识别中...' : '识别流量'}
-        </button>
-      </div>
+          {isTrafficAlarm && <div className="mb-2 text-[13px] font-bold text-rose-100">流量不足</div>}
+          <div className="flex items-center justify-between gap-8">
+            <span className="text-slate-200">已使用流量</span>
+            <span className="text-base font-bold text-cyan-100">{usedText}</span>
+          </div>
+          <div className="flex items-center justify-between gap-8 mt-2">
+            <span className="text-slate-200">流量阈值</span>
+            <span className="text-base font-bold text-white">{thresholdText}</span>
+          </div>
+          <div className="flex items-center justify-between gap-8 mt-2">
+            <span className="text-slate-200">估算剩余流量</span>
+            <span className="text-base font-bold text-white">{remainingText}</span>
+          </div>
+          <div className="flex items-center justify-between gap-8 mt-2 text-xs">
+            <span className="text-slate-300">更新时间</span>
+            <span className="font-semibold text-slate-100">{updateTimeText}</span>
+          </div>
+          <div className="mt-2 border-t border-white/10 pt-2 text-xs text-slate-300">
+            识别状态：{trafficOcrStatus}
+          </div>
+          <button
+            type="button"
+            onClick={handleRecognizeTraffic}
+            disabled={!videoId || trafficRecognizing}
+            className="mt-3 w-full rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+          >
+            {trafficRecognizing ? '后端识别中...' : '识别流量'}
+          </button>
+        </div>
+      )}
 
       {connectionStatus === 'error' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">

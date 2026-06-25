@@ -36,8 +36,6 @@ public class LoginActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         // ⚠️ 你现在每次启动都 clear，会导致永远重新登录（按需保留）
-        new com.app.myapplication.data.local.SessionManager(this).clear();
-
         vm = new ViewModelProvider(this).get(LoginViewModel.class);
 
         // 已登录直接进首页

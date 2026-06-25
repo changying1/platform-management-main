@@ -1091,22 +1091,32 @@ public class LiveFragment extends Fragment {
 
     private List<AlarmBoxOverlayView.AlarmBox> parseAlarmBoxes(JsonObject alarm) {
         List<AlarmBoxOverlayView.AlarmBox> result = new ArrayList<>();
-        JsonArray boxes = firstArray(alarm, "alarm_boxes", "boxes");
-        if (boxes == null) return result;
+        JsonArray boxes = firstArray(alarm, "alarm_boxes", "boxes", "detections", "detection_results");
+        if (boxes == null && alarm.has("detection_results") && alarm.get("detection_results").isJsonObject()) {
+            boxes = firstArray(alarm.getAsJsonObject("detection_results"), "boxes", "detections", "results");
+        }
 
-        for (JsonElement element : boxes) {
+        if (boxes != null) for (JsonElement element : boxes) {
             if (!element.isJsonObject()) continue;
             JsonObject box = element.getAsJsonObject();
             float[] coords = parseCoords(box);
             if (coords == null) continue;
-            String label = firstString(box, "msg", "type", "personName");
+            String label = firstString(box, "msg", "label", "class_name", "class", "type", "personName");
             result.add(new AlarmBoxOverlayView.AlarmBox(coords[0], coords[1], coords[2], coords[3], label));
+        }
+
+        if (result.isEmpty()) {
+            float[] coords = parseCoords(alarm);
+            if (coords != null) {
+                String label = firstString(alarm, "msg", "label", "alarm_type", "type");
+                result.add(new AlarmBoxOverlayView.AlarmBox(coords[0], coords[1], coords[2], coords[3], label));
+            }
         }
         return result;
     }
 
     private float[] parseCoords(JsonObject box) {
-        JsonArray coords = firstArray(box, "coords", "bbox", "xyxy", "box");
+        JsonArray coords = firstArray(box, "coords", "coords_norm", "bbox", "bounding_box", "xyxy", "box");
         if (coords != null && coords.size() >= 4) {
             return new float[] {
                     coords.get(0).getAsFloat(),
@@ -1114,6 +1124,12 @@ public class LiveFragment extends Fragment {
                     coords.get(2).getAsFloat(),
                     coords.get(3).getAsFloat()
             };
+        }
+
+        JsonObject nested = firstObject(box, "coords", "coords_norm", "bbox", "bounding_box");
+        if (nested != null) {
+            float[] nestedCoords = parseCoords(nested);
+            if (nestedCoords != null) return nestedCoords;
         }
 
         float x1 = firstFloat(box, "x1", "left", "x");
@@ -1134,6 +1150,15 @@ public class LiveFragment extends Fragment {
         for (String key : keys) {
             if (obj.has(key) && obj.get(key).isJsonArray()) {
                 return obj.getAsJsonArray(key);
+            }
+        }
+        return null;
+    }
+
+    private JsonObject firstObject(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && obj.get(key).isJsonObject()) {
+                return obj.getAsJsonObject(key);
             }
         }
         return null;

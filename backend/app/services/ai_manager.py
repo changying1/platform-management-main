@@ -13,7 +13,12 @@ from datetime import datetime, timedelta
 from app.services.ai_service import AIService
 from app.core.database import SessionLocal, get_mongo_db, get_next_sequence
 from app.services import ai_features
-from app.services.video_service import VideoService, RECORD_SEGMENT_SECONDS, RECORD_SEGMENT_SAFE_MARGIN_SECONDS
+from app.services.video_service import (
+    VideoService,
+    RECORD_SEGMENT_SECONDS,
+    RECORD_SEGMENT_SAFE_MARGIN_SECONDS,
+    ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS,
+)
 from app.services.ai_runtime.model_registry import list_model_configs
 from app.services.alarm_service import AlarmService
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
@@ -882,6 +887,49 @@ class AIManager:
 
         return ""
 
+    def _extract_alarm_boxes(self, details):
+        if not isinstance(details, dict):
+            return []
+
+        candidates = []
+        for key in (
+            "boxes",
+            "bbox",
+            "bounding_box",
+            "detections",
+            "results",
+            "detection_results",
+            "target_boxes",
+            "alarm_boxes",
+        ):
+            value = details.get(key)
+            if not value:
+                continue
+            if isinstance(value, list):
+                if len(value) >= 4 and all(isinstance(v, (int, float, str)) for v in value[:4]):
+                    candidates.append(value)
+                else:
+                    candidates.extend(value)
+            elif isinstance(value, dict):
+                nested = None
+                for nested_key in ("boxes", "bbox", "detections", "results", "alarm_boxes"):
+                    nested_value = value.get(nested_key)
+                    if nested_value:
+                        nested = nested_value
+                        break
+                if isinstance(nested, list):
+                    candidates.extend(nested)
+                else:
+                    candidates.append(value)
+
+        boxes = []
+        for item in candidates:
+            if isinstance(item, dict):
+                boxes.append(copy.deepcopy(item))
+            elif isinstance(item, (list, tuple)) and len(item) >= 4:
+                boxes.append({"bbox": list(item[:4])})
+        return boxes
+
     def _normalize_box_coords_for_frame(self, box, frame_shape):
         if not isinstance(box, dict) or not frame_shape:
             return None
@@ -900,6 +948,9 @@ class AIManager:
             raw_values = list(box.get("coords")[:4])
         elif isinstance(box.get("bbox"), (list, tuple)) and len(box.get("bbox")) >= 4:
             raw_values = list(box.get("bbox")[:4])
+            source_kind = "xywh"
+        elif isinstance(box.get("bounding_box"), (list, tuple)) and len(box.get("bounding_box")) >= 4:
+            raw_values = list(box.get("bounding_box")[:4])
             source_kind = "xywh"
         elif all(k in box for k in ("x1", "y1", "x2", "y2")):
             raw_values = [box.get("x1"), box.get("y1"), box.get("x2"), box.get("y2")]
@@ -1094,8 +1145,8 @@ class AIManager:
         video_path,
         boxes,
         trigger_offset_seconds,
-        draw_window_before=1.0,
-        draw_window_after=2.0,
+        draw_window_before=5.0,
+        draw_window_after=5.0,
         alarm_trace_id=None,
     ):
         if not boxes:
@@ -1120,6 +1171,20 @@ class AIManager:
             if not fps or fps <= 0 or width <= 0 or height <= 0:
                 raise ValueError(f"invalid video metadata fps={fps} width={width} height={height}")
 
+            valid_boxes = []
+            for box in boxes:
+                if not isinstance(box, dict):
+                    continue
+                coords_norm = box.get("coords_norm")
+                if isinstance(coords_norm, (list, tuple)) and len(coords_norm) >= 4:
+                    valid_boxes.append(box)
+                    continue
+                normalized = self._normalize_box_coords_for_frame(box, (height, width, 3))
+                if normalized is not None:
+                    valid_boxes.append(normalized)
+            if not valid_boxes:
+                raise ValueError("no drawable bbox in alarm video")
+
             writer = cv2.VideoWriter(
                 raw_tmp_path,
                 cv2.VideoWriter_fourcc(*"mp4v"),
@@ -1140,7 +1205,7 @@ class AIManager:
 
                 current_seconds = frame_index / fps
                 if start_seconds <= current_seconds <= end_seconds:
-                    frame = self._draw_boxes_on_frame(frame, boxes)
+                    frame = self._draw_boxes_on_frame(frame, valid_boxes)
 
                 writer.write(frame)
                 frame_index += 1
@@ -1168,7 +1233,17 @@ class AIManager:
                 "-an",
                 h264_tmp_path,
             ]
-            transcode_proc = subprocess.run(transcode_cmd, capture_output=True, text=True)
+            try:
+                transcode_proc = subprocess.run(
+                    transcode_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise TimeoutError(
+                    f"报警视频生成超时: ffmpeg box transcode 超过 {ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS:.0f} 秒"
+                ) from exc
             if transcode_proc.returncode != 0:
                 logger.error(
                     "[ALARM_VIDEO_BOX_TRANSCODE_FAILED] video_path=%s stderr=%s",
@@ -1336,6 +1411,223 @@ class AIManager:
             final_second = min(final_second, max(0, int(duration_seconds)))
         return max(0, final_second), offset
 
+    def _classify_alarm_video_error(self, error: Exception | str) -> str:
+        if isinstance(error, TimeoutError):
+            return "video_failed"
+
+        error_text = str(error or "").lower()
+        if "no_video_segment:" in error_text:
+            return "no_video_segment"
+
+        video_failed_markers = (
+            "video_failed:",
+            "timeout",
+            "timed out",
+            "报警视频生成超时",
+            "ffmpeg",
+            "concat",
+            "trim",
+            "generated video file is empty",
+        )
+        if any(marker in error_text for marker in video_failed_markers):
+            return "video_failed"
+
+        return "no_video_segment"
+
+    def _coerce_alarm_datetime(self, value):
+        if isinstance(value, datetime):
+            alarm_dt = value
+        elif isinstance(value, (int, float)):
+            alarm_dt = datetime.fromtimestamp(value)
+        elif isinstance(value, str) and value.strip():
+            text = value.strip().replace("T", " ")
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                alarm_dt = datetime.fromisoformat(text)
+            except ValueError:
+                alarm_dt = None
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d_%H%M%S", "%Y%m%d%H%M%S"):
+                    try:
+                        alarm_dt = datetime.strptime(text, fmt)
+                        break
+                    except ValueError:
+                        continue
+                if alarm_dt is None:
+                    return None
+        else:
+            return None
+
+        if getattr(alarm_dt, "tzinfo", None) is not None:
+            alarm_dt = alarm_dt.astimezone().replace(tzinfo=None)
+        return alarm_dt.replace(microsecond=0)
+
+    def _resolve_alarm_time(self, alarm_id: int, fallback_alarm_time=None, details=None):
+        sources = []
+        alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
+
+        image_path_keys = (
+            "alarm_image_path",
+            "snapshot_path",
+            "screenshot_path",
+            "thumbnail_path",
+            "image_url",
+            "snapshot_url",
+            "picture_url",
+            "image_path",
+        )
+        for container_name, container in (("alarm", alarm_record), ("details", details if isinstance(details, dict) else {})):
+            for key in image_path_keys:
+                image_path = (container or {}).get(key)
+                if image_path:
+                    parsed = self.video_service._parse_alarm_event_time(os.path.basename(urlsplit(str(image_path)).path))
+                    sources.append((f"{container_name}.{key}.filename", parsed))
+
+        for container_name, container in (("alarm", alarm_record), ("details", details if isinstance(details, dict) else {})):
+            for key in ("snapshot_time", "image_time", "capture_time"):
+                sources.append((f"{container_name}.{key}", (container or {}).get(key)))
+
+        for container_name, container in (("details", details if isinstance(details, dict) else {}), ("alarm", alarm_record)):
+            for key in ("detection_time", "alarm_time", "trigger_time", "timestamp", "created_at"):
+                sources.append((f"{container_name}.{key}", (container or {}).get(key)))
+        sources.append(("argument.alarm_time", fallback_alarm_time))
+
+        for source, value in sources:
+            alarm_dt = self._coerce_alarm_datetime(value)
+            if alarm_dt is not None:
+                return alarm_dt, source
+        return None, "missing"
+
+    def _format_alarm_video_time(self, value: datetime) -> str:
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _segments_missing_reason(self, segments, alarm_time: datetime, clip_start: datetime, clip_end: datetime) -> str:
+        if not segments:
+            return "missing_pre_and_post_segment"
+        has_before = any(seg_start <= alarm_time for _, seg_start, _ in segments)
+        has_after = any(seg_end > alarm_time for _, _, seg_end in segments)
+        has_pre_window = any(seg_start <= clip_start or (seg_start <= alarm_time and seg_end > clip_start) for _, seg_start, seg_end in segments)
+        has_post_window = any(seg_start < clip_end and seg_end > alarm_time for _, seg_start, seg_end in segments)
+        if not has_before and not has_after:
+            return "missing_pre_and_post_segment"
+        if not has_before or not has_pre_window:
+            return "missing_pre_segment"
+        if not has_after or not has_post_window:
+            return "missing_post_segment"
+        return "alarm_time_not_covered"
+
+    def _collect_alarm_video_segments(self, video_id: int, alarm_time: datetime, clip_start: datetime, clip_end: datetime):
+        segments = self.video_service._collect_segments_for_timerange(video_id, clip_start, clip_end)
+        covers_alarm_time = any(seg_start <= alarm_time < seg_end for _, seg_start, seg_end in segments)
+        missing_reason = "" if covers_alarm_time else self._segments_missing_reason(
+            segments,
+            alarm_time,
+            clip_start,
+            clip_end,
+        )
+        return segments, covers_alarm_time, missing_reason
+
+    def _log_alarm_video_state(
+        self,
+        alarm_id,
+        device_id,
+        alarm_time,
+        clip_start,
+        clip_end,
+        segments,
+        covers_alarm_time,
+        boxes,
+        output_path="",
+        duration_seconds=0,
+        recording_status="pending",
+        extra_reason="",
+    ):
+        selected_segments = []
+        for seg_path, seg_start, seg_end in segments:
+            selected_segments.append(
+                {
+                    "name": os.path.basename(seg_path),
+                    "start": self._format_alarm_video_time(seg_start),
+                    "end": self._format_alarm_video_time(seg_end),
+                    "duration": round((seg_end - seg_start).total_seconds(), 3),
+                }
+            )
+        self._emit_alarm_log(
+            "info",
+            "[ALARM_VIDEO_STATE] alarm_id={} device_id={} alarm_time={} clip_start={} clip_end={} "
+            "selected_segments={} covers_alarm_time={} bbox_count={} output_path={} duration_seconds={} "
+            "recording_status={} reason={}",
+            alarm_id,
+            device_id,
+            self._format_alarm_video_time(alarm_time),
+            self._format_alarm_video_time(clip_start),
+            self._format_alarm_video_time(clip_end),
+            json.dumps(selected_segments, ensure_ascii=False),
+            bool(covers_alarm_time),
+            len(boxes or []),
+            output_path or "",
+            duration_seconds or 0,
+            recording_status,
+            extra_reason or "",
+        )
+
+    def _validate_alarm_video_result(
+        self,
+        result,
+        snapshot_time: datetime,
+        clip_start: datetime,
+        clip_end: datetime,
+        min_after_snapshot_seconds: float = 3.0,
+    ):
+        recording_path = (result or {}).get("recording_path") or ""
+        recording_full_path = (result or {}).get("recording_full_path") or ""
+        if not recording_path:
+            raise ValueError("video_failed: recording_path empty")
+        if not recording_full_path or not os.path.exists(recording_full_path):
+            raise ValueError("video_failed: alarm video file missing")
+
+        duration_seconds = self.video_service._probe_video_duration(recording_full_path, timeout_seconds=8.0)
+        if duration_seconds is None:
+            duration_seconds = result.get("duration_seconds")
+        try:
+            duration_seconds = float(duration_seconds)
+        except (TypeError, ValueError):
+            duration_seconds = 0.0
+        if duration_seconds <= 0:
+            raise ValueError("video_failed: duration_seconds <= 0")
+        actual_start = self._coerce_alarm_datetime(result.get("start_time")) or clip_start
+        actual_end = self._coerce_alarm_datetime(result.get("end_time"))
+        if actual_end is None:
+            actual_end = actual_start + timedelta(seconds=duration_seconds)
+        covers_snapshot_time = actual_start <= snapshot_time <= actual_end
+        alarm_offset = (snapshot_time - actual_start).total_seconds()
+        has_video_after_snapshot = (duration_seconds - alarm_offset) >= float(min_after_snapshot_seconds)
+        timing = {
+            "duration_seconds": duration_seconds,
+            "actual_clip_start": actual_start,
+            "actual_clip_end": actual_end,
+            "alarm_second": alarm_offset,
+            "covers_snapshot_time": bool(covers_snapshot_time),
+            "has_video_after_snapshot": bool(has_video_after_snapshot),
+            "min_after_snapshot_seconds": float(min_after_snapshot_seconds),
+        }
+        if not covers_snapshot_time:
+            raise ValueError(
+                f"snapshot_time_not_covered: snapshot_time={self._format_alarm_video_time(snapshot_time)} "
+                f"actual_start={self._format_alarm_video_time(actual_start)} "
+                f"actual_end={self._format_alarm_video_time(actual_end)}"
+            )
+        if alarm_offset < 0 or duration_seconds <= alarm_offset:
+            raise ValueError(
+                f"snapshot_time_not_covered: duration_seconds={duration_seconds:.3f} alarm_second={alarm_offset:.3f}"
+            )
+        if not has_video_after_snapshot:
+            raise ValueError(
+                f"snapshot_tail_not_ready: duration_seconds={duration_seconds:.3f} "
+                f"alarm_second={alarm_offset:.3f} min_after={min_after_snapshot_seconds:.3f}"
+            )
+        return timing
+
     def _save_alarm_clip_async(
         self,
         alarm_id: int,
@@ -1353,6 +1645,15 @@ class AIManager:
             try:
                 video_id = int(device_id)
             except Exception:
+                self._update_alarm_recording_status(alarm_id, "video_failed", None, "device_id is not a video camera id")
+                self._emit_alarm_log(
+                    "error",
+                    "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} reason=device_id_not_video_id",
+                    alarm_trace_id or "-",
+                    alarm_id,
+                    device_id,
+                )
+                return
                 self._update_alarm_recording_status(alarm_id, "failed", None, "device_id 非摄像头ID，无法自动录像")
                 self._emit_alarm_log(
                     "error",
@@ -1392,6 +1693,7 @@ class AIManager:
 
             last_error = None
             failure_status = "no_video_segment"
+            saved_recording_path = None
             for attempt in range(1, 3):
                 try:
                     self._emit_alarm_log(
@@ -1411,6 +1713,9 @@ class AIManager:
                         output_type="alarm",
                         filename_prefix=f"alarm_{alarm_id}",
                     )
+                    saved_recording_path = result.get("recording_path") or ""
+                    if not saved_recording_path:
+                        raise ValueError("video_failed: alarm video generated without recording_path")
                     recording_full_path = result.get("recording_full_path")
                     expected_alarm_second = (trigger_time - clip_start).total_seconds()
                     duration_seconds = result.get("duration_seconds")
@@ -1418,6 +1723,17 @@ class AIManager:
                         duration_seconds = float(duration_seconds)
                     except (TypeError, ValueError):
                         duration_seconds = None
+
+                    self._update_alarm_recording_status(
+                        alarm_id,
+                        "saved",
+                        saved_recording_path,
+                        None,
+                        duration_seconds=result.get("duration_seconds"),
+                        start_time=result.get("start_time"),
+                        end_time=result.get("end_time"),
+                        alarm_second=int(round(expected_alarm_second)),
+                    )
 
                     def _clamp_alarm_second(value):
                         try:
@@ -1523,12 +1839,24 @@ class AIManager:
                     )
                     return
                 except Exception as e:
+                    if saved_recording_path:
+                        self._emit_alarm_log(
+                            "error",
+                            "[ALARM_VIDEO_POSTPROCESS_FAILED] trace_id={} alarm_id={} device_id={} path={} error={}",
+                            alarm_trace_id or "-",
+                            alarm_id,
+                            device_id,
+                            saved_recording_path,
+                            e,
+                        )
+                        return
                     last_error = e
                     error_text = str(e)
                     if "合并失败" in error_text or "裁剪失败" in error_text or "生成的视频文件" in error_text:
                         failure_status = "video_failed"
                     else:
                         failure_status = "no_video_segment"
+                    failure_status = self._classify_alarm_video_error(e)
                     self._emit_alarm_log(
                         "warning",
                         "[ALARM_VIDEO_RETRY] trace_id={} alarm_id={} device_id={} attempt={} error={}",
@@ -1549,6 +1877,333 @@ class AIManager:
                 alarm_trace_id or "-",
                 alarm_id,
                 device_id,
+                last_error,
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _save_alarm_clip_async(
+        self,
+        alarm_id: int,
+        device_id: str,
+        alarm_time: datetime,
+        alarm_trace_id: str | None = None,
+        details=None,
+        boxes=None,
+    ):
+        if boxes is None:
+            boxes = self._extract_alarm_boxes(details)
+        boxes = boxes if isinstance(boxes, list) else []
+
+        def _worker():
+            try:
+                video_id = int(device_id)
+            except Exception:
+                self._update_alarm_recording_status(
+                    alarm_id,
+                    "video_failed",
+                    None,
+                    "device_id is not a video camera id",
+                )
+                self._emit_alarm_log(
+                    "error",
+                    "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} reason=device_id_not_video_id",
+                    alarm_trace_id or "-",
+                    alarm_id,
+                    device_id,
+                )
+                return
+
+            detection_time = self._coerce_alarm_datetime(alarm_time)
+            snapshot_time, alarm_time_source = self._resolve_alarm_time(
+                alarm_id,
+                fallback_alarm_time=alarm_time,
+                details=details,
+            )
+            if snapshot_time is None:
+                self._update_alarm_recording_status(alarm_id, "video_failed", None, "alarm_time missing")
+                self._emit_alarm_log(
+                    "error",
+                    "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} reason=alarm_time_missing",
+                    alarm_trace_id or "-",
+                    alarm_id,
+                    device_id,
+                )
+                return
+
+            clip_start = snapshot_time - timedelta(seconds=30)
+            clip_end = snapshot_time + timedelta(seconds=30)
+            retry_interval_seconds = 5
+            try:
+                min_after_snapshot_seconds = float(os.getenv("ALARM_VIDEO_MIN_AFTER_SNAPSHOT_SECONDS", "3"))
+            except (TypeError, ValueError):
+                min_after_snapshot_seconds = 3.0
+            min_after_snapshot_seconds = max(0.0, min(min_after_snapshot_seconds, 10.0))
+            try:
+                configured_wait = int(os.getenv("ALARM_VIDEO_MAX_WAIT_SECONDS", "120"))
+            except (TypeError, ValueError):
+                configured_wait = 120
+            max_wait_seconds = max(90, min(configured_wait, 120))
+            deadline = time.time() + max_wait_seconds
+            last_error = None
+            failure_status = "no_video_segment"
+            last_segments = []
+            last_covers_alarm_time = False
+
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_VIDEO_SCHEDULED] trace_id={} alarm_id={} device_id={} detection_time={} snapshot_time={} source={} clip_start={} clip_end={} retry_interval={} max_wait={} min_after_snapshot={}",
+                alarm_trace_id or "-",
+                alarm_id,
+                device_id,
+                self._format_alarm_video_time(detection_time or snapshot_time),
+                self._format_alarm_video_time(snapshot_time),
+                alarm_time_source,
+                self._format_alarm_video_time(clip_start),
+                self._format_alarm_video_time(clip_end),
+                retry_interval_seconds,
+                max_wait_seconds,
+                min_after_snapshot_seconds,
+            )
+
+            if not boxes:
+                self._emit_alarm_log(
+                    "warning",
+                    "[ALARM_VIDEO_BOX_MISSING] alarm_id={} reason=no_bbox_in_detection_result",
+                    alarm_id,
+                )
+
+            attempt = 0
+            while True:
+                attempt += 1
+                segments, covers_alarm_time, missing_reason = self._collect_alarm_video_segments(
+                    video_id,
+                    snapshot_time,
+                    clip_start,
+                    clip_end,
+                )
+                last_segments = segments
+                last_covers_alarm_time = covers_alarm_time
+                self._log_alarm_video_state(
+                    alarm_id,
+                    device_id,
+                    snapshot_time,
+                    clip_start,
+                    clip_end,
+                    segments,
+                    covers_alarm_time,
+                    boxes,
+                    recording_status="generating" if covers_alarm_time else "waiting",
+                    extra_reason=missing_reason,
+                )
+
+                if not covers_alarm_time:
+                    last_error = ValueError(f"{missing_reason}: alarm_time_not_covered")
+                    failure_status = "alarm_time_not_covered" if segments else "no_video_segment"
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(retry_interval_seconds)
+                    continue
+
+                try:
+                    self._emit_alarm_log(
+                        "info",
+                        "[ALARM_VIDEO_GENERATING] trace_id={} alarm_id={} device_id={} attempt={} snapshot_time={} clip_start={} clip_end={}",
+                        alarm_trace_id or "-",
+                        alarm_id,
+                        device_id,
+                        attempt,
+                        self._format_alarm_video_time(snapshot_time),
+                        self._format_alarm_video_time(clip_start),
+                        self._format_alarm_video_time(clip_end),
+                    )
+                    result = self.video_service.save_playback_clip(
+                        video_id,
+                        clip_start,
+                        clip_end,
+                        output_type="alarm",
+                        filename_prefix=f"alarm_{alarm_id}",
+                    )
+                    recording_full_path = result.get("recording_full_path")
+                    timing = self._validate_alarm_video_result(
+                        result,
+                        snapshot_time,
+                        clip_start,
+                        clip_end,
+                        min_after_snapshot_seconds=min_after_snapshot_seconds,
+                    )
+                    duration_seconds = timing["duration_seconds"]
+
+                    actual_start = timing["actual_clip_start"]
+                    actual_end = timing["actual_clip_end"]
+                    expected_alarm_second = timing["alarm_second"]
+                    final_alarm_second = int(round(expected_alarm_second))
+                    alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
+                    alarm_image_path = alarm_record.get("alarm_image_path") or ""
+                    try:
+                        matched_alarm_second, match_score = self._locate_alarm_frame_in_video(
+                            recording_full_path,
+                            alarm_image_path,
+                            expected_alarm_second,
+                        )
+                        self._emit_alarm_log(
+                            "info",
+                            "[ALARM_VIDEO_FRAME_MATCHED] alarm_id={} expected_by_snapshot={} matched={} score={:.4f}",
+                            alarm_id,
+                            int(round(expected_alarm_second)),
+                            matched_alarm_second,
+                            match_score,
+                        )
+                    except Exception as match_error:
+                        self._emit_alarm_log(
+                            "warning",
+                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected_by_snapshot={} final={} reason={}",
+                            alarm_id,
+                            int(round(expected_alarm_second)),
+                            final_alarm_second,
+                            match_error,
+                        )
+
+                    final_alarm_second = max(0, min(final_alarm_second, max(0, int(duration_seconds) - 1)))
+
+                    box_rendered = False
+                    if boxes:
+                        try:
+                            self._draw_alarm_boxes_on_video(
+                                recording_full_path,
+                                boxes,
+                                final_alarm_second,
+                                alarm_trace_id=alarm_trace_id,
+                            )
+                            try:
+                                alarm_root = self.video_service._get_alarm_video_root()
+                                rel_path = os.path.relpath(recording_full_path, alarm_root)
+                                self.video_service._mirror_write_file(
+                                    recording_full_path,
+                                    os.path.join("alarm_videos", rel_path),
+                                )
+                            except Exception:
+                                pass
+                            self._emit_alarm_log(
+                                "info",
+                                "[ALARM_VIDEO_BOXED] trace_id={} alarm_id={} path={} box_count={}",
+                                alarm_trace_id or "-",
+                                alarm_id,
+                                recording_full_path,
+                                len(boxes),
+                            )
+                            box_rendered = True
+                        except Exception as box_error:
+                            raise ValueError(f"alarm_video_box_render_failed: {box_error}") from box_error
+
+                    timing = self._validate_alarm_video_result(
+                        result,
+                        snapshot_time,
+                        clip_start,
+                        clip_end,
+                        min_after_snapshot_seconds=min_after_snapshot_seconds,
+                    )
+                    duration_seconds = timing["duration_seconds"]
+                    actual_start = timing["actual_clip_start"]
+                    actual_end = timing["actual_clip_end"]
+                    final_alarm_second = max(0, min(final_alarm_second, max(0, int(duration_seconds) - 1)))
+                    self._update_alarm_recording_status(
+                        alarm_id,
+                        "saved",
+                        result.get("recording_path"),
+                        None,
+                        duration_seconds=round(float(duration_seconds), 2),
+                        start_time=result.get("start_time") or self._format_alarm_video_time(clip_start),
+                        end_time=result.get("end_time") or self._format_alarm_video_time(clip_end),
+                        alarm_second=final_alarm_second,
+                    )
+                    self._log_alarm_video_state(
+                        alarm_id,
+                        device_id,
+                        snapshot_time,
+                        clip_start,
+                        clip_end,
+                        segments,
+                        True,
+                        boxes,
+                        output_path=result.get("recording_path") or "",
+                        duration_seconds=duration_seconds,
+                        recording_status="saved",
+                    )
+                    self._emit_alarm_log(
+                        "info",
+                        "[ALARM_VIDEO_SAVED] trace_id={} alarm_id={} device_id={} path={} alarm_second={} duration_seconds={:.2f}",
+                        alarm_trace_id or "-",
+                        alarm_id,
+                        device_id,
+                        result.get("recording_path"),
+                        final_alarm_second,
+                        float(duration_seconds),
+                    )
+                    self._emit_alarm_log(
+                        "info",
+                        "[ALARM_VIDEO_FINAL] trace_id={} alarm_id={} detection_time={} snapshot_time={} clip_requested_start={} clip_requested_end={} actual_clip_start={} actual_clip_end={} actual_duration={:.2f} alarm_second_by_snapshot={:.2f} covers_snapshot_time={} has_video_after_snapshot={} box_rendered={} final_recording_status={}",
+                        alarm_trace_id or "-",
+                        alarm_id,
+                        self._format_alarm_video_time(detection_time or snapshot_time),
+                        self._format_alarm_video_time(snapshot_time),
+                        self._format_alarm_video_time(clip_start),
+                        self._format_alarm_video_time(clip_end),
+                        self._format_alarm_video_time(actual_start),
+                        self._format_alarm_video_time(actual_end),
+                        float(duration_seconds),
+                        float(timing["alarm_second"]),
+                        timing["covers_snapshot_time"],
+                        timing["has_video_after_snapshot"],
+                        box_rendered,
+                        "saved",
+                    )
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    error_text = str(exc)
+                    if "alarm_time_not_covered" in error_text or "snapshot_time_not_covered" in error_text:
+                        failure_status = "alarm_time_not_covered"
+                    elif "snapshot_tail_not_ready" in error_text:
+                        failure_status = "alarm_time_not_covered"
+                    elif "alarm_video_box_render_failed" in error_text:
+                        failure_status = "alarm_video_box_render_failed"
+                    else:
+                        failure_status = self._classify_alarm_video_error(exc)
+
+                    self._emit_alarm_log(
+                        "warning",
+                        "[ALARM_VIDEO_RETRY] trace_id={} alarm_id={} device_id={} attempt={} error={}",
+                        alarm_trace_id or "-",
+                        alarm_id,
+                        device_id,
+                        attempt,
+                        exc,
+                    )
+                    if failure_status in {"video_failed", "alarm_video_box_render_failed"} or time.time() >= deadline:
+                        break
+                    time.sleep(retry_interval_seconds)
+
+            self._update_alarm_recording_status(alarm_id, failure_status, None, str(last_error or ""))
+            self._log_alarm_video_state(
+                alarm_id,
+                device_id,
+                snapshot_time,
+                clip_start,
+                clip_end,
+                last_segments,
+                last_covers_alarm_time,
+                boxes,
+                recording_status=failure_status,
+                extra_reason=str(last_error or ""),
+            )
+            self._emit_alarm_log(
+                "error",
+                "[ALARM_VIDEO_FAILED] trace_id={} alarm_id={} device_id={} status={} error={}",
+                alarm_trace_id or "-",
+                alarm_id,
+                device_id,
+                failure_status,
                 last_error,
             )
 
@@ -1620,10 +2275,9 @@ class AIManager:
         # 2) {"alarm": true, "boxes": [{"type": "...", "msg": "..."}]}
         alarm_type = self._extract_alarm_type(details)
         alarm_msg = details.get("msg") if isinstance(details, dict) else None
-        boxes = (details.get("boxes") or []) if isinstance(details, dict) else []
-        boxes = boxes if isinstance(boxes, list) else []
+        boxes = self._extract_alarm_boxes(details)
 
-        box_count = 0
+        box_count = len(boxes)
         person_info = {}
         person_name = ""
         personnel_id = ""
@@ -1631,7 +2285,6 @@ class AIManager:
         if isinstance(details, dict) and isinstance(details.get("boxes"), list) and details["boxes"]:
             first_box = details["boxes"][0] or {}
             alarm_msg = alarm_msg or first_box.get("msg")
-            box_count = len(details["boxes"])
 
             person_info = first_box.get("person") or {}
             person_name = (
@@ -1661,7 +2314,25 @@ class AIManager:
         try:
             next_id = int(get_next_sequence("alarm_record_id"))
             now = datetime.now()
+            detected_at = None
+            if isinstance(details, dict):
+                for time_key in ("detection_time", "alarm_time", "trigger_time", "timestamp", "created_at"):
+                    detected_at = self._coerce_alarm_datetime(details.get(time_key))
+                    if detected_at is not None:
+                        break
+            if detected_at is None:
+                detected_at = now
             bound_image_path = self._bind_alarm_image_filename(image_path, next_id, str(device_id))
+            snapshot_at = self._coerce_alarm_datetime(
+                self.video_service._parse_alarm_event_time(os.path.basename(urlsplit(str(bound_image_path)).path))
+            )
+            if snapshot_at is None and isinstance(details, dict):
+                for time_key in ("snapshot_time", "image_time", "capture_time"):
+                    snapshot_at = self._coerce_alarm_datetime(details.get(time_key))
+                    if snapshot_at is not None:
+                        break
+            if snapshot_at is None:
+                snapshot_at = detected_at
 
             project_id = self._infer_project_id_from_device(device_id)
             payload = {
@@ -1675,7 +2346,12 @@ class AIManager:
                 "alarm_type": alarm_type,
                 "behavior_code": algo_key or alarm_type,
                 "severity": severity,
-                "timestamp": now,
+                "timestamp": detected_at,
+                "alarm_time": detected_at,
+                "detection_time": detected_at,
+                "snapshot_time": snapshot_at,
+                "image_time": snapshot_at,
+                "capture_time": snapshot_at,
                 "description": alarm_msg,
                 "status": "pending",
                 "handled_at": None,
@@ -1710,8 +2386,9 @@ class AIManager:
             self._save_alarm_clip_async(
                 next_id,
                 str(device_id),
-                now,
+                detected_at,
                 alarm_trace_id=alarm_trace_id,
+                details=details,
                 boxes=boxes,
             )
 

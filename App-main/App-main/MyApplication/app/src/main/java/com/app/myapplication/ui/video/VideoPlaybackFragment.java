@@ -1,6 +1,7 @@
 package com.app.myapplication.ui.video;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,6 +19,7 @@ import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.VideoApi;
 import com.app.myapplication.data.local.AppConfig;
+import com.google.gson.Gson;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -33,6 +35,8 @@ import retrofit2.Response;
 public class VideoPlaybackFragment extends Fragment {
 
     private static final String ARG_DEVICE_ID = "device_id";
+    private static final String TAG = "VideoPlaybackFragment";
+    private static final Gson GSON = new Gson();
 
     public static VideoPlaybackFragment newInstance(String deviceId) {
         Bundle b = new Bundle();
@@ -138,10 +142,42 @@ public class VideoPlaybackFragment extends Fragment {
         item.deviceName = "Device " + deviceId;
         item.startTime = firstNonEmpty(row.get("start_time"), row.get("startTime"), row.get("created_at"));
         item.endTime = firstNonEmpty(row.get("end_time"), row.get("endTime"));
-        item.duration = intValue(row.get("duration"), row.get("duration_seconds"), row.get("video_duration"), row.get("clip_duration"));
-        item.alarmSecond = intValue(row.get("alarm_second"), row.get("alarmSecond"));
+        item.duration = doubleValue(row.get("duration"), row.get("duration_seconds"), row.get("video_duration"), row.get("clip_duration"));
+        item.alarmSecond = doubleValue(row.get("alarm_second_by_snapshot"), row.get("alarmSecondBySnapshot"));
+        if (item.alarmSecond <= 0) {
+            item.alarmSecond = doubleValue(row.get("alarm_second"), row.get("alarmSecond"));
+        }
+        item.snapshotTime = firstNonEmpty(row.get("snapshot_time"), row.get("snapshotTime"), row.get("image_time"), row.get("capture_time"));
+        item.actualClipStart = firstNonEmpty(row.get("actual_clip_start"), row.get("actualClipStart"), row.get("clip_start"), row.get("video_start_time"));
         item.type = isAlarmMode ? "alarm" : "manual";
-        item.filePath = firstNonEmpty(row.get("video_url"), row.get("clip_url"), row.get("web_path"), row.get("url"), row.get("path"), row.get("recording_path"));
+        item.hasBoxedVideoUrl = !firstNonEmpty(
+                row.get("boxed_video_url"),
+                row.get("boxedVideoUrl"),
+                row.get("annotated_video_url"),
+                row.get("annotatedVideoUrl"),
+                row.get("alarm_video_url"),
+                row.get("alarmVideoUrl")
+        ).isEmpty();
+        item.filePath = firstNonEmpty(
+                row.get("boxed_video_url"),
+                row.get("boxedVideoUrl"),
+                row.get("annotated_video_url"),
+                row.get("annotatedVideoUrl"),
+                row.get("alarm_video_url"),
+                row.get("alarmVideoUrl"),
+                row.get("video_url"),
+                row.get("videoUrl"),
+                row.get("alarm_video_path"),
+                row.get("alarmVideoPath"),
+                row.get("raw_video_path"),
+                row.get("rawVideoPath"),
+                row.get("clip_url"),
+                row.get("web_path"),
+                row.get("url"),
+                row.get("path"),
+                row.get("recording_path")
+        );
+        item.bboxJson = jsonValue(firstObject(row, "coords", "coords_norm", "bbox", "bounding_box", "boxes", "detections", "detection_results"));
         if (item.filePath.isEmpty()) {
             String filename = firstNonEmpty(row.get("filename"), row.get("name"));
             if (!filename.isEmpty()) {
@@ -161,10 +197,14 @@ public class VideoPlaybackFragment extends Fragment {
         public String deviceName;
         public String startTime;
         public String endTime;
-        public int duration;
-        public int alarmSecond;
+        public double duration;
+        public double alarmSecond;
+        public String snapshotTime;
+        public String actualClipStart;
         public String type;
         public String filePath;
+        public boolean hasBoxedVideoUrl;
+        public String bboxJson;
         public String company;
         public String project;
         public String recordingStatus;
@@ -225,8 +265,9 @@ public class VideoPlaybackFragment extends Fragment {
                 tvProject.setText(item.project);
                 tvTime.setText(formatTime(item.startTime));
 
-                int minutes = item.duration / 60;
-                int seconds = item.duration % 60;
+                int displayDuration = (int) Math.round(item.duration);
+                int minutes = displayDuration / 60;
+                int seconds = displayDuration % 60;
                 tvDuration.setText(String.format(Locale.getDefault(), "Duration: %02d:%02d", minutes, seconds));
 
                 boolean isAlarm = "alarm".equals(item.type);
@@ -256,14 +297,59 @@ public class VideoPlaybackFragment extends Fragment {
                     if (unavailable) {
                         Toast.makeText(requireContext(), firstNonEmpty(item.errorMessage, "暂无报警视频"), Toast.LENGTH_SHORT).show();
                     } else if (item.filePath != null && !item.filePath.isEmpty()) {
-                        long alarmSecond = item.alarmSecond > 0 ? item.alarmSecond : (item.duration > 0 && item.duration < 30 ? item.duration / 2L : 30L);
-                        VideoFilePlayActivity.start(requireContext(), AppConfig.toAbsoluteUrl(requireContext(), item.filePath), "alarm".equals(item.type), alarmSecond);
+                        VideoFilePlayActivity.start(
+                                requireContext(),
+                                AppConfig.toAbsoluteUrl(requireContext(), item.filePath),
+                                "alarm".equals(item.type),
+                                resolveAlarmSecond(item),
+                                item.id,
+                                item.snapshotTime,
+                                item.actualClipStart,
+                                item.hasBoxedVideoUrl,
+                                item.bboxJson
+                        );
                     } else {
                         Toast.makeText(requireContext(), "暂无播放地址", Toast.LENGTH_SHORT).show();
                     }
                 });
             }
         }
+    }
+
+    private static double resolveAlarmSecond(PlaybackItem item) {
+        if (item.alarmSecond > 0) return item.alarmSecond;
+        long snapshotTime = parseTimeMillis(item.snapshotTime);
+        long actualClipStart = parseTimeMillis(item.actualClipStart);
+        if (snapshotTime > 0 && actualClipStart > 0) {
+            double fallback = Math.max(0d, (snapshotTime - actualClipStart) / 1000d);
+            Log.d(TAG, "Fallback alarmSecond from snapshot_time - actual_clip_start: alarmId="
+                    + item.id + ", alarmSecond=" + fallback
+                    + ", snapshotTime=" + item.snapshotTime
+                    + ", actualClipStart=" + item.actualClipStart);
+            return fallback;
+        }
+        double fallback = item.duration > 0 && item.duration < 30 ? Math.max(0d, item.duration / 2d) : 30d;
+        Log.w(TAG, "Missing backend alarmSecond and snapshot clip timing, using last fallback: alarmId="
+                + item.id + ", alarmSecond=" + fallback);
+        return fallback;
+    }
+
+    private static long parseTimeMillis(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return 0;
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss"
+        };
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
+                if (date != null) return date.getTime();
+            } catch (Exception ignored) {
+            }
+        }
+        return 0;
     }
 
     private static String formatTime(String raw) {
@@ -310,6 +396,40 @@ public class VideoPlaybackFragment extends Fragment {
             }
         }
         return 0;
+    }
+
+    private static double doubleValue(Object... values) {
+        for (Object value : values) {
+            if (value instanceof Number) return ((Number) value).doubleValue();
+            if (value != null) {
+                try {
+                    return Double.parseDouble(value.toString());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return 0d;
+    }
+
+    private static Object firstObject(Map<String, Object> row, String... keys) {
+        if (row == null) return null;
+        for (String key : keys) {
+            if (row.containsKey(key) && row.get(key) != null && !firstNonEmpty(row.get(key)).isEmpty()) {
+                return row.get(key);
+            }
+        }
+        return null;
+    }
+
+    private static String jsonValue(Object value) {
+        if (value == null) return "";
+        if (value instanceof String) return firstNonEmpty(value);
+        try {
+            return GSON.toJson(value);
+        } catch (Exception e) {
+            Log.w(TAG, "Invalid bbox json value: " + value);
+            return "";
+        }
     }
 
     private static String safeMessage(Throwable t) {

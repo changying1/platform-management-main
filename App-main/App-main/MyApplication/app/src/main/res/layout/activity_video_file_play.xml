@@ -63,6 +63,12 @@
             android:layout_height="match_parent"
             android:visibility="gone"/>
 
+        <com.app.myapplication.ui.video.AlarmBoxOverlayView
+            android:id="@+id/alarm_box_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"/>
+
         <View
             android:id="@+id/video_tap_layer"
             android:layout_width="match_parent"

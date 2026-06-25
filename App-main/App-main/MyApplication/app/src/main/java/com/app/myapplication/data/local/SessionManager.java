@@ -31,16 +31,21 @@ public class SessionManager {
      */
     public static String getToken(Context ctx) {
         SharedPreferences prefs = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE);
-        return prefs.getString(K_TOKEN, "");
+        return normalizeToken(prefs.getString(K_TOKEN, ""));
     }
 
     public boolean hasToken() {
-        String t = sp.getString(K_TOKEN, "");
+        String t = getToken();
         return t != null && !t.isEmpty();
     }
 
     public String getToken() {
-        return sp.getString(K_TOKEN, "");
+        return normalizeToken(sp.getString(K_TOKEN, ""));
+    }
+
+    public String getAuthorizationHeader() {
+        String token = getToken();
+        return token.isEmpty() ? "" : "Bearer " + token;
     }
 
     public String getUserId() {
@@ -73,6 +78,14 @@ public class SessionManager {
                 .putString(K_NICK, nickname)
                 .putString(K_AVATAR, "")
                 .apply();
+    }
+
+    public static String normalizeToken(String token) {
+        String value = token == null ? "" : token.trim();
+        while (value.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
+            value = value.substring("Bearer ".length()).trim();
+        }
+        return value;
     }
 
     public void clear() {

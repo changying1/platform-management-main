@@ -532,7 +532,7 @@
       <div className="rounded-lg border border-blue-400/30 bg-slate-900/65 backdrop-blur-md overflow-hidden cursor-pointer hover:border-cyan-400 transition-all group">
         <div className="relative aspect-video bg-black/50 overflow-hidden">
           {previewStream ? (
-            <VideoPlayer src={previewStream} />
+            <VideoPlayer src={previewStream} showTrafficPanel={false} />
           ) : isLoading ? (
             <div className="w-full h-full flex items-center justify-center">
               <Loader className="animate-spin text-cyan-400" size={32} />
@@ -2392,6 +2392,7 @@ useEffect(() => {
       src={previewStreams[device.id].url}
       playType={previewStreams[device.id].play_type}
       accessToken={previewStreams[device.id].access_token}
+      showTrafficPanel={false}
     />
             ) : previewLoading[device.id] ? (
               <div className="h-full w-full flex items-center justify-center text-slate-300 text-sm">

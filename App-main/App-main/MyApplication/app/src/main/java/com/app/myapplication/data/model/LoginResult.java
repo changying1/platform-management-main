@@ -1,22 +1,28 @@
 package com.app.myapplication.data.model;
 
+import com.google.gson.annotations.SerializedName;
+
 import java.util.List;
 
-/*
-    后端对接字段
- */
 public class LoginResult {
-    // ✅ 后端对接最关键：token/refreshToken/过期时间
+    @SerializedName(value = "token", alternate = {"access_token", "accessToken"})
     public String token;
-    public String refreshToken;
-    public long expiresAt;   // 建议后端给过期时间戳（ms）或 expiresIn（秒）
 
-    // ✅ 用户信息：用于"我的"页面显示/业务鉴权
+    @SerializedName(value = "refreshToken", alternate = {"refresh_token", "refresh"})
+    public String refreshToken;
+
+    @SerializedName(value = "expiresAt", alternate = {"expires_at", "expire_at", "expiresIn", "expires_in"})
+    public long expiresAt;
+
+    @SerializedName(value = "userId", alternate = {"user_id", "id"})
     public String userId;
+
+    @SerializedName(value = "nickname", alternate = {"nick_name", "name", "username"})
     public String nickname;
+
+    @SerializedName(value = "avatarUrl", alternate = {"avatar_url", "avatar"})
     public String avatarUrl;
-    
-    // ✅ 权限信息
-    public String role;           // 角色级别
-    public List<String> permissions;  // 权限列表
+
+    public String role;
+    public List<String> permissions;
 }

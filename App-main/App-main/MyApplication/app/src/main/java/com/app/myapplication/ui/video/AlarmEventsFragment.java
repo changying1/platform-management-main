@@ -88,7 +88,7 @@ public class AlarmEventsFragment extends Fragment {
 
                         if (!response.isSuccessful() || response.body() == null) {
                             tvEmpty.setVisibility(View.VISIBLE);
-                            Toast.makeText(requireContext(), "Failed to get alarm records", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(requireContext(), "告警信息加载失败", Toast.LENGTH_SHORT).show();
                             return;
                         }
 
@@ -108,7 +108,7 @@ public class AlarmEventsFragment extends Fragment {
                         if (!isAdded()) return;
                         progressBar.setVisibility(View.GONE);
                         tvEmpty.setVisibility(View.VISIBLE);
-                        Toast.makeText(requireContext(), "Network error: " + safeMessage(t), Toast.LENGTH_SHORT).show();
+                        Toast.makeText(requireContext(), "告警信息加载失败: " + safeMessage(t), Toast.LENGTH_SHORT).show();
                     }
                 });
     }
@@ -134,7 +134,11 @@ public class AlarmEventsFragment extends Fragment {
         item.status = alarm.getStatus();
         item.durationSeconds = alarm.getDurationSeconds();
         item.startTime = alarm.getStartTime();
-        item.alarmSecond = alarm.getAlarmSecond();
+        item.snapshotTime = alarm.getSnapshotTime();
+        item.actualClipStart = alarm.getActualClipStart();
+        item.alarmSecond = alarm.getAlarmSecondValue();
+        item.hasBoxedVideoUrl = alarm.hasBoxedVideoUrl();
+        item.bboxJson = alarm.getBboxJson();
         item.videoError = alarm.getRecordingError();
         item.recordingStatus = alarm.getRecordingStatus();
         return item;
@@ -157,9 +161,13 @@ public class AlarmEventsFragment extends Fragment {
         public String snapshotPath;
         public String videoUrl;
         public String status;
-        public int durationSeconds;
+        public double durationSeconds;
         public String startTime;
-        public Integer alarmSecond;
+        public String snapshotTime;
+        public String actualClipStart;
+        public Double alarmSecond;
+        public boolean hasBoxedVideoUrl;
+        public String bboxJson;
         public String videoError;
         public String recordingStatus;
     }
@@ -262,25 +270,43 @@ public class AlarmEventsFragment extends Fragment {
                     if (unavailable) {
                         Toast.makeText(itemView.getContext(), videoFailureMessage(item), Toast.LENGTH_SHORT).show();
                     } else {
-                        VideoFilePlayActivity.start(requireContext(), url, true, resolveAlarmSecond(item));
+                        VideoFilePlayActivity.start(
+                                requireContext(),
+                                url,
+                                true,
+                                resolveAlarmSecond(item),
+                                item.id,
+                                item.snapshotTime,
+                                item.actualClipStart,
+                                item.hasBoxedVideoUrl,
+                                item.bboxJson
+                        );
                     }
                 });
             }
         }
     }
 
-    private static long resolveAlarmSecond(AlarmEventItem item) {
+    private static double resolveAlarmSecond(AlarmEventItem item) {
         if (item.alarmSecond != null) {
-            return Math.max(0, item.alarmSecond);
+            return Math.max(0d, item.alarmSecond);
         }
-        long alarmTime = parseTimeMillis(item.timestamp);
-        long startTime = parseTimeMillis(item.startTime);
-        if (alarmTime > 0 && startTime > 0) {
-            return Math.max(0, Math.round((alarmTime - startTime) / 1000.0));
+        long snapshotTime = parseTimeMillis(item.snapshotTime);
+        long actualClipStart = parseTimeMillis(item.actualClipStart);
+        if (snapshotTime > 0 && actualClipStart > 0) {
+            double fallback = Math.max(0d, (snapshotTime - actualClipStart) / 1000d);
+            Log.d(TAG_IMAGE, "Fallback alarmSecond from snapshot_time - actual_clip_start: alarmId="
+                    + item.id + ", alarmSecond=" + fallback
+                    + ", snapshotTime=" + item.snapshotTime
+                    + ", actualClipStart=" + item.actualClipStart);
+            return fallback;
         }
-        return item.durationSeconds > 0 && item.durationSeconds < 30
-                ? Math.max(0, item.durationSeconds / 2L)
-                : 30L;
+        double fallback = item.durationSeconds > 0 && item.durationSeconds < 30
+                ? Math.max(0d, item.durationSeconds / 2d)
+                : 30d;
+        Log.w(TAG_IMAGE, "Missing backend alarmSecond and snapshot clip timing, using last fallback: alarmId="
+                + item.id + ", alarmSecond=" + fallback);
+        return fallback;
     }
 
     private static long parseTimeMillis(String raw) {

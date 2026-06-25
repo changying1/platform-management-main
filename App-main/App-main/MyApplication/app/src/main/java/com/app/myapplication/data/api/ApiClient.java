@@ -32,12 +32,8 @@ public class ApiClient {
                     .addInterceptor(chain -> {
                         Request original = chain.request();
                         Request.Builder builder = original.newBuilder();
-                        String token = session.getToken();
-                        if (token != null && !token.trim().isEmpty()) {
-                            String auth = token.trim();
-                            if (!auth.toLowerCase().startsWith("bearer ")) {
-                                auth = "Bearer " + auth;
-                            }
+                        String auth = session.getAuthorizationHeader();
+                        if (!auth.isEmpty()) {
                             builder.header("Authorization", auth);
                         }
 

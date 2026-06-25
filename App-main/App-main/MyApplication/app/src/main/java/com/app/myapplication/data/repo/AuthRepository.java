@@ -37,10 +37,11 @@ public class AuthRepository {
             @Override
             public void onResponse(Call<LoginResult> call, Response<LoginResult> response) {
                 LoginResult result = response.body();
-                if (!response.isSuccessful() || result == null || result.token == null || result.token.trim().isEmpty()) {
+                if (!response.isSuccessful() || result == null || SessionManager.normalizeToken(result.token).isEmpty()) {
                     cb.onError("登录失败: HTTP " + response.code());
                     return;
                 }
+                result.token = SessionManager.normalizeToken(result.token);
                 if (result.nickname == null || result.nickname.trim().isEmpty()) {
                     result.nickname = account;
                 }

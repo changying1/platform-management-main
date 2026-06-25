@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 import shutil
 
@@ -58,7 +58,7 @@ RECORDING_PROCESSES = {}
 
 
 
-# [鏃ュ織鍘嬪埗]
+# [閺冦儱绻旈崢瀣煑]
 
 def suppress_verbose_logging():
 
@@ -107,7 +107,7 @@ logger = get_logger("VideoService")
 
 
 
-# --- 閰嶇疆閮ㄥ垎 ---
+# --- 闁板秶鐤嗛柈銊ュ瀻 ---
 
 NMS_HOST = "http://127.0.0.1:8001"
 
@@ -119,7 +119,7 @@ NMS_MEDIA_ROOT = os.path.abspath(os.getenv("NMS_MEDIA_ROOT", r"C:\media"))
 
 
 
-# --- 鍏ㄥ眬缂撳瓨 ---
+# --- 閸忋劌鐪紓鎾崇摠 ---
 
 ONVIF_CLIENT_CACHE = {}
 
@@ -135,7 +135,7 @@ CAMERA_TIME_SYNC_CACHE: Dict[int, float] = {}
 
 
 
-# [鏂板] 鍏ㄥ眬瀛楀吀锛氱敤浜庡瓨鍌ㄦ鍦ㄨ繍琛岀殑 FFmpeg 杩涚▼ {stream_name: process_object}
+# [閺傛澘顤僝 閸忋劌鐪€涙鍚€閿涙氨鏁ゆ禍搴＄摠閸屻劍顒滈崷銊ㄧ箥鐞涘瞼娈?FFmpeg 鏉╂稓鈻?{stream_name: process_object}
 
 FFMPEG_PROCESSES = {}
 
@@ -216,15 +216,20 @@ TRAFFIC_OCR_DEBUG_IMAGE_ENV = "TRAFFIC_OCR_DEBUG_IMAGE_PATH"
 BYTES_PER_GB = 1024 * 1024 * 1024
 HIKIOT_FLOW_CARD_PATH = "/flow/card/user/page"
 HIKIOT_FLOW_CARD_TIMEOUT_SECONDS = 10
+HIKIOT_DEFAULT_BASE_URL = "https://api.hikiot.com/api-saas/v1"
+HIKIOT_DEFAULT_APP_NO = "__UNI__3109F91"
+HIKIOT_DEFAULT_TERMINAL = "2"
+HIKIOT_FALLBACK_BEARER_TOKEN = "750f2465-2078-4bb7-82bd-9d10cde399ed"
 HIKIOT_DISPLAY_RESERVED_GB = float(os.getenv("HIKIOT_DISPLAY_RESERVED_GB", "0.5"))
 EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
-# 近实时回放依赖短分段；常态回放由独立归档逻辑完成，不与分段时长绑定。
+# 杩戝疄鏃跺洖鏀句緷璧栫煭鍒嗘锛涘父鎬佸洖鏀剧敱鐙珛褰掓。閫昏緫瀹屾垚锛屼笉涓庡垎娈垫椂闀跨粦瀹氥€?
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
 
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
 MIN_RECORD_SEGMENT_BYTES = int(os.getenv("VIDEO_MIN_RECORD_SEGMENT_BYTES", str(64 * 1024)))
 RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS", "2"))
 RECORDING_LIST_MAX_SECONDS = float(os.getenv("VIDEO_RECORDING_LIST_MAX_SECONDS", "6"))
+ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS = float(os.getenv("ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS", "60"))
 PLAYBACK_ARCHIVE_WINDOW_HOURS = max(1, int(os.getenv("PLAYBACK_ARCHIVE_WINDOW_HOURS", "3")))
 
 PLAYBACK_ARCHIVE_LOOKBACK_HOURS = max(PLAYBACK_ARCHIVE_WINDOW_HOURS,
@@ -298,7 +303,8 @@ class VideoService:
 
     @staticmethod
     def _is_placeholder_org_value(value: Any) -> bool:
-        return str(value or "").strip().lower() in {"", "0", "??", "？", "string", "null", "none", "undefined", "--", "全部项目", "全部公司"}
+        text = str(value or "").strip().lower()
+        return text in {"", "0", "?", "??", "string", "null", "none", "undefined", "--", "全部项目", "全部公司"}
 
     def _find_standard_device_doc(self, video_doc: dict | None) -> Optional[dict]:
         if not video_doc:
@@ -406,12 +412,12 @@ class VideoService:
         grid_id = self._scope_text(payload.get("grid_id"))
         grid_doc = self._find_grid_doc(grid_id, payload.get("grid"))
         if grid_id and not grid_doc:
-            raise ValueError("所属网格不存在")
+            raise ValueError("鎵€灞炵綉鏍间笉瀛樺湪")
 
         if grid_doc:
             grid_project_id = self._scope_text(grid_doc.get("project_id"))
             if not grid_project_id:
-                raise ValueError("所属网格未绑定项目")
+                raise ValueError("鎵€灞炵綉鏍兼湭缁戝畾椤圭洰")
             requested_project_id = self._scope_text(payload.get("project_id"))
             if requested_project_id and not self._is_placeholder_org_value(requested_project_id) and requested_project_id != grid_project_id:
                 raise ValueError("设备所属项目与网格所属项目不一致")
@@ -432,7 +438,7 @@ class VideoService:
 
         project_doc = project_by_id or project_by_name
         if project_id and not project_doc:
-            raise ValueError("所属项目不存在")
+            raise ValueError("鎵€灞為」鐩笉瀛樺湪")
 
         if project_doc:
             canonical_project_id = self._scope_text(project_doc.get("id") or project_doc.get("project_id"))
@@ -950,7 +956,7 @@ class VideoService:
 
             except Exception as e:
 
-                logger.error(f"闀滃儚鍚屾鎵弿澶辫触: {e}")
+                logger.error(f"闂€婊冨剼閸氬本顒為幍顐ｅ伎婢惰精瑙? {e}")
 
             time.sleep(60)
 
@@ -1049,7 +1055,7 @@ class VideoService:
 
                     shutil.copy2(source_file, target_path)
 
-                    logger.info(f"鏈湴闀滃儚瀹屾垚: {sp['name']} -> {relative_path}")
+                    logger.info(f"閺堫剙婀撮梹婊冨剼鐎瑰本鍨? {sp['name']} -> {relative_path}")
 
 
 
@@ -1073,7 +1079,7 @@ class VideoService:
 
             except Exception as e:
 
-                logger.error(f"闀滃儚鍐欏叆澶辫触 {sp.get('name')}: {e}")
+                logger.error(f"闂€婊冨剼閸愭瑥鍙嗘径杈Е {sp.get('name')}: {e}")
 
 
 
@@ -1089,11 +1095,11 @@ class VideoService:
 
             bucket.put_object_from_file(object_key, source_file)
 
-            logger.info(f"OSS 涓婁紶瀹屾垚: {config['name']} -> {object_key}")
+            logger.info(f"OSS 娑撳﹣绱剁€瑰本鍨? {config['name']} -> {object_key}")
 
         except Exception as e:
 
-            logger.error(f"OSS 涓婁紶澶辫触: {e}")
+            logger.error(f"OSS 娑撳﹣绱舵径杈Е: {e}")
 
 
 
@@ -1117,11 +1123,11 @@ class VideoService:
 
             client.upload_file(config["bucket"], object_key, source_file)
 
-            logger.info(f"COS 涓婁紶瀹屾垚: {config['name']} -> {object_key}")
+            logger.info(f"COS 娑撳﹣绱剁€瑰本鍨? {config['name']} -> {object_key}")
 
         except Exception as e:
 
-            logger.error(f"COS 涓婁紶澶辫触: {e}")
+            logger.error(f"COS 娑撳﹣绱舵径杈Е: {e}")
 
 
 
@@ -1145,11 +1151,11 @@ class VideoService:
 
             s3.upload_file(source_file, config["bucket"], object_key)
 
-            logger.info(f"S3 涓婁紶瀹屾垚: {config['name']} -> {object_key}")
+            logger.info(f"S3 娑撳﹣绱剁€瑰本鍨? {config['name']} -> {object_key}")
 
         except Exception as e:
 
-            logger.error(f"S3 涓婁紶澶辫触: {e}")
+            logger.error(f"S3 娑撳﹣绱舵径杈Е: {e}")
 
 
 
@@ -1193,13 +1199,13 @@ class VideoService:
 
 
 
-            logger.warning(f"瀛樺偍璺緞閰嶇疆鏍煎紡寮傚父,宸查噸缃负绌哄垪琛? {config_file}")
+            logger.warning(f"鐎涙ê鍋嶇捄顖氱窞闁板秶鐤嗛弽鐓庣础瀵倸鐖?瀹告煡鍣哥純顔昏礋缁屽搫鍨悰? {config_file}")
 
             return []
 
         except Exception as e:
 
-            logger.error(f"鍔犺浇瀛樺偍璺緞閰嶇疆澶辫触: {e}")
+            logger.error(f"閸旂姾娴囩€涙ê鍋嶇捄顖氱窞闁板秶鐤嗘径杈Е: {e}")
 
             return []
 
@@ -1259,7 +1265,7 @@ class VideoService:
 
             if sp.get("path") == path:
 
-                logger.warning(f"瀛樺偍璺緞宸插瓨? {path}")
+                logger.warning(f"鐎涙ê鍋嶇捄顖氱窞瀹告彃鐡? {path}")
 
                 return False
 
@@ -1281,7 +1287,7 @@ class VideoService:
 
             except Exception as e:
 
-                logger.error(f"鏃犳硶璁块棶瀛樺偍璺緞 {path}: {e}")
+                logger.error(f"閺冪姵纭剁拋鍧楁６鐎涙ê鍋嶇捄顖氱窞 {path}: {e}")
 
                 return False
 
@@ -1313,7 +1319,7 @@ class VideoService:
 
         self._save_storage_paths(paths)
 
-        logger.info(f"宸叉坊鍔犲疄鏃堕暅鍍忓瓨? {name} ({mirror_type})")
+        logger.info(f"瀹稿弶鍧婇崝鐘茬杽閺冨爼鏆呴崓蹇撶摠? {name} ({mirror_type})")
 
         return True
 
@@ -1333,7 +1339,7 @@ class VideoService:
 
             self._save_storage_paths(paths)
 
-            logger.info(f"宸插垹闄ゅ瓨鍌ㄨ矾? {removed.get('name')}")
+            logger.info(f"瀹告彃鍨归梽銈呯摠閸屻劏鐭? {removed.get('name')}")
 
             return True
 
@@ -1357,7 +1363,7 @@ class VideoService:
 
             self._save_storage_paths(paths)
 
-            logger.info(f"涓诲瓨鍌ㄥ凡鍒囨崲? {paths[0].get('name')}")
+            logger.info(f"娑撹鐡ㄩ崒銊ュ嚒閸掑洦宕? {paths[0].get('name')}")
 
             return True
 
@@ -1372,15 +1378,15 @@ class VideoService:
         while self._cleanup_thread_running:
 
             try:
-                # 检查存储空间并预警
+                # 妫€鏌ュ瓨鍌ㄧ┖闂村苟棰勮
                 self.check_storage_space()
                 
-                # 清理过期文件
+                # 娓呯悊杩囨湡鏂囦欢
                 self.cleanup_expired_files()
 
             except Exception as e:
 
-                logger.error(f"娓呯悊杩囨湡鏂囦欢澶辫触: {e}")
+                logger.error(f"濞撳懐鎮婃潻鍥ㄦ埂閺傚洣娆㈡径杈Е: {e}")
 
             time.sleep(3600)
 
@@ -1479,12 +1485,12 @@ class VideoService:
 
         if count_cleaned > 0:
 
-            logger.info(f"宸叉竻?{count_cleaned} 涓繃鏈熷綍?鎴浘鏂囦欢")
+            logger.info(f"瀹稿弶绔?{count_cleaned} 娑擃亣绻冮張鐔风秿?閹搭亜娴橀弬鍥︽")
 
 
 
     def check_storage_space(self) -> Dict:
-        """检查存储空间使用情况并返回状态"""
+        # Check storage usage and return status.
         import shutil
         
         config = self._get_system_config()
@@ -1498,18 +1504,18 @@ class VideoService:
         
         for storage_root in self._get_enabled_local_storage_roots(include_default=True):
             try:
-                # 获取磁盘使用情况
+                # 鑾峰彇纾佺洏浣跨敤鎯呭喌
                 total, used, free = shutil.disk_usage(storage_root)
                 usage_percent = (used / total) * 100 if total > 0 else 0
                 
-                # 计算视频存储目录大小
+                # 璁＄畻瑙嗛瀛樺偍鐩綍澶у皬
                 video_size = self._get_directory_size(storage_root)
                 video_size_gb = video_size / (1024**3)
                 
-                # 判断是否超过容量限制
+                # 鍒ゆ柇鏄惁瓒呰繃瀹归噺闄愬埗
                 over_capacity = video_size_gb > max_size_gb
                 
-                # 确定状态
+                # 纭畾鐘舵€?
                 if usage_percent >= critical_threshold or over_capacity:
                     status = "critical"
                 elif usage_percent >= warning_threshold:
@@ -1530,16 +1536,16 @@ class VideoService:
                 }
                 results.append(result)
                 
-                # 记录日志
+                # 璁板綍鏃ュ織
                 if status == "critical":
-                    logger.error(f"存储空间紧急: {storage_root} 使用率 {usage_percent:.1f}%, 视频占用 {video_size_gb:.1f}GB")
+                    logger.error(f"瀛樺偍绌洪棿绱ф€? {storage_root} 浣跨敤鐜?{usage_percent:.1f}%, 瑙嗛鍗犵敤 {video_size_gb:.1f}GB")
                     if auto_cleanup and cleanup_strategy in ["space", "both"]:
                         self._emergency_cleanup(storage_root, max_size_gb)
                 elif status == "warning":
-                    logger.warning(f"存储空间警告: {storage_root} 使用率 {usage_percent:.1f}%, 视频占用 {video_size_gb:.1f}GB")
+                    logger.warning(f"瀛樺偍绌洪棿璀﹀憡: {storage_root} 浣跨敤鐜?{usage_percent:.1f}%, 瑙嗛鍗犵敤 {video_size_gb:.1f}GB")
                     
             except Exception as e:
-                logger.error(f"检查存储空间失败 {storage_root}: {e}")
+                logger.error(f"妫€鏌ュ瓨鍌ㄧ┖闂村け璐?{storage_root}: {e}")
                 
         return {
             "storages": results,
@@ -1548,7 +1554,7 @@ class VideoService:
         }
     
     def _get_directory_size(self, path: str) -> int:
-        """计算目录总大小"""
+        # Calculate directory size.
         total = 0
         try:
             for dirpath, _, filenames in os.walk(path):
@@ -1561,8 +1567,8 @@ class VideoService:
         return total
     
     def _emergency_cleanup(self, storage_root: str, target_size_gb: float):
-        """紧急清理：按文件时间删除旧文件直到低于目标大小"""
-        logger.warning(f"开始紧急清理: {storage_root}, 目标大小 {target_size_gb}GB")
+        # Delete old media files until storage is under the target size.
+        logger.warning(f"寮€濮嬬揣鎬ユ竻鐞? {storage_root}, 鐩爣澶у皬 {target_size_gb}GB")
         
         target_bytes = target_size_gb * 1024**3
         current_size = self._get_directory_size(storage_root)
@@ -1570,7 +1576,7 @@ class VideoService:
         if current_size <= target_bytes:
             return
         
-        # 收集所有可删除文件（按修改时间排序）
+        # 鏀堕泦鎵€鏈夊彲鍒犻櫎鏂囦欢锛堟寜淇敼鏃堕棿鎺掑簭锛?
         files = []
         for dirpath, _, filenames in os.walk(storage_root):
             for f in filenames:
@@ -1583,14 +1589,14 @@ class VideoService:
                     except Exception:
                         pass
         
-        # 按时间排序（先删旧的）
+        # 鎸夋椂闂存帓搴忥紙鍏堝垹鏃х殑锛?
         files.sort(key=lambda x: x[1])
         
         deleted_count = 0
         deleted_bytes = 0
         
         for filepath, _, filesize in files:
-            if current_size - deleted_bytes <= target_bytes * 0.9:  # 清理到目标的90%
+            if current_size - deleted_bytes <= target_bytes * 0.9:  # 娓呯悊鍒扮洰鏍囩殑90%
                 break
                 
             try:
@@ -1600,7 +1606,7 @@ class VideoService:
             except Exception:
                 pass
         
-        logger.warning(f"紧急清理完成: 删除 {deleted_count} 个文件, 释放 {deleted_bytes / (1024**3):.2f} GB")
+        logger.warning(f"绱ф€ユ竻鐞嗗畬鎴? 鍒犻櫎 {deleted_count} 涓枃浠? 閲婃斁 {deleted_bytes / (1024**3):.2f} GB")
 
 
 
@@ -1779,25 +1785,24 @@ class VideoService:
             os.getenv("HIKIOT_BASE_URL")
             or os.getenv("HIKIOT_API_BASE_URL")
             or os.getenv("HIKIOT_FLOW_CARD_BASE_URL")
-            or ""
+            or HIKIOT_DEFAULT_BASE_URL
         ).rstrip("/")
         token = (
-            os.getenv("HIKIOT_AUTHORIZATION")
+            os.getenv("HIKIOT_BEARER_TOKEN")
+            or os.getenv("HIKIOT_AUTHORIZATION")
             or os.getenv("HIKIOT_AUTHORIZATION_BEARER")
             or os.getenv("HIKIOT_TOKEN")
             or os.getenv("HIKIOT_ACCESS_TOKEN")
-            or ""
+            or HIKIOT_FALLBACK_BEARER_TOKEN
         ).strip()
-        app_no = (os.getenv("HIKIOT_APP_NO") or os.getenv("HIKIOT_APPNO") or "").strip()
-        terminal = (os.getenv("HIKIOT_TERMINAL") or "").strip()
-        if not base_url:
-            raise ValueError("Hikiot API base url is not configured")
+        app_no = (os.getenv("HIKIOT_APP_NO") or os.getenv("HIKIOT_APPNO") or HIKIOT_DEFAULT_APP_NO).strip()
+        terminal = (os.getenv("HIKIOT_TERMINAL") or HIKIOT_DEFAULT_TERMINAL).strip()
         if not token:
-            raise ValueError("Hikiot Authorization token is not configured")
+            raise ValueError("Hikiot traffic API token is not configured")
         if not app_no:
-            raise ValueError("Hikiot appNo is not configured")
+            raise ValueError("Hikiot traffic API appNo is not configured")
         if not terminal:
-            raise ValueError("Hikiot terminal is not configured")
+            raise ValueError("Hikiot traffic API terminal is not configured")
         if not token.lower().startswith("bearer "):
             token = f"Bearer {token}"
         return base_url, token, app_no, terminal
@@ -1806,6 +1811,7 @@ class VideoService:
         base_url, authorization, app_no, terminal = self._get_hikiot_config()
         url = f"{base_url}{HIKIOT_FLOW_CARD_PATH}"
         headers = {
+            "User-Agent": "Mozilla/5.0",
             "Authorization": authorization,
             "appNo": app_no,
             "terminal": terminal,
@@ -1818,15 +1824,36 @@ class VideoService:
         )
         response.raise_for_status()
         payload = response.json()
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
         data = payload.get("data") if isinstance(payload, dict) else None
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            for key in ("records", "list", "rows"):
+            for key in ("records", "list", "items", "data", "rows"):
                 value = data.get(key)
                 if isinstance(value, list):
                     return value
         return []
+
+    def _query_hikiot_flow_card(self, sim_card_id: str | None = None) -> tuple[dict, list[dict], str]:
+        cards = self._fetch_hikiot_flow_cards()
+        first_card = next((item for item in cards if isinstance(item, dict)), None)
+        normalized_sim_card_id = self._normalize_card_match_value(sim_card_id)
+        if not cards or not first_card:
+            raise ValueError("Hikiot娴侀噺鎺ュ彛鏈繑鍥炲崱鏁版嵁")
+
+        if normalized_sim_card_id:
+            matched_card = self._match_hikiot_flow_card(normalized_sim_card_id, cards)
+            if matched_card:
+                return matched_card, cards, "Hikiot娴侀噺璇嗗埆鎴愬姛"
+            logger.warning(
+                "鏈尮閰嶅埌 SIM锛屽凡浣跨敤绗竴鏉?Hikiot 鍗℃暟鎹?sim_card_id=%s",
+                normalized_sim_card_id,
+            )
+            return first_card, cards, "SIM not matched; using first Hikiot card"
+
+        return first_card, cards, "Hikiot娴侀噺璇嗗埆鎴愬姛"
 
     def _normalize_card_match_value(self, value: Any) -> str:
         if value is None:
@@ -1837,13 +1864,27 @@ class VideoService:
         target = self._normalize_card_match_value(sim_card_id)
         if not target:
             return None
-        match_fields = ("cardId", "cardNo", "iccid", "simCardId", "id")
+        match_fields = ("cardId", "cardNo", "cardNumber", "iccid", "msisdn", "simCardId", "sim_card_id", "id")
         for card in cards or []:
             if not isinstance(card, dict):
                 continue
             for field in match_fields:
                 if self._normalize_card_match_value(card.get(field)) == target:
                     return card
+        candidate_keys = sorted({
+            key
+            for card in cards or []
+            if isinstance(card, dict)
+            for key in card.keys()
+            if any(token in str(key).lower() for token in ("card", "iccid", "msisdn", "sim"))
+        })
+        if candidate_keys:
+            masked_target = f"{target[:4]}***{target[-4:]}" if len(target) > 8 else "***"
+            logger.warning(
+                "Hikiot card not matched for sim_card_id=%s, candidate_keys=%s",
+                masked_target,
+                candidate_keys,
+            )
         return None
 
     def _parse_hikiot_flow_value_gb(self, value: Any) -> Optional[float]:
@@ -1865,7 +1906,7 @@ class VideoService:
         return self._parse_hikiot_flow_value_gb(total_flow)
 
     def _get_hikiot_card_no(self, card: dict, fallback: Any = None) -> str:
-        for key in ("cardNo", "cardId", "iccid", "simCardId", "id"):
+        for key in ("cardNo", "cardNumber", "cardId", "iccid", "msisdn", "simCardId", "sim_card_id", "id"):
             value = self._normalize_card_match_value(card.get(key) if isinstance(card, dict) else None)
             if value:
                 return value
@@ -1924,26 +1965,22 @@ class VideoService:
             return None
 
         sim_card_id = self._normalize_card_match_value(getattr(db_video, "sim_card_id", None))
-        if not sim_card_id:
-            return {"success": False, "message": "当前摄像头未绑定SIM卡"}
+        has_sim_card_id = bool(sim_card_id)
 
         try:
-            cards = self._fetch_hikiot_flow_cards()
+            card, cards, query_message = self._query_hikiot_flow_card(sim_card_id if has_sim_card_id else None)
         except ValueError as exc:
             return {"success": False, "message": str(exc)}
         except requests.RequestException as exc:
-            return {"success": False, "message": f"Hikiot flow card request failed: {exc}"}
+            return {"success": False, "message": f"Hikiot娴侀噺鎺ュ彛璇锋眰澶辫触: {exc}"}
         except Exception as exc:
-            return {"success": False, "message": f"Hikiot flow card lookup failed: {exc}"}
-        card = self._match_hikiot_flow_card(sim_card_id, cards)
-        if not card:
-            return {"success": False, "message": "未找到当前摄像头绑定的SIM卡流量信息"}
+            return {"success": False, "message": f"Hikiot娴侀噺鎺ュ彛鏌ヨ澶辫触: {exc}"}
 
         used_gb = self._parse_hikiot_flow_value_gb(card.get("usedFlow"))
         remaining_gb = self._parse_hikiot_flow_value_gb(card.get("residualFlow"))
         total_gb = self._extract_hikiot_total_flow_gb(card)
         expired_at = card.get("expiredTimes")
-        card_no = self._get_hikiot_card_no(card, sim_card_id)
+        card_no = self._get_hikiot_card_no(card, sim_card_id if has_sim_card_id else None)
         now = datetime.utcnow()
 
         updates = {
@@ -1969,22 +2006,32 @@ class VideoService:
         status_summary = self._build_device_status_summary(db, refreshed)
         return {
             "success": True,
-            "message": "ok",
+            "message": "Hikiot娴侀噺璇嗗埆鎴愬姛",
+            "source": "hikiot",
             "device_id": refreshed.id,
             "device_name": getattr(refreshed, "name", None),
-            "sim_card_id": sim_card_id,
+            "sim_card_id": sim_card_id if has_sim_card_id else card_no,
             "last_update_time": now,
+            "update_time": now,
             "last_traffic_ocr_time": now,
             "last_calculated_at": now,
             "cycle_start_time": now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
             "cycle_end_time": now,
             **fields,
             **status_summary,
+            "used_gb": used_gb,
+            "remaining_gb": remaining_gb,
+            "total_gb": total_gb,
+            "expired_times": expired_at,
+            "hikiot_message": query_message,
             "hikiot_card": {
                 "cardId": card.get("cardId"),
                 "cardNo": card.get("cardNo"),
+                "cardNumber": card.get("cardNumber"),
                 "iccid": card.get("iccid"),
+                "msisdn": card.get("msisdn"),
                 "simCardId": card.get("simCardId"),
+                "sim_card_id": card.get("sim_card_id"),
                 "id": card.get("id"),
             },
         }
@@ -2545,24 +2592,24 @@ class VideoService:
 
         status_text_map = {
 
-            "online": "鍦ㄧ嚎",
+            "online": "在线",
 
-            "offline": "绂荤嚎",
+            "offline": "离线",
 
-            "sleeping": "寰呮満/浼戠湢",
+            "sleeping": "休眠",
 
         }
 
-        status_text_parts = [status_text_map.get(main_status, "绂荤嚎")]
+        status_text_parts = [status_text_map.get(main_status, "离线")]
 
         tag_text_map = {
 
             "privacy_enabled": "隐私开启",
-            "storage_abnormal": "瀛樺偍寮傚父",
+            "storage_abnormal": "鐎涙ê鍋嶅鍌氱埗",
 
             "low_battery": "低电量",
             "weak_signal": "信号弱",
-            "alarm_active": "寮傚父鍛婅",
+            "alarm_active": "瀵倸鐖堕崨濠咁劅",
         }
 
         status_text_parts.extend(tag_text_map[tag] for tag in status_tags if tag in tag_text_map)
@@ -2614,7 +2661,7 @@ class VideoService:
 
     ) -> bool:
 
-        """Sync monitoring alarms from device status."""
+        # Sync monitoring alarms from device status.
 
         device_id = str(db_video.id)
 
@@ -2636,7 +2683,7 @@ class VideoService:
                 severity=severity,
 
                 description=description,
-                location=db_video.name or f"视频设备-{device_id}",
+                location=db_video.name or f"瑙嗛璁惧-{device_id}",
                 device_name=db_video.name or f"Video-{device_id}",
             )
             push_alarm_threadsafe(self._build_monitoring_alarm_websocket_payload(alarm_doc))
@@ -2674,7 +2721,7 @@ class VideoService:
 
     ) -> bool:
 
-        """Sync monitoring alarms from device status."""
+        # Sync monitoring alarms from device status.
 
         changed = False
 
@@ -2688,7 +2735,7 @@ class VideoService:
 
                 "high",
 
-                f"瑙嗛璁惧 {db_video.name} 绂荤嚎",
+                f"视频设备 {db_video.name} 离线",
 
                 status_summary.get("main_status") == "offline",
 
@@ -2700,7 +2747,7 @@ class VideoService:
 
                 "low",
 
-                f"瑙嗛璁惧 {db_video.name} 澶勪簬寰呮満/浼戠湢",
+                f"视频设备 {db_video.name} 休眠",
 
                 bool(status_summary.get("sleeping")),
 
@@ -2724,7 +2771,7 @@ class VideoService:
 
                 "high",
 
-                f"瑙嗛璁惧 {db_video.name} 瀛樺偍寮傚父",
+                f"鐟欏棝顣剁拋鎯ь槵 {db_video.name} 鐎涙ê鍋嶅鍌氱埗",
 
                 bool(status_summary.get("storage_abnormal")),
 
@@ -2787,9 +2834,9 @@ class VideoService:
         traffic_low_active = quota > 0 and ratio <= TRAFFIC_ALERT_THRESHOLD_RATIO
 
         traffic_desc = (
-            f"视频设备 {db_video.name} 流量低于阈值; "
-            f"剩余 {self._format_bytes(remaining)} / 周额度 {self._format_bytes(quota)}; "
-            f"本周已用 {self._format_bytes(weekly_used_bytes)}"
+            f"瑙嗛璁惧 {db_video.name} 娴侀噺浣庝簬闃堝€? "
+            f"鍓╀綑 {self._format_bytes(remaining)} / 鍛ㄩ搴?{self._format_bytes(quota)}; "
+            f"鏈懆宸茬敤 {self._format_bytes(weekly_used_bytes)}"
         )
 
         changed = self._sync_single_monitoring_alarm(
@@ -2931,7 +2978,7 @@ class VideoService:
             )
             return {
                 "success": True,
-                "message": "Hikiot流量数据已存在，OCR结果未覆盖",
+                "message": "Hikiot traffic data already exists; OCR result not overwritten",
                 "device_id": video_id,
                 "last_update_time": getattr(db_video, "traffic_ocr_updated_at", None) or now,
                 "last_calculated_at": now,
@@ -2950,7 +2997,7 @@ class VideoService:
                     "traffic_rejected_ocr_text": normalized_ocr_text,
                     "traffic_rejected_used_gb": None,
                     "traffic_ocr_status": "unrecognized",
-                    "traffic_ocr_reject_reason": "未识别到可信流量读数",
+                    "traffic_ocr_reject_reason": "鏈瘑鍒埌鍙俊娴侀噺璇绘暟",
                     "traffic_ocr_updated_at": now,
                 })
                 refreshed = self._get_video_runtime_by_id(video_id) or db_video
@@ -2958,7 +3005,7 @@ class VideoService:
                 fields = self._build_traffic_summary_fields(current_used_gb, current_ocr_text or normalized_ocr_text)
                 return {
                     "success": False,
-                    "message": "未识别到可信流量读数",
+                    "message": "鏈瘑鍒埌鍙俊娴侀噺璇绘暟",
                     "last_update_time": updated_at,
                     "candidates": candidates,
                     "traffic_text": current_ocr_text or "",
@@ -2976,7 +3023,7 @@ class VideoService:
                         "historical_used_gb": current_used_gb,
                         "delta_gb": None,
                         "delta_allowed": False,
-                        "ignored_reason": "未识别到可信流量读数",
+                        "ignored_reason": "鏈瘑鍒埌鍙俊娴侀噺璇绘暟",
                         "historical_value_suspicious": self._is_suspicious_traffic_history(current_used_gb),
                         "final_used_gb": current_used_gb,
                         "no_usable_candidate_reason": "no_trusted_traffic_reading",
@@ -3107,7 +3154,7 @@ class VideoService:
             )
         message = "ok" if is_valid else invalid_reason
         if reset_suspicious_history:
-            message = "历史流量统计异常，已使用当前OCR读数重置。"
+            message = "历史流量统计异常，已使用当前OCR读数重置"
 
         logger.info(
             "Traffic OCR usage debug video_id=%s selected=%s historical=%s suspicious=%s final=%s",
@@ -3134,10 +3181,12 @@ class VideoService:
         return self._refresh_hikiot_video_traffic(db, video_id)
 
     def recognize_video_traffic(self, db: Session, video_id: int):
-        result = self._refresh_hikiot_video_traffic(db, video_id)
-        if result is not None:
-            return result
-        return {"success": False, "message": "设备不存在"}
+        hikiot_result = self._refresh_hikiot_video_traffic(db, video_id)
+        if hikiot_result is None:
+            return {"success": False, "message": "设备不存在"}
+        if bool(hikiot_result.get("success")):
+            return hikiot_result
+        hikiot_error = str(hikiot_result.get("message") or "")
 
         print(f"[TrafficOCR] recognize start video_id={video_id}")
         db_video = self._get_video_runtime_by_id(video_id)
@@ -3152,9 +3201,9 @@ class VideoService:
             print(f"[TrafficOCR] snapshot method={method}")
             print(f"[TrafficOCR] snapshot saved path={snapshot_path}")
         except Exception as exc:
-            reason = str(exc) or "获取截图失败"
+            reason = str(exc) or "鑾峰彇鎴浘澶辫触"
             print(f"[TrafficOCR] recognize failed reason={reason}")
-            return {"success": False, "message": reason}
+            return {"success": False, "message": reason, "hikiot_error": hikiot_error}
 
         try:
             ocr_result = self._recognize_traffic_from_snapshot(
@@ -3164,9 +3213,9 @@ class VideoService:
                 timestamp=timestamp,
             )
         except Exception as exc:
-            reason = str(exc) or "识别失败"
+            reason = str(exc) or "璇嗗埆澶辫触"
             print(f"[TrafficOCR] recognize failed reason={reason}")
-            return {"success": False, "message": reason}
+            return {"success": False, "message": reason, "hikiot_error": hikiot_error}
 
         raw_text = str(ocr_result.get("raw_text") or "")
         traffic_text = str(ocr_result.get("traffic_text") or "")
@@ -3180,6 +3229,8 @@ class VideoService:
             return {"success": False, "message": "设备不存在"}
 
         traffic_debug = dict(result.get("traffic_debug") or {})
+        if hikiot_error:
+            traffic_debug["hikiot_error"] = hikiot_error
         ocr_selected_candidate = next((item for item in candidates if not item.get("excluded")), None)
         if ocr_selected_candidate:
             raw_candidate_value = ocr_selected_candidate.get("raw_value_gb")
@@ -3319,7 +3370,7 @@ class VideoService:
         if not live_url:
             live_url = str(getattr(db_video, "rtsp_url", "") or getattr(db_video, "stream_url", "") or "")
         if not live_url:
-            raise ValueError("直播流不可用")
+            raise ValueError("鐩存挱娴佷笉鍙敤")
 
         self._capture_ffmpeg_snapshot(live_url, snapshot_path)
         return snapshot_path, "ffmpeg"
@@ -3328,7 +3379,7 @@ class VideoService:
         device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
         channel_no = int(getattr(db_video, "channel_no", None) or 1)
         if not device_serial:
-            raise ValueError("萤石设备缺少 device_serial")
+            raise ValueError("钀ょ煶璁惧缂哄皯 device_serial")
 
         payload = {"deviceSerial": device_serial, "channelNo": channel_no}
         body = None
@@ -3341,7 +3392,7 @@ class VideoService:
                 last_error = exc
 
         if body is None:
-            raise ValueError(f"萤石截图失败: {last_error}")
+            raise ValueError(f"钀ょ煶鎴浘澶辫触: {last_error}")
 
         data = body.get("data") or {}
         picture_url = (
@@ -3352,12 +3403,12 @@ class VideoService:
             or (data if isinstance(data, str) else "")
         )
         if not picture_url:
-            raise ValueError("萤石截图接口未返回图片地址")
+            raise ValueError("钀ょ煶鎴浘鎺ュ彛鏈繑鍥炲浘鐗囧湴鍧€")
 
         response = requests.get(str(picture_url), timeout=TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS)
         response.raise_for_status()
         if not response.content:
-            raise ValueError("萤石截图为空")
+            raise ValueError("钀ょ煶鎴浘涓虹┖")
         with open(output_path, "wb") as fh:
             fh.write(response.content)
 
@@ -3386,13 +3437,13 @@ class VideoService:
                 timeout=TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
-            raise ValueError("获取截图超时")
+            raise ValueError("鑾峰彇鎴浘瓒呮椂")
 
         if result.returncode != 0:
             error = (result.stderr or result.stdout or "").strip()[-500:]
-            raise ValueError(f"获取截图失败: {error or 'ffmpeg 截图失败'}")
+            raise ValueError(f"鑾峰彇鎴浘澶辫触: {error or 'ffmpeg 鎴浘澶辫触'}")
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            raise ValueError("获取截图失败")
+            raise ValueError("鑾峰彇鎴浘澶辫触")
 
     def _recognize_traffic_from_snapshot(
         self,
@@ -4622,7 +4673,7 @@ class VideoService:
 
     def _get_ezviz_config(self) -> tuple[str, str, str]:
 
-        # 杩愯鏃惰鍙栫幆澧冨彉閲?閬垮厤瀵煎叆鏃舵満瀵艰嚧閰嶇疆鍊间负绌?
+        # 鏉╂劘顢戦弮鎯邦嚢閸欐牜骞嗘晶鍐ㄥ綁闁?闁灝鍘ょ€电厧鍙嗛弮鑸垫簚鐎佃壈鍤ч柊宥囩枂閸婇棿璐熺粚?
 
         base_url = (os.getenv("EZVIZ_BASE_URL") or EZVIZ_BASE_URL or "https://open.ys7.com").rstrip("/")
 
@@ -4636,7 +4687,7 @@ class VideoService:
 
     # -------------------------------------------------------------------------
 
-    # 鏍稿績 1: 鑾峰彇杩炴帴
+    # 閺嶇绺?1: 閼惧嘲褰囨潻鐐村复
 
     # -------------------------------------------------------------------------
 
@@ -4728,7 +4779,7 @@ class VideoService:
 
             logger.error(f"Connection Failed: {e}")
 
-            raise ValueError(f"杩炴帴澶辫触: {e}")
+            raise ValueError(f"鏉╃偞甯存径杈Е: {e}")
 
 
 
@@ -4792,7 +4843,7 @@ class VideoService:
 
         if not db_video.ip_address or not db_video.username or not db_video.password:
 
-            return {"status": "skipped", "message": "璁惧缂哄皯 ONVIF 杩炴帴鍙傛暟"}
+            return {"status": "skipped", "message": "鐠佹儳顦紓鍝勭毌 ONVIF 鏉╃偞甯撮崣鍌涙殶"}
 
 
 
@@ -4922,7 +4973,7 @@ class VideoService:
 
                 "status": "success",
 
-                "message": "鎽勫儚澶存椂闂村凡鍚屾",
+                "message": "閹藉嫬鍎氭径瀛樻闂傛潙鍑￠崥灞绢劄",
 
                 "drift_seconds_before_sync": int(drift_seconds) if drift_seconds is not None else None,
 
@@ -4932,7 +4983,7 @@ class VideoService:
 
             logger.warning(f"Camera time sync skipped for video_id={db_video.id}: {e}")
 
-            return {"status": "error", "message": f"鎽勫儚澶存牎鏃跺け? {e}"}
+            return {"status": "error", "message": f"閹藉嫬鍎氭径瀛樼墡閺冭泛銇? {e}"}
 
 
 
@@ -4949,7 +5000,7 @@ class VideoService:
 
     # -------------------------------------------------------------------------
 
-    # 杈呭姪: 鐢熸垚 WS-Security Header (妯℃嫙 ODM 璁よ瘉)
+    # 鏉堝懎濮? 閻㈢喐鍨?WS-Security Header (濡剝瀚?ODM 鐠併倛鐦?
 
     # -------------------------------------------------------------------------
 
@@ -4975,31 +5026,24 @@ class VideoService:
 
 
 
-        return f"""<s:Header>
-
-    <Security s:mustUnderstand="1" xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-
-        <UsernameToken>
-
-            <Username>{username}</Username>
-
-            <Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{digest}</Password>
-
-            <Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce_b64}</Nonce>
-
-            <Created xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">{created}</Created>
-
-        </UsernameToken>
-
-    </Security>
-
-</s:Header>"""
+        return (
+            f'<s:Header>\n'
+            f'    <Security s:mustUnderstand="1" xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">\n'
+            f'        <UsernameToken>\n'
+            f'            <Username>{username}</Username>\n'
+            f'            <Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{digest}</Password>\n'
+            f'            <Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce_b64}</Nonce>\n'
+            f'            <Created xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">{created}</Created>\n'
+            f'        </UsernameToken>\n'
+            f'    </Security>\n'
+            f'</s:Header>'
+        )
 
 
 
     # -------------------------------------------------------------------------
 
-    # 鏍稿績 2: 鍘熷 SOAP 鍋滄 (ODMFix)
+    # 閺嶇绺?2: 閸樼喎顫?SOAP 閸嬫粍顒?(ODMFix)
 
     # -------------------------------------------------------------------------
 
@@ -5030,79 +5074,45 @@ class VideoService:
 
 
         payloads = [
-
-            # 鏂规 0: Wireshark 鎶撳寘澶嶅埢
-
-            f"""<?xml version="1.0" encoding="UTF-8"?>
-
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-
-  {security_header}
-
-  <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-
-    <Stop xmlns="http://www.onvif.org/ver20/ptz/wsdl">
-
-      <ProfileToken>{profile_token}</ProfileToken>
-
-      <PanTilt>true</PanTilt>
-
-            <Zoom>true</Zoom>
-
-    </Stop>
-
-  </s:Body>
-
-</s:Envelope>""",
-
-            # 鏂规 A: 澶囩敤
-
-            f"""<?xml version="1.0" encoding="UTF-8"?>
-
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
-
-  {security_header}
-
-  <s:Body>
-
-    <tptz:Stop>
-
-      <tptz:ProfileToken>{profile_token}</tptz:ProfileToken>
-
-      <tptz:PanTilt>true</tptz:PanTilt>
-
-      <tptz:Zoom>true</tptz:Zoom>
-
-    </tptz:Stop>
-
-  </s:Body>
-
-</s:Envelope>""",
-
-            # 鏂规 B: 澶囩敤
-
-            f"""<?xml version="1.0" encoding="UTF-8"?>
-
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
-
-  {security_header}
-
-  <s:Body>
-
-    <tptz:Stop>
-
-      <tptz:ProfileToken>{profile_token}</tptz:ProfileToken>
-
-      <tptz:PanTilt>1</tptz:PanTilt>
-
-      <tptz:Zoom>1</tptz:Zoom>
-
-    </tptz:Stop>
-
-  </s:Body>
-
-</s:Envelope>"""
-
+            (
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">\n'
+                f'  {security_header}\n'
+                f'  <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">\n'
+                f'    <Stop xmlns="http://www.onvif.org/ver20/ptz/wsdl">\n'
+                f'      <ProfileToken>{profile_token}</ProfileToken>\n'
+                f'      <PanTilt>true</PanTilt>\n'
+                f'      <Zoom>true</Zoom>\n'
+                f'    </Stop>\n'
+                f'  </s:Body>\n'
+                f'</s:Envelope>'
+            ),
+            (
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">\n'
+                f'  {security_header}\n'
+                f'  <s:Body>\n'
+                f'    <tptz:Stop>\n'
+                f'      <tptz:ProfileToken>{profile_token}</tptz:ProfileToken>\n'
+                f'      <tptz:PanTilt>true</tptz:PanTilt>\n'
+                f'      <tptz:Zoom>true</tptz:Zoom>\n'
+                f'    </tptz:Stop>\n'
+                f'  </s:Body>\n'
+                f'</s:Envelope>'
+            ),
+            (
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">\n'
+                f'  {security_header}\n'
+                f'  <s:Body>\n'
+                f'    <tptz:Stop>\n'
+                f'      <tptz:ProfileToken>{profile_token}</tptz:ProfileToken>\n'
+                f'      <tptz:PanTilt>1</tptz:PanTilt>\n'
+                f'      <tptz:Zoom>1</tptz:Zoom>\n'
+                f'    </tptz:Stop>\n'
+                f'  </s:Body>\n'
+                f'</s:Envelope>'
+            ),
         ]
 
 
@@ -5172,7 +5182,7 @@ class VideoService:
 
 
 
-            # 鍏滃簳
+            # 閸忔粌绨?
 
             try:
 
@@ -5202,7 +5212,7 @@ class VideoService:
 
             if video_id in ONVIF_CLIENT_CACHE: del ONVIF_CLIENT_CACHE[video_id]
 
-            raise ValueError("鎵€鏈夊仠姝㈡柟娉曞潎澶辫触")
+            raise ValueError("閹碘偓閺堝浠犲銏℃煙濞夋洖娼庢径杈Е")
 
 
 
@@ -5212,7 +5222,7 @@ class VideoService:
 
             logger.error(f"Stop Fatal Error: {e}")
 
-            raise ValueError(f"鍋滄澶辫触: {e}")
+            raise ValueError(f"閸嬫粍顒涙径杈Е: {e}")
 
 
 
@@ -5301,7 +5311,7 @@ class VideoService:
 
         if not preset_tokens or len(preset_tokens) < 2:
 
-            raise ValueError("宸¤埅鑷冲皯闇€瑕佷袱涓缃偣")
+            raise ValueError("瀹嘎ゅ焻閼峰啿鐨棁鈧憰浣疯⒈娑擃亪顣╃純顔惧仯")
 
 
 
@@ -5314,7 +5324,7 @@ class VideoService:
 
             if missing:
 
-                raise ValueError(f"浠ヤ笅棰勭疆鐐逛笉瀛樺湪: {', '.join(missing)}")
+                raise ValueError(f"娴犮儰绗呮０鍕枂閻愰€涚瑝鐎涙ê婀? {', '.join(missing)}")
 
 
 
@@ -5448,9 +5458,9 @@ class VideoService:
 
             'right': 'right',
 
-            'zoom_in': '鏀惧ぇ',
+            'zoom_in': '閺€鎯с亣',
 
-            'zoom_out': '缂╁皬',
+            'zoom_out': 'zoom_out',
 
         }.get(direction, direction)
 
@@ -5540,7 +5550,7 @@ class VideoService:
 
         code_str = str(raw_code or "")
 
-        msg = raw_message or "璋冪敤澶辫触"
+        msg = raw_message or "鐠嬪啰鏁ゆ径杈Е"
 
         msg_lower = msg.lower()
 
@@ -5552,13 +5562,13 @@ class VideoService:
 
         if "offline" in msg_lower or "设备不在线" in msg or "设备离线" in msg:
 
-            return "DEVICE_OFFLINE", "璁惧绂荤嚎鎴栦笉鍙揪"
+            return "DEVICE_OFFLINE", "鐠佹儳顦粋鑽ゅ殠閹存牔绗夐崣顖濇彧"
 
         if "ptz" in msg_lower and ("not" in msg_lower or "不支持" in msg):
 
             return "PTZ_NOT_SUPPORTED", "Device does not support cloud PTZ"
 
-        if code_str == "60019" or "鍔犲瘑" in msg:
+        if code_str == "60019" or "加密" in msg:
 
             return "VIDEO_ENCRYPTED", "Video encryption is enabled for the current protocol"
 
@@ -5572,7 +5582,7 @@ class VideoService:
 
         if not app_key or not app_secret:
 
-            raise ValueError("UPSTREAM_ERROR: 鏈厤缃悿?AppKey/AppSecret")
+            raise ValueError("UPSTREAM_ERROR: 閺堫亪鍘ょ純顔挎偪?AppKey/AppSecret")
 
 
 
@@ -5598,7 +5608,7 @@ class VideoService:
 
         if code != "200":
 
-            semantic_code, semantic_msg = self._map_error_code(code, str(body.get("msg", "鑾峰彇 token 澶辫触")))
+            semantic_code, semantic_msg = self._map_error_code(code, str(body.get("msg", "get token failed")))
 
             raise ValueError(f"{semantic_code}: {semantic_msg}")
 
@@ -5612,7 +5622,7 @@ class VideoService:
 
         if not token:
 
-            raise ValueError("UPSTREAM_ERROR: 鑾峰彇 token 澶辫触")
+            raise ValueError("UPSTREAM_ERROR: get token failed")
 
 
 
@@ -5742,13 +5752,13 @@ class VideoService:
 
                 return retry_body
 
-            semantic_code, semantic_msg = self._map_error_code(retry_code, str(retry_body.get("msg", "璋冪敤澶辫触")))
+            semantic_code, semantic_msg = self._map_error_code(retry_code, str(retry_body.get("msg", "鐠嬪啰鏁ゆ径杈Е")))
 
             raise ValueError(f"{semantic_code}: {semantic_msg}")
 
 
 
-        semantic_code, semantic_msg = self._map_error_code(code, str(body.get("msg", "璋冪敤澶辫触")))
+        semantic_code, semantic_msg = self._map_error_code(code, str(body.get("msg", "鐠嬪啰鏁ゆ径杈Е")))
 
         raise ValueError(f"{semantic_code}: {semantic_msg}")
 
@@ -5756,7 +5766,7 @@ class VideoService:
 
     def _get_stream_info_local(self, db_video: VideoDevice) -> dict:
 
-        # 鎷夋祦鍓嶆墽琛屾寜闇€鏍℃椂锛氳秴杩囬槇鍊兼墠鏀?涓旀湁鍐峰嵈鏃堕棿閬垮厤棰戠箒鍐欒澶?
+        # 閹峰绁﹂崜宥嗗⒔鐞涘本瀵滈棁鈧弽鈩冩閿涙俺绉存潻鍥閸婂吋澧犻弨?娑撴梹婀侀崘宄板祱閺冨爼妫块柆鍨帳妫版垹绠掗崘娆掝啎婢?
 
         sync_result = self._sync_camera_time_for_video(db_video, force=False)
 
@@ -5766,7 +5776,7 @@ class VideoService:
 
 
 
-        # 鎳掑惎鍔ㄦ帹娴侊細褰撳墠绔姹傛挱鏀惧湴鍧€鏃?濡傛帹娴佽繘绋嬩笉瀛樺湪鍒欒嚜鍔ㄦ媺璧?
+        # 閹虫帒鎯庨崝銊﹀腹濞翠緤绱拌ぐ鎾冲缁旑垵顕Ч鍌涙尡閺€鎯ф勾閸р偓閺?婵″倹甯瑰ù浣界箻缁嬪绗夌€涙ê婀崚娆掑殰閸斻劍濯虹挧?
 
         stream_name = str(db_video.id)
 
@@ -5796,7 +5806,7 @@ class VideoService:
 
 
 
-        # 鎷夋祦闃舵椤哄甫鍋氫竴娆″綍鍍忚嚜鎰?纭繚鈥滆澶囧湪绾挎椂鎸佺画钀界洏鈥?
+        # 閹峰绁﹂梼鑸殿唽妞ゅ搫鐢崑姘濞嗏€崇秿閸嶅繗鍤滈幇?绾喕绻氶垾婊嗩啎婢跺洤婀痪鎸庢閹镐胶鐢婚拃鐣屾磸閳?
 
         record_entry = RECORDING_PROCESSES.get(db_video.id)
 
@@ -5886,11 +5896,11 @@ class VideoService:
 
         if not device_serial:
 
-            raise ValueError("UPSTREAM_ERROR: 浜戣澶囩己?device_serial")
+            raise ValueError("UPSTREAM_ERROR: 娴滄垼顔曟径鍥╁繁?device_serial")
 
 
 
-        # ?寮哄埗浣跨敤 HLS 鑰屼笉?ezopen
+        # ?瀵搫鍩楁担璺ㄦ暏 HLS 閼板奔绗?ezopen
 
         # if protocol_name == "ezopen":
 
@@ -5976,7 +5986,7 @@ class VideoService:
 
         if not url:
 
-            raise last_error or ValueError("UPSTREAM_ERROR: 骞冲彴鏈繑鍥炲彲鐢ㄦ挱鏀惧湴鍧€")
+            raise last_error or ValueError("UPSTREAM_ERROR: 楠炲啿褰撮張顏囩箲閸ョ偛褰查悽銊︽尡閺€鎯ф勾閸р偓")
 
 
 
@@ -6002,7 +6012,7 @@ class VideoService:
 
 
 
-        # ?鍏抽敭锛氳浆?ezopen ?HLS 鍦板潃
+        # ?閸忔娊鏁敍姘虫祮?ezopen ?HLS 閸︽澘娼?
 
         # if url and url.startswith("ezopen://"):
 
@@ -6014,7 +6024,7 @@ class VideoService:
 
 
 
-        # 浜戞祦鍦烘櫙涔熻鎸佺画钀芥湰鍦板垎娈?渚涗复鏃剁紦?甯告€佸洖鏀句娇鐢?
+        # 娴滄垶绁﹂崷鐑樻珯娑旂喕顩﹂幐浣虹敾閽€鑺ユ拱閸︽澘鍨庡▓?娓氭稐澶嶉弮鍓佺处?鐢憡鈧礁娲栭弨鍙ュ▏閻?
 
         record_entry = RECORDING_PROCESSES.get(db_video.id)
 
@@ -6084,13 +6094,13 @@ class VideoService:
 
     #     if not device_serial:
 
-    #         raise ValueError("UPSTREAM_ERROR: 浜戣澶囩己?device_serial")
+    #         raise ValueError("UPSTREAM_ERROR: 娴滄垼顔曟径鍥╁繁?device_serial")
 
     #
 
     #     if protocol_name == "ezopen":
 
-    #         preferred_code = 2  # 寮哄埗浣跨敤 HLS 鑰屼笉?ezopen
+    #         preferred_code = 2  # 瀵搫鍩楁担璺ㄦ暏 HLS 閼板奔绗?ezopen
 
     #     else:
 
@@ -6178,7 +6188,7 @@ class VideoService:
 
     #     if not url:
 
-    #         raise last_error or ValueError("UPSTREAM_ERROR: 骞冲彴鏈繑鍥炲彲鐢ㄦ挱鏀惧湴鍧€")
+    #         raise last_error or ValueError("UPSTREAM_ERROR: 楠炲啿褰撮張顏囩箲閸ョ偛褰查悽銊︽尡閺€鎯ф勾閸р偓")
 
     #
 
@@ -6204,7 +6214,7 @@ class VideoService:
 
     #
 
-    #     # 浜戞祦鍦烘櫙涔熻鎸佺画钀芥湰鍦板垎娈?渚涗复鏃剁紦?甯告€佸洖鏀句娇鐢?
+    #     # 娴滄垶绁﹂崷鐑樻珯娑旂喕顩﹂幐浣虹敾閽€鑺ユ拱閸︽澘鍨庡▓?娓氭稐澶嶉弮鍓佺处?鐢憡鈧礁娲栭弨鍙ュ▏閻?
 
     #     record_entry = RECORDING_PROCESSES.get(db_video.id)
 
@@ -6270,7 +6280,7 @@ class VideoService:
 
         if direction_code is None:
 
-            raise ValueError("PTZ_NOT_SUPPORTED: 涓嶆敮鎸佺殑 PTZ 鏂瑰悜")
+            raise ValueError("PTZ_NOT_SUPPORTED: unsupported PTZ direction")
 
 
 
@@ -6292,7 +6302,7 @@ class VideoService:
 
         except Exception as first_error:
 
-            # 钀ょ煶浜戝伓鍙戠綉缁滄姈鍔ㄤ細瀵艰嚧 start 瓒呮椂,鐭殏閲嶈瘯涓€娆″彲鎻愬崌绋冲畾鎬?
+            # 閽€銈囩叾娴滄垵浼撻崣鎴犵秹缂佹粍濮堥崝銊ょ窗鐎佃壈鍤?start 鐡掑懏妞?閻厽娈忛柌宥堢槸娑撯偓濞嗏€冲讲閹绘劕宕岀粙鍐茬暰閹?
 
             logger.warning(f"EZVIZ PTZ start retry for video_id={db_video.id}: {first_error}")
 
@@ -6332,7 +6342,7 @@ class VideoService:
 
 
 
-        # 鍏堝皾璇曚笉?direction(钀ょ煶閮ㄥ垎鏈?stop 瑕佹眰?serial+channel?
+        # 閸忓牆鐨剧拠鏇氱瑝?direction(閽€銈囩叾闁劌鍨庨張?stop 鐟曚焦鐪?serial+channel?
 
         try:
 
@@ -6543,7 +6553,7 @@ class VideoService:
 
         except Exception as e:
 
-            # 鏌愪簺鎽勫儚澶翠笉鏀寔棰勭疆鐐?鎴栧綋鍓嶈繛鎺ユ殏鏃朵笉鍙敤;姝ゅ闄嶇骇涓虹┖鍒楄〃,閬垮厤鍓嶇鎸佺画鍑虹幇 400?
+            # 閺屾劒绨洪幗鍕剼婢剁繝绗夐弨顖涘瘮妫板嫮鐤嗛悙?閹存牕缍嬮崜宥堢箾閹恒儲娈忛弮鏈电瑝閸欘垳鏁?濮濄倕顦╅梽宥囬獓娑撹櫣鈹栭崚妤勩€?闁灝鍘ら崜宥囶伂閹镐胶鐢婚崙铏瑰箛 400?
 
             logger.warning(f"GetPresets failed for video_id={video_id}: {e}")
 
@@ -6576,7 +6586,7 @@ class VideoService:
 
 
 
-        # 钀ょ煶浜戣澶囧?
+        # 閽€銈囩叾娴滄垼顔曟径鍥ь槱?
 
         if self._is_ezviz_ptz(db_video):
 
@@ -6596,11 +6606,11 @@ class VideoService:
 
             print("=" * 50)
 
-            print("璋冪敤钀ょ煶浜戞坊鍔犻缃偣")
+            print("Calling EZVIZ add preset")
 
             print(f"Payload: {payload}")
 
-            # ?淇敼锛氬垱寤烘柊棰勭疆鐐规椂涓嶄紶 index(preset_token?
+            # ?娣囶喗鏁奸敍姘灡瀵ょ儤鏌婃０鍕枂閻愯妞傛稉宥勭炊 index(preset_token?
 
             # if preset_token:
 
@@ -6610,13 +6620,13 @@ class VideoService:
 
 
 
-            print(f"钀ょ煶浜戝搷? {body}")
+            print(f"閽€銈囩叾娴滄垵鎼? {body}")
 
-            print(f"鍝嶅簲 code: {body.get('code')}")
+            print(f"閸濆秴绨?code: {body.get('code')}")
 
-            print(f"鍝嶅簲 msg: {body.get('msg')}")
+            print(f"閸濆秴绨?msg: {body.get('msg')}")
 
-            print(f"鍝嶅簲 data: {body.get('data')}")
+            print(f"閸濆秴绨?data: {body.get('data')}")
 
             print("=" * 50)
 
@@ -6652,14 +6662,14 @@ class VideoService:
 
 
 
-        # ONVIF 璁惧澶勭悊
+        # ONVIF 鐠佹儳顦径鍕倞
 
         _, _, ptz, _, token = self._create_ptz_and_media(mongo_db, video_id)
 
 
-        # ?淇敼锛氬垱寤洪缃偣鏃跺彧?ProfileToken ?PresetName
+        # ?娣囶喗鏁奸敍姘灡瀵ゆ椽顣╃純顔惧仯閺冭泛褰?ProfileToken ?PresetName
 
-        # 缁濆涓嶈?PresetToken?
+        # 缂佹繂顕稉宥堫洣?PresetToken?
 
         req = {'ProfileToken': token}
 
@@ -6669,7 +6679,7 @@ class VideoService:
 
 
 
-        # ?鍒犻櫎涓嬮潰杩欏嚑琛?鍒涘缓鏂伴缃偣涓嶈兘?PresetToken
+        # ?閸掔娀娅庢稉瀣桨鏉╂瑥鍤戠悰?閸掓稑缂撻弬浼搭暕缂冾喚鍋ｆ稉宥堝厴?PresetToken
 
         # if preset_token:
 
@@ -6679,23 +6689,23 @@ class VideoService:
 
         try:
 
-            # SetPreset 杩斿洖鎽勫儚澶寸敓鎴愮殑 PresetToken
+            # SetPreset 鏉╂柨娲栭幗鍕剼婢跺鏁撻幋鎰畱 PresetToken
 
             created_token = ptz.SetPreset(req)
 
 
 
-            # ?淇敼锛氱‘淇濊繑鍥炴湁鏁堢殑 token
+            # ?娣囶喗鏁奸敍姘扁€樻穱婵婄箲閸ョ偞婀侀弫鍫㈡畱 token
 
             if not created_token:
 
-                raise ValueError("鎽勫儚澶存湭杩斿洖棰勭疆?token")
+                raise ValueError("閹藉嫬鍎氭径瀛樻弓鏉╂柨娲栨０鍕枂?token")
 
 
 
             return {
 
-                "token": str(created_token),  # 鍙娇鐢ㄦ憚鍍忓ご杩斿洖?token
+                "token": str(created_token),  # 閸欘亙濞囬悽銊︽啔閸嶅繐銇旀潻鏂挎礀?token
 
                 "name": name or f"Preset-{created_token}"
 
@@ -6703,7 +6713,7 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"鍒涘缓棰勭疆鐐瑰け? {e}")
+            raise ValueError(f"閸掓稑缂撴０鍕枂閻愮懓銇? {e}")
 
     # def set_preset(self, mongo_db, video_id: int, name: Optional[str] = None, preset_token: Optional[str] = None):
     #     db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
@@ -6776,7 +6786,7 @@ class VideoService:
 
     #     except Exception as e:
 
-    #         raise ValueError(f"鍒涘缓棰勭疆鐐瑰け? {e}")
+    #         raise ValueError(f"閸掓稑缂撴０鍕枂閻愮懓銇? {e}")
 
 
 
@@ -6832,7 +6842,7 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"璋冪敤棰勭疆鐐瑰け? {e}")
+            raise ValueError(f"鐠嬪啰鏁ゆ０鍕枂閻愮懓銇? {e}")
 
 
 
@@ -6878,14 +6888,14 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"鍒犻櫎棰勭疆鐐瑰け? {e}")
+            raise ValueError(f"閸掔娀娅庢０鍕枂閻愮懓銇? {e}")
 
 
 
     def remove_presets_bulk(self, mongo_db, video_id: int, preset_tokens: list[str]):
         if not preset_tokens:
 
-            raise ValueError("preset_tokens 涓嶈兘涓虹┖")
+            raise ValueError("preset_tokens 娑撳秷鍏樻稉铏光敄")
 
 
 
@@ -6939,7 +6949,7 @@ class VideoService:
 
         if not unique_tokens:
 
-            raise ValueError("娌℃湁鏈夋晥鐨勯缃偣 token")
+            raise ValueError("濞屸剝婀侀張澶嬫櫏閻ㄥ嫰顣╃純顔惧仯 token")
 
 
 
@@ -7034,7 +7044,7 @@ class VideoService:
                         self.goto_preset(mongo_db, video_id, preset)
                     except Exception as e:
 
-                        logger.warning(f"宸¤埅璺宠浆澶辫触 video_id={video_id}, preset={preset}: {e}")
+                        logger.warning(f"瀹嘎ゅ焻鐠哄疇娴嗘径杈Е video_id={video_id}, preset={preset}: {e}")
 
 
 
@@ -7083,7 +7093,7 @@ class VideoService:
 
         if len(preset_tokens) < 2:
 
-            raise ValueError("宸¤埅鑷冲皯闇€瑕佷袱涓缃偣")
+            raise ValueError("瀹嘎ゅ焻閼峰啿鐨棁鈧憰浣疯⒈娑擃亪顣╃純顔惧仯")
 
 
 
@@ -7104,7 +7114,7 @@ class VideoService:
 
             if missing:
 
-                raise ValueError(f"浠ヤ笅棰勭疆鐐逛笉瀛樺湪: {', '.join(missing)}")
+                raise ValueError(f"娴犮儰绗呮０鍕枂閻愰€涚瑝鐎涙ê婀? {', '.join(missing)}")
 
         elif not self._is_ezviz_ptz(db_video):
 
@@ -7275,7 +7285,7 @@ class VideoService:
 
     # -------------------------------------------------------------------------
 
-    # 鏍稿績涓氬姟: 娣诲姞/鍒犻櫎/鏇存柊
+    # 閺嶇绺炬稉姘: 濞ｈ濮?閸掔娀娅?閺囧瓨鏌?
 
     # -------------------------------------------------------------------------
 
@@ -7398,7 +7408,7 @@ class VideoService:
 
 
 
-        # 鏂板璁惧鍚庡厛灏濊瘯鍚屾鎽勫儚澶存椂闂?閬垮厤 OSD 鏃堕棿鎸佺画婕傜Щ
+        # 閺傛澘顤冪拋鎯ь槵閸氬骸鍘涚亸婵婄槸閸氬本顒為幗鍕剼婢跺瓨妞傞梻?闁灝鍘?OSD 閺冨爼妫块幐浣虹敾濠曞倻些
 
         sync_result = self._sync_camera_time_for_video(new_video, force=True)
 
@@ -7416,7 +7426,7 @@ class VideoService:
 
 
 
-        # 鍚姩鎺ㄦ祦骞舵洿鏂版挱鏀惧湴鍧€
+        # 閸氼垰濮╅幒銊︾ウ楠炶埖娲块弬鐗堟尡閺€鎯ф勾閸р偓
 
         self.start_ffmpeg_stream(camera_data.rtsp_url, stream_name)
 
@@ -7440,7 +7450,7 @@ class VideoService:
 
     def sync_hikvision_devices(self, mongo_db):
 
-        # 褰撳墠椤圭洰?RTSP/ONVIF 鎵嬪姩鎺ュ叆涓轰富,淇濈暀鍚屾鎺ュ彛閬垮厤璺敱璋冪敤鏃舵姤閿?
+        # 瑜版挸澧犳い鍦窗?RTSP/ONVIF 閹靛濮╅幒銉ュ弳娑撹桨瀵?娣囨繄鏆€閸氬本顒為幒銉ュ經闁灝鍘ょ捄顖滄暠鐠嬪啰鏁ら弮鑸靛Г闁?
 
         logger.info("sync_hikvision_devices called - manual RTSP/ONVIF flow is used")
 
@@ -7696,19 +7706,15 @@ class VideoService:
 
     # -------------------------------------------------------------------------
 
-    # [鏂板姛鑳絔 V4 鏋侀€熸帹?+ 杩涚▼绠＄悊
+    # [閺傛澘濮涢懗绲?V4 閺嬩線鈧喐甯?+ 鏉╂稓鈻肩粻锛勬倞
 
     # -------------------------------------------------------------------------
 
     def start_ffmpeg_stream(self, rtsp_url: str, stream_name: str):
 
-        """
+        # Start an FFmpeg stream.
 
-        鍚姩 FFmpeg 鎺ㄦ祦 (闅愯棌绐楀彛 + 鍏ㄥ眬绠＄悊)
-
-        """
-
-        # 濡傛灉宸茬粡瀛樺湪鍚屽悕鎺ㄦ祦,鍏堝仠姝㈡棫鐨?
+        # 婵″倹鐏夊鑼病鐎涙ê婀崥灞芥倳閹恒劍绁?閸忓牆浠犲銏℃＋閻?
         self.stop_ffmpeg_stream(stream_name)
 
 
@@ -7719,7 +7725,7 @@ class VideoService:
 
 
 
-        # V4 瀹岀編閰嶇疆
+        # V4 鐎瑰瞼绶ㄩ柊宥囩枂
 
         command = [
 
@@ -7759,7 +7765,7 @@ class VideoService:
 
         try:
 
-            # [淇敼鍏抽敭鐐筣 闅愯棌 CMD 绐楀彛
+            # [娣囶喗鏁奸崗鎶芥暛閻愮 闂呮劘妫?CMD 缁愭褰?
 
             startupinfo = None
 
@@ -7769,7 +7775,7 @@ class VideoService:
 
             if os.name == 'nt':
 
-                # Windows 涓嬩娇?CREATE_NO_WINDOW (0x08000000) 褰诲簳闅愯棌
+                # Windows 娑撳濞?CREATE_NO_WINDOW (0x08000000) 瑜拌绨抽梾鎰
 
                 creationflags = 0x08000000
 
@@ -7789,7 +7795,7 @@ class VideoService:
 
 
 
-            # [鏂板] 瀛樺叆鍏ㄥ眬瀛楀吀
+            # [閺傛澘顤僝 鐎涙ê鍙嗛崗銊ョ湰鐎涙鍚€
 
             FFMPEG_PROCESSES[stream_name] = process
 
@@ -7809,11 +7815,7 @@ class VideoService:
 
     def stop_ffmpeg_stream(self, stream_name: str):
 
-        """
-
-        [鏂板] 鍋滄骞舵竻?FFmpeg 杩涚▼
-
-        """
+        # Stop and clean up an FFmpeg stream.
 
         global FFMPEG_PROCESSES
 
@@ -7827,7 +7829,7 @@ class VideoService:
 
                 logger.info(f"Stopping FFmpeg for {stream_name} (PID: {process.pid})...")
 
-                process.terminate()  # 灏濊瘯娓╁拰鍏抽棴
+                process.terminate()  # 鐏忔繆鐦〒鈺佹嫲閸忔娊妫?
 
                 try:
 
@@ -7835,7 +7837,7 @@ class VideoService:
 
                 except subprocess.TimeoutExpired:
 
-                    process.kill()  # 寮哄埗鍏抽棴
+                    process.kill()  # 瀵搫鍩楅崗鎶芥４
 
                 logger.info(f"Stream {stream_name} stopped.")
 
@@ -7845,7 +7847,7 @@ class VideoService:
 
             finally:
 
-                # 鏃犺濡備綍浠庡瓧鍏镐腑绉婚櫎
+                # 閺冪姾顔戞俊鍌欑秿娴犲骸鐡ч崗闀愯厬缁夊娅?
 
                 if stream_name in FFMPEG_PROCESSES:
 
@@ -8172,7 +8174,7 @@ class VideoService:
 
     def _get_ezviz_recordable_url(self, db_video: VideoDevice) -> Optional[str]:
 
-        """Return a recordable URL for cloud devices."""
+        # Return a recordable URL for cloud devices.
 
         device_serial = str(getattr(db_video, "device_serial", "") or "").strip()
 
@@ -8306,13 +8308,13 @@ class VideoService:
 
         if not source_url:
 
-            logger.warning(f"褰曞儚鍚姩澶辫触,video_id={video_id} 缂哄皯鍙綍鍒跺湴鍧€")
+            logger.warning(f"Recording start failed video_id={video_id}: source_url is empty")
 
             return None
 
 
 
-        # 濡傛灉鍚屼竴璺綍鍍忚繘绋嬫鍦ㄨ繍琛屼笖婧愬湴鍧€鏈彉,涓嶈閲嶅惎?
+        # 婵″倹鐏夐崥灞肩鐠侯垰缍嶉崓蹇氱箻缁嬪顒滈崷銊ㄧ箥鐞涘奔绗栧┃鎰勾閸р偓閺堫亜褰?娑撳秷顩﹂柌宥呮儙?
 
         existing = RECORDING_PROCESSES.get(video_id)
 
@@ -8360,7 +8362,7 @@ class VideoService:
 
 
 
-        # 鐩存帴鍐欏埌璁惧鐩綍,閬垮厤鏃ユ湡瀛愮洰褰曚笉瀛樺湪瀵?ffmpeg 鏃犳硶钀界洏?
+        # 閻╁瓨甯撮崘娆忓煂鐠佹儳顦惄顔肩秿,闁灝鍘ら弮銉︽埂鐎涙劗娲拌ぐ鏇氱瑝鐎涙ê婀€?ffmpeg 閺冪姵纭堕拃鐣屾磸?
 
         segment_pattern = os.path.join(device_root, "%Y%m%d_%H%M%S.mp4")
 
@@ -8464,9 +8466,9 @@ class VideoService:
 
                 logger.error(
 
-                    f"褰曞儚杩涚▼鍚姩鍚庣珛鍗抽€€?video_id={video_id}, returncode={process.returncode}, "
+                    f"瑜版洖鍎氭潻娑氣柤閸氼垰濮╅崥搴ｇ彌閸楁娊鈧偓?video_id={video_id}, returncode={process.returncode}, "
 
-                    f"璇锋煡鐪嬫棩? {log_path}"
+                    f"鐠囬攱鐓￠惇瀣）? {log_path}"
 
                 )
 
@@ -8492,13 +8494,13 @@ class VideoService:
 
             }
 
-            logger.info(f"褰曞儚杩涚▼宸插惎?video_id={video_id}, pid={process.pid}, output={segment_pattern}")
+            logger.info(f"瑜版洖鍎氭潻娑氣柤瀹告彃鎯?video_id={video_id}, pid={process.pid}, output={segment_pattern}")
 
             return process
 
         except Exception as e:
 
-            logger.error(f"褰曞儚鍚姩澶辫触 video_id={video_id}: {e}")
+            logger.error(f"瑜版洖鍎氶崥顖氬З婢惰精瑙?video_id={video_id}: {e}")
 
             return None
 
@@ -8534,7 +8536,7 @@ class VideoService:
 
         except Exception as e:
 
-            logger.error(f"鍋滄褰曞儚澶辫触 video_id={video_id}: {e}")
+            logger.error(f"閸嬫粍顒涜ぐ鏇炲剼婢惰精瑙?video_id={video_id}: {e}")
 
         finally:
 
@@ -8554,15 +8556,53 @@ class VideoService:
 
     def _parse_segment_start(self, file_path: str) -> Optional[datetime]:
 
+        name = os.path.basename(str(file_path))
+        match = re.search(r"(20\d{6})_(\d{6})", name)
+        if match:
+            try:
+                return datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+            except Exception:
+                return None
+
         try:
-
-            name = os.path.basename(file_path).replace(".mp4", "")
-
-            return datetime.strptime(name, "%Y%m%d_%H%M%S")
-
+            stem = os.path.splitext(name)[0]
+            return datetime.strptime(stem, "%Y%m%d_%H%M%S")
         except Exception:
-
             return None
+
+    @staticmethod
+    def _parse_duration_text(value) -> Optional[float]:
+        if value is None:
+            return None
+
+        text = str(value).strip()
+        if not text or text.upper() == "N/A":
+            return None
+
+        try:
+            duration = float(text)
+            return duration if duration >= 0 else None
+        except (TypeError, ValueError):
+            pass
+
+        duration_marker = "Duration:"
+        if duration_marker in text:
+            text = text.split(duration_marker, 1)[1].split(",", 1)[0].strip()
+
+        parts = text.split(":")
+        if len(parts) != 3:
+            return None
+
+        try:
+            hours = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
+        except (TypeError, ValueError):
+            return None
+
+        if hours < 0 or minutes < 0 or seconds < 0:
+            return None
+        return hours * 3600 + minutes * 60 + seconds
 
 
     def _probe_video_duration(self, file_path: str, timeout_seconds: float = 2.0) -> Optional[float]:
@@ -8645,7 +8685,7 @@ class VideoService:
             seg_start = self._parse_segment_start(file_path)
             if seg_start:
                 if (datetime.now() - seg_start).total_seconds() < (
-                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
                     return False, None, "segment_still_writing"
 
             age = time.time() - stat.st_mtime
@@ -8691,16 +8731,29 @@ class VideoService:
         except Exception as exc:
             return False, None, f"validate_exception:{exc}"
 
-    def _get_segment_end(self, file_path: str, seg_start: datetime) -> datetime:
+    def _get_segment_end(
+            self,
+            file_path: str,
+            seg_start: datetime,
+            next_seg_start: Optional[datetime] = None,
+    ) -> datetime:
         duration = self._probe_segment_duration_seconds(file_path)
         if duration:
             return seg_start + timedelta(seconds=duration)
-        return seg_start + timedelta(seconds=self._get_record_segment_seconds())
+        if next_seg_start and next_seg_start > seg_start:
+            return next_seg_start
+        return seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
 
 
-    def _is_segment_usable(self, file_path: str, min_age_seconds: int = 6) -> bool:
+    def _is_segment_usable(
+            self,
+            file_path: str,
+            min_age_seconds: int = 6,
+            has_newer_segment: bool = False,
+            allow_probe_fallback: bool = False,
+    ) -> bool:
 
-        """Filter unfinished or corrupted segments."""
+        # Filter unfinished or corrupted segments.
 
         try:
 
@@ -8710,9 +8763,9 @@ class VideoService:
 
 
 
-            # 褰曞儚鎸夊浐瀹氬垎娈垫椂闀垮垏鐗?鑷冲皯绛夊緟涓€涓畬鏁村垎娈靛懆鏈熷啀鍙備笌鎷兼帴?
+            # 瑜版洖鍎氶幐澶婃祼鐎规艾鍨庡▓鍨闂€鍨瀼閻?閼峰啿鐨粵澶婄窡娑撯偓娑擃亜鐣弫鏉戝瀻濞堥潧鎳嗛張鐔峰晙閸欏倷绗岄幏鍏煎复?
 
-            # 閬垮厤鎶婁粛鍦ㄥ啓鍏ヤ腑鐨勫綋鍓嶅垎娈靛姞?concat?
+            # 闁灝鍘ら幎濠佺矝閸︺劌鍟撻崗銉よ厬閻ㄥ嫬缍嬮崜宥呭瀻濞堥潧濮?concat?
 
             seg_start = self._parse_segment_start(file_path)
 
@@ -8720,9 +8773,11 @@ class VideoService:
 
                 if (datetime.now() - seg_start).total_seconds() < (
 
-                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
 
-                    return False
+                    if not has_newer_segment:
+
+                        return False
 
 
 
@@ -8738,7 +8793,9 @@ class VideoService:
 
             if age < min_age_seconds:
 
-                return False
+                if not has_newer_segment:
+
+                    return False
 
 
 
@@ -8746,7 +8803,7 @@ class VideoService:
 
             if not os.path.exists(ffprobe_path):
 
-                # 娌℃湁 ffprobe 鏃惰嚦灏戜繚璇佹枃浠朵笉鏄€滄鍦ㄥ啓鍏モ€濈姸?
+                # 濞屸剝婀?ffprobe 閺冩儼鍤︾亸鎴滅箽鐠囦焦鏋冩禒鏈电瑝閺勵垪鈧粍顒滈崷銊ュ晸閸忋儮鈧繄濮?
 
                 return True
 
@@ -8772,11 +8829,11 @@ class VideoService:
 
             if not (result.returncode == 0 and bool((result.stdout or "").strip())):
 
-                return False
+                return bool(allow_probe_fallback)
 
 
 
-            # 浜屾鏍￠獙锛氬揩閫熻В?1 绉掕棰?灏芥棭鍓旈櫎鏄庢樉鎹熷潖鍒嗘
+            # 娴滃本顐奸弽锟犵崣閿涙艾鎻╅柅鐔恍?1 缁夋帟顫嬫０?鐏忚姤妫崜鏃堟珟閺勫孩妯夐幑鐔锋綎閸掑棙顔?
 
             ffmpeg_path = self._get_ffmpeg_path()
 
@@ -8800,7 +8857,11 @@ class VideoService:
 
             decode_result = subprocess.run(decode_check_cmd, capture_output=True, text=True)
 
-            return decode_result.returncode == 0
+            if decode_result.returncode == 0:
+
+                return True
+
+            return bool(allow_probe_fallback)
 
         except Exception:
 
@@ -8809,7 +8870,7 @@ class VideoService:
 
     def _get_recording_thumbnail_path(self, file_path: str) -> Optional[str]:
 
-        """Return a stable thumbnail path for a recording, generating it once if needed."""
+        # Return a stable thumbnail path for a recording, generating it once if needed.
 
         try:
 
@@ -8929,7 +8990,7 @@ class VideoService:
 
                             logger.warning(
 
-                                f"褰曞儚杩涚▼宸查€€鍑?鍑嗗閲嶅惎 video_id={video_id}, returncode={proc.returncode}"
+                                f"瑜版洖鍎氭潻娑氣柤瀹告煡鈧偓閸?閸戝棗顦柌宥呮儙 video_id={video_id}, returncode={proc.returncode}"
 
                             )
 
@@ -8951,7 +9012,7 @@ class VideoService:
 
                     except Exception as e:
 
-                        logger.warning(f"妫€鏌ュ綍鍍忚繘绋嬬姸鎬佸け璐?鍑嗗閲嶅惎 video_id={video_id}: {e}")
+                        logger.warning(f"濡偓閺屻儱缍嶉崓蹇氱箻缁嬪濮搁幀浣搞亼鐠?閸戝棗顦柌宥呮儙 video_id={video_id}: {e}")
 
                         RECORDING_PROCESSES.pop(video_id, None)
 
@@ -8971,7 +9032,7 @@ class VideoService:
 
                         logger.warning(
 
-                            f"褰曞儚杩涚▼宸查€€鍑?鍑嗗閲嶅惎 video_id={video_id}, returncode={entry.returncode}"
+                            f"瑜版洖鍎氭潻娑氣柤瀹告煡鈧偓閸?閸戝棗顦柌宥呮儙 video_id={video_id}, returncode={entry.returncode}"
 
                         )
 
@@ -8981,7 +9042,7 @@ class VideoService:
 
                 except Exception as e:
 
-                    logger.warning(f"妫€鏌ュ綍鍍忚繘绋嬬姸鎬佸け璐?鍑嗗閲嶅惎 video_id={video_id}: {e}")
+                    logger.warning(f"濡偓閺屻儱缍嶉崓蹇氱箻缁嬪濮搁幀浣搞亼鐠?閸戝棗顦柌宥呮儙 video_id={video_id}: {e}")
 
                     RECORDING_PROCESSES.pop(video_id, None)
 
@@ -8999,25 +9060,25 @@ class VideoService:
 
             if record_source:
 
-                logger.info(f"鍚姩/閲嶅惎褰曞儚 video_id={video_id}, source={record_source}")
+                logger.info(f"閸氼垰濮?闁插秴鎯庤ぐ鏇炲剼 video_id={video_id}, source={record_source}")
 
                 self.start_ffmpeg_recording(video_id, record_source)
 
             else:
 
-                logger.warning(f"鏃犳硶鍚姩褰曞儚,video_id={video_id} 缂哄皯鍙綍鍒跺湴鍧€")
+                logger.warning(f"Cannot start recording video_id={video_id}: source_url is empty")
 
     
 
     def restart_all_recordings(self, mongo_db):
 
-        # 鍋滄鎵€鏈夋鍦ㄥ綍鍒剁殑杩涚▼
+        # 閸嬫粍顒涢幍鈧張澶嬵劀閸︺劌缍嶉崚鍓佹畱鏉╂稓鈻?
 
         for video_id in list(RECORDING_PROCESSES.keys()):
 
             self.stop_ffmpeg_recording(video_id)
 
-        # 浣跨敤鏂拌矾寰勯噸鏂板惎鍔ㄦ墍鏈夊綍?
+        # 娴ｈ法鏁ら弬鎷岀熅瀵板嫰鍣搁弬鏉挎儙閸斻劍澧嶉張澶婄秿?
 
         self.ensure_all_recordings(mongo_db)
 
@@ -9040,7 +9101,7 @@ class VideoService:
 
         if not raw:
 
-            raise ValueError("鏃堕棿鍙傛暟涓嶈兘涓虹┖")
+            raise ValueError("閺冨爼妫块崣鍌涙殶娑撳秷鍏樻稉铏光敄")
 
 
 
@@ -9058,7 +9119,7 @@ class VideoService:
 
         except ValueError:
 
-            raise ValueError("鏃堕棿鏍煎紡鏃犳晥,鏀?ISO 鏍煎紡,濡?2026-03-24T09:47:00")
+            raise ValueError("閺冨爼妫块弽鐓庣础閺冪姵鏅?閺€?ISO 閺嶇厧绱?婵?2026-03-24T09:47:00")
 
 
 
@@ -9156,15 +9217,15 @@ class VideoService:
 
         
 
-        # 濡傛灉鍦ㄩ粯?static 鐩綍涓??/static
+        # 婵″倹鐏夐崷銊╃帛?static 閻╊喖缍嶆稉??/static
 
         
 
-        # 鍚﹀垯?/api/videos 鍔ㄦ€佽矾?
+        # 閸氾箑鍨?/api/videos 閸斻劍鈧浇鐭?
 
-        # abs_file_path = 瀛樺偍鏍圭洰?recordings/璁惧ID/瑙嗛.mp4
+        # abs_file_path = 鐎涙ê鍋嶉弽鍦窗?recordings/鐠佹儳顦琁D/鐟欏棝顣?mp4
 
-        # 鐩稿璺緞闇€瑕佸幓?recordings 杩欎竴?
+        # 閻╃顕捄顖氱窞闂団偓鐟曚礁骞?recordings 鏉╂瑤绔?
 
 
 
@@ -9208,7 +9269,7 @@ class VideoService:
 
                 continue
 
-
+            parsed_segments: list[tuple[str, datetime]] = []
 
             for seg_path in sorted(glob.glob(os.path.join(device_root, "*.mp4"))):
 
@@ -9218,27 +9279,51 @@ class VideoService:
 
                     continue
 
-                    
-
                 seg_start = self._parse_segment_start(seg_path)
 
                 if not seg_start:
 
                     continue
 
+                parsed_segments.append((seg_path, seg_start))
 
+            parsed_segments.sort(key=lambda item: item[1])
 
-                seg_end = self._get_segment_end(seg_path, seg_start)
+            for index, (seg_path, seg_start) in enumerate(parsed_segments):
 
-                if seg_end <= start_dt or seg_start >= end_dt:
+                seg_filename = os.path.basename(seg_path)
+                next_seg_start = None
+
+                for _, candidate_next_start in parsed_segments[index + 1:]:
+
+                    if candidate_next_start > seg_start:
+
+                        next_seg_start = candidate_next_start
+                        break
+
+                fallback_seg_end = (
+                    next_seg_start
+                    if next_seg_start and next_seg_start > seg_start
+                    else seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                )
+
+                if not (fallback_seg_end > start_dt and seg_start < end_dt):
 
                     continue
 
-                if not self._is_segment_usable(seg_path):
+                seg_end = self._get_segment_end(seg_path, seg_start, next_seg_start)
+
+                if not (seg_end > start_dt and seg_start < end_dt):
 
                     continue
 
+                if not self._is_segment_usable(
+                        seg_path,
+                        has_newer_segment=next_seg_start is not None,
+                        allow_probe_fallback=True,
+                ):
 
+                    continue
 
                 candidates.append((seg_path, seg_start, seg_end))
 
@@ -9247,6 +9332,74 @@ class VideoService:
 
 
         return candidates
+
+
+
+    def _summarize_segment_collection_failure(self, video_id: int, start_dt: datetime, end_dt: datetime) -> str:
+
+        parts = []
+
+        try:
+
+            for record_root in self._get_all_record_roots():
+
+                device_root = os.path.join(record_root, str(video_id))
+
+                if not os.path.isdir(device_root):
+
+                    parts.append(f"{device_root}:missing")
+                    continue
+
+                files = sorted(glob.glob(os.path.join(device_root, "*.mp4")))
+                parsed_count = 0
+                overlap_count = 0
+                usable_count = 0
+
+                parsed_segments: list[tuple[str, datetime]] = []
+                for seg_path in files:
+                    seg_start = self._parse_segment_start(seg_path)
+                    if seg_start:
+                        parsed_count += 1
+                        parsed_segments.append((seg_path, seg_start))
+
+                parsed_segments.sort(key=lambda item: item[1])
+
+                for index, (seg_path, seg_start) in enumerate(parsed_segments):
+                    next_seg_start = None
+                    for _, candidate_next_start in parsed_segments[index + 1:]:
+                        if candidate_next_start > seg_start:
+                            next_seg_start = candidate_next_start
+                            break
+
+                    fallback_seg_end = (
+                        next_seg_start
+                        if next_seg_start and next_seg_start > seg_start
+                        else seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                    )
+                    if not (fallback_seg_end > start_dt and seg_start < end_dt):
+                        continue
+
+                    seg_end = self._get_segment_end(seg_path, seg_start, next_seg_start)
+                    if not (seg_end > start_dt and seg_start < end_dt):
+                        continue
+
+                    overlap_count += 1
+                    if self._is_segment_usable(
+                            seg_path,
+                            has_newer_segment=next_seg_start is not None,
+                            allow_probe_fallback=True,
+                    ):
+                        usable_count += 1
+
+                parts.append(
+                    f"{device_root}:mp4={len(files)},parsed={parsed_count},overlap={overlap_count},usable={usable_count}"
+                )
+
+        except Exception as exc:
+
+            parts.append(f"diagnostic_failed:{exc}")
+
+        return "; ".join(parts)[:180]
 
 
 
@@ -9541,8 +9694,13 @@ class VideoService:
         segments = self._collect_segments_for_timerange(video_id, start_dt, end_dt)
 
         if not segments:
+            diagnostic = self._summarize_segment_collection_failure(video_id, start_dt, end_dt)
+            raise ValueError(
+                "no_video_segment: selected time range has no usable recording segments; "
+                f"video_id={video_id}; start={start_dt}; end={end_dt}; scan={diagnostic}"
+            )
 
-            raise ValueError("鎵€閫夋椂闂存娌℃湁鍙敤褰曞儚鍒嗘")
+            raise ValueError("閹碘偓闁妞傞梻瀛橆唽濞屸剝婀侀崣顖滄暏瑜版洖鍎氶崚鍡橆唽")
 
 
 
@@ -9565,8 +9723,9 @@ class VideoService:
         ffmpeg_path = self._get_ffmpeg_path()
 
         if not os.path.exists(ffmpeg_path):
+            raise ValueError(f"video_failed: ffmpeg not found: {ffmpeg_path}")
 
-            raise ValueError(f"鏈壘?ffmpeg: {ffmpeg_path}")
+            raise ValueError(f"閺堫亝澹?ffmpeg: {ffmpeg_path}")
 
 
 
@@ -9587,6 +9746,31 @@ class VideoService:
 
 
         try:
+            alarm_ffmpeg_timeout = ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS if output_type == "alarm" else None
+
+            def _run_clip_ffmpeg(cmd: list[str], step_name: str):
+                try:
+                    return subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=alarm_ffmpeg_timeout,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    timeout_seconds = alarm_ffmpeg_timeout or 0
+                    logger.error(
+                        "Alarm video ffmpeg timeout video_id=%s step=%s timeout_seconds=%.1f start=%s end=%s",
+                        video_id,
+                        step_name,
+                        timeout_seconds,
+                        start_dt,
+                        end_dt,
+                    )
+                    raise TimeoutError(
+                        f"alarm video generation timeout: ffmpeg {step_name} exceeded {timeout_seconds:.0f}s"
+                    ) from exc
 
             with open(concat_list_path, "w", encoding="utf-8") as f:
 
@@ -9616,19 +9800,7 @@ class VideoService:
 
             ]
 
-            concat_proc = subprocess.run(
-
-                concat_cmd,
-
-                capture_output=True,
-
-                text=True,
-
-                encoding="utf-8",
-
-                errors="replace",
-
-            )
+            concat_proc = _run_clip_ffmpeg(concat_cmd, "concat")
 
             if concat_proc.returncode != 0:
 
@@ -9654,21 +9826,10 @@ class VideoService:
 
                 ]
 
-                concat_fallback_proc = subprocess.run(
-
-                    concat_fallback_cmd,
-
-                    capture_output=True,
-
-                    text=True,
-
-                    encoding="utf-8",
-
-                    errors="replace",
-
-                )
+                concat_fallback_proc = _run_clip_ffmpeg(concat_fallback_cmd, "concat fallback")
 
                 if concat_fallback_proc.returncode != 0:
+                    raise ValueError("video_failed: ffmpeg concat failed")
 
                     logger.error(
 
@@ -9686,7 +9847,7 @@ class VideoService:
 
                     )
 
-                    raise ValueError("褰曞儚鍒嗘鍚堝苟澶辫触")
+                    raise ValueError("瑜版洖鍎氶崚鍡橆唽閸氬牆鑻熸径杈Е")
 
 
 
@@ -9719,13 +9880,7 @@ class VideoService:
                     "-c", "copy",
                     final_output_path,
                 ]
-            trim_proc = subprocess.run(
-                trim_cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            trim_proc = _run_clip_ffmpeg(trim_cmd, "trim")
             if trim_proc.returncode != 0:
 
                 trim_fallback_cmd = [
@@ -9750,23 +9905,10 @@ class VideoService:
 
                 ]
 
-                trim_fallback_proc = subprocess.run(
-
-                    trim_fallback_cmd,
-
-                    capture_output=True,
-
-                    text=True,
-
-                    encoding="utf-8",
-
-                    errors="replace",
-
-                )
+                trim_fallback_proc = _run_clip_ffmpeg(trim_fallback_cmd, "trim fallback")
 
                 if trim_fallback_proc.returncode != 0:
-
-                    raise ValueError("褰曞儚瑁佸壀澶辫触")
+                    raise ValueError("video_failed: ffmpeg trim failed")
 
 
 
@@ -9776,19 +9918,15 @@ class VideoService:
 
             actual_duration = self._probe_video_duration(final_output_path, timeout_seconds=8.0)
             expected_duration = clip_duration
-            if output_type == "alarm" and actual_duration is not None:
-                min_duration_seconds = float(os.getenv("ALARM_VIDEO_MIN_DURATION_SECONDS", "8"))
-                min_duration_ratio = float(os.getenv("ALARM_VIDEO_MIN_DURATION_RATIO", "0.5"))
-                min_required = max(min_duration_seconds, expected_duration * min_duration_ratio)
-                min_required = min(min_required, max(0.0, expected_duration - 1.0))
-                if actual_duration < min_required:
-                    try:
-                        os.remove(final_output_path)
-                    except Exception:
-                        pass
-                    raise ValueError(
-                        f"报警视频时长过短: actual={actual_duration:.2f}s expected={expected_duration:.2f}s"
-                    )
+            if output_type == "alarm" and actual_duration is not None and actual_duration < expected_duration:
+                logger.warning(
+                    "Alarm video shorter than target window video_id=%s actual_duration=%.2f expected_duration=%.2f start=%s end=%s",
+                    video_id,
+                    actual_duration,
+                    expected_duration,
+                    start_dt,
+                    end_dt,
+                )
 
 
 
@@ -9820,17 +9958,29 @@ class VideoService:
 
 
 
+            duration_value = float(actual_duration) if actual_duration else float((end_dt - start_dt).total_seconds())
+            actual_start_dt = first_seg_start + timedelta(seconds=clip_offset)
+            actual_end_dt = actual_start_dt + timedelta(seconds=duration_value)
+
             return {
 
                 "status": "success",
 
                 "video_id": video_id,
 
-                "start_time": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "start_time": actual_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
 
-                "end_time": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": actual_end_dt.strftime("%Y-%m-%d %H:%M:%S"),
 
-                "duration_seconds": int(round(actual_duration)) if actual_duration else int((end_dt - start_dt).total_seconds()),
+                "requested_start_time": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+
+                "requested_end_time": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+
+                "expected_duration": float(expected_duration),
+
+                "actual_duration": duration_value,
+
+                "duration_seconds": duration_value,
 
                 "recording_path": self._to_static_web_path(final_output_path),
 
@@ -9874,17 +10024,17 @@ class VideoService:
 
         if now <= start_dt:
 
-            raise ValueError("褰撳墠鏃堕棿绐楀彛鏃犲彲缂撳瓨鍐呭")
+            raise ValueError("瑜版挸澧犻弮鍫曟？缁愭褰涢弮鐘插讲缂傛挸鐡ㄩ崘鍛啇")
 
 
 
-        # 鑻ュ綋鍓嶇獥鍙ｅ苟闈炰粠璧风偣灏卞紑濮嬫湁鍒嗘(渚嬪鏈嶅姟鍒氭仮澶?,鍏佽浠庣獥鍙ｅ唴鏈€鏃╁彲鐢ㄥ垎娈靛紑濮嬬敓鎴?
+        # 閼汇儱缍嬮崜宥囩崶閸欙絽鑻熼棃鐐扮矤鐠ч鍋ｇ亸鍗炵磻婵婀侀崚鍡橆唽(娓氬顩ч張宥呭閸掓碍浠径?,閸忎浇顔忔禒搴ｇ崶閸欙絽鍞撮張鈧弮鈺佸讲閻劌鍨庡▓闈涚磻婵鏁撻幋?
 
         available_segments = self._collect_segments_for_timerange(video_id, start_dt, now)
 
         if not available_segments:
 
-            raise ValueError("褰撳墠鏃堕棿绐楀彛鏃犲彲缂撳瓨鍐呭")
+            raise ValueError("瑜版挸澧犻弮鍫曟？缁愭褰涢弮鐘插讲缂傛挸鐡ㄩ崘鍛啇")
 
         effective_start_dt = max(start_dt, available_segments[0][1])
 
@@ -9918,7 +10068,7 @@ class VideoService:
 
     def _prune_temp_cache_videos(self, video_id: int, keep_latest: int = 3):
 
-        """Keep only the latest temporary cache videos per device."""
+        # Keep only the latest temporary cache videos per device.
 
         keep_latest = max(1, int(keep_latest))
 
@@ -10103,7 +10253,7 @@ class VideoService:
 
     def _get_alarm_screenshot_root(self) -> str:
 
-        """Return alarm screenshot root."""
+        # Return alarm screenshot root.
 
         return self._get_default_static_subdir(self._folder("alarm_screenshots"))
 
@@ -10129,13 +10279,7 @@ class VideoService:
 
     def list_recording_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
 
-        """
-
-        鑾峰彇鎸囧畾瑙嗛璁惧鐨勫綍鍒惰棰戝垪琛?鐩存帴浠庡綍鍒剁洰褰?
-
-        鐢ㄤ簬"甯歌鐩戞帶鍥炴斁"
-
-        """
+        # List recorded video clips directly from storage.
 
         self._refresh_storage_paths()
 
@@ -10234,21 +10378,7 @@ class VideoService:
 
     def list_alarm_videos_direct(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
 
-        """
-
-        鑾峰彇鎸囧畾瑙嗛璁惧鐨勬姤璀﹀綍鍒惰棰戝垪琛?
-
-
-
-        浼樺厛鐩存帴璇诲彇 static/alarm_videos 涓敱 save_playback_clip 鐢熸垚鐨勬姤璀﹁棰?
-
-        鑻ュ巻鍙叉暟鎹皻鏈惤鐩樺埌璇ョ洰褰?鍒欏洖閫€鍒版棫閫昏緫锛氶€氳繃 static/alarms 鐨勬埅鍥惧拰
-
-        static/recordings 鐨勫父瑙勫綍鍍忓弽鎺ㄦ姤璀﹁棰?
-
-        鐢ㄤ簬"鎶ヨ鐩戞帶鍥炴斁"
-
-        """
+        # List alarm video clips directly from storage.
 
         self._refresh_storage_paths()
         max_limit = max(1, min(limit, 500))
@@ -10338,13 +10468,7 @@ class VideoService:
 
     def list_alarm_screenshots(self, video_id: int, limit: int = 120, sort_order: str = "desc") -> list[dict]:
 
-        """
-
-        鑾峰彇鎸囧畾瑙嗛璁惧鐨勫憡璀︽埅鍥惧垪?
-
-        鐢ㄤ簬"鍛婅鎴浘"
-
-        """
+        # List alarm screenshots for a video device.
 
         self._refresh_storage_paths()
 
@@ -10366,7 +10490,7 @@ class VideoService:
 
             file_name = os.path.basename(file_path)
 
-            # 绛涢€夊尮閰嶈璁惧鐨勫憡璀︽埅?(鏂囦欢鍚嶆牸? 358_*.jpg)
+            # 缁涙盯鈧灏柊宥堫嚉鐠佹儳顦惃鍕啞鐠€锔藉焻?(閺傚洣娆㈤崥宥嗙壐? 358_*.jpg)
 
             if not file_name.startswith(f"{video_id_str}_") and f"_{video_id_str}_" not in file_name:
 
@@ -10389,7 +10513,7 @@ class VideoService:
 
                     "web_path": self._to_backend_static_web_path(file_path),
 
-                    "thumbnail_path": self._to_backend_static_web_path(file_path),  # JPG鍙洿鎺ョ敤浣滅缉鐣ュ浘
+                    "thumbnail_path": self._to_backend_static_web_path(file_path),  # JPG閸欘垳娲块幒銉ф暏娴ｆ粎缂夐悾銉ユ禈
 
                 })
 
@@ -10408,10 +10532,10 @@ class VideoService:
         return screenshots
 
     def batch_update_organization(self, mongo_db, company=None, project=None, grid=None, team=None, device_ids=None):
-        """批量更新设备的组织架构信息"""
+        # Batch update device organization fields.
         collection = self._video_collection()
         
-        # 构建更新内容
+        # 鏋勫缓鏇存柊鍐呭
         update_data = {}
         if company is not None:
             update_data["company"] = company
@@ -10425,16 +10549,16 @@ class VideoService:
         if not update_data:
             return 0
         
-        # 构建查询条件
+        # 鏋勫缓鏌ヨ鏉′欢
         if device_ids:
-            # 只更新指定的设备
+            # 鍙洿鏂版寚瀹氱殑璁惧
             device_ids_str = [str(id) for id in device_ids]
             result = collection.update_many(
                 {"id": {"$in": device_ids_str}},
                 {"$set": update_data}
             )
         else:
-            # 更新所有设备
+            # 鏇存柊鎵€鏈夎澶?
             result = collection.update_many(
                 {},
                 {"$set": update_data}

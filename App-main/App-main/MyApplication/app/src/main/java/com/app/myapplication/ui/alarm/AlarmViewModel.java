@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
@@ -106,7 +107,7 @@ public class AlarmViewModel extends ViewModel {
         AlarmApi alarmApi = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
-        alarmApi.getAlarms().enqueue(new Callback<List<Alarm>>() {
+        alarmApi.getAlarmList(0, 100, null).enqueue(new Callback<List<Alarm>>() {
             @Override
             public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
                 loading.setValue(false);
@@ -136,6 +137,7 @@ public class AlarmViewModel extends ViewModel {
                     alarmStats.setValue(stats);
                 } else {
                     Log.e("AlarmViewModel", "Failed to fetch alarms: " + response.code());
+                    showLoadFailed(context, "告警信息加载失败");
                 }
             }
 
@@ -143,8 +145,18 @@ public class AlarmViewModel extends ViewModel {
             public void onFailure(Call<List<Alarm>> call, Throwable t) {
                 loading.setValue(false);
                 Log.e("AlarmViewModel", "Error fetching alarms", t);
+                showLoadFailed(context, "告警信息加载失败");
             }
         });
+    }
+
+    private void showLoadFailed(Context context, String message) {
+        alarmData.setValue(new ArrayList<>());
+        filteredAlarms.setValue(new ArrayList<>());
+        alarmStats.setValue(new AlarmStats(0, 0, 0, 0, 0, 0));
+        if (context != null) {
+            Toast.makeText(context.getApplicationContext(), message, Toast.LENGTH_SHORT).show();
+        }
     }
 
     // 计算报警统计数据

@@ -192,7 +192,17 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
                 android.widget.Toast.makeText(holder.itemView.getContext(), videoFailureMessage(alarm), android.widget.Toast.LENGTH_SHORT).show();
                 return;
             }
-            VideoFilePlayActivity.start(holder.itemView.getContext(), url, true, resolveAlarmSecond(alarm));
+            VideoFilePlayActivity.start(
+                    holder.itemView.getContext(),
+                    url,
+                    true,
+                    resolveAlarmSecond(alarm),
+                    String.valueOf(alarm.getId()),
+                    alarm.getSnapshotTime(),
+                    alarm.getActualClipStart(),
+                    alarm.hasBoxedVideoUrl(),
+                    alarm.getBboxJson()
+            );
         });
 
         boolean isPending = isPendingStatus(alarm.getStatus());
@@ -269,17 +279,26 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         });
     }
 
-    private long resolveAlarmSecond(Alarm alarm) {
-        if (alarm.getAlarmSecond() != null) {
-            return Math.max(0, alarm.getAlarmSecond());
+    private double resolveAlarmSecond(Alarm alarm) {
+        Double backendSecond = alarm.getAlarmSecondValue();
+        if (backendSecond != null) {
+            return Math.max(0d, backendSecond);
         }
-        long alarmTime = parseTimeMillis(alarm.getTimestamp());
-        long startTime = parseTimeMillis(alarm.getStartTime());
-        if (alarmTime > 0 && startTime > 0) {
-            return Math.max(0, Math.round((alarmTime - startTime) / 1000.0));
+        long snapshotTime = parseTimeMillis(alarm.getSnapshotTime());
+        long actualClipStart = parseTimeMillis(alarm.getActualClipStart());
+        if (snapshotTime > 0 && actualClipStart > 0) {
+            double fallback = Math.max(0d, (snapshotTime - actualClipStart) / 1000d);
+            Log.d(TAG, "Fallback alarmSecond from snapshot_time - actual_clip_start: alarmId="
+                    + alarm.getId() + ", alarmSecond=" + fallback
+                    + ", snapshotTime=" + alarm.getSnapshotTime()
+                    + ", actualClipStart=" + alarm.getActualClipStart());
+            return fallback;
         }
-        int duration = alarm.getDurationSeconds();
-        return duration > 0 && duration < 30 ? Math.max(0, duration / 2) : 30;
+        double duration = alarm.getDurationSeconds();
+        double fallback = duration > 0 && duration < 30 ? Math.max(0d, duration / 2d) : 30d;
+        Log.w(TAG, "Missing backend alarmSecond and snapshot clip timing, using last fallback: alarmId="
+                + alarm.getId() + ", alarmSecond=" + fallback);
+        return fallback;
     }
 
     private long parseTimeMillis(String raw) {

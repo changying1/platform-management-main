@@ -49,11 +49,11 @@ class AlarmOut(AlarmCreate):
     picture_url: Optional[str] = None
     video_url: Optional[str] = None
     clip_url: Optional[str] = None
-    duration: Optional[int] = None
-    duration_seconds: Optional[int] = None
+    duration: Optional[float] = None
+    duration_seconds: Optional[float] = None
     alarm_second: Optional[int] = None
-    video_duration: Optional[int] = None
-    clip_duration: Optional[int] = None
+    video_duration: Optional[float] = None
+    clip_duration: Optional[float] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     error_message: Optional[str] = None
