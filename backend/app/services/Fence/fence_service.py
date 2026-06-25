@@ -867,9 +867,17 @@ class FenceService:
 
     def _get_device_lat_lng(self, device: dict) -> tuple[float | None, float | None]:
 
-        lat = device.get("last_latitude")
+        lat = device.get("lat")
 
-        lng = device.get("last_longitude")
+        lng = device.get("lng")
+
+        if lat is None:
+
+            lat = device.get("last_latitude")
+
+        if lng is None:
+
+            lng = device.get("last_longitude")
 
         if lat is None:
 
@@ -878,14 +886,6 @@ class FenceService:
         if lng is None:
 
             lng = device.get("last_lng")
-
-        if lat is None:
-
-            lat = device.get("lat")
-
-        if lng is None:
-
-            lng = device.get("lng")
 
         if lat is None or lng is None:
 

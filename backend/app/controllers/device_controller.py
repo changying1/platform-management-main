@@ -300,8 +300,8 @@ def _mongo_device_to_response(device: dict) -> dict:
         "stream_url": device.get("stream_url"),
         "owner_id": device.get("owner_id"),
         "is_online": bool(device.get("is_online", False)),
-        "last_latitude": device.get("last_latitude"),
-        "last_longitude": device.get("last_longitude"),
+        "last_latitude": device.get("last_latitude") or device.get("lat"),
+        "last_longitude": device.get("last_longitude") or device.get("lng"),
     }
 
 
@@ -324,7 +324,10 @@ def _device_in_scope(device: dict | None, user: dict) -> bool:
 def _device_type(device: dict | None) -> str:
     if not device:
         return ""
-    return str(device.get("type") or device.get("device_type") or "").lower()
+    raw_type = device.get("type") or device.get("device_type")
+    if not raw_type:
+        return "location"
+    return str(raw_type).strip().lower()
 
 
 def _is_location_device(device: dict | None) -> bool:
