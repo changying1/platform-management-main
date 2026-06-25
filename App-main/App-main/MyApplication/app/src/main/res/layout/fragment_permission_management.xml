@@ -151,7 +151,8 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical|end"
-        android:paddingHorizontal="16dp">
+        android:paddingHorizontal="16dp"
+        android:visibility="gone">
 
         <Button
             android:id="@+id/btn_reset"

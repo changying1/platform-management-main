@@ -351,7 +351,7 @@ public class PermissionManagementFragment extends BaseManagementFragment {
         }
         
         if (selectedRole != null) {
-            tvSelectedRole.setText("当前角色: " + selectedRole.getDisplayName());
+            tvSelectedRole.setText("当前角色: " + selectedRole.getDisplayName() + " (只读)");
             tvEmptyRole.setVisibility(View.GONE);
             rvPermissions.setVisibility(View.VISIBLE);
             

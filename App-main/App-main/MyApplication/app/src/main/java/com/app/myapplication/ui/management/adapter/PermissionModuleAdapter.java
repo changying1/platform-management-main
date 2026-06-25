@@ -75,12 +75,7 @@ public class PermissionModuleAdapter extends RecyclerView.Adapter<PermissionModu
                 CheckBox checkBox = new CheckBox(itemView.getContext());
                 checkBox.setText(permission.getName());
                 checkBox.setChecked(permission.isChecked());
-                checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                    permission.setChecked(isChecked);
-                    if (listener != null) {
-                        listener.onPermissionChanged(permission.getCode(), isChecked);
-                    }
-                });
+                checkBox.setEnabled(false); // 全员只读，禁止修改
                 layoutPermissions.addView(checkBox);
             }
         }

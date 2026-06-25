@@ -33,7 +33,7 @@ import java.util.List;
 public class ManagementActivity extends AppCompatActivity {
     public static final String EXTRA_INITIAL_TAB = "initial_tab";
     public static final String TAB_PERSON = "person";
-    private static final boolean SHOW_EXTENDED_MANAGEMENT_TABS = false;
+    private static final boolean SHOW_EXTENDED_MANAGEMENT_TABS = true;
 
     private TabLayout tabLayout;
     private ViewPager2 viewPager;

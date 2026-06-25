@@ -162,7 +162,7 @@ public class VoiceCallFragment extends Fragment {
     private void loadContacts() {
         progressBar.setVisibility(View.VISIBLE);
         AppVoiceCallApi api = ApiClient.get(requireContext()).create(AppVoiceCallApi.class);
-        api.getPersonnel().enqueue(new Callback<List<Map<String, Object>>>() {
+        api.getCallUsers().enqueue(new Callback<List<Map<String, Object>>>() {
             @Override
             public void onResponse(@NonNull Call<List<Map<String, Object>>> call, @NonNull Response<List<Map<String, Object>>> response) {
                 progressBar.setVisibility(View.GONE);
