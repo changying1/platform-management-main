@@ -28,6 +28,12 @@ interface MonitoringSummary {
   weekly_quota_text?: string;
   weekly_used_text?: string;
   weekly_remaining_text?: string;
+  total_flow_display?: string;
+  used_flow_display?: string;
+  remaining_flow_display?: string;
+  total_flow_unit?: string;
+  used_flow_unit?: string;
+  remaining_flow_unit?: string;
   monthly_threshold_text?: string;
   estimated_remaining_text?: string;
   traffic_status?: string;
@@ -71,6 +77,12 @@ const normalizeTrafficSummary = (data: any, previous: MonitoringSummary | null):
     weekly_used_text: data?.weekly_used_text,
     weekly_quota_text: data?.weekly_quota_text,
     weekly_remaining_text: data?.weekly_remaining_text,
+    total_flow_display: data?.total_flow_display || data?.totalFlow || data?.total_flow,
+    used_flow_display: data?.used_flow_display || data?.usedFlow || data?.used_flow,
+    remaining_flow_display: data?.remaining_flow_display || data?.residualFlow || data?.residual_flow || data?.remaining_flow,
+    total_flow_unit: data?.total_flow_unit,
+    used_flow_unit: data?.used_flow_unit,
+    remaining_flow_unit: data?.remaining_flow_unit,
     monthly_threshold_text: data?.monthly_threshold_text,
     estimated_remaining_text: data?.estimated_remaining_text,
     traffic_status: data?.traffic_status,
@@ -86,6 +98,12 @@ const normalizeTrafficSummary = (data: any, previous: MonitoringSummary | null):
       weekly_used_text: previous?.weekly_used_text,
       weekly_remaining_text: previous?.weekly_remaining_text,
       estimated_remaining_text: previous?.estimated_remaining_text,
+      total_flow_display: previous?.total_flow_display,
+      used_flow_display: previous?.used_flow_display,
+      remaining_flow_display: previous?.remaining_flow_display,
+      total_flow_unit: previous?.total_flow_unit,
+      used_flow_unit: previous?.used_flow_unit,
+      remaining_flow_unit: previous?.remaining_flow_unit,
       traffic_status: previous?.traffic_status || next.traffic_status,
       last_traffic_ocr_time: previous?.last_traffic_ocr_time || next.last_traffic_ocr_time,
     };
@@ -109,28 +127,43 @@ const formatUpdateTime = (value?: string | null): string => {
 };
 
 const hasRecognizedTrafficValue = (summary?: MonitoringSummary | null): boolean => {
-  const text = summary?.traffic_text || summary?.weekly_used_text || '';
+  const text = summary?.traffic_text || summary?.used_flow_display || summary?.weekly_used_text || '';
   return !!text && text !== '--';
 };
 
-const formatTrafficGb = (value: unknown): string => {
+const formatTrafficValue = (value: unknown, unit?: unknown): string => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/[a-zA-Z\u4e00-\u9fa5]+$/.test(raw)) return raw;
+
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '';
-  return `${Math.max(0, numeric).toFixed(3).replace(/\.?0+$/, '')}GB`;
+  const unitText = String(unit ?? '').trim();
+  return `${Math.max(0, numeric).toFixed(3).replace(/\.?0+$/, '')}${unitText || 'GB'}`;
 };
 
 const normalizeRecognizeTrafficSummary = (data: any, previous: MonitoringSummary | null): MonitoringSummary => {
   const trafficText =
+    data?.used_flow_display ||
+    data?.usedFlow ||
+    data?.used_flow ||
     data?.traffic_text ||
     data?.traffic_ocr_text ||
     data?.weekly_used_text ||
-    formatTrafficGb(data?.used_traffic_gb ?? data?.traffic_value);
+    formatTrafficValue(data?.used_traffic_gb, 'GB') ||
+    formatTrafficValue(data?.traffic_value, data?.traffic_unit);
 
   return {
     ...previous,
     weekly_used_text: data?.weekly_used_text || trafficText,
     weekly_quota_text: data?.weekly_quota_text || previous?.weekly_quota_text,
     weekly_remaining_text: data?.weekly_remaining_text || previous?.weekly_remaining_text,
+    total_flow_display: data?.total_flow_display || data?.totalFlow || data?.total_flow || previous?.total_flow_display,
+    used_flow_display: data?.used_flow_display || data?.usedFlow || data?.used_flow || trafficText || previous?.used_flow_display,
+    remaining_flow_display: data?.remaining_flow_display || data?.residualFlow || data?.residual_flow || data?.remaining_flow || previous?.remaining_flow_display,
+    total_flow_unit: data?.total_flow_unit || previous?.total_flow_unit,
+    used_flow_unit: data?.used_flow_unit || data?.traffic_unit || previous?.used_flow_unit,
+    remaining_flow_unit: data?.remaining_flow_unit || previous?.remaining_flow_unit,
     monthly_threshold_text: data?.monthly_threshold_text || previous?.monthly_threshold_text,
     estimated_remaining_text: data?.estimated_remaining_text || previous?.estimated_remaining_text,
     traffic_status: data?.traffic_status || previous?.traffic_status,
@@ -543,9 +576,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     monitoringSummary?.status_tags?.includes('VIDEO_DEVICE_OFFLINE');
 
   const hasCachedTraffic = hasRecognizedTrafficValue(monitoringSummary);
-  const usedText = hasCachedTraffic ? (monitoringSummary?.traffic_text || monitoringSummary?.weekly_used_text) : '等待识别';
-  const thresholdText = monitoringSummary?.monthly_threshold_text || monitoringSummary?.weekly_quota_text || '30.00GB';
-  const remainingText = monitoringSummary?.estimated_remaining_text || monitoringSummary?.weekly_remaining_text || '--';
+  const usedText = hasCachedTraffic
+    ? (monitoringSummary?.used_flow_display || monitoringSummary?.traffic_text || monitoringSummary?.weekly_used_text)
+    : '等待识别';
+  const thresholdText =
+    monitoringSummary?.total_flow_display ||
+    monitoringSummary?.monthly_threshold_text ||
+    monitoringSummary?.weekly_quota_text ||
+    formatTrafficValue(monitoringSummary?.traffic_value, monitoringSummary?.total_flow_unit) ||
+    '30.00GB';
+  const remainingText =
+    monitoringSummary?.remaining_flow_display ||
+    monitoringSummary?.estimated_remaining_text ||
+    monitoringSummary?.weekly_remaining_text ||
+    '--';
   const updateTimeText = formatBackendLocalTime(monitoringSummary?.last_traffic_ocr_time);
   const isTrafficAlarm = monitoringSummary?.traffic_status === 'alarm';
 
@@ -584,35 +628,35 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
 
       {showTrafficPanel && (
         <div
-          className={`absolute bottom-4 right-4 z-10 rounded-md px-4 py-3 text-sm text-slate-100 min-w-[320px] shadow-lg border ${
+          className={`absolute bottom-5 right-5 z-10 rounded-md px-8 py-6 text-[17px] text-slate-100 min-w-[560px] max-w-[min(92vw,640px)] shadow-2xl border ${
             isTrafficAlarm ? 'bg-rose-950/85 border-rose-300/50' : 'bg-slate-900/82 border-cyan-200/25'
           }`}
         >
-          {isTrafficAlarm && <div className="mb-2 text-[13px] font-bold text-rose-100">流量不足</div>}
-          <div className="flex items-center justify-between gap-8">
+          {isTrafficAlarm && <div className="mb-4 text-[18px] font-bold text-rose-100">流量不足</div>}
+          <div className="flex items-center justify-between gap-14">
             <span className="text-slate-200">已使用流量</span>
-            <span className="text-base font-bold text-cyan-100">{usedText}</span>
+            <span className="text-3xl font-bold text-cyan-100">{usedText}</span>
           </div>
-          <div className="flex items-center justify-between gap-8 mt-2">
+          <div className="flex items-center justify-between gap-14 mt-4">
             <span className="text-slate-200">流量阈值</span>
-            <span className="text-base font-bold text-white">{thresholdText}</span>
+            <span className="text-2xl font-bold text-white">{thresholdText}</span>
           </div>
-          <div className="flex items-center justify-between gap-8 mt-2">
+          <div className="flex items-center justify-between gap-14 mt-4">
             <span className="text-slate-200">估算剩余流量</span>
-            <span className="text-base font-bold text-white">{remainingText}</span>
+            <span className="text-2xl font-bold text-white">{remainingText}</span>
           </div>
-          <div className="flex items-center justify-between gap-8 mt-2 text-xs">
+          <div className="flex items-center justify-between gap-14 mt-4 text-sm">
             <span className="text-slate-300">更新时间</span>
             <span className="font-semibold text-slate-100">{updateTimeText}</span>
           </div>
-          <div className="mt-2 border-t border-white/10 pt-2 text-xs text-slate-300">
+          <div className="mt-4 border-t border-white/10 pt-4 text-sm text-slate-300">
             识别状态：{trafficOcrStatus}
           </div>
           <button
             type="button"
             onClick={handleRecognizeTraffic}
             disabled={!videoId || trafficRecognizing}
-            className="mt-3 w-full rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+            className="mt-5 w-full rounded bg-cyan-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
           >
             {trafficRecognizing ? '后端识别中...' : '识别流量'}
           </button>

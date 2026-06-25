@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { alarmApi, AlarmResponse } from '@/src/api/alarmApi';
+import { formatAlarmDisplayTime, getAlarmDisplayTime, parseAlarmTimeValue } from '@/src/utils/alarmTime';
 import { AlarmRecord, AlarmStatusFilter, AlarmLevelFilter } from '../types';
 
 const ALARM_TYPE_LABEL_MAP: Record<string, string> = {
@@ -32,20 +33,10 @@ const formatAlarmTypeLabel = (alarmType?: string) => {
   return raw;
 };
 
-const parseAlarmTimestamp = (timestamp?: string) => {
-  const raw = String(timestamp || '').trim();
-  if (!raw) return new Date(NaN);
-  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
-  return new Date(hasTimezone ? raw : `${raw}Z`);
-};
+const parseAlarmTimestamp = parseAlarmTimeValue;
 
 const formatAlarmTime = (timestamp?: string) => {
-  const date = parseAlarmTimestamp(timestamp);
-  if (Number.isNaN(date.getTime())) return '--';
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-  });
+  return formatAlarmDisplayTime(timestamp);
 };
 
 export const useAlarms = () => {
@@ -60,14 +51,20 @@ export const useAlarms = () => {
   // Unsaved local state for alarm levels
   const [localLevels, setLocalLevels] = useState<Record<number, string>>({});
 
-  const mapResponseToAlarm = (a: AlarmResponse): AlarmRecord => ({
-    id: `ALM-${parseAlarmTimestamp(a.timestamp).getFullYear()}${String(parseAlarmTimestamp(a.timestamp).getMonth() + 1).padStart(2, '0')}${String(parseAlarmTimestamp(a.timestamp).getDate()).padStart(2, '0')}-${String(a.id).padStart(3, '0')}`,
+  const mapResponseToAlarm = (a: AlarmResponse): AlarmRecord => {
+    const alarmTimestamp = getAlarmDisplayTime(a as any);
+    const alarmDate = parseAlarmTimestamp(alarmTimestamp);
+    const alarmCodeDate = Number.isNaN(alarmDate.getTime())
+      ? '00000000'
+      : `${alarmDate.getFullYear()}${String(alarmDate.getMonth() + 1).padStart(2, '0')}${String(alarmDate.getDate()).padStart(2, '0')}`;
+    return {
+    id: `ALM-${alarmCodeDate}-${String(a.id).padStart(3, '0')}`,
     rawId: a.id,
     user: a.device_id,
     device: a.device_id,
     type: formatAlarmTypeLabel(a.alarm_type),
-    time: formatAlarmTime(a.timestamp),
-    timestamp: a.timestamp,
+    time: formatAlarmTime(alarmTimestamp),
+    timestamp: alarmTimestamp,
     location: a.location || '未知位置',
     status: a.status as 'pending' | 'resolved',
     level: (a.severity?.toLowerCase() || 'medium') as 'high' | 'medium' | 'low',
@@ -75,7 +72,8 @@ export const useAlarms = () => {
     recordingPath: a.recording_path || a.video_url || a.clip_url,
     recordingStatus: a.recording_status,
     recordingError: a.recording_error || a.error_message,
-  });
+    };
+  };
 
   const fetchAlarms = useCallback(async () => {
     setLoading(true);
@@ -151,7 +149,7 @@ export const useAlarms = () => {
       const dayEnd = new Date(dayStart.getTime() + 86400000);
 
       const dayAlarms = alarms.filter((a) => {
-        const ts = new Date(a.timestamp);
+        const ts = parseAlarmTimestamp(a.timestamp);
         return ts >= dayStart && ts < dayEnd;
       });
 
@@ -207,7 +205,7 @@ export const useAlarms = () => {
   // 最新报警（用于实时播报）
   const latestAlarms = useMemo(() => {
     return [...alarms]
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .sort((a, b) => parseAlarmTimestamp(b.timestamp).getTime() - parseAlarmTimestamp(a.timestamp).getTime())
       .slice(0, 10)
       .map((a) => ({
         id: a.id,

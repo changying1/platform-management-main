@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { getAlarmPlaybackVideos, type SavedPlaybackVideo } from '../src/api/videoApi';
 import { withAuthTokenParam } from '../src/api/config';
+import { formatAlarmDisplayTime, getAlarmDisplayTime, parseAlarmTimeValue } from '../src/utils/alarmTime';
 import { hasStoredPermission } from '../src/utils/permissions';
 import { getStoredScopeState } from '../src/utils/authScope';
 import { 
@@ -76,12 +77,7 @@ type AlarmSortKey =
 
 type AlarmSortDirection = 'asc' | 'desc';
 
-const parseAlarmTimestamp = (timestamp?: string) => {
-  const raw = String(timestamp || '').trim();
-  if (!raw) return new Date(NaN);
-  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
-  return new Date(hasTimezone ? raw : `${raw}Z`);
-};
+const parseAlarmTimestamp = parseAlarmTimeValue;
 
 const formatVideoTime = (time: number) => {
   const minutes = Math.floor(time / 60);
@@ -222,12 +218,7 @@ function AlarmPlaybackPlayer({ src, alarm }: { src: string; alarm: AlarmRecord }
 }
 
 const formatAlarmTimestamp = (timestamp?: string) => {
-  const date = parseAlarmTimestamp(timestamp);
-  if (Number.isNaN(date.getTime())) return '--';
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-  });
+  return formatAlarmDisplayTime(timestamp);
 };
 
 const parseAlarmFilterDateTime = (value: string) => {
@@ -267,7 +258,7 @@ const loadSeqRef = useRef(0);
 const alarmLoadCountsRef = useRef({ raw: 0, normalized: 0 });
 
 const formatAlarmCodeDate = (timestamp?: string) => {
-  const date = timestamp ? new Date(timestamp) : null;
+  const date = timestamp ? parseAlarmTimestamp(timestamp) : null;
   if (date && !Number.isNaN(date.getTime())) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -359,7 +350,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
 
   const rawType = String(item.alarm_type || '');
   const title = rawType || (isFence ? '围栏告警' : '视频告警');
-  const timestamp = item.timestamp || '';
+  const timestamp = getAlarmDisplayTime(rawItem);
   const alarmCode = `ALM-${formatAlarmCodeDate(timestamp)}-${item.id}`;
 
   const locationText =
@@ -389,7 +380,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     recordKey: [
       sourceType,
       item.id,
-      item.timestamp || '',
+      timestamp,
       item.fence_id ?? '',
       rawItem._id ?? '',
     ].join('-'),
@@ -434,7 +425,7 @@ const loadAlarms = async () => {
     if (requestSeq !== loadSeqRef.current || requestedTab !== activeTab) return;
     const mapped = data
       .map(mapAlarmFromApi)
-      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+      .sort((a, b) => parseAlarmTimestamp(b.time).getTime() - parseAlarmTimestamp(a.time).getTime());
 
     alarmLoadCountsRef.current = { raw: data.length, normalized: mapped.length };
     setAlarms(mapped);

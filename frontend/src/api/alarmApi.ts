@@ -46,7 +46,14 @@ export interface AlarmResponse {
   description?: string;
   location?: string;
   status: string;
+  alarm_time?: string;
+  detection_time?: string;
+  trigger_time?: string;
+  snapshot_time?: string;
+  image_time?: string;
+  capture_time?: string;
   timestamp: string;
+  created_at?: string;
   handled_at?: string;
   person_name?: string;
   person_label?: string;

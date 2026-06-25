@@ -107,35 +107,6 @@
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  type VideoWithWorkDuration = Video & {
-    // total_work_seconds?: number;
-    // total_work_duration_seconds?: number;
-    uptime_seconds?: number;
-    runtime_seconds?: number;
-  };
-
-  const WORK_DURATION_STORAGE_KEY = "video_center_work_duration_by_device";
-
-  const getVideoWorkDurationSeconds = (video?: Video | null) => {
-    if (!video) return undefined;
-
-    const source = video as VideoWithWorkDuration;
-    const candidates = [
-      // source.total_work_seconds,
-      // source.total_work_duration_seconds,
-      source.uptime_seconds,
-      source.runtime_seconds,
-    ];
-
-    for (const val of candidates) {
-      if (typeof val === "number" && Number.isFinite(val) && val >= 0) {
-        return Math.floor(val);
-      }
-    }
-
-    return undefined;
-  };
-
   const textOf = (value: unknown): string => {
     if (value === null || value === undefined) return "";
     if (Array.isArray(value)) {
@@ -426,30 +397,6 @@
       .filter(Boolean)
       .join(" ");
 
-  const loadWorkDurationMap = (): Record<number, number> => {
-    if (typeof window === "undefined") return {};
-
-    try {
-      const raw = window.localStorage.getItem(WORK_DURATION_STORAGE_KEY);
-      if (!raw) return {};
-
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!parsed || typeof parsed !== "object") return {};
-
-      const result: Record<number, number> = {};
-      for (const [idStr, val] of Object.entries(parsed)) {
-        const id = Number(idStr);
-        const seconds = Number(val);
-        if (Number.isInteger(id) && Number.isFinite(seconds) && seconds >= 0) {
-          result[id] = Math.floor(seconds);
-        }
-      }
-      return result;
-    } catch {
-      return {};
-    }
-  };
-
   const VIDEO_CENTER_STYLE_ID = "video-center-cyber-style";
   if (typeof document !== "undefined" && !document.getElementById(VIDEO_CENTER_STYLE_ID)) {
     const styleEl = document.createElement("style");
@@ -653,7 +600,9 @@
     const [previewStreams, setPreviewStreams] = useState<Record<number, StreamUrl>>({});
     const [previewLoading, setPreviewLoading] = useState<Record<number, boolean>>({});
     const [previewErrors, setPreviewErrors] = useState<Record<number, string>>({});
-    const [workDurationByDevice, setWorkDurationByDevice] = useState<Record<number, number>>(loadWorkDurationMap);
+    const [currentWorkDurationSeconds, setCurrentWorkDurationSeconds] = useState(0);
+    const cameraStartTimeRef = useRef<number | null>(null);
+    const cameraWorkTimerRef = useRef<number | null>(null);
     const [gridCols, setGridCols] = useState(3);
     const [showPlayer, setShowPlayer] = useState(false);
     const [currentDevice, setCurrentDevice] = useState<Video | null>(null);
@@ -872,73 +821,30 @@
       };
     };
 
-    const currentWorkDurationSeconds = maximizedVideo
-      ? workDurationByDevice[maximizedVideo.id] ?? getVideoWorkDurationSeconds(maximizedVideo)
-      : undefined;
-
-    useEffect(() => {
-      if (!devices.length) return;
-
-      setWorkDurationByDevice((prev) => {
-        const next = { ...prev };
-        let changed = false;
-
-        for (const device of devices) {
-          const backendSeconds = getVideoWorkDurationSeconds(device);
-          if (typeof backendSeconds === "number") {
-            const localSeconds = next[device.id];
-            if (typeof localSeconds !== "number" || backendSeconds > localSeconds) {
-              next[device.id] = backendSeconds;
-              changed = true;
-            }
-          } else if (typeof next[device.id] !== "number") {
-            next[device.id] = 0;
-            changed = true;
-          }
-        }
-
-        return changed ? next : prev;
-      });
-    }, [devices]);
-
-    useEffect(() => {
-      const timer = window.setInterval(() => {
-        setWorkDurationByDevice((prev) => {
-          if (!devices.length) return prev;
-
-          const next = { ...prev };
-          let changed = false;
-
-          for (const device of devices) {
-            if (typeof next[device.id] !== "number") {
-              next[device.id] = getVideoWorkDurationSeconds(device) ?? 0;
-              changed = true;
-            }
-
-            const isWorking =
-              device.status === "online" ||
-              (!!maximizedVideo && maximizedVideo.id === device.id && !!streamUrl);
-
-            if (isWorking) {
-              next[device.id] += 1;
-              changed = true;
-            }
-          }
-
-          return changed ? next : prev;
-        });
-      }, 1000);
-
-      return () => window.clearInterval(timer);
-    }, [devices, maximizedVideo, streamUrl]);
-
-    useEffect(() => {
-      try {
-        window.localStorage.setItem(WORK_DURATION_STORAGE_KEY, JSON.stringify(workDurationByDevice));
-      } catch {
-        // ignore localStorage write failures
+    const resetCameraWorkDuration = useCallback(() => {
+      if (cameraWorkTimerRef.current !== null) {
+        window.clearInterval(cameraWorkTimerRef.current);
+        cameraWorkTimerRef.current = null;
       }
-    }, [workDurationByDevice]);
+      cameraStartTimeRef.current = null;
+      setCurrentWorkDurationSeconds(0);
+    }, []);
+
+    const startCameraWorkDuration = useCallback(() => {
+      resetCameraWorkDuration();
+      cameraStartTimeRef.current = Date.now();
+      setCurrentWorkDurationSeconds(0);
+      cameraWorkTimerRef.current = window.setInterval(() => {
+        if (cameraStartTimeRef.current === null) return;
+        setCurrentWorkDurationSeconds(Math.floor((Date.now() - cameraStartTimeRef.current) / 1000));
+      }, 1000);
+    }, [resetCameraWorkDuration]);
+
+    // Previously this overlay represented device/backend uptime plus a localStorage-backed accumulated value.
+    // It now represents only the current camera stream session and resets on close, switch, or unmount.
+    useEffect(() => {
+      return () => resetCameraWorkDuration();
+    }, [resetCameraWorkDuration]);
 
     // --- ✅ 新增：切换摄像头时重置 AI 状态 ---
 useEffect(() => {
@@ -1693,6 +1599,7 @@ useEffect(() => {
 
   const handleShowStream = async (device: Video): Promise<boolean> => {
     // 1. 先直接打开全屏
+    resetCameraWorkDuration();
     setMaximizedVideo(device);
     setIsMonitorOnlyMode(false);
     void setKeyboardTarget(device.id);
@@ -1718,6 +1625,7 @@ useEffect(() => {
       setPreviewStreams((prev) => ({ ...prev, [device.id]: streamData }));
       setStreamInfo(streamData);
       setStreamUrl(streamData.url);
+      startCameraWorkDuration();
       return true;
     } catch (err: any) {
       const msg = err?.message || '流加载失败';
@@ -1725,6 +1633,7 @@ useEffect(() => {
       setFullScreenStreamError(msg);
       setStreamUrl(null);
       setStreamInfo(null);
+      resetCameraWorkDuration();
       return false;
     } finally {
       setFullScreenStreamLoading(false);
@@ -2641,7 +2550,7 @@ useEffect(() => {
                 {maximizedVideo.name}
                 <span className="text-sm font-mono font-normal text-slate-300 bg-slate-900/75 px-2 rounded border border-blue-300/20">{maximizedVideo.ip_address}</span>
               </h2>
-              <button onClick={() => { setMaximizedVideo(null); setStreamUrl(null); setStreamInfo(null); setIsMonitorOnlyMode(false); }} className="p-2 text-slate-400 hover:bg-rose-500/20 hover:text-rose-300 rounded-full transition-colors"><X size={24} /></button>
+              <button onClick={() => { resetCameraWorkDuration(); setMaximizedVideo(null); setStreamUrl(null); setStreamInfo(null); setIsMonitorOnlyMode(false); }} className="p-2 text-slate-400 hover:bg-rose-500/20 hover:text-rose-300 rounded-full transition-colors"><X size={24} /></button>
             </div>
             )}
             <div className={`flex-1 flex min-h-0 ${isMonitorOnlyMode ? 'gap-0' : 'gap-4'}`}>
@@ -2679,7 +2588,7 @@ useEffect(() => {
                         </button>
                       )}
                       <div className="relative w-full h-full bg-slate-900" 
-                      onDoubleClick={() => { setMaximizedVideo(null); setStreamUrl(null);setStreamInfo(null); setIsMonitorOnlyMode(false);  }}
+                      onDoubleClick={() => { resetCameraWorkDuration(); setMaximizedVideo(null); setStreamUrl(null);setStreamInfo(null); setIsMonitorOnlyMode(false);  }}
                       >
                         
                         <VideoPlayer
@@ -2693,7 +2602,7 @@ useEffect(() => {
                       <div className="absolute top-28 left-16 z-20 pointer-events-none flex flex-col gap-1.5 max-w-[45vw] text-black text-3xl font-bold leading-8 ">
                           <div className="truncate">{maximizedVideo.name || ""}</div>
                           <div className="truncate">{maximizedVideo.remark?.trim() || ""}</div>
-                          <div className="truncate">累计工作时长：{formatWorkDuration(currentWorkDurationSeconds)}</div>
+                          <div className="truncate">本次工作时长：{formatWorkDuration(currentWorkDurationSeconds)}</div>
                         </div>
                       </div>
                     </div>
