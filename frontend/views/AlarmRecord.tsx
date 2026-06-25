@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { hasStoredPermission } from '../src/utils/permissions';
@@ -21,6 +21,13 @@ import {
   ArrowUp,
   ArrowUpDown
 } from 'lucide-react';
+
+const cleanAlarmDisplayText = (value?: string | null) => String(value || '')
+  .replace(/[\uFF08(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[\uFF09)]/g, '')
+  .replace(/\bconfidence\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/gi, '')
+  .replace(/\u7F6E\u4FE1\u5EA6\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/g, '')
+  .replace(/\s{2,}/g, ' ')
+  .trim();
 
 // 告警记录类型
 interface AlarmRecord {
@@ -244,9 +251,24 @@ export default function AlarmRecords() {
   const [stats, setStats] = useState({ total: 0, pending: 0, fence: 0, video: 0 });
   const [selectedAlarm, setSelectedAlarm] = useState<AlarmRecord | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+// 获取默认日期范围（结束时间为当前时间，开始时间为空表示无限制）
+const getDefaultDateRange = () => {
+  const end = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return {
+    startDate: '',
+    startTime: '',
+    endDate: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
+    endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+  };
+};
+
+const defaultDateRange = getDefaultDateRange();
 const [searchKeyword, setSearchKeyword] = useState('');
-const [startDate, setStartDate] = useState<string>('');
-const [endDate, setEndDate] = useState<string>('');
+const [startDate, setStartDate] = useState<string>(defaultDateRange.startDate);
+const [startTime, setStartTime] = useState<string>(defaultDateRange.startTime);
+const [endDate, setEndDate] = useState<string>(defaultDateRange.endDate);
+const [endTime, setEndTime] = useState<string>(defaultDateRange.endTime);
 const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
@@ -306,6 +328,18 @@ const getAlarmSourceType = (item: AlarmResponse): 'fence' | 'video' => {
     description.includes('围栏')
     ? 'fence'
     : 'video';
+};
+
+const isOfflineAlarm = (item: AlarmResponse) => {
+  const rawItem = item as any;
+  const text = [
+    item.alarm_type,
+    rawItem.type,
+    item.description,
+    rawItem.alarm_content,
+    rawItem.message,
+  ].join(' ').toLowerCase();
+  return text.includes('offline') || text.includes('离线');
 };
 
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
@@ -408,6 +442,7 @@ const loadAlarms = async () => {
       })),
     });
     const mapped = data
+      .filter((item) => !isOfflineAlarm(item))
       .filter((item) => requestedTab === 'all' || getAlarmSourceType(item) === requestedTab)
       .map(mapAlarmFromApi)
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
@@ -433,9 +468,12 @@ useEffect(() => {
 }, [activeTab]);
 
   const clearDateFilter = () => {
-  setStartDate('');
-  setEndDate('');
-};
+   const defaultRange = getDefaultDateRange();
+   setStartDate(defaultRange.startDate);
+   setStartTime(defaultRange.startTime);
+   setEndDate(defaultRange.endDate);
+   setEndTime(defaultRange.endTime);
+ };
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -460,7 +498,7 @@ useEffect(() => {
   };
 
   const getSituationText = (alarm: AlarmRecord) => {
-    const description = String(alarm.description || '').trim();
+    const description = cleanAlarmDisplayText(alarm.description);
     if (description && description !== alarm.title) return description;
     const target = alarm.deviceName || alarm.personName || '未知对象';
     const location = alarm.location && alarm.location !== '未提供位置' ? alarm.location : '';
@@ -696,10 +734,10 @@ const handleConfirmProcess = async () => {
     
     // 日期范围筛选
     const alarmDate = parseAlarmTimestamp(alarm.time);
-    const filterStart = parseAlarmFilterDateTime(startDate);
-    const filterEnd = parseAlarmFilterDateTime(endDate);
-    if (filterStart && alarmDate < filterStart) return false;
-    if (filterEnd && alarmDate > filterEnd) return false;
+    const filterStart = startDate ? new Date(`${startDate}T${startTime || '00:00'}:00`) : null;
+    const filterEnd = endDate ? new Date(`${endDate}T${endTime || '23:59'}:59`) : null;
+    if (filterStart && !Number.isNaN(filterStart.getTime()) && alarmDate < filterStart) return false;
+    if (filterEnd && !Number.isNaN(filterEnd.getTime()) && alarmDate > filterEnd) return false;
     return true;
   });
 
@@ -861,22 +899,38 @@ const handleConfirmProcess = async () => {
 {/* 时间范围筛选 */}
 <div className="flex items-center gap-2">
   <Calendar size={14} className="text-slate-400" />
+  {/* 开始日期 */}
   <input
-    type="datetime-local"
-    step="60"
+    type="date"
     value={startDate}
     onChange={(e) => setStartDate(e.target.value)}
     className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
   />
-  <span className="text-slate-500">-</span>
+  {/* 开始时间 */}
   <input
-    type="datetime-local"
+    type="time"
     step="60"
+    value={startTime}
+    onChange={(e) => setStartTime(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 w-[90px]"
+  />
+  <span className="text-slate-500">-</span>
+  {/* 结束日期 */}
+  <input
+    type="date"
     value={endDate}
     onChange={(e) => setEndDate(e.target.value)}
     className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
   />
-  {(startDate || endDate) && (
+  {/* 结束时间 */}
+  <input
+    type="time"
+    step="60"
+    value={endTime}
+    onChange={(e) => setEndTime(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 w-[90px]"
+  />
+  {(startDate || endDate || startTime || endTime) && (
     <button onClick={clearDateFilter} className="px-2 py-1 text-sm text-cyan-400">清除</button>
   )}
 </div>
@@ -906,14 +960,14 @@ const handleConfirmProcess = async () => {
                 {renderSortHeader('level', '等级', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
                 {renderSortHeader('person', '告警对象', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
                 {renderSortHeader('device', '告警设备', 'w-[13%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('location', '告警地点', 'w-[10%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('branch', '分公司', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('project', '项目', 'w-[9%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('grid', '网格', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('team', '工队', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('location', '告警地点', 'w-[7%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('branch', '分公司', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('project', '项目', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('grid', '网格', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
+                {renderSortHeader('team', '工队', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
                 {renderSortHeader('status', '处置', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
                 {renderSortHeader('time', '告警时间', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                <th className="w-[4%] px-3 py-3 text-right text-sm font-semibold text-slate-300">操作</th>
+                <th className="w-[11%] px-3 py-3 text-right text-sm font-semibold text-slate-300">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
@@ -1003,14 +1057,14 @@ const handleConfirmProcess = async () => {
                      </div>
                    </td>
                    <td className="px-3 py-3 text-right align-top">
-                    <div className="flex flex-wrap justify-end gap-1.5">
+                    <div className="flex flex-row flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setPreviewImage(alarm.snapshot!);
                           }}
-                          className="px-2.5 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-md text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <ImageIcon size={14} />
                           截图
@@ -1023,7 +1077,7 @@ const handleConfirmProcess = async () => {
                             e.stopPropagation();
                             openAlarmVideo(alarm);
                           }}
-                          className="px-2.5 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2 py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-md text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <Video size={14} />
                           视频
@@ -1036,7 +1090,7 @@ const handleConfirmProcess = async () => {
                             e.stopPropagation();
                             handleOpenProcessModal(alarm, 'resolved');
                           }}
-                          className="px-2.5 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg text-xs font-medium transition-all inline-flex items-center gap-1"
+                          className="px-2 py-1 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-md text-xs font-medium transition-all inline-flex items-center gap-1"
                         >
                           <CheckCircle size={14} />
                           处理
@@ -1050,7 +1104,7 @@ const handleConfirmProcess = async () => {
                             await loadAlarms();
                           }
                         }}
-                        className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm font-medium transition-all"
+                        className="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-md text-xs font-medium transition-all inline-flex items-center"
                       >
                         删除
                       </button>
@@ -1159,7 +1213,7 @@ const handleConfirmProcess = async () => {
                 </div>
                 <div className="col-span-2">
                   <span className="text-slate-400">报警信息：</span>
-                  <p className="text-slate-200 mt-1">{selectedAlarm.description}</p>
+                  <p className="text-slate-200 mt-1">{cleanAlarmDisplayText(selectedAlarm.description)}</p>
                 </div>
                 {selectedAlarm.recordingStatus && (
                   <div>
@@ -1249,7 +1303,7 @@ const handleConfirmProcess = async () => {
         <div className="bg-slate-800/50 rounded-lg p-3">
           <div className="text-sm text-slate-400 mb-1">告警信息</div>
           <div className="text-white font-medium">{processingAlarm.title}</div>
-          <div className="text-xs text-slate-400 mt-1">{processingAlarm.description}</div>
+          <div className="text-xs text-slate-400 mt-1">{cleanAlarmDisplayText(processingAlarm.description)}</div>
         </div>
         
         <div>

@@ -30,7 +30,7 @@ class AlarmOut(AlarmCreate):
     grid_id: Optional[str] = None
     grid_name: Optional[str] = None
     grid: Optional[str] = None
-    team_id: Optional[str] = None
+    team_id: Optional[int | str] = None
     team_name: Optional[str] = None
     team: Optional[str] = None
     trigger_person_name: Optional[str] = None

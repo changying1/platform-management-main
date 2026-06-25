@@ -80,10 +80,6 @@ public class VideoCenterActivity extends AppCompatActivity {
         chip9 = findViewById(R.id.chip_9);
         etCustomGrid = findViewById(R.id.et_custom_grid);
 
-        btnPrev = findViewById(R.id.btn_prev);
-        btnNext = findViewById(R.id.btn_next);
-        tvPage = findViewById(R.id.tv_page);
-
         // Drawer 列表（卡片样式 + 编辑/删除）
         drawerAdapter = new DrawerDeviceAdapter(
                 device -> { // 点击设备：进入播放（或你的选中逻辑）
@@ -156,10 +152,6 @@ public class VideoCenterActivity extends AppCompatActivity {
             }
         });
 
-        // 分页
-        btnPrev.setOnClickListener(v -> vm.prevPage());
-        btnNext.setOnClickListener(v -> vm.nextPage());
-
         // 订阅状态刷新 UI
         vm.getState().observe(this, s -> {
 
@@ -176,11 +168,8 @@ public class VideoCenterActivity extends AppCompatActivity {
             // Drawer：用 filteredDevices 展示（搜索什么就显示什么）
             drawerAdapter.setData(s.filteredDevices);
 
-            // 主体：你要“跟设备列表一致”就用 filteredDevices
-            // 如果你后续做分页切片，就换成 s.pageDevices
+            // 主体：滚动展示全部筛选后的真实设备，不再分页切片
             tileAdapter.setData(s.filteredDevices);
-            tileAdapter.setData(s.pageTiles);              // ✅ 用分页切片
-            tvPage.setText(s.page + "/" + s.totalPages);
             if (s.error != null && !s.error.isEmpty()) {
                 Toast.makeText(this, s.error, Toast.LENGTH_SHORT).show();
             }
@@ -190,12 +179,6 @@ public class VideoCenterActivity extends AppCompatActivity {
         });
 
         vm.loadDevices();
-
-        // ✅ 等RV真正layout完成后再计算 pageSize（一次不够就post两次）
-        rvGrid.post(() -> rvGrid.post(() -> {
-            int pageSize = calcPageSizeByViewportExact();
-            vm.setPageSize(pageSize); // 这会触发recalc并刷新pageTiles
-        }));
     }
 
     private void openPlay(VideoDevice item) {
@@ -383,15 +366,6 @@ public class VideoCenterActivity extends AppCompatActivity {
         gridLayoutManager.setSpanCount(cols);
         tileAdapter.setSpanCount(cols); // ✅ 告诉adapter当前列数
         tileAdapter.notifyDataSetChanged();
-        rvGrid.post(() -> {
-            int pageSize = calcPageSizeByViewportExact();
-            vm.setPageSize(pageSize);
-        });
-        // ✅ 2) 按容器高度计算“一页能放多少”
-        int pageSize = calcPageSizeByViewport(cols);
-
-        // ✅ 3) 告诉 ViewModel 用这个 pageSize 分页
-        vm.setPageSize(pageSize);
 
         // ✅ 如果你还想让输入框显示当前列数（可选）
         // isApplyingGrid = true;

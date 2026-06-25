@@ -3,17 +3,17 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp">
+    android:background="#F8F4FA"
+    android:padding="12dp">
 
     <LinearLayout
         android:id="@+id/summaryBox"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
         android:background="@drawable/rounded_corner_background"
         android:gravity="center"
         android:orientation="horizontal"
-        android:padding="16dp"
+        android:padding="14dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
@@ -22,33 +22,27 @@
             android:id="@+id/tvTotalAlarms"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
             android:layout_weight="1"
-            android:text="日报警 0"
+            android:text="总数 0"
             android:textColor="#333333"
-            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvPendingAlarms"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
             android:layout_weight="1"
             android:text="待处理 0"
-            android:textColor="#FF9800"
-            android:textSize="16sp"
+            android:textColor="#FF8A00"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvProcessedAlarms"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
             android:layout_weight="1"
-            android:text="已处理 0"
-            android:textColor="#4CAF50"
-            android:textSize="16sp"
+            android:text="围栏 0"
+            android:textColor="#2979FF"
             android:textStyle="bold" />
 
         <TextView
@@ -56,66 +50,106 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="高风险 0"
-            android:textColor="#F44336"
-            android:textSize="16sp"
+            android:text="视频 0"
+            android:textColor="#7B1FA2"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <androidx.appcompat.widget.AppCompatEditText
-        android:id="@+id/etSearch"
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/sourceTabs"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:background="@drawable/search_background"
-        android:drawableLeft="@drawable/ic_search"
-        android:drawablePadding="8dp"
-        android:enabled="true"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:hint="搜索报警编号/设备/人员/位置/内容"
-        android:inputType="text"
-        android:padding="10dp"
-        android:singleLine="true"
-        android:textColor="#333333"
-        android:textColorHint="#888888"
-        android:textSize="14sp"
+        android:layout_marginTop="10dp"
+        app:checkedButton="@id/btnSourceAll"
+        app:selectionRequired="true"
+        app:singleSelection="true"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/summaryBox" />
+        app:layout_constraintTop_toBottomOf="@id/summaryBox">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSourceAll"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="全部" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSourceFence"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="围栏告警" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSourceVideo"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="视频告警" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
 
     <LinearLayout
-        android:id="@+id/filterRow"
+        android:id="@+id/searchRow"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:gravity="center"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/etSearch">
+        app:layout_constraintTop_toBottomOf="@id/sourceTabs">
 
-        <Spinner
-            android:id="@+id/spinnerStatus"
+        <androidx.appcompat.widget.AppCompatEditText
+            android:id="@+id/etSearch"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:background="@drawable/search_background"
+            android:drawableStart="@drawable/ic_search"
+            android:drawablePadding="8dp"
+            android:hint="搜索编号、设备、人员、位置或内容"
+            android:padding="10dp"
+            android:singleLine="true"
+            android:textSize="14sp" />
 
-        <Spinner
-            android:id="@+id/spinnerLevel"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFilter"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:text="筛选"
+            app:icon="@android:drawable/ic_menu_sort_by_size" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvActiveFilters"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="全部状态 · 全部级别 · 时间不限"
+        android:textColor="#6750A4"
+        android:textSize="12sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/searchRow" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="6dp"
+        android:clipToPadding="false"
+        android:paddingBottom="16dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/filterRow" />
+        app:layout_constraintTop_toBottomOf="@id/tvActiveFilters" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

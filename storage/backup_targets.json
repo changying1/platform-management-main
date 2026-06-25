@@ -1,0 +1,9 @@
+[
+  {
+    "type": "local",
+    "path": "E:/project/platform-yaokong-260409/platform-management-main - 副本 (2) - 副本/storage",
+    "name": "默认本地备份",
+    "enabled": true,
+    "config": {}
+  }
+]

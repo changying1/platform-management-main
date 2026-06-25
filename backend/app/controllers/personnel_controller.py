@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from app.core.data_scope import in_scope
 from app.core.security import get_current_user
 from app.schemas.personnel_schema import PersonnelCreate, PersonnelUpdate, PersonnelOut
 from app.services.personnel_service import PersonnelService
@@ -79,6 +80,22 @@ def ensure_management_scope_bound(data):
             raise HTTPException(status_code=400, detail="工队管理员必须绑定工队或班组")
 
 
+def ensure_target_in_scope(data, current_user: dict):
+    if in_scope(
+        data.dict(),
+        current_user,
+        project_fields=("projectId", "project_id"),
+        grid_fields=("gridId", "grid_id", "gridIds", "grid_ids"),
+        team_fields=("teamId", "team_id"),
+        branch_fields=("branchId", "branch_id"),
+        company_fields=("company", "dept", "department"),
+        project_name_fields=("project",),
+        team_name_fields=("team", "workTeam", "work_team"),
+    ):
+        return
+    raise HTTPException(status_code=403, detail="personnel target is outside current user scope")
+
+
 @router.get("/", response_model=list[PersonnelOut])
 def list_personnel(current_user: dict = Depends(get_current_user)):
     return service.list_personnel(current_user=current_user)
@@ -88,6 +105,7 @@ def list_personnel(current_user: dict = Depends(get_current_user)):
 def create_personnel(data: PersonnelCreate, current_user: dict = Depends(get_current_user)):
     ensure_management_scope_bound(data)
     ensure_can_assign_permission(data.permissionLevel, current_user)
+    ensure_target_in_scope(data, current_user)
     return service.create_personnel(data, current_user=current_user)
 
 

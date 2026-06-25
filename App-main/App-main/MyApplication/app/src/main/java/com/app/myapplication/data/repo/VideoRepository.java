@@ -31,9 +31,9 @@ public class VideoRepository {
         return ApiClient.get(ctx).create(VideoApi.class);
     }
 
-    /** GET /video/ */
+    /** GET /video/?limit=5000，与 Web 端 getAllVideos() 对齐 */
     public void getDevices(Result<List<VideoDevice>> cb) {
-        api().getDevices().enqueue(new Callback<List<VideoDevice>>() {
+        api().getDevices(5000).enqueue(new Callback<List<VideoDevice>>() {
             @Override
             public void onResponse(Call<List<VideoDevice>> call, Response<List<VideoDevice>> response) {
                 if (!response.isSuccessful()) {

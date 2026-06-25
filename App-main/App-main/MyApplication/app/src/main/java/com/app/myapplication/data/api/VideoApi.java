@@ -18,7 +18,7 @@ import retrofit2.http.Query;
 public interface VideoApi {
 
     @GET("video/")
-    Call<List<VideoDevice>> getDevices();
+    Call<List<VideoDevice>> getDevices(@Query("limit") int limit);
 
     @GET("video/stream/{video_id}")
     Call<LiveStreamInfo> getLiveStream(@Path("video_id") String videoId);
@@ -100,4 +100,20 @@ public interface VideoApi {
 
     @GET("video/{video_id}/alarm/videos")
     Call<List<Map<String, Object>>> getAlarmVideos(@Path("video_id") String videoId, @Query("limit") int limit);
+
+    @GET("video/playbacks/query")
+    Call<Map<String, Object>> queryPlaybacks(
+            @Query("media_type") String mediaType,
+            @Query("page") int page,
+            @Query("page_size") int pageSize,
+            @Query("device_id") String deviceId,
+            @Query("company") String company,
+            @Query("project") String project,
+            @Query("grid") String grid,
+            @Query("team") String team,
+            @Query("keyword") String keyword,
+            @Query("start_time") String startTime,
+            @Query("end_time") String endTime,
+            @Query("sort_order") String sortOrder
+    );
 }

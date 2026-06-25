@@ -12,7 +12,32 @@ def runtime_detect(algorithm_code: str, frame: Any, **kwargs) -> dict:
 
 
 def legacy_alarm_detect(service, algorithm_code: str, frame: Any, **kwargs):
-    result = runtime_detect(algorithm_code, frame, **kwargs)
+    # 优先从已加载的模块中获取自定义的 detect() 逻辑，避免包未初始化完全时的导入问题
+    import sys
+    import importlib
+    
+    module = sys.modules.get(f"app.services.ai_features.{algorithm_code}")
+    if module is None:
+        try:
+            module = importlib.import_module(f"app.services.ai_features.{algorithm_code}")
+        except Exception:
+            try:
+                module = importlib.import_module(f".{algorithm_code}", package=__package__)
+            except Exception:
+                module = None
+
+    if module is not None and hasattr(module, "detect"):
+        try:
+            detect_fn = getattr(module, "detect")
+            result = detect_fn(frame, **kwargs)
+        except Exception as e:
+            print(f"[AI][{algorithm_code}] 执行自定义 detect 失败: {e}")
+            import traceback
+            traceback.print_exc()
+            result = runtime_detect(algorithm_code, frame, **kwargs)
+    else:
+        result = runtime_detect(algorithm_code, frame, **kwargs)
+
     if not result.get("success"):
         print(f"[AI][{algorithm_code}] {result.get('error')}")
         return False, None

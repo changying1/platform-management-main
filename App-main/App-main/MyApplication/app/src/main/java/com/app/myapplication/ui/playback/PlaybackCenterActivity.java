@@ -1,30 +1,24 @@
 package com.app.myapplication.ui.playback;
 
 import android.os.Bundle;
-import android.view.View;
 import android.widget.ImageButton;
+import android.widget.TextView;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentActivity;
-import androidx.viewpager2.adapter.FragmentStateAdapter;
-import androidx.viewpager2.widget.ViewPager2;
 
 import com.app.myapplication.R;
 import com.app.myapplication.ui.track.TrackPlaybackFragment;
 import com.app.myapplication.ui.video.VideoPlaybackFragment;
-import com.google.android.material.tabs.TabLayout;
-import com.google.android.material.tabs.TabLayoutMediator;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class PlaybackCenterActivity extends AppCompatActivity {
+    public static final String EXTRA_INITIAL_TAB = "initial_tab";
+    public static final String TAB_VIDEO = "video";
+    public static final String TAB_TRACK = "track";
+    public static final String TAB_VOICE = "voice";
 
     private ImageButton btnBack;
-    private TabLayout tabLayout;
-    private ViewPager2 viewPager;
+    private TextView tvTitle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -32,54 +26,52 @@ public class PlaybackCenterActivity extends AppCompatActivity {
         setContentView(R.layout.activity_playback_center);
 
         btnBack = findViewById(R.id.btn_back);
-        tabLayout = findViewById(R.id.tab_layout);
-        viewPager = findViewById(R.id.view_pager);
+        tvTitle = findViewById(R.id.tv_title);
 
         btnBack.setOnClickListener(v -> finish());
 
-        setupViewPager();
+        if (savedInstanceState == null) {
+            openRequestedPlayback();
+        } else {
+            updateTitle(resolvePlaybackType());
+        }
     }
 
-    private void setupViewPager() {
-        PlaybackPagerAdapter adapter = new PlaybackPagerAdapter(this);
-        adapter.addFragment(new VideoPlaybackFragment(), "视频回放");
-        adapter.addFragment(new TrackPlaybackFragment(), "轨迹回放");
-        adapter.addFragment(new VoicePlaybackFragment(), "语音回放");
-
-        viewPager.setAdapter(adapter);
-        viewPager.setOffscreenPageLimit(3);
-
-        new TabLayoutMediator(tabLayout, viewPager, (tab, position) -> {
-            tab.setText(adapter.getPageTitle(position));
-        }).attach();
+    private void openRequestedPlayback() {
+        String type = resolvePlaybackType();
+        updateTitle(type);
+        getSupportFragmentManager()
+                .beginTransaction()
+                .replace(R.id.fragment_container, createFragment(type))
+                .commit();
     }
 
-    public static class PlaybackPagerAdapter extends FragmentStateAdapter {
-        private final List<Fragment> fragments = new ArrayList<>();
-        private final List<String> titles = new ArrayList<>();
-
-        public PlaybackPagerAdapter(@NonNull FragmentActivity fragmentActivity) {
-            super(fragmentActivity);
+    private String resolvePlaybackType() {
+        String type = getIntent().getStringExtra(EXTRA_INITIAL_TAB);
+        if (TAB_TRACK.equals(type) || TAB_VOICE.equals(type)) {
+            return type;
         }
+        return TAB_VIDEO;
+    }
 
-        public void addFragment(Fragment fragment, String title) {
-            fragments.add(fragment);
-            titles.add(title);
+    private Fragment createFragment(String type) {
+        if (TAB_TRACK.equals(type)) {
+            return new TrackPlaybackFragment();
         }
-
-        @NonNull
-        @Override
-        public Fragment createFragment(int position) {
-            return fragments.get(position);
+        if (TAB_VOICE.equals(type)) {
+            return new VoicePlaybackFragment();
         }
+        return new VideoPlaybackFragment();
+    }
 
-        @Override
-        public int getItemCount() {
-            return fragments.size();
-        }
-
-        public String getPageTitle(int position) {
-            return titles.get(position);
+    private void updateTitle(String type) {
+        if (tvTitle == null) return;
+        if (TAB_TRACK.equals(type)) {
+            tvTitle.setText("轨迹回放");
+        } else if (TAB_VOICE.equals(type)) {
+            tvTitle.setText("通信回放");
+        } else {
+            tvTitle.setText("视频回放");
         }
     }
 }

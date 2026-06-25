@@ -442,6 +442,7 @@ export default function SettingsView() {
       { id: '13', name: '动火监护缺失', category: '动火作业', code: 'hotwork_supervisor', level: 'high', description: '动火作业无现场监护' },
       { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
       { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
+      { id: '16', name: '打手机检测', category: '作业行为', code: 'phone', level: 'high', description: '检测作业人员在作业现场玩手机/打手机的行为' },
     ],
   });
   
@@ -604,6 +605,7 @@ export default function SettingsView() {
           { id: '13', name: '动火监护缺失', category: '动火作业', code: 'hotwork_supervisor', level: 'high', description: '动火作业无现场监护' },
           { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
           { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
+          { id: '16', name: '打手机检测', category: '作业行为', code: 'phone', level: 'high', description: '检测作业人员在作业现场玩手机/打手机的行为' },
         ],
         videoRetentionDays: 360,
         videoQuality: 'high',

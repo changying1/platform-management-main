@@ -20,6 +20,7 @@ interface FenceAddModalProps {
   tempPoints: [number, number][];
   drawingMode: "circle" | "polygon" | null;
   editingFenceId?: string | null;
+  initialData?: any;
   companies?: string[];
   projects?: string[];
   organizationTree?: OrganizationTreeNode[];
@@ -37,6 +38,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   tempPoints,
   drawingMode,
   editingFenceId,
+  initialData,
   companies = [],
   projects = [],
   organizationTree = [],
@@ -51,7 +53,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setBuildMode("select");
-      setSelectedOrgs([]);
+      if (!editingFenceId) setSelectedOrgs([]);
       setOrgDropdownOpen(false);
     }
   }, [isOpen]);
@@ -180,15 +182,15 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
     const grid = first("grid");
     const team = first("team");
     return {
-      company: company?.name || "",
-      project: project?.name || "",
-      grid: grid?.name || "",
-      team: team?.name || "",
-      branch_id: company?.unit_id || company?.id || null,
-      project_id: project?.unit_id || project?.id || null,
-      grid_id: grid?.unit_id || grid?.id || null,
-      team_id: team?.unit_id || team?.id || null,
-      orgs: selectedOrgs,
+      company: company?.name || initialData?.company || "",
+      project: project?.name || initialData?.project || "",
+      grid: grid?.name || initialData?.grid || "",
+      team: team?.name || initialData?.team || "",
+      branch_id: company?.unit_id || company?.id || initialData?.branch_id || null,
+      project_id: project?.unit_id || project?.id || initialData?.project_id || null,
+      grid_id: grid?.unit_id || grid?.id || initialData?.grid_id || null,
+      team_id: team?.unit_id || team?.id || initialData?.team_id || null,
+      orgs: selectedOrgs.length > 0 ? selectedOrgs : (initialData?.orgs || []),
     };
   };
 
@@ -207,7 +209,19 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
       };
       
-      setFormData({
+      setFormData(editingFenceId && initialData ? {
+        name: initialData.name || "",
+        company: initialData.company || "",
+        project: initialData.project || "",
+        behavior: initialData.behavior || "No Entry",
+        shape: initialData.shape || "polygon",
+        radius: initialData.radius || 50,
+        startTime: initialData.startTime || getLocalDateTime(now),
+        endTime: initialData.endTime || getLocalDateTime(endDate),
+        severity: initialData.severity || "general",
+        description: initialData.description || "",
+        selectedDeviceIds: initialData.selectedDeviceIds || [],
+      } : {
         name: "",
         company: "",
         project: "",
@@ -218,10 +232,11 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
         endTime: getLocalDateTime(endDate),
         severity: "general",
         description: "",
+        selectedDeviceIds: [],
       });
       setPosition({ x: window.innerWidth - 360, y: 100 });
     }
-  }, [isOpen]);
+  }, [editingFenceId, initialData, isOpen]);
 
   // 拖拽逻辑
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -607,31 +622,36 @@ const showTopTip = (message: string) => {
                 </div>
               </div>
 
-              {/* 生效时间段 */}
+              {/* 有效日期范围 */}
               <div className="space-y-3">
                 <label className="block text-sm font-medium text-slate-300 flex items-center gap-2">
                   <Clock size={14} className="text-cyan-400" />
-                  生效时间段
+                  有效日期范围
                 </label>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <span className="text-slate-400 text-sm w-12">开始</span>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-end">
+                  <label className="block space-y-1.5">
+                    <span className="block text-xs font-medium text-slate-400">有效期开始</span>
                     <input
                       type="datetime-local"
                       value={formData.startTime}
                       onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                      className="flex-1 px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
+                      aria-label="有效期开始时间"
+                      className="w-full min-w-0 px-3 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
                     />
+                  </label>
+                  <div className="hidden h-[42px] items-center text-slate-500 sm:flex" aria-hidden="true">
+                    至
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-slate-400 text-sm w-12">结束</span>
+                  <label className="block space-y-1.5">
+                    <span className="block text-xs font-medium text-slate-400">有效期结束</span>
                     <input
                       type="datetime-local"
                       value={formData.endTime}
                       onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                      className="flex-1 px-4 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
+                      aria-label="有效期结束时间"
+                      className="w-full min-w-0 px-3 py-2.5 bg-slate-800/50 border border-cyan-400/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 transition-colors"
                     />
-                  </div>
+                  </label>
                 </div>
               </div>
             </div>
@@ -647,12 +667,26 @@ const showTopTip = (message: string) => {
                 </button>
                 <button
                   onClick={() => {
-                    if (!formData.name || selectedOrgs.length === 0) {
+                    if (!formData.name || (!editingFenceId && selectedOrgs.length === 0)) {
                       alert("请填写围栏名称并选择至少一个绑定组织");
                       return;
                     }
                     if (!formData.startTime || !formData.endTime) {
                       showTopTip("请设置生效时间");
+                      return;
+                    }
+                    if (new Date(formData.endTime).getTime() <= new Date(formData.startTime).getTime()) {
+                      showTopTip("生效结束时间必须晚于开始时间");
+                      return;
+                    }
+
+                    if (editingFenceId) {
+                      onSaveFence({
+                        ...formData,
+                        ...getSelectedOrgPayload(),
+                        center: tempCenter,
+                        points: tempPoints,
+                      });
                       return;
                     }
 

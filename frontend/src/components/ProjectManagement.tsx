@@ -1,6 +1,7 @@
 // src/components/admin/ProjectManagement.tsx
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Edit2, Trash2, X, FolderTree, Upload, Download } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, X, FolderTree, Upload, Download, MapPin } from 'lucide-react';
+import AMapLoader from '@amap/amap-jsapi-loader';
 import * as XLSX from 'xlsx';
 import { getAuthHeaders } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
@@ -18,6 +19,8 @@ interface Project {
   endDate?: string;
   status: 'ongoing' | 'completed' | 'suspended';
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 const SQL_PROJECTS: Project[] = [
@@ -51,6 +54,70 @@ const detectBackendUrl = (): string => {
   return `${window.location.protocol}//${window.location.host}`;
 };
 const API_BASE = detectBackendUrl();
+const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || 'ab3044412b12b8deb9da741c6739be1d';
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || '65a74edbb64d47769637df170a5da117';
+const DEFAULT_CENTER: [number, number] = [108.9398, 34.3416];
+
+const ProjectLocationPicker: React.FC<{
+  latitude?: number | null;
+  longitude?: number | null;
+  onChange: (latitude: number, longitude: number) => void;
+}> = ({ latitude, longitude, onChange }) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<any>(null);
+  const markerRef = React.useRef<any>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      if (!containerRef.current || mapRef.current) return;
+      if (!(window as any)._AMapSecurityConfig) {
+        (window as any)._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE };
+      }
+      const AMap = await AMapLoader.load({ key: AMAP_KEY, version: '2.0' });
+      if (cancelled || !containerRef.current) return;
+      const hasPoint = Number.isFinite(latitude) && Number.isFinite(longitude);
+      const center = hasPoint ? [longitude, latitude] : DEFAULT_CENTER;
+      const map = new AMap.Map(containerRef.current, {
+        center,
+        zoom: hasPoint ? 17 : 11,
+        viewMode: '2D',
+      });
+      mapRef.current = map;
+
+      const setMarker = (lng: number, lat: number) => {
+        if (!markerRef.current) {
+          markerRef.current = new AMap.Marker({ position: [lng, lat], map });
+        } else {
+          markerRef.current.setPosition([lng, lat]);
+        }
+      };
+      if (hasPoint) setMarker(Number(longitude), Number(latitude));
+      map.on('click', (event: any) => {
+        const lng = Number(event.lnglat.getLng());
+        const lat = Number(event.lnglat.getLat());
+        setMarker(lng, lat);
+        onChange(lat, lng);
+      });
+    };
+    void init();
+    return () => {
+      cancelled = true;
+      mapRef.current?.destroy();
+      mapRef.current = null;
+      markerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    const position = [Number(longitude), Number(latitude)];
+    mapRef.current.setCenter(position);
+    if (markerRef.current) markerRef.current.setPosition(position);
+  }, [latitude, longitude]);
+
+  return <div ref={containerRef} className="h-64 w-full overflow-hidden rounded-lg border border-cyan-400/30" />;
+};
 
 export default function ProjectManagement() {
 const [projects, setProjects] = useState<Project[]>(SQL_PROJECTS);
@@ -63,11 +130,11 @@ const fetchProjects = async () => {
     if (res.ok) {
       const data = await res.json();
       const apiData = Array.isArray(data) ? data : data.value || data.data || [];
-      if (apiData.length > 1) {
+      if (apiData.length > 0) {
         const mappedProjects: Project[] = apiData.map((p: any) => ({
           id: p.id,
           name: p.project_name || p.name || '',
-          company: '默认分公司',
+          company: p.branch_name || '默认分公司',
           team: '土建工队',
           manager: p.manager_name || p.manager || '',
           managerPhone: '',
@@ -76,6 +143,8 @@ const fetchProjects = async () => {
           startDate: p.created_at?.split('T')[0] || p.start_date || '2024-01-01',
           status: p.status === 'active' ? 'ongoing' : p.status === 'completed' ? 'completed' : 'suspended',
           address: p.address || '',
+          latitude: Number.isFinite(Number(p.latitude ?? p.lat)) ? Number(p.latitude ?? p.lat) : null,
+          longitude: Number.isFinite(Number(p.longitude ?? p.lng)) ? Number(p.longitude ?? p.lng) : null,
         }));
         setProjects(mappedProjects);
       }
@@ -103,6 +172,58 @@ const statuses = ['all', 'ongoing', 'completed', 'suspended'];
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<Project | null>(null);
+
+  const openCreateModal = () => {
+    setEditingItem({
+      id: 0,
+      name: '',
+      company: '',
+      team: '',
+      manager: '',
+      startDate: '',
+      status: 'ongoing',
+      address: '',
+      latitude: null,
+      longitude: null,
+    });
+    setShowModal(true);
+  };
+
+  const saveProject = async () => {
+    if (!editingItem?.name.trim()) {
+      alert('请填写项目名称');
+      return;
+    }
+    if (!Number.isFinite(editingItem.latitude) || !Number.isFinite(editingItem.longitude)) {
+      alert('请在地图上点击设置项目位置');
+      return;
+    }
+
+    const isEdit = editingItem.id > 0;
+    const payload = {
+      name: editingItem.name.trim(),
+      manager: editingItem.manager || null,
+      status: editingItem.status === 'ongoing' ? 'active' : editingItem.status,
+      remark: editingItem.address || null,
+      latitude: editingItem.latitude,
+      longitude: editingItem.longitude,
+    };
+    const response = await fetch(
+      isEdit ? `${API_BASE}/projects/${editingItem.id}` : `${API_BASE}/projects/`,
+      {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(payload),
+      }
+    );
+    if (!response.ok) {
+      alert(`保存失败：${await response.text()}`);
+      return;
+    }
+    await fetchProjects();
+    setShowModal(false);
+    setEditingItem(null);
+  };
 
 const filteredData = projects.filter(p => {
   const matchesSearch = searchTerm === '' || 
@@ -208,7 +329,7 @@ const confirmImport = () => {
   
   {canCreatePersonnel && <button onClick={() => setShowUploadModal(true)} className="px-3 py-1.5 bg-green-500/20 text-green-300 rounded-lg flex items-center gap-1 text-sm"><Upload size={14} />批量导入</button>}
   <button onClick={downloadTemplate} className="px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-lg flex items-center gap-1 text-sm"><Download size={14} />下载模板</button>
-  {canCreatePersonnel && <button onClick={() => { setEditingItem(null); setShowModal(true); }} className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg flex items-center gap-1 text-sm"><Plus size={14} />添加项目</button>}
+  {canCreatePersonnel && <button onClick={openCreateModal} className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg flex items-center gap-1 text-sm"><Plus size={14} />添加项目</button>}
 </div>
 
       <div className="overflow-x-auto">
@@ -237,7 +358,15 @@ const confirmImport = () => {
     <td className="px-4 py-3 text-slate-300">{project.startDate}</td>
     <td className="px-4 py-3 text-slate-300">{project.address}</td>
     <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusStyle(project.status)}`}>{getStatusText(project.status)}</span></td>
-    <td className="px-4 py-3 text-right">...</td>
+    <td className="px-4 py-3 text-right">
+      <button
+        onClick={() => { setEditingItem({ ...project }); setShowModal(true); }}
+        className="inline-flex h-8 w-8 items-center justify-center rounded text-cyan-300 hover:bg-cyan-500/20"
+        title="编辑项目"
+      >
+        <Edit2 size={15} />
+      </button>
+    </td>
   </tr>
 ))}
           </tbody>
@@ -270,9 +399,30 @@ const confirmImport = () => {
           <div><label className="block text-sm text-slate-400 mb-1">开工日期</label><input type="date" value={editingItem?.startDate || ''} onChange={(e) => setEditingItem({ ...editingItem!, startDate: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
           <div><label className="block text-sm text-slate-400 mb-1">地址</label><input type="text" value={editingItem?.address || ''} onChange={(e) => setEditingItem({ ...editingItem!, address: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
         </div>
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <MapPin size={15} className="text-cyan-400" />
+              项目位置坐标 *
+            </label>
+            <span className="text-xs text-slate-500">
+              {Number.isFinite(editingItem?.latitude) && Number.isFinite(editingItem?.longitude)
+                ? `${Number(editingItem?.longitude).toFixed(6)}, ${Number(editingItem?.latitude).toFixed(6)}`
+                : '请在地图上点击选点'}
+            </span>
+          </div>
+          <ProjectLocationPicker
+            latitude={editingItem?.latitude}
+            longitude={editingItem?.longitude}
+            onChange={(latitude, longitude) =>
+              setEditingItem((current) => current ? { ...current, latitude, longitude } : current)
+            }
+          />
+          <p className="mt-2 text-xs text-slate-500">点击地图设置项目中心位置；编辑旧项目时可重新选点。</p>
+        </div>
       </div>
       <div className="flex gap-3 mt-8">
-        <button onClick={() => { if (!editingItem?.name) { alert('请填写项目名称'); return; } if (editingItem.id) { setProjects(projects.map(p => p.id === editingItem.id ? editingItem : p)); } else { const newId = Math.max(...projects.map(p => p.id), 0) + 1; setProjects([...projects, { ...editingItem, id: newId } as Project]); } setShowModal(false); setEditingItem(null); }} className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900">保存</button>
+        <button onClick={() => void saveProject()} className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900">保存</button>
         <button onClick={() => { setShowModal(false); setEditingItem(null); }} className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100">取消</button>
       </div>
     </div>

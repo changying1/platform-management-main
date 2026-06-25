@@ -46,6 +46,16 @@ class AlarmService:
             or "电子围栏" in description
         )
 
+    def _is_offline_alarm_doc(self, alarm_doc: dict | None) -> bool:
+        if not alarm_doc:
+            return False
+        alarm_type = str(alarm_doc.get("alarm_type") or alarm_doc.get("type") or "").lower()
+        description = str(alarm_doc.get("description") or alarm_doc.get("alarm_content") or "")
+        return (
+            "offline" in alarm_type
+            or "离线" in description
+        )
+
     def _coerce_alarm_time(self, value):
         if isinstance(value, datetime):
             return value
@@ -887,6 +897,12 @@ class AlarmService:
         query = {}
         if project_id is not None:
             query["project_id"] = project_id
+        query = merge_filters(query, {"$nor": [
+            {"alarm_type": {"$regex": "offline", "$options": "i"}},
+            {"type": {"$regex": "offline", "$options": "i"}},
+            {"description": {"$regex": "离线"}},
+            {"alarm_content": {"$regex": "离线"}},
+        ]})
 
         video_alarm_query = {"$or": [
                 {"source_type": "video"},
@@ -920,6 +936,7 @@ class AlarmService:
             )
         if current_user is not None and use_post_scope_filter:
             docs = [doc for doc in docs if self._in_user_scope(doc, current_user, user_scope_query)]
+        docs = [doc for doc in docs if not self._is_offline_alarm_doc(doc)]
         docs.sort(key=self._alarm_sort_time, reverse=True)
         docs = docs[max(0, int(skip)): max(0, int(skip)) + max(1, int(limit))]
         return [self._mongo_alarm_to_out(doc) for doc in docs]
@@ -929,6 +946,7 @@ class AlarmService:
         if current_user is not None and not is_hq(current_user):
             user_scope_query = scope_filter(current_user, **self._scope_kwargs())
             docs = [doc for doc in docs if self._in_user_scope(doc, current_user, user_scope_query)]
+        docs = [doc for doc in docs if not self._is_offline_alarm_doc(doc)]
 
         total = len(docs)
         fence = sum(1 for doc in docs if self._is_fence_alarm_doc(doc))

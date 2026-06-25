@@ -16,7 +16,6 @@ import androidx.fragment.app.Fragment;
 import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.local.SessionManager;
-import com.app.myapplication.ui.call.AppVoiceCallInviteService;
 import com.app.myapplication.ui.login.LoginActivity;
 
 public class MeFragment extends Fragment {
@@ -43,14 +42,18 @@ public class MeFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        bindSessionProfile();
+        SessionManager session = new SessionManager(requireContext());
+        String displayName = firstNonEmpty(session.getFullName(), session.getNickname(), session.getUsername());
+        if (displayName == null || displayName.trim().isEmpty()) {
+            displayName = session.getUsername();
+        }
+        tvName.setText(displayName == null || displayName.trim().isEmpty() ? "未登录" : displayName);
+        tvSub.setText(buildProfileSubtitle(session));
 
-            // 先用默认头像（本地圆形背景+图标）
-            // 如果你以后要加载 avatarUrl，我再帮你加 Glide
         btnLogout.setOnClickListener(v -> {
-            AppVoiceCallInviteService.stop(requireContext());
-            new SessionManager(requireContext()).clear();
+            session.clear();
             ApiClient.reset();
+
             Intent intent = new Intent(requireContext(), LoginActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(intent);
@@ -58,23 +61,73 @@ public class MeFragment extends Fragment {
         });
     }
 
-    private void bindSessionProfile() {
-        SessionManager session = new SessionManager(requireContext());
-        String name = session.getNickname();
-        if (name == null || name.trim().isEmpty()) {
-            name = session.getUsername();
-        }
-        if (name == null || name.trim().isEmpty()) {
-            name = session.getUserId();
-        }
-        tvName.setText((name == null || name.trim().isEmpty()) ? "未登录" : name.trim());
+    private String buildProfileSubtitle(SessionManager session) {
+        String username = session.getUsername();
+        String roleLabel = roleLabel(firstNonEmpty(session.getPermissionLevel(), session.getRole()));
+        String organization = joinNonEmpty(" / ", session.getCompany(), session.getProject(), session.getTeam());
 
-        String role = session.getRole();
-        String permissionLevel = session.getPermissionLevel();
-        String label = (role == null || role.trim().isEmpty()) ? "用户" : role.trim();
-        if (permissionLevel != null && !permissionLevel.trim().isEmpty()) {
-            label += " · " + permissionLevel.trim();
+        StringBuilder builder = new StringBuilder();
+        if (!isBlank(username)) {
+            builder.append(username);
         }
-        tvSub.setText(label + " · 在线");
+        if (!isBlank(roleLabel)) {
+            if (builder.length() > 0) builder.append('\n');
+            builder.append(roleLabel);
+        }
+        if (!isBlank(organization)) {
+            if (builder.length() > 0) builder.append('\n');
+            builder.append(organization);
+        }
+        if (builder.length() == 0) {
+            builder.append("未登录");
+        }
+        return builder.toString();
+    }
+
+    private String roleLabel(String role) {
+        if (role == null) return "";
+        switch (role) {
+            case "headquarters_admin":
+            case "HQ":
+            case "ADMIN":
+                return "系统总管理员";
+            case "branch_admin":
+            case "BRANCH":
+                return "分公司管理员";
+            case "project_safety_admin":
+            case "PROJECT":
+                return "项目管理员";
+            case "grid_admin":
+            case "GRID":
+                return "网格管理员";
+            case "team_admin":
+            case "TEAM":
+                return "工队管理员";
+            default:
+                return role;
+        }
+    }
+
+    private String firstNonEmpty(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            if (!isBlank(value)) return value.trim();
+        }
+        return "";
+    }
+
+    private String joinNonEmpty(String separator, String... values) {
+        StringBuilder builder = new StringBuilder();
+        if (values == null) return "";
+        for (String value : values) {
+            if (isBlank(value)) continue;
+            if (builder.length() > 0) builder.append(separator);
+            builder.append(value.trim());
+        }
+        return builder.toString();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

@@ -18,6 +18,7 @@ export interface FenceData {
     start: string;
     end: string;
   };
+  effective_time?: string;
   center?: [number, number];
   radius?: number;
   points?: [number, number][];
@@ -95,5 +96,6 @@ export interface OrganizationTreeNode {
   team_id?: string | number | null;
   children?: OrganizationTreeNode[];
   fences?: FenceData[];
+  devices?: FenceDevice[];
   fenceCount?: number;
 }

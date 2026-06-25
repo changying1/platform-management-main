@@ -104,11 +104,22 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
+        <CheckBox
+            android:id="@+id/cb_remember_account"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginTop="10dp"
+            android:buttonTint="#6C4FB3"
+            android:checked="true"
+            android:text="记住账号"
+            android:textColor="#6B7280"
+            android:textSize="13sp" />
+
         <Button
             android:id="@+id/btn_login"
             android:layout_width="match_parent"
             android:layout_height="46dp"
-            android:layout_marginTop="28dp"
+            android:layout_marginTop="12dp"
             android:background="@drawable/bg_login_button"
             android:text="登录"
             android:textColor="#FFFFFF"

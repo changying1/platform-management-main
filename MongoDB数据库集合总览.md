@@ -321,30 +321,44 @@
 
 建议索引：`id`、`device_serial`、`status`、`project`、`grid_id`、`team_id`。
 
-### 11. `fence`
+### 11. `fence` ⚠️
 
 电子围栏集合。
 
-| 字段 | 类型 | 中文说明 |
-|---|---|---|
-| `_id` | ObjectId | MongoDB 主键 |
-| `id` | Number/String | 围栏业务 ID |
-| `name` | String | 围栏名称 |
-| `project_id` | String/Number | 所属项目 ID |
-| `project_region_id` | String/Number | 所属项目区域 ID |
-| `shape` | String | 围栏形状，如 `polygon`、`circle` |
-| `behavior` | String | 管控类型，如 `No Entry`、`No Exit` |
-| `coordinates_json` | String | 坐标 JSON |
-| `radius` | Number | 圆形围栏半径，单位米 |
-| `effective_time` | String | 生效时间，如 `5.00-23.00` |
-| `worker_count` | Number | 当前相关人员数量 |
-| `remark` | String | 备注 |
-| `alarm_type` | String | 告警等级，如 `high`、`medium`、`low` |
-| `is_active` | Number | 是否启用，1 启用，0 禁用 |
-| `created_at` | Date/String | 创建时间 |
-| `updated_at` | Date/String | 更新时间 |
+| 字段 | 类型 | 中文说明 | 状态 |
+|---|---|---|---|
+| `_id` | ObjectId | MongoDB 主键 | ✅ |
+| `fence_id` | String | 围栏业务 ID（时间戳生成） | 🔧 |
+| `name` | String | 围栏名称 | ✅ |
+| `company` | String | 所属公司 | 🔧 |
+| `project` | String | 所属项目名称 | 🔧 |
+| `project_id` | String/Number | 所属项目 ID（遗留字段，现主要用 `project`） | 📝 |
+| `project_region_id` | String/Number | 所属项目区域 ID | ✅ |
+| `shape` | String | 围栏形状，如 `polygon`、`circle` | ✅ |
+| `behavior` | String | 管控类型，如 `No Entry`、`No Exit` | ✅ |
+| `severity` | String | 告警严重等级，如 `high`、`medium`、`low`、`severe` | 🔧 |
+| `geometry` | Object | 几何数据：`{center: [lat, lng], radius: number}` 或 `{points: [[lat, lng], ...]}` | 🔧 |
+| `schedule` | Object | 生效时间段：`{start: ISO时间, end: ISO时间}` | 🔧 |
+| `effective_time` | String | 每日生效时间，如 `00:00-23:59` | ✅ |
+| `worker_count` | Number | 当前相关人员数量 | ✅ |
+| `remark` | String | 备注 | ✅ |
+| `alarm_type` | String | 告警等级，如 `high`、`medium`、`low` | ✅ |
+| `is_active` | Boolean | 是否启用，`true` 启用，`false` 禁用 | 🔧 |
+| `createdAt` | String/Date | 创建时间（ISO 格式） | 🔧 |
+| `updatedAt` | String/Date | 更新时间（ISO 格式） | 🔧 |
 
-建议索引：`id`、`project_id`、`project_region_id`、`is_active`。
+**废弃字段说明**：
+- `coordinates_json`：已废弃，坐标数据现存储在 `geometry` 对象中
+- `radius`：已废弃，圆形半径现存储在 `geometry.radius` 中
+
+**新增字段说明**：
+- `fence_id`：代码实际使用的业务 ID 字段（替代文档中的 `id`）
+- `company`、`project`：穿透式责任管理组织架构字段
+- `severity`：与 `alarm_type` 并存的严重等级字段
+- `geometry`：统一的几何数据对象，支持圆形（center + radius）和多边形（points）
+- `schedule`：生效时间段对象，替代原有的单一时间字段
+
+建议索引：`fence_id`、`project`、`project_region_id`、`is_active`。
 
 ### 12. `project_region`
 

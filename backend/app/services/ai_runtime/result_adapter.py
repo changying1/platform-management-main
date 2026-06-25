@@ -186,7 +186,9 @@ def to_alarm_boxes(result: Mapping[str, Any], alarm_labels: set[str] | frozenset
     boxes = []
     for det in result.get("detections", []) or []:
         label = str(det.get("label", ""))
-        if alarm_labels is not None and label not in alarm_labels:
+        raw_label = str(det.get("raw_label", ""))
+        # 兼容实名制人脸识别等后处理情况：若 label (姓名) 或 raw_label (face) 在告警标签集中，则均视为有效告警
+        if alarm_labels is not None and label not in alarm_labels and raw_label not in alarm_labels:
             continue
         boxes.append(
             {

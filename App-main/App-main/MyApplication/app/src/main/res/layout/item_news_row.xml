@@ -2,80 +2,75 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingTop="10dp"
-    android:paddingBottom="10dp">
+    android:orientation="horizontal"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
 
-    <!-- 左侧彩色点 -->
     <View
         android:id="@+id/vDot"
         android:layout_width="8dp"
         android:layout_height="8dp"
         android:background="@drawable/bg_news_dot" />
 
-    <!-- 中间：tag + 标题 + 摘要 -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
         android:layout_weight="1"
-        android:layout_marginStart="10dp"
         android:orientation="vertical">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/tvTag"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingLeft="8dp"
-                android:paddingRight="8dp"
-                android:paddingTop="2dp"
-                android:paddingBottom="2dp"
-                android:text="公告"
-                android:textSize="11sp"
+                android:background="@drawable/bg_news_tag"
+                android:paddingStart="6dp"
+                android:paddingTop="0dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="0dp"
+                android:text="&#x516C;&#x544A;"
                 android:textColor="#2563EB"
-                android:background="@drawable/bg_news_tag" />
+                android:textSize="10sp" />
 
             <TextView
                 android:id="@+id/tvTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="关于系统升级维护通知"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:textColor="#111827"
+                android:ellipsize="end"
                 android:maxLines="1"
-                android:ellipsize="end" />
+                android:text="&#x7CFB;&#x7EDF;&#x5347;&#x7EA7;&#x7EF4;&#x62A4;&#x901A;&#x77E5;"
+                android:textColor="#111827"
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/tvDesc"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="本周六 00:00-02:00 进行升级，期间视频回放可能短暂不可用。"
-            android:textSize="12sp"
-            android:textColor="#6B7280"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
             android:maxLines="1"
-            android:ellipsize="end" />
-
+            android:text="&#x6682;&#x65E0;&#x8BE6;&#x60C5;"
+            android:textColor="#6B7280"
+            android:textSize="10sp" />
     </LinearLayout>
 
-    <!-- 右侧：时间 -->
     <TextView
         android:id="@+id/tvTime"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="10:20"
-        android:textSize="11sp"
+        android:layout_marginStart="6dp"
+        android:text="--"
         android:textColor="#9CA3AF"
-        android:layout_marginStart="10dp" />
-
+        android:textSize="10sp" />
 </LinearLayout>

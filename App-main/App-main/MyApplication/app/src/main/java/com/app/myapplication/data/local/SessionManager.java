@@ -20,6 +20,12 @@ public class SessionManager {
     private static final String K_PERMISSION_LEVEL = "permission_level";
     private static final String K_PERMISSIONS = "permissions";
     private static final String K_USERNAME = "username";
+    private static final String K_FULL_NAME = "full_name";
+    private static final String K_COMPANY = "company";
+    private static final String K_PROJECT = "project";
+    private static final String K_TEAM = "team";
+    private static final String K_REMEMBER_ACCOUNT = "remember_account";
+    private static final String K_REMEMBERED_USERNAME = "remembered_username";
 
     private final SharedPreferences sp;
 
@@ -52,17 +58,46 @@ public class SessionManager {
         return sp.getString(K_NICK, "");
     }
 
+    public String getFullName() {
+        return sp.getString(K_FULL_NAME, "");
+    }
+
+    public String getCompany() {
+        return sp.getString(K_COMPANY, "");
+    }
+
+    public String getProject() {
+        return sp.getString(K_PROJECT, "");
+    }
+
+    public String getTeam() {
+        return sp.getString(K_TEAM, "");
+    }
+
     public void saveSession(LoginResult r) {
+        String username = r.username == null ? "" : r.username;
+        String displayName = r.nickname;
+        if (displayName == null || displayName.trim().isEmpty()) {
+            displayName = r.fullName;
+        }
+        if (displayName == null || displayName.trim().isEmpty()) {
+            displayName = username;
+        }
+
         sp.edit()
                 .putString(K_TOKEN, r.token == null ? "" : r.token)
                 .putString(K_REFRESH, r.refreshToken == null ? "" : r.refreshToken)
                 .putLong(K_EXPIRES, r.expiresAt)
                 .putString(K_USER_ID, r.userId == null ? "" : r.userId)
-                .putString(K_NICK, r.nickname == null ? "" : r.nickname)
+                .putString(K_NICK, displayName == null ? "" : displayName)
+                .putString(K_USERNAME, username)
+                .putString(K_FULL_NAME, r.fullName == null ? "" : r.fullName)
                 .putString(K_AVATAR, r.avatarUrl == null ? "" : r.avatarUrl)
                 .putString(K_ROLE, r.role == null ? "" : r.role)
                 .putString(K_PERMISSION_LEVEL, r.permissionLevel == null ? "" : r.permissionLevel)
-                .putString(K_USERNAME, r.username == null ? "" : r.username)
+                .putString(K_COMPANY, r.company == null ? "" : r.company)
+                .putString(K_PROJECT, r.project == null ? "" : r.project)
+                .putString(K_TEAM, r.team == null ? "" : r.team)
                 .putString(K_PERMISSIONS, r.permissions == null ? "" : String.join(",", r.permissions))
                 .apply();
     }
@@ -79,14 +114,52 @@ public class SessionManager {
     }
 
     public void clear() {
+        boolean rememberAccount = isRememberAccount();
+        String rememberedUsername = getRememberedUsername();
+        SharedPreferences.Editor editor = sp.edit().clear();
+        if (rememberAccount) {
+            editor.putBoolean(K_REMEMBER_ACCOUNT, true)
+                    .putString(K_REMEMBERED_USERNAME, rememberedUsername);
+        }
+        editor.apply();
+    }
+
+    public void clearAll() {
         sp.edit().clear().apply();
+    }
+
+    public boolean isRememberAccount() {
+        return sp.getBoolean(K_REMEMBER_ACCOUNT, true);
+    }
+
+    public void setRememberAccount(boolean rememberAccount) {
+        SharedPreferences.Editor editor = sp.edit().putBoolean(K_REMEMBER_ACCOUNT, rememberAccount);
+        if (!rememberAccount) {
+            editor.remove(K_REMEMBERED_USERNAME);
+        }
+        editor.apply();
+    }
+
+    public String getRememberedUsername() {
+        return sp.getString(K_REMEMBERED_USERNAME, "");
+    }
+
+    public void saveRememberedUsername(String username) {
+        sp.edit()
+                .putBoolean(K_REMEMBER_ACCOUNT, true)
+                .putString(K_REMEMBERED_USERNAME, username == null ? "" : username)
+                .apply();
     }
 
     /**
      * 获取用户角色级别
      */
     public String getPermissionLevel() {
-        return sp.getString(K_PERMISSION_LEVEL, "");
+        String level = sp.getString(K_PERMISSION_LEVEL, "");
+        if (level != null && !level.isEmpty()) {
+            return level;
+        }
+        return sp.getString(K_ROLE, "");
     }
 
     /**
@@ -114,6 +187,7 @@ public class SessionManager {
     public void saveRoleAndPermissions(String role, java.util.List<String> permissions) {
         sp.edit()
             .putString(K_ROLE, role == null ? "" : role)
+            .putString(K_PERMISSION_LEVEL, role == null ? "" : role)
             .putString(K_PERMISSIONS, String.join(",", permissions))
             .apply();
     }

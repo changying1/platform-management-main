@@ -1,3 +1,10 @@
+
+const cleanAlarmDisplayText = (value?: string | null) => String(value || '')
+  .replace(/[\uFF08(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[\uFF09)]/g, '')
+  .replace(/\bconfidence\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/gi, '')
+  .replace(/\u7F6E\u4FE1\u5EA6\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/g, '')
+  .replace(/\s{2,}/g, ' ')
+  .trim();
 // frontend/views/VideoPlayback.tsx
 
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
@@ -39,8 +46,7 @@ import { TrackMap } from '../src/components/TrackMap';
 // 鉁?鏂板锛氬鍏ョ湡瀹?API
 import {
   getAllVideos,
-  getRecordingVideos,
-  getAlarmVideosList,
+  getPlaybackPage,
   type SavedPlaybackVideo,
 } from "../src/api/videoApi";
 import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from "../src/api/config";
@@ -109,6 +115,7 @@ interface TrackRecord {
   startTime: string;
   endTime: string;
   points: TrackPoint[];
+  pointCount?: number;
 }
 
 type TrackOrgNode = {
@@ -1888,13 +1895,36 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
       return gradients[index];
     };
 
-    const formatCardTime = (value?: string) => {
-      if (!value) return '';
+    const parseCardDateTime = (value?: string) => {
+      if (!value) return null;
       const date = new Date(String(value).replace(' ', 'T'));
-      if (Number.isNaN(date.getTime())) return String(value).slice(11, 16);
-      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+      return Number.isNaN(date.getTime()) ? null : date;
     };
 
+    const formatCardDate = (value?: string) => {
+      const date = parseCardDateTime(value);
+      if (!date) return String(value || '').slice(0, 10);
+      return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+    };
+
+    const formatCardTime = (value?: string) => {
+      const date = parseCardDateTime(value);
+      if (!date) return String(value || '').slice(11, 19);
+      return [
+        String(date.getHours()).padStart(2, '0'),
+        String(date.getMinutes()).padStart(2, '0'),
+        String(date.getSeconds()).padStart(2, '0'),
+      ].join(':');
+    };
+
+    const startDateLabel = formatCardDate(playback.startTime);
+    const endDateLabel = formatCardDate(playback.endTime);
+    const dateRangeLabel =
+      startDateLabel === endDateLabel ? startDateLabel : `${startDateLabel}/${endDateLabel}`;
     const timeRangeLabel = `${formatCardTime(playback.startTime)}-${formatCardTime(playback.endTime)}`;
 
     return (
@@ -1970,8 +2000,9 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
               </div>
             )}
 
-            <div className="absolute bottom-2 left-2 max-w-[68%] rounded bg-black/60 px-1.5 py-0.5 text-[11px] leading-none text-white/90 backdrop-blur-sm pointer-events-none">
-              <span className="truncate">{timeRangeLabel}</span>
+            <div className="absolute bottom-1.5 left-2 max-w-[75%] rounded bg-black/65 px-1.5 py-1 text-[10px] leading-[12px] text-white/90 backdrop-blur-sm pointer-events-none">
+              <div className="truncate text-cyan-100">{dateRangeLabel}</div>
+              <div className="truncate">{timeRangeLabel}</div>
             </div>
 
             <div className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/60 text-white text-xs rounded">
@@ -2145,9 +2176,37 @@ const TrackPlaybackContent = ({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <input type="datetime-local" step="60" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            {/* 开始日期 */}
+            <input 
+              type="date" 
+              value={dateRange.startDate} 
+              onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" 
+            />
+            {/* 开始时间 */}
+            <input 
+              type="time" 
+              step="60" 
+              value={dateRange.startTime} 
+              onChange={(e) => setDateRange({ ...dateRange, startTime: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-[90px]" 
+            />
             <span className="text-slate-500">-</span>
-            <input type="datetime-local" step="60" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            {/* 结束日期 */}
+            <input 
+              type="date" 
+              value={dateRange.endDate} 
+              onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" 
+            />
+            {/* 结束时间 */}
+            <input 
+              type="time" 
+              step="60" 
+              value={dateRange.endTime} 
+              onChange={(e) => setDateRange({ ...dateRange, endTime: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-[90px]" 
+            />
           </div>
           {activeFiltersCount > 0 && <button onClick={resetFilters} className="px-2 py-1 text-sm text-cyan-400">重置</button>}
         </div>
@@ -2190,7 +2249,7 @@ const TrackPlaybackContent = ({
                   </div>
                   <div className="min-w-0">
                     <div className="truncate text-slate-100" title={deviceName}>{deviceName}</div>
-                    <div className="mt-1 text-xs text-cyan-300/70">{points.length} 个轨迹点</div>
+                    <div className="mt-1 text-xs text-cyan-300/70">{track.pointCount ?? points.length} 个轨迹点</div>
                   </div>
                   <div className="font-mono text-xs text-slate-300">{formatCoord(points[0])}</div>
                   <div className="min-w-0">
@@ -2261,7 +2320,13 @@ const VoicePlaybackContent = ({
     setSelectedGrid('all');
     setSelectedTeam('all');
     setSearchKeyword('');
-    setDateRange({ start: '', end: '' });
+    const defaultRange = getDefaultVoiceDateRange();
+    setDateRange({ 
+      startDate: defaultRange.startDate, 
+      startTime: defaultRange.startTime,
+      endDate: defaultRange.endDate, 
+      endTime: defaultRange.endTime 
+    });
   };
 
   const activeFiltersCount = [
@@ -2270,8 +2335,10 @@ const VoicePlaybackContent = ({
     selectedGrid !== 'all',
     selectedTeam !== 'all',
     searchKeyword !== '',
-    dateRange.start !== '',
-    dateRange.end !== ''
+    dateRange.startDate !== '',
+    dateRange.startTime !== '',
+    dateRange.endDate !== '',
+    dateRange.endTime !== ''
   ].filter(Boolean).length;
   const selectedHasAudio = Boolean(selectedVoice?.audioUrl);
   const projectOptions = selectedCompany === 'all'
@@ -2307,9 +2374,37 @@ const VoicePlaybackContent = ({
             <input type="text" placeholder="搜索来源、接收对象..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-200" />
           </div>
           <div className="flex items-center gap-2">
-            <input type="datetime-local" step="60" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            {/* 开始日期 */}
+            <input 
+              type="date" 
+              value={dateRange.startDate} 
+              onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" 
+            />
+            {/* 开始时间 */}
+            <input 
+              type="time" 
+              step="60" 
+              value={dateRange.startTime} 
+              onChange={(e) => setDateRange({ ...dateRange, startTime: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-[90px]" 
+            />
             <span className="text-slate-500">-</span>
-            <input type="datetime-local" step="60" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" />
+            {/* 结束日期 */}
+            <input 
+              type="date" 
+              value={dateRange.endDate} 
+              onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200" 
+            />
+            {/* 结束时间 */}
+            <input 
+              type="time" 
+              step="60" 
+              value={dateRange.endTime} 
+              onChange={(e) => setDateRange({ ...dateRange, endTime: e.target.value })} 
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-200 w-[90px]" 
+            />
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {readProjectScope().showCompanyFilter && (
@@ -2436,6 +2531,10 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
     const [selectedGridLevel, setSelectedGridLevel] = useState<string>('all');
     const [activeTab, setActiveTab] = useState<TabType>('all');
     const [searchKeyword, setSearchKeyword] = useState('');
+    const [videoStartDate, setVideoStartDate] = useState('');
+    const [videoStartClock, setVideoStartClock] = useState('00:00');
+    const [videoEndDate, setVideoEndDate] = useState('');
+    const [videoEndClock, setVideoEndClock] = useState('23:59');
     const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
     const [showProjectDropdown, setShowProjectDropdown] = useState(false);
     const [showGridDropdown, setShowGridDropdown] = useState(false);
@@ -2448,12 +2547,15 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   // 鉁?淇敼2锛氬垹闄ゆā鎷熸暟鎹紝鏀圭敤鐪熷疄 API 鏁版嵁
   const [recordingVideos, setRecordingVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
+  const [alarmScreenshots, setAlarmScreenshots] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedAlarm, setSelectedAlarm] = useState<ExtendedSavedPlayback | null>(null);
   const [filteredPlaybacks, setFilteredPlaybacks] = useState<ExtendedSavedPlayback[]>([]);
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [playbackTotal, setPlaybackTotal] = useState(0);
+  const [playbackTotalPages, setPlaybackTotalPages] = useState(0);
   // 鉁?40:9 鏇寸獎鍗＄墖锛?0鍒椕?琛?= 40涓紝鍒氬ソ濉弧椤甸潰
   const itemsPerPage = 40;
 
@@ -2482,16 +2584,14 @@ const getTrackRetentionDaysFromLocal = () => {
   }
 };
 
-const getDefaultTrackDateRange = (days: number = getTrackRetentionDaysFromLocal()) => {
+const getDefaultTrackDateRange = () => {
   const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - Math.max(1, Math.floor(days)));
   const toDateTimeLocalValue = (date: Date) => {
     const pad = (value: number) => String(value).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
   return {
-    start: toDateTimeLocalValue(start),
+    start: '', // 开始时间为空表示无限制
     end: toDateTimeLocalValue(end),
   };
 };
@@ -2544,7 +2644,24 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
   const [selectedVoice, setSelectedVoice] = useState<VoiceRecord | null>(null);
   const [voiceScopeDevices, setVoiceScopeDevices] = useState<Device[]>([]);
   const [voiceSearchKeyword, setVoiceSearchKeyword] = useState('');
-  const [voiceDateRange, setVoiceDateRange] = useState({ start: '', end: '' });
+  // 通信回放日期和时间分开（结束时间为当前时间，开始时间为空表示无限制）
+  const getDefaultVoiceDateRange = () => {
+    const end = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return {
+      startDate: '',
+      startTime: '',
+      endDate: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
+      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+    };
+  };
+  const defaultVoiceDateRange = getDefaultVoiceDateRange();
+  const [voiceDateRange, setVoiceDateRange] = useState({ 
+    startDate: defaultVoiceDateRange.startDate, 
+    startTime: defaultVoiceDateRange.startTime,
+    endDate: defaultVoiceDateRange.endDate, 
+    endTime: defaultVoiceDateRange.endTime 
+  });
   const [selectedVoiceCompany, setSelectedVoiceCompany] = useState<string>('all');
   const [selectedVoiceProject, setSelectedVoiceProject] = useState<string>('all');
   const [selectedVoiceGrid, setSelectedVoiceGrid] = useState<string>('all');
@@ -2595,7 +2712,6 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
 
         if (!cancelled && response.ok && Number.isFinite(days) && days > 0) {
           setTrackRetentionDays(days);
-          setTrackDateRange(getDefaultTrackDateRange(days));
         }
       } catch (error) {
         console.warn('鍔犺浇杞ㄨ抗淇濆瓨澶╂暟澶辫触锛屼娇鐢ㄦ湰鍦伴粯璁ゅ€?', error);
@@ -2807,49 +2923,71 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
 
   // 鉁?鍔犺浇瑙嗛锛氫袱涓狝PI鐙珛鍔犺浇锛屼簰涓嶅奖鍝嶏紒
 useEffect(() => {
-  // 鉁?鍏ㄩ儴璁惧鏃讹紝鐢ㄧ涓€涓澶囧姞杞借棰?
-  const devicesToLoad = selectedDevice ? [selectedDevice] : devices;
-  if (devicesToLoad.length === 0) {
-    setRecordingVideos([]);
-    setAlarmVideos([]);
-    setAlarmScreenshots([]);
-    return;
-  }
-  
-  const loadVideos = async () => {
+  let cancelled = false;
+  const isAlarmTab = activeTab === 'alarm';
+  const startTimeFilter = videoStartDate ? `${videoStartDate}T${videoStartClock || '00:00'}` : '';
+  const endTimeFilter = videoEndDate ? `${videoEndDate}T${videoEndClock || '23:59'}` : '';
+  const timer = window.setTimeout(async () => {
     setLoadingVideos(true);
     try {
-      // 鉁?绛変袱涓狝PI閮藉洖鏉ユ墠涓€璧锋洿鏂扮姸鎬侊紒瑙ｅ喅绔炴€侊紒
-      const results = await Promise.all(devicesToLoad.map(async (device) => {
-        try {
-          const [recordings, alarms, screenshots] = await Promise.all([
-            getRecordingVideos(device.id, selectedDevice ? 500 : 120),
-            getAlarmVideosList(device.id, selectedDevice ? 120 : 80),
-            getAlarmScreenshots(device.id, selectedDevice ? 120 : 80),
-          ]);
-          const attachDevice = (item: SavedPlaybackVideo) => ({ ...item, __device: device });
-          return {
-            recordings: Array.isArray(recordings) ? recordings.map(attachDevice) : [],
-            alarms: Array.isArray(alarms) ? alarms.map(attachDevice) : [],
-            screenshots: Array.isArray(screenshots) ? screenshots.map(attachDevice) : [],
-          };
-        } catch {
-          return { recordings: [], alarms: [], screenshots: [] };
-        }
-      }));
-
-      setRecordingVideos(results.flatMap(result => result.recordings) as SavedPlaybackVideo[]);
-      setAlarmVideos(results.flatMap(result => result.alarms) as SavedPlaybackVideo[]);
-      setAlarmScreenshots(results.flatMap(result => result.screenshots) as SavedPlaybackVideo[]);
-    } catch (err) {
-      setRecordingVideos([]);
-      setAlarmVideos([]);
+      const result = await getPlaybackPage({
+        mediaType: isAlarmTab ? 'alarm' : 'manual',
+        page: currentPage,
+        pageSize: itemsPerPage,
+        deviceId: selectedDevice?.id,
+        company: selectedCompany,
+        project: selectedProject,
+        grid: selectedGrid,
+        team: selectedTeam,
+        keyword: searchKeyword,
+        startTime: startTimeFilter,
+        endTime: endTimeFilter,
+      });
+      if (cancelled) return;
+      if (isAlarmTab) {
+        setAlarmVideos(result.data);
+        setRecordingVideos([]);
+      } else {
+        setRecordingVideos(result.data);
+        setAlarmVideos([]);
+      }
+      setAlarmScreenshots([]);
+      setPlaybackTotal(result.total);
+      setPlaybackTotalPages(result.total_pages);
+    } catch (error) {
+      if (!cancelled) {
+        console.error('加载回放分页失败:', error);
+        setRecordingVideos([]);
+        setAlarmVideos([]);
+        setAlarmScreenshots([]);
+        setPlaybackTotal(0);
+        setPlaybackTotalPages(0);
+      }
     } finally {
-      setLoadingVideos(false);
+      if (!cancelled) {
+        setLoadingVideos(false);
+      }
     }
+  }, 200);
+
+  return () => {
+    cancelled = true;
+    window.clearTimeout(timer);
   };
-  loadVideos();
-}, [selectedDevice?.id, devices]);
+}, [
+  activeTab,
+  currentPage,
+  selectedDevice?.id,
+  selectedCompany,
+  selectedProject,
+  selectedGrid,
+  selectedTeam,
+  searchKeyword,
+  videoStartDate,
+  videoStartClock,
+  videoEndDate,
+  videoEndClock,
+]);
 
 // 鉁?杞ㄨ抗API璋冪敤锛堜粠TrackPlayback.tsx杩佺Щ锛?
 // 鑾峰彇杞ㄨ抗璁惧鍒楄〃
@@ -2884,7 +3022,7 @@ const fetchAllTrajectories = async (hours: number = 24, signal?: AbortSignal) =>
     const params = new URLSearchParams({ hours: String(hours) });
     if (trackDateRange.start) params.set('start_time', new Date(trackDateRange.start).toISOString());
     if (trackDateRange.end) params.set('end_time', new Date(trackDateRange.end).toISOString());
-    const res = await fetch(`${TRACK_API_BASE_URL}/device/trajectories?${params.toString()}`, {
+    const res = await fetch(`${TRACK_API_BASE_URL}/device/trajectories/summary?${params.toString()}`, {
       headers: getAuthHeaders(),
       credentials: 'include',
       signal,
@@ -2892,7 +3030,7 @@ const fetchAllTrajectories = async (hours: number = 24, signal?: AbortSignal) =>
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
-    const devicesWithTrajectory: TrackDevice[] = Array.isArray(data) ? data : (data.devices || []);
+    const devicesWithTrajectory: any[] = Array.isArray(data) ? data : (data.devices || []);
     const deviceById = new Map<string, TrackDevice>();
     trackDevices.forEach(device => {
       const primaryId = String((device as any).device_id || '');
@@ -2900,12 +3038,35 @@ const fetchAllTrajectories = async (hours: number = 24, signal?: AbortSignal) =>
       if (primaryId) deviceById.set(primaryId, device);
       if (code) deviceById.set(code, device);
     });
-    const trackRecords = devicesWithTrajectory
-      .map(deviceData => {
-        const lookupId = String((deviceData as any).device_id || (deviceData as any).device_code || '');
-        return buildTrackRecord(deviceById.get(lookupId) || deviceData, deviceData, hours);
-      })
-      .filter((record): record is TrackRecord => Boolean(record));
+    const trackRecords = devicesWithTrajectory.map((summary) => {
+      const lookupId = String(summary.device_id || summary.device_code || '');
+      const device = deviceById.get(lookupId) || summary;
+      const startPoint = summary.start_point;
+      const points = startPoint && Number.isFinite(Number(startPoint.lat)) && Number.isFinite(Number(startPoint.lng))
+        ? [{
+            lat: Number(startPoint.lat),
+            lng: Number(startPoint.lng),
+            time: startPoint.timestamp || summary.start_time,
+            speed: Number(startPoint.speed) || 0,
+          }]
+        : [];
+      return {
+        id: `track_${lookupId}_${summary.start_time || Date.now()}`,
+        deviceId: lookupId,
+        deviceName: summary.device_name || device.name || '未知设备',
+        holder: summary.holder || device.holder || '未知人员',
+        company: summary.company || device.company || '',
+        branch_id: String(summary.branch_id || device.branch_id || ''),
+        project: summary.project || device.project || '',
+        project_id: String(summary.project_id || device.project_id || ''),
+        grid: summary.grid || device.grid || device.grid_name || '',
+        team: summary.team || device.team || '',
+        startTime: summary.start_time,
+        endTime: summary.end_time,
+        points,
+        pointCount: Number(summary.point_count) || 0,
+      } as TrackRecord;
+    }).filter((record) => record.deviceId && record.startTime && record.endTime);
 
     if (!signal?.aborted) {
       setTrackRecords(trackRecords);
@@ -2920,7 +3081,7 @@ const fetchAllTrajectories = async (hours: number = 24, signal?: AbortSignal) =>
 };
 // 设备列表或日期范围变化时获取轨迹
 useEffect(() => {
-  if (mainTab !== 'track' || trackDevices.length === 0) {
+  if (mainTab !== 'track') {
     activeTrackFetchRef.current?.abort();
     activeTrackFetchRef.current = null;
     setLoadingTracks(false);
@@ -2957,6 +3118,44 @@ useEffect(() => {
 
   return undefined;
 }, [mainTab, trackDevices, trackDateRange.start, trackDateRange.end, trackRetentionDays]);
+
+  const openTrackPlayback = async (track: TrackRecord | null) => {
+    if (!track) {
+      setSelectedTrack(null);
+      return;
+    }
+    setLoadingTracks(true);
+    try {
+      const params = new URLSearchParams({
+        hours: String(Math.min(24 * 90, Math.max(1, trackRetentionDays * 24))),
+        start_time: track.startTime,
+        end_time: track.endTime,
+      });
+      const response = await fetch(
+        `${TRACK_API_BASE_URL}/device/trajectories/${encodeURIComponent(track.deviceId)}/points?${params.toString()}`,
+        {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const points = (Array.isArray(payload?.points) ? payload.points : [])
+        .filter((point: any) => Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng)))
+        .map((point: any) => ({
+          lat: Number(point.lat),
+          lng: Number(point.lng),
+          time: point.timestamp || point.time,
+          speed: Number(point.speed) || 0,
+        }));
+      setSelectedTrack({ ...track, points, pointCount: points.length });
+    } catch (error) {
+      console.error('加载轨迹点失败:', error);
+      setSelectedTrack({ ...track, points: [] });
+    } finally {
+      setLoadingTracks(false);
+    }
+  };
   // 鉁?鐪熷疄API + 鍏滃簳锛屽叏閮ㄨ澶囦篃鏈夋暟鎹紒
   useEffect(() => {
     const convertToSavedPlayback = (): ExtendedSavedPlayback[] => {
@@ -2965,7 +3164,24 @@ useEffect(() => {
       // 鉁?鐢ㄧ涓€涓澶囧綋榛樿锛堝叏閮ㄨ澶囨椂涔熸樉绀哄唴瀹癸級
       const getPlaybackDevice = (video: SavedPlaybackVideo) => {
         const attached = (video as any).__device as Device | undefined;
-        return attached || selectedDevice || devices.find(device => device.id === Number((video as any).video_id)) || devices[0];
+        if (attached) return attached;
+        const matched = devices.find(device => String(device.id) === String(video.device_id || ''));
+        if (matched) return matched;
+        return {
+          id: Number(video.device_id || 0),
+          name: video.device_name || video.name || '未知设备',
+          ip_address: '',
+          status: '',
+          company: video.company || '',
+          project: video.project || '',
+          project_id: video.project_id || '',
+          grid: video.grid || '',
+          grid_id: video.grid_id || '',
+          grid_name: video.grid || '',
+          team: video.team || '',
+          team_id: video.team_id || '',
+          team_name: video.team || '',
+        } as Device;
       };
 
       const createBasePlayback = (video: SavedPlaybackVideo) => {
@@ -3181,22 +3397,6 @@ useEffect(() => {
     
     let list = convertToSavedPlayback();
     
-    // 娌￠€夎澶囨椂锛屾墠鎸夊叕鍙?椤圭洰/浣滀笟闃熺瓫閫?
-    if (!selectedDevice) {
-      if (selectedCompany !== 'all') {
-        list = list.filter(p => p.company === selectedCompany);
-      }
-      if (selectedProject !== 'all') {
-        list = list.filter(p => p.project === selectedProject || playbackMatchesProjectScope(p, projectScope));
-      }
-      if (selectedTeam !== 'all') {
-        list = list.filter(p => p.teamKey === selectedTeam || p.team === selectedTeam);
-      }
-      if (selectedGrid !== 'all') {
-        list = list.filter(p => p.gridKey === selectedGrid || p.grid === selectedGrid || p.grid_id === selectedGrid);
-      }
-    }
-    
     // 鎸塗ab绛涢€?
     if (activeTab === 'alarm') {
       list = list.filter(p => p.type === 'alarm');
@@ -3204,29 +3404,21 @@ useEffect(() => {
       list = list.filter(p => p.type === 'manual');
     }
     
-    // 鎸夊叧閿瘝鎼滅储锛堟敮鎸佸鏉′欢妯＄硦鎼滅储锛?
-    if (searchKeyword) {
-      list = list.filter(p => playbackMatchesSearch(p, searchKeyword));
-    }
-    
     // 鉁?鏈€缁堟寜鏃堕棿鍊掑簭鎺掑垪锛堟柊鐨勫湪鍓嶏級
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, searchKeyword, selectedCompany, selectedProject, selectedGrid, selectedTeam, devices]);
+  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, devices]);
  
 
 // 鉁?鍒嗛〉璁＄畻 - 鏀惧湪 useEffect 澶栭潰
-const totalPages = Math.ceil(filteredPlaybacks.length / itemsPerPage);
-const currentPagePlaybacks = filteredPlaybacks.slice(
-  (currentPage - 1) * itemsPerPage,
-  currentPage * itemsPerPage
-);
+const totalPages = playbackTotalPages;
+const currentPagePlaybacks = filteredPlaybacks;
 
 // 绛涢€夊彉鍖栨椂閲嶇疆椤电爜
 useEffect(() => {
   setCurrentPage(1);
-}, [filteredPlaybacks.length, activeTab, selectedCompany, selectedProject, selectedGrid, selectedTeam, selectedDevice, searchKeyword]);
+}, [activeTab, selectedCompany, selectedProject, selectedGrid, selectedTeam, selectedDevice, searchKeyword, videoStartDate, videoStartClock, videoEndDate, videoEndClock]);
    
 
     // 鎾斁閫変腑鐨勫洖鏀?
@@ -3448,8 +3640,8 @@ const enrichAlarmWithScreenshot = (playback: ExtendedSavedPlayback | null): Exte
 
   const filteredVoices = voiceRecords.filter(voice => {
     const voiceTime = parseVoiceDateTime(voice.startTime);
-    const filterStart = parseDateFilterStart(voiceDateRange.start);
-    const filterEnd = parseDateFilterEnd(voiceDateRange.end);
+    const filterStart = voiceDateRange.startDate ? new Date(`${voiceDateRange.startDate}T${voiceDateRange.startTime || '00:00'}:00`) : null;
+    const filterEnd = voiceDateRange.endDate ? new Date(`${voiceDateRange.endDate}T${voiceDateRange.endTime || '23:59'}:59`) : null;
     if (selectedVoiceCompany !== 'all' && voice.company !== selectedVoiceCompany) return false;
     if (selectedVoiceProject !== 'all' && voice.project !== selectedVoiceProject) return false;
     if (selectedVoiceGrid !== 'all' && (voice.grid || '未匹配网格') !== selectedVoiceGrid) return false;
@@ -3489,7 +3681,13 @@ return (
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-bold text-cyan-300">
                   监控视频
-                  <span className="text-sm text-slate-400 ml-2">（共 {filteredPlaybacks.length} 条记录）</span>
+                  <span className="text-sm text-slate-400 ml-2">（共 {playbackTotal} 条记录）</span>
+                  {loadingVideos && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-cyan-300">
+                      <Loader2 size={12} className="animate-spin" />
+                      加载中
+                    </span>
+                  )}
                 </h3>
                 
                 {/* 鏌ョ湅妯″紡鍒囨崲鎸夐挳 */}
@@ -3666,6 +3864,62 @@ return (
                           </button>
                         ))}
                       </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={videoStartDate}
+                      max={videoEndDate || undefined}
+                      onChange={(event) => setVideoStartDate(event.target.value)}
+                      className="h-8 w-[126px] rounded-lg border border-slate-700 bg-slate-800/80 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+                      title="开始日期"
+                      aria-label="开始日期"
+                    />
+                    <input
+                      type="time"
+                      step="60"
+                      value={videoStartClock}
+                      onChange={(event) => setVideoStartClock(event.target.value)}
+                      className="h-8 w-[88px] rounded-lg border border-slate-700 bg-slate-800/80 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+                      title="开始时间"
+                      aria-label="开始时间"
+                    />
+                    <span className="text-xs text-slate-500">至</span>
+                    <input
+                      type="date"
+                      value={videoEndDate}
+                      min={videoStartDate || undefined}
+                      onChange={(event) => setVideoEndDate(event.target.value)}
+                      className="h-8 w-[126px] rounded-lg border border-slate-700 bg-slate-800/80 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+                      title="结束日期"
+                      aria-label="结束日期"
+                    />
+                    <input
+                      type="time"
+                      step="60"
+                      value={videoEndClock}
+                      onChange={(event) => setVideoEndClock(event.target.value)}
+                      className="h-8 w-[88px] rounded-lg border border-slate-700 bg-slate-800/80 px-2 text-xs text-slate-200 outline-none focus:border-cyan-400"
+                      title="结束时间"
+                      aria-label="结束时间"
+                    />
+                    {(videoStartDate || videoEndDate) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVideoStartDate('');
+                          setVideoStartClock('00:00');
+                          setVideoEndDate('');
+                          setVideoEndClock('23:59');
+                        }}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-800/80 text-slate-400 transition-colors hover:border-cyan-400/50 hover:text-cyan-300"
+                        title="清除时间筛选"
+                        aria-label="清除时间筛选"
+                      >
+                        <X size={14} />
+                      </button>
                     )}
                   </div>
 
@@ -3857,17 +4111,14 @@ onShowScreenshot={async (playback) => {
                         <span className="text-slate-400">违规人员</span>
                         <span className="text-red-300">{currentPlayback.alarmInfo.personnel || '未知'}</span>
                       </div>
-                      <div className="flex justify-between">
-                          <span className="text-slate-400">置信度</span>
-                        <span className="text-red-300">{((currentPlayback.alarmInfo.score || 0) * 100).toFixed(0)}%</span>
-                      </div>
+
                       <div className="flex justify-between">
                         <span className="text-slate-400">报警时间</span>
                         <span className="text-red-300">{formatTime(currentPlayback.alarmInfo.timestamp)}</span>
                       </div>
                       <div className="mt-2 pt-2 border-t border-red-400/20">
                         <span className="text-slate-400 block mb-1">报警信息</span>
-                        <span className="text-red-200/80 text-sm">{currentPlayback.alarmInfo.msg}</span>
+                        <span className="text-red-200/80 text-sm">{cleanAlarmDisplayText(currentPlayback.alarmInfo.msg)}</span>
                       </div>
                       <div className="mt-3 pt-3 border-t border-red-400/20">
                         <button
@@ -3915,7 +4166,7 @@ onShowScreenshot={async (playback) => {
         currentPage={trackCurrentPage}
         setCurrentPage={setTrackCurrentPage}
         selectedTrack={selectedTrack}
-        setSelectedTrack={setSelectedTrack}
+        setSelectedTrack={openTrackPlayback}
         selectedCompany={selectedTrackCompany}
         setSelectedCompany={setSelectedTrackCompany}
         selectedProject={selectedTrackProject}
@@ -4011,8 +4262,7 @@ onShowScreenshot={async (playback) => {
                     <div className="text-sm text-white">{formatTime(selectedAlarm.alarmInfo.timestamp)}</div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3">
-                      <div className="text-xs text-slate-400 mb-1">置信度</div>
-                    <div className="text-sm text-white">{((selectedAlarm.alarmInfo.score || 0) * 100).toFixed(0)}%</div>
+
                   </div>
                 </div>
                 
@@ -4023,7 +4273,7 @@ onShowScreenshot={async (playback) => {
                 
                 <div className="bg-slate-800/50 rounded-lg p-3">
                   <div className="text-xs text-slate-400 mb-1">报警描述</div>
-                  <div className="text-sm text-slate-200">{selectedAlarm.alarmInfo.msg}</div>
+                  <div className="text-sm text-slate-200">{cleanAlarmDisplayText(selectedAlarm.alarmInfo.msg)}</div>
                 </div>
                 
                 <div className="bg-slate-800/50 rounded-lg p-3">

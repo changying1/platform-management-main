@@ -193,6 +193,61 @@ class DeviceLocationHistoryService:
             results.append(latest)
         return results
 
+    def get_track_summaries(
+        self,
+        hours: int = 24,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> list[dict]:
+        self.ensure_indexes()
+        match: dict[str, Any] = {}
+        time_query: dict[str, Any] = {}
+        start_dt = _parse_datetime(start_time)
+        end_dt = _parse_datetime(end_time)
+        if start_dt:
+            time_query["$gte"] = start_dt
+        if end_dt:
+            time_query["$lte"] = end_dt
+        if not time_query and hours and hours > 0:
+            time_query["$gte"] = _utc_now() - timedelta(hours=hours)
+        if time_query:
+            match["timestamp"] = time_query
+
+        pipeline = []
+        if match:
+            pipeline.append({"$match": match})
+        pipeline.extend([
+            {"$sort": {"device_id": 1, "timestamp": 1}},
+            {
+                "$group": {
+                    "_id": "$device_id",
+                    "first": {"$first": "$$ROOT"},
+                    "latest": {"$last": "$$ROOT"},
+                    "point_count": {"$sum": 1},
+                }
+            },
+        ])
+
+        results = []
+        for row in self.collection.aggregate(pipeline, allowDiskUse=True):
+            first = row.get("first") or {}
+            latest = row.get("latest") or {}
+            results.append({
+                **latest,
+                "device_id": str(row.get("_id") or latest.get("device_id") or ""),
+                "start_time": first.get("timestamp_text") or _iso_z(_parse_datetime(first.get("timestamp"))),
+                "end_time": latest.get("timestamp_text") or _iso_z(_parse_datetime(latest.get("timestamp"))),
+                "point_count": int(row.get("point_count") or 0),
+                "start_point": {
+                    "timestamp": first.get("timestamp_text") or _iso_z(_parse_datetime(first.get("timestamp"))),
+                    "lat": first.get("lat"),
+                    "lng": first.get("lng"),
+                    "speed": first.get("speed"),
+                    "direction": first.get("direction"),
+                },
+            })
+        return results
+
     def summarize_recent_tracks(self, days: int = 7) -> list[dict]:
         self.ensure_indexes()
         cutoff = _utc_now() - timedelta(days=max(1, days))

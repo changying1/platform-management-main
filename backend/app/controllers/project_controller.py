@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
+import json
 
 from app.core.data_scope import is_hq, project_ids_for_user, text, value_variants
 from app.core.database import get_mongo_collection, get_compatible_mongo_db
@@ -293,10 +294,34 @@ def _project_regions(region_ids: list[int]):
     return regions
 
 
+def _project_coordinates(project: dict) -> tuple[float | None, float | None]:
+    latitude = project.get("latitude") or project.get("lat")
+    longitude = project.get("longitude") or project.get("lng")
+    if latitude is not None and longitude is not None:
+        try:
+            return float(latitude), float(longitude)
+        except (TypeError, ValueError):
+            pass
+
+    center = project.get("center")
+    if isinstance(center, str):
+        try:
+            center = json.loads(center)
+        except (TypeError, ValueError):
+            center = None
+    if isinstance(center, (list, tuple)) and len(center) >= 2:
+        try:
+            return float(center[1]), float(center[0])
+        except (TypeError, ValueError):
+            pass
+    return None, None
+
+
 def _to_response(project: dict) -> ProjectResponse:
     user_ids = [int(x) for x in project.get("user_ids", []) if str(x).isdigit()]
     region_ids = [int(x) for x in project.get("region_ids", []) if str(x).isdigit()]
     project_name = _clean_text(project.get("name")) or ""
+    latitude, longitude = _project_coordinates(project)
     return ProjectResponse(
         id=_safe_int(project.get("id")),
         name=project_name,
@@ -304,6 +329,8 @@ def _to_response(project: dict) -> ProjectResponse:
         manager=_clean_text(project.get("manager") or project.get("manager_name")),
         status=project.get("status"),
         remark=_clean_text(project.get("remark")),
+        latitude=latitude,
+        longitude=longitude,
         branch_id=_safe_int(_project_branch_id(project)) or None,
         grid_ids=[str(x) for x in project.get("grid_ids", []) if str(x)],
         team_ids=[str(x) for x in project.get("team_ids", []) if str(x)],
@@ -480,6 +507,7 @@ def get_projects(
         team_count = _project_team_count(project)
         device_count = _project_count_by_name(devices_collection, project_name)
         user_count = len(user_ids) if user_ids else _project_count_by_name(personnel_collection, project_name)
+        latitude, longitude = _project_coordinates(project)
         result.append(ProjectListItem(
             id=_safe_int(project.get("id")),
             name=project_name,
@@ -487,6 +515,8 @@ def get_projects(
             manager=_clean_text(project.get("manager") or project.get("manager_name")),
             status=project.get("status"),
             remark=_clean_text(project.get("remark")),
+            latitude=latitude,
+            longitude=longitude,
             branch_id=_safe_int(_project_branch_id(project)) or None,
             branch_name=next(iter(_project_branch_names(project)), None),
             user_count=_safe_int(project.get("user_count"), user_count),

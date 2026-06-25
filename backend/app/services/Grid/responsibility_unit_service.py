@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -154,6 +155,7 @@ def _legacy_lookup_query(unit_id: str, fields: tuple[str, ...]) -> dict:
 
 def _legacy_grid_to_unit(grid: dict) -> dict:
     grid_id = _text(grid.get("grid_id") or grid.get("_id"))
+    latitude, longitude = _grid_center(grid)
     return _synthetic_unit(
         unit_id=grid_id,
         name=grid.get("name") or f"缃戞牸{grid_id}",
@@ -163,6 +165,10 @@ def _legacy_grid_to_unit(grid: dict) -> dict:
         grid_id=grid_id,
         level=2,
         sort_order=grid.get("sort_order", 0),
+        latitude=latitude,
+        longitude=longitude,
+        center=grid.get("center"),
+        zoom_level=grid.get("zoom_level"),
     )
 
 
@@ -177,6 +183,10 @@ def _legacy_project_to_unit(project: dict) -> dict:
         project_id=project_id,
         level=2,
         sort_order=project.get("sort_order", 0),
+        latitude=project.get("latitude") or project.get("lat"),
+        longitude=project.get("longitude") or project.get("lng"),
+        center=project.get("center"),
+        zoom_level=project.get("zoom_level"),
     )
 
 
@@ -250,7 +260,7 @@ def _branch_docs() -> list[dict]:
     return result
 
 
-def _synthetic_unit(unit_id: str, name: str, unit_type: str, parent_id=None, project_id=None, grid_id=None, team_id=None, level=1, sort_order=0) -> dict:
+def _synthetic_unit(unit_id: str, name: str, unit_type: str, parent_id=None, project_id=None, grid_id=None, team_id=None, level=1, sort_order=0, latitude=None, longitude=None, center=None, zoom_level=None) -> dict:
     return {
         "id": f"synthetic-{unit_id}",
         "unit_id": unit_id,
@@ -266,9 +276,51 @@ def _synthetic_unit(unit_id: str, name: str, unit_type: str, parent_id=None, pro
         "level": level,
         "is_under_construction": unit_type in {"grid", "team"},
         "sort_order": sort_order,
+        "latitude": latitude,
+        "longitude": longitude,
+        "center": center,
+        "zoom_level": zoom_level,
         "created_at": "",
         "updated_at": "",
     }
+
+
+def _grid_center(grid: dict) -> tuple[float | None, float | None]:
+    lat = grid.get("latitude") or grid.get("lat")
+    lng = grid.get("longitude") or grid.get("lng")
+    try:
+        if lat is not None and lng is not None:
+            return float(lat), float(lng)
+    except (TypeError, ValueError):
+        pass
+
+    raw = grid.get("bounds_json") or grid.get("bounds")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = None
+    if not isinstance(raw, list):
+        return None, None
+
+    points = []
+    for point in raw:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        try:
+            first, second = float(point[0]), float(point[1])
+        except (TypeError, ValueError):
+            continue
+        if -90 <= first <= 90 and -180 <= second <= 180:
+            points.append((first, second))
+        elif -90 <= second <= 90 and -180 <= first <= 180:
+            points.append((second, first))
+    if not points:
+        return None, None
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
 
 
 def _organization_units() -> list[dict]:
@@ -286,6 +338,11 @@ def _organization_units() -> list[dict]:
     for index, project in enumerate(_project_docs(), start=1):
         project_id = _text(project.get("id") or project.get("_id"))
         branch_id = _text(project.get("branch_id"))
+        # 获取项目坐标
+        lat = project.get("latitude") or project.get("lat")
+        lng = project.get("longitude") or project.get("lng")
+        center = project.get("center")
+        zoom_level = project.get("zoom_level")
         units.append(_synthetic_unit(
             unit_id=project_id,
             name=project.get("name") or project.get("project_name") or f"项目{project_id}",
@@ -294,6 +351,10 @@ def _organization_units() -> list[dict]:
             project_id=project_id,
             level=2,
             sort_order=index,
+            latitude=lat,
+            longitude=lng,
+            center=center,
+            zoom_level=zoom_level,
         ))
 
     for index, grid in enumerate(grid_collection.find({}).sort("created_at", 1), start=1):
@@ -301,6 +362,10 @@ def _organization_units() -> list[dict]:
         project_id = _text(grid.get("project_id"))
         if not grid_id:
             continue
+        # Prefer explicit coordinates, then derive a stable center from bounds_json.
+        lat, lng = _grid_center(grid)
+        center = grid.get("center")
+        zoom_level = grid.get("zoom_level")
         units.append(_synthetic_unit(
             unit_id=grid_id,
             name=grid.get("name") or f"网格{grid_id}",
@@ -310,6 +375,10 @@ def _organization_units() -> list[dict]:
             grid_id=grid_id,
             level=2,
             sort_order=index,
+            latitude=lat,
+            longitude=lng,
+            center=center,
+            zoom_level=zoom_level,
         ))
 
     for index, team in enumerate(team_collection.find({}), start=1):
@@ -318,6 +387,11 @@ def _organization_units() -> list[dict]:
         grid_id = _text(team.get("grid_id"))
         if not team_id:
             continue
+        # 获取工队坐标
+        lat = team.get("latitude") or team.get("lat")
+        lng = team.get("longitude") or team.get("lng")
+        center = team.get("center")
+        zoom_level = team.get("zoom_level")
         units.append(_synthetic_unit(
             unit_id=team_id,
             name=team.get("name") or team.get("team_name") or f"工队{team_id}",
@@ -328,6 +402,10 @@ def _organization_units() -> list[dict]:
             team_id=team_id,
             level=3,
             sort_order=index,
+            latitude=lat,
+            longitude=lng,
+            center=center,
+            zoom_level=zoom_level,
         ))
     return units
 
@@ -352,6 +430,10 @@ def _to_out(doc: dict) -> dict:
         "level": doc.get("level", 1),
         "is_under_construction": doc.get("is_under_construction", True),
         "sort_order": doc.get("sort_order", 0),
+        "latitude": doc.get("latitude"),
+        "longitude": doc.get("longitude"),
+        "center": doc.get("center"),
+        "zoom_level": doc.get("zoom_level"),
         "created_at": doc.get("created_at", ""),
         "updated_at": doc.get("updated_at", ""),
     }
@@ -742,6 +824,12 @@ class ResponsibilityUnitService:
             existing_keys = {_business_key(u): index for index, u in enumerate(all_units)}
             key = _business_key(unit)
             if key and key in existing_keys:
+                # 保留坐标信息，避免被覆盖
+                existing_unit = all_units[existing_keys[key]]
+                unit["latitude"] = unit.get("latitude") or existing_unit.get("latitude")
+                unit["longitude"] = unit.get("longitude") or existing_unit.get("longitude")
+                unit["center"] = unit.get("center") or existing_unit.get("center")
+                unit["zoom_level"] = unit.get("zoom_level") or existing_unit.get("zoom_level")
                 all_units[existing_keys[key]] = unit
             elif unit["unit_id"] not in {u["unit_id"] for u in all_units}:
                 all_units.append(unit)

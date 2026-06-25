@@ -83,6 +83,9 @@ public class AuthRepository {
                         result.nickname = account;
                     }
                 }
+                if (result.username == null || result.username.trim().isEmpty()) {
+                    result.username = account;
+                }
                 session.saveSession(result);
                 ApiClient.reset();
                 cb.onSuccess(result);

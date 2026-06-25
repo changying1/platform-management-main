@@ -29,6 +29,7 @@ interface SidebarProps {
   onSelectDevice?: (device: FenceDevice) => void;
   onEditFence: (f: FenceData) => void;
   onDeleteFence: (id: string, e: React.MouseEvent) => void;
+  onNavigateToLocation?: (lat: number, lng: number, zoom?: number) => void;
   stats?: {
     totalFences: number;
     totalDevices: number;
@@ -55,6 +56,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
   onSelectDevice,
   onEditFence, 
   onDeleteFence, 
+  onNavigateToLocation,
   violationTypes = {},
   canDeleteFence = false,
   searchKeyword = "",
@@ -156,25 +158,45 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     return [...others, ...grids];
   };
 
+  // 获取围栏的最底层归属单位类型
+  const getFenceLowestLevel = (fence: FenceData): 'team' | 'grid' | 'project' | 'branch' | null => {
+    if (hasTeamScope(fence as any)) return 'team';
+    if (hasGridScope(fence as any)) return 'grid';
+    if (text(fence.project) || text(fence.project_id)) return 'project';
+    if (text(fence.branch_id) || text(fence.company)) return 'branch';
+    return null;
+  };
+
   const fenceMatchesNode = (fence: FenceData, node: OrganizationTreeNode) => {
     const nodeType = getOrgType(node.type);
     const nodeUnitId = getOrgId(node);
     if (!nodeUnitId) return false;
 
+    // 获取围栏的最底层归属级别
+    const fenceLowestLevel = getFenceLowestLevel(fence);
+
     if (nodeType === "branch") {
+      // 只有围栏最底层是公司时，才在公司层级显示
+      if (fenceLowestLevel !== 'branch') return false;
       return text(fence.branch_id) === nodeUnitId || text(fence.branch_id) === nodeUnitId.replace(/^BRANCH-/, "");
     }
     if (nodeType === "project") {
+      // 只有围栏最底层是项目时，才在项目层级显示
+      if (fenceLowestLevel !== 'project') return false;
       const isProjectFence =
         text(fence.project_id) === nodeUnitId ||
         text(fence.project_id) === text(node.project_id) ||
         text(fence.project) === text(node.name);
-      return isProjectFence && !hasGridScope(fence) && !hasTeamScope(fence as any);
+      return isProjectFence;
     }
     if (nodeType === "grid") {
-      return (sameNonEmpty(fence.grid_id, nodeUnitId) || sameNonEmpty(fence.grid_id, node.grid_id)) && !hasTeamScope(fence as any);
+      // 只有围栏最底层是网格时，才在网格层级显示
+      if (fenceLowestLevel !== 'grid') return false;
+      return sameNonEmpty(fence.grid_id, nodeUnitId) || sameNonEmpty(fence.grid_id, node.grid_id);
     }
     if (nodeType === "team") {
+      // 只有围栏最底层是工队时，才在工队层级显示
+      if (fenceLowestLevel !== 'team') return false;
       return sameNonEmpty(fence.team_id, nodeUnitId) || sameNonEmpty(fence.team_id, node.team_id);
     }
     return false;
@@ -182,25 +204,44 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
 
   const shouldShowOrgNode = (node: OrganizationTreeNode) => text(node.type) !== "personnel";
 
+  // 获取设备的最底层归属单位类型
+  const getDeviceLowestLevel = (device: FenceDevice): 'team' | 'grid' | 'project' | 'branch' | null => {
+    if (hasTeamScope(device as any)) return 'team';
+    if (hasGridScope(device as any)) return 'grid';
+    if (text(device.project) || text((device as any).project_id)) return 'project';
+    if (text(device.company)) return 'branch';
+    return null;
+  };
+
   const deviceMatchesNode = (device: FenceDevice, node: OrganizationTreeNode) => {
     const nodeType = getOrgType(node.type);
     const nodeUnitId = getOrgId(node);
     if (!nodeUnitId) return false;
 
+    // 获取设备的最底层归属级别
+    const deviceLowestLevel = getDeviceLowestLevel(device);
+
     if (nodeType === "branch") {
+      // 只有设备最底层是公司时，才在公司层级显示
+      if (deviceLowestLevel !== 'branch') return false;
       return text(device.company) === text(node.name);
     }
     if (nodeType === "project") {
+      // 只有设备最底层是项目时，才在项目层级显示
+      if (deviceLowestLevel !== 'project') return false;
       const projectId = text((device as any).project_id);
-      const isProjectDevice = text(device.project) === text(node.name) || projectId === nodeUnitId || projectId === text(node.project_id);
-      return isProjectDevice && !hasGridScope(device) && !hasTeamScope(device as any);
+      return text(device.project) === text(node.name) || projectId === nodeUnitId || projectId === text(node.project_id);
     }
     if (nodeType === "grid") {
+      // 只有设备最底层是网格时，才在网格层级显示
+      if (deviceLowestLevel !== 'grid') return false;
       return sameNonEmpty(device.grid_id, nodeUnitId) ||
         sameNonEmpty(device.grid_id, node.grid_id) ||
         sameNonEmpty(device.grid || device.grid_name, node.name);
     }
     if (nodeType === "team") {
+      // 只有设备最底层是工队时，才在工队层级显示
+      if (deviceLowestLevel !== 'team') return false;
       return sameNonEmpty((device as any).team_id, nodeUnitId) ||
         sameNonEmpty((device as any).team_id, node.team_id) ||
         sameNonEmpty((device as any).team || (device as any).team_name, node.name);
@@ -243,6 +284,7 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
         ...node,
         children,
         fences: directFences,
+        devices: directDevices,
         fenceCount: directFences.length + childCount,
       }];
     });
@@ -320,6 +362,13 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
           >
             <Info size={12} />
           </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEditFence(fence); }}
+            className="p-1 text-slate-400 hover:text-amber-300 rounded"
+            title="编辑围栏"
+          >
+            <Edit size={12} />
+          </button>
           {canDeleteFence && (
           <button
             onClick={(e) => onDeleteFence(fence.id, e)}
@@ -333,6 +382,72 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
+  // 计算组织节点的中心坐标
+  const getNodeCenter = (node: OrganizationTreeNode): [number, number] | null => {
+    const nodeAny = node as any;
+
+    const normalizePoint = (firstValue: unknown, secondValue: unknown): [number, number] | null => {
+      const first = Number(firstValue);
+      const second = Number(secondValue);
+      if (!Number.isFinite(first) || !Number.isFinite(second) || (first === 0 && second === 0)) return null;
+      if (first >= -90 && first <= 90 && second >= -180 && second <= 180) return [first, second];
+      if (second >= -90 && second <= 90 && first >= -180 && first <= 180) return [second, first];
+      return null;
+    };
+
+    // latitude/longitude 的语义明确，优先级高于兼容格式 center。
+    const lat = Number(nodeAny.latitude ?? nodeAny.lat);
+    const lng = Number(nodeAny.longitude ?? nodeAny.lng);
+    const explicitPoint = normalizePoint(lat, lng);
+    if (explicitPoint) return explicitPoint;
+
+    let center = nodeAny.center;
+    if (typeof center === 'string') {
+      try {
+        center = JSON.parse(center);
+      } catch {
+        center = null;
+      }
+    }
+    if (Array.isArray(center) && center.length >= 2) {
+      const centerPoint = normalizePoint(center[0], center[1]);
+      if (centerPoint) return centerPoint;
+    }
+
+    // 如果没有自身坐标，则通过下属的围栏和设备计算
+    const allFences = node.fences || [];
+    const allDevices = node.devices || [];
+
+    // 收集所有坐标点
+    const points: [number, number][] = [];
+
+    // 从围栏获取坐标
+    allFences.forEach(fence => {
+      if (fence.type === 'Circle' && fence.center) {
+        points.push(fence.center);
+      } else if (fence.type === 'Polygon' && fence.points && fence.points.length > 0) {
+        // 多边形取第一个点作为代表
+        points.push(fence.points[0]);
+      }
+    });
+
+    // 从设备获取坐标
+    allDevices.forEach((device: FenceDevice) => {
+      const devLat = Number(device.lat);
+      const devLng = Number(device.lng);
+      if (Number.isFinite(devLat) && Number.isFinite(devLng) && devLat !== 0 && devLng !== 0) {
+        points.push([devLat, devLng]);
+      }
+    });
+
+    if (points.length === 0) return null;
+
+    // 计算中心点
+    const sumLat = points.reduce((sum, p) => sum + p[0], 0);
+    const sumLng = points.reduce((sum, p) => sum + p[1], 0);
+    return [sumLat / points.length, sumLng / points.length];
+  };
+
   const renderOrgNode = (node: OrganizationTreeNode, depth = 0) => {
     const nodeId = text(node.unit_id || node.id);
     const children = node.children || [];
@@ -340,17 +455,46 @@ export const FenceSidebar: React.FC<SidebarProps> = ({
     const isExpanded = Boolean(normalizedKeyword) || expandedOrgNodes.includes(nodeId) || depth < 2;
     const Icon = getNodeIcon(text(node.type));
     const color = getNodeColor(text(node.type));
+    const nodeCenter = getNodeCenter(node);
+    const nodeType = getOrgType(node.type);
+
+    const navigateToNode = () => {
+      if (!nodeCenter) {
+        console.warn(`节点 "${node.name}" 没有可用的位置坐标`);
+        return;
+      }
+      if (onNavigateToLocation) {
+        const [lat, lng] = nodeCenter;
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          console.warn(`节点 "${node.name}" 的坐标无效:`, nodeCenter);
+          return;
+        }
+        // 根据节点类型设置不同的缩放级别
+        const zoom = nodeType === 'team' ? 19 : nodeType === 'grid' ? 17 : nodeType === 'project' ? 15 : 13;
+        onNavigateToLocation(lat, lng, zoom);
+      }
+    };
+
+    const handleNodeRowClick = () => {
+      toggleOrgNode(nodeId);
+      navigateToNode();
+    };
 
     return (
       <div key={nodeId || node.id} className="space-y-1">
         <div
-          onClick={() => toggleOrgNode(nodeId)}
+          onClick={handleNodeRowClick}
           className="px-2 py-1.5 flex items-center justify-between bg-slate-800/60 rounded-lg border border-slate-700/50 cursor-pointer hover:bg-slate-800/80 transition-all"
           style={{ marginLeft: depth ? Math.min(depth * 10, 32) : 0 }}
         >
           <div className="flex items-center gap-2 min-w-0">
             <Icon size={14} className={color} />
-            <span className={`text-sm font-bold truncate ${color}`}>{node.name}</span>
+            <span
+              className={`text-sm font-bold truncate ${color} ${nodeCenter ? 'hover:underline' : 'opacity-60'}`}
+              title={nodeCenter ? '点击整行跳转到地图位置' : `${node.name} (无位置信息)`}
+            >
+              {node.name}
+            </span>
             <span className="text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">
               {node.fenceCount || 0}
             </span>
@@ -439,8 +583,7 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
           }`}
         >
           <Shield size={14} />
-          <span>组织树</span>
-          作业队
+          <span>围栏列表</span>
         </button>
         <button
           onClick={() => setActiveTab("device")}
@@ -520,6 +663,13 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                                 >
                                   <Info size={12} />
                                 </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onEditFence(fence); }}
+                                  className="p-1 text-slate-400 hover:text-amber-300 rounded"
+                                  title="编辑围栏"
+                                >
+                                  <Edit size={12} />
+                                </button>
                                 {canDeleteFence && (
                                 <button
                                   onClick={(e) => onDeleteFence(fence.id, e)}
@@ -574,6 +724,13 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                       title="查看详情"
                     >
                       <Info size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEditFence(fence); }}
+                      className="p-1 text-slate-400 hover:text-amber-300 rounded"
+                      title="编辑围栏"
+                    >
+                      <Edit size={12} />
                     </button>
                     {canDeleteFence && (
                     <button
@@ -694,15 +851,21 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <span className="text-slate-400">生效开始：</span>
+                  <span className="text-slate-400">有效期开始：</span>
                   <span className="text-slate-200 text-sm">
                     {selectedDetail.data.schedule?.start ? new Date(selectedDetail.data.schedule.start).toLocaleString() : '永久生效'}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <span className="text-slate-400">生效结束：</span>
+                  <span className="text-slate-400">有效期结束：</span>
                   <span className="text-slate-200 text-sm">
                     {selectedDetail.data.schedule?.end ? new Date(selectedDetail.data.schedule.end).toLocaleString() : '永久生效'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <span className="text-slate-400">每日生效时段：</span>
+                  <span className="text-slate-200 text-sm">
+                    {selectedDetail.data.effective_time || '00:00-23:59'}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -758,6 +921,19 @@ className="absolute -right-8 top-1/2 -translate-y-1/2 z-30 bg-slate-900/90 backd
             )}
             
  <div className="flex gap-3 mt-6">
+        {selectedDetail.type === 'fence' && (
+          <button
+            onClick={() => {
+              const fence = selectedDetail.data as FenceData;
+              setSelectedDetail(null);
+              onEditFence(fence);
+            }}
+            className="flex-1 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2"
+          >
+            <Edit size={14} />
+            编辑
+          </button>
+        )}
         <button onClick={() => setSelectedDetail(null)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all">
           关闭
         </button>

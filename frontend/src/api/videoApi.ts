@@ -299,6 +299,13 @@ export interface SavedPlaybackVideo {
   alarm_id?: number | string;
   device_id?: string;
   device_name?: string;
+  company?: string;
+  project?: string;
+  project_id?: string;
+  grid?: string;
+  grid_id?: string;
+  team?: string;
+  team_id?: string;
   name: string;
   size_bytes: number;
   duration_seconds?: number;
@@ -317,6 +324,29 @@ export interface SavedPlaybackVideo {
   description?: string;
   recording_status?: string;
   alarm_second?: number;
+}
+
+export interface PlaybackPageResponse {
+  code: number;
+  data: SavedPlaybackVideo[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface PlaybackPageQuery {
+  mediaType: 'manual' | 'alarm';
+  page: number;
+  pageSize?: number;
+  deviceId?: number | string;
+  company?: string;
+  project?: string;
+  grid?: string;
+  team?: string;
+  keyword?: string;
+  startTime?: string;
+  endTime?: string;
 }
 
 export interface TempCacheSaveResponse extends PlaybackSaveResponse {
@@ -1299,6 +1329,38 @@ export async function getAlarmScreenshots(
   
   // ✅ 内网穿透：替换所有文件路径里的 localhost
   return list.map(v => fixPlaybackUrl(v));
+}
+
+export async function getPlaybackPage(query: PlaybackPageQuery): Promise<PlaybackPageResponse> {
+  const base = getApiBase();
+  const params = new URLSearchParams({
+    media_type: query.mediaType,
+    page: String(query.page),
+    page_size: String(query.pageSize || 40),
+  });
+  if (query.deviceId !== undefined && query.deviceId !== null) params.set('device_id', String(query.deviceId));
+  if (query.company && query.company !== 'all') params.set('company', query.company);
+  if (query.project && query.project !== 'all') params.set('project', query.project);
+  if (query.grid && query.grid !== 'all') params.set('grid', query.grid);
+  if (query.team && query.team !== 'all') params.set('team', query.team);
+  if (query.keyword?.trim()) params.set('keyword', query.keyword.trim());
+  if (query.startTime) params.set('start_time', query.startTime);
+  if (query.endTime) params.set('end_time', query.endTime);
+
+  const response = await authFetch(`${base}/video/playbacks/query?${params.toString()}`);
+  if (!response.ok) {
+    let message = 'Failed to get playback page';
+    try {
+      const error = await response.json();
+      message = error.detail || message;
+    } catch {}
+    throw new Error(message);
+  }
+  const result = await response.json();
+  return {
+    ...result,
+    data: Array.isArray(result.data) ? result.data.map((item: SavedPlaybackVideo) => fixPlaybackUrl(item)) : [],
+  };
 }
 
 // ✅ 内网穿透终极解决方案！只用相对路径！

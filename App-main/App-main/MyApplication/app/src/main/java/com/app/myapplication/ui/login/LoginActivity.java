@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -13,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.app.myapplication.R;
+import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.ui.MainActivity;
 import com.app.myapplication.viewmodel.login.LoginViewModel;
 
@@ -23,6 +25,8 @@ public class LoginActivity extends AppCompatActivity {
     private EditText etUsername;
     private EditText etPassword;
     private Button btnLogin;
+    private CheckBox cbRememberAccount;
+    private SessionManager session;
 
     // 你布局里旧的 progress（在 card 内，会挤布局）
     private ProgressBar progress;
@@ -35,18 +39,31 @@ public class LoginActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // ⚠️ 你现在每次启动都 clear，会导致永远重新登录（按需保留）
+        session = new SessionManager(this);
+
         vm = new ViewModelProvider(this).get(LoginViewModel.class);
 
         // 已登录直接进首页
+        if (vm.isLoggedIn()) {
+            goHome();
+            return;
+        }
+
         setContentView(R.layout.activity_login);
 
         etUsername = findViewById(R.id.et_username);
         etPassword = findViewById(R.id.et_password);
         btnLogin = findViewById(R.id.btn_login);
+        cbRememberAccount = findViewById(R.id.cb_remember_account);
         progress = findViewById(R.id.progress);
         tvError = findViewById(R.id.tv_error);
         loadingOverlay = findViewById(R.id.loading_overlay); // ✅
+
+        cbRememberAccount.setChecked(session.isRememberAccount());
+        if (session.isRememberAccount()) {
+            etUsername.setText(session.getRememberedUsername());
+            etUsername.setSelection(etUsername.getText().length());
+        }
 
         // ✅ 强制确保旧 progress 不参与显示（避免布局跳动）
         if (progress != null) progress.setVisibility(View.GONE);
@@ -65,8 +82,6 @@ public class LoginActivity extends AppCompatActivity {
             }
         });
 
-        vm.validateSession();
-
         btnLogin.setOnClickListener(v -> {
             // 防重复点击（如果正在loading就不再触发）
             if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) return;
@@ -84,6 +99,11 @@ public class LoginActivity extends AppCompatActivity {
                 return;
             }
 
+            boolean rememberAccount = cbRememberAccount == null || cbRememberAccount.isChecked();
+            session.setRememberAccount(rememberAccount);
+            if (rememberAccount) {
+                session.saveRememberedUsername(username);
+            }
             vm.login(username, password);
         });
     }
