@@ -44,6 +44,7 @@ public class AlarmViewModel extends ViewModel {
     private static final long POLLING_INTERVAL = 30000; // 30秒
     private Context appContext;
     private final Set<Long> notifiedAlarmIds = new HashSet<>();
+    private boolean notificationBaselineInitialized = false;
 
     public AlarmViewModel() {
         pollingHandler = new Handler(Looper.getMainLooper());
@@ -106,13 +107,13 @@ public class AlarmViewModel extends ViewModel {
         AlarmApi alarmApi = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
-        alarmApi.getAlarms().enqueue(new Callback<List<Alarm>>() {
+        alarmApi.getAlarmsLimited(500).enqueue(new Callback<List<Alarm>>() {
             @Override
             public void onResponse(Call<List<Alarm>> call, Response<List<Alarm>> response) {
                 loading.setValue(false);
 
                 if (response.isSuccessful() && response.body() != null) {
-                    List<Alarm> alarms = response.body();
+                    List<Alarm> alarms = withoutOfflineAlarms(response.body());
                     Log.d("AlarmViewModel", "Fetched " + alarms.size() + " alarms");
 
                     // 打印围栏相关报警
@@ -155,6 +156,8 @@ public class AlarmViewModel extends ViewModel {
         int high = 0;
         int medium = 0;
         int low = 0;
+        int fence = 0;
+        int video = 0;
 
         for (Alarm alarm : alarms) {
             String status = alarm.getDisplayStatus();
@@ -173,9 +176,30 @@ public class AlarmViewModel extends ViewModel {
             } else if ("low".equals(severity)) {
                 low++;
             }
+
+            if ("fence".equals(AlarmAdapter.sourceType(alarm))) fence++;
+            else video++;
         }
 
-        return new AlarmStats(total, pending, resolved, high, medium, low);
+        return new AlarmStats(total, pending, resolved, high, medium, low, fence, video);
+    }
+
+    private List<Alarm> withoutOfflineAlarms(List<Alarm> alarms) {
+        List<Alarm> result = new ArrayList<>();
+        if (alarms == null) return result;
+        for (Alarm alarm : alarms) {
+            if (!isOfflineAlarm(alarm)) result.add(alarm);
+        }
+        return result;
+    }
+
+    static boolean isOfflineAlarm(Alarm alarm) {
+        if (alarm == null) return false;
+        String text = String.valueOf(alarm.getAlarmType()) + " "
+                + String.valueOf(alarm.getDescription()) + " "
+                + String.valueOf(alarm.getDisplayAlarmType());
+        text = text.toLowerCase(Locale.ROOT);
+        return text.contains("offline") || text.contains("离线");
     }
 
     // 应用筛选
@@ -197,6 +221,7 @@ public class AlarmViewModel extends ViewModel {
         List<Alarm> filteredList = new ArrayList<>();
 
         for (Alarm alarm : allAlarms) {
+            if (isOfflineAlarm(alarm)) continue;
             boolean matchesStatus = "all".equals(status) ||
                     status.equals(alarm.getDisplayStatus());
 
@@ -322,32 +347,45 @@ public class AlarmViewModel extends ViewModel {
 
     // 解决报警
     public void resolveAlarm(Context context, long alarmId, String severity) {
+        updateAlarmStatus(context, alarmId, "resolved", severity, null, null);
+    }
+
+    public void updateAlarmStatus(
+            Context context,
+            long alarmId,
+            String status,
+            String severity,
+            String handler,
+            String remark
+    ) {
         AlarmApi api = ApiClient.get(context).create(AlarmApi.class);
         loading.setValue(true);
 
         Map<String, Object> body = new HashMap<>();
-        body.put("status", "resolved");
+        body.put("status", status);
         if (severity != null) {
             body.put("severity", severity);
         }
+        if (handler != null) body.put("handler", handler);
+        if (remark != null) body.put("remark", remark);
 
         api.updateAlarm(alarmId, body).enqueue(new Callback<Alarm>() {
             @Override
             public void onResponse(Call<Alarm> call, Response<Alarm> response) {
                 loading.setValue(false);
                 if (response.isSuccessful()) {
-                    Log.d("AlarmViewModel", "Resolved alarm: " + alarmId);
+                    Log.d("AlarmViewModel", "Updated alarm status: " + alarmId + " -> " + status);
                     // 重新获取数据
                     fetchAlarms(context);
                 } else {
-                    Log.e("AlarmViewModel", "Failed to resolve alarm: " + response.code());
+                    Log.e("AlarmViewModel", "Failed to update alarm: " + response.code());
                 }
             }
 
             @Override
             public void onFailure(Call<Alarm> call, Throwable t) {
                 loading.setValue(false);
-                Log.e("AlarmViewModel", "Error resolving alarm", t);
+                Log.e("AlarmViewModel", "Error updating alarm", t);
             }
         });
     }
@@ -367,6 +405,13 @@ public class AlarmViewModel extends ViewModel {
         }
         notifiedAlarmIds.retainAll(currentPendingFenceAlarmIds);
 
+        if (!notificationBaselineInitialized) {
+            notifiedAlarmIds.addAll(currentPendingFenceAlarmIds);
+            notificationBaselineInitialized = true;
+            Log.d("AlarmViewModel", "Alarm notification baseline initialized, count=" + notifiedAlarmIds.size());
+            return;
+        }
+
         List<Alarm> newAlarms = new ArrayList<>();
         for (Alarm alarm : pendingFenceAlarms) {
             if (!notifiedAlarmIds.contains(alarm.getId())) {
@@ -378,14 +423,14 @@ public class AlarmViewModel extends ViewModel {
             return;
         }
 
-        if (pendingFenceAlarms.size() == 1) {
-            Alarm alarm = pendingFenceAlarms.get(0);
+        if (newAlarms.size() == 1) {
+            Alarm alarm = newAlarms.get(0);
             sendFenceAlarmNotification(alarm);
             notifiedAlarmIds.add(alarm.getId());
             return;
         }
 
-        sendMergedFenceAlarmNotification(pendingFenceAlarms);
+        sendMergedFenceAlarmNotification(newAlarms);
         for (Alarm alarm : newAlarms) {
             notifiedAlarmIds.add(alarm.getId());
         }

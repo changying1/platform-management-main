@@ -256,6 +256,19 @@ def _can_switch_to_user(target_user: dict, current_user: dict) -> bool:
 
 def _write_login_log(username: str, success: bool, details: str):
     try:
+        # 获取用户所属单位信息
+        from app.core.database import get_mongo_collection
+        user = get_mongo_collection("users").find_one({"username": username}, {"_id": 0})
+        
+        # 判断是否为总管理员（admin）
+        is_admin = username.lower() == "admin" or (user and user.get("role", "").upper() in ["HQ", "ADMIN", "HEADQUARTERS_ADMIN"])
+        
+        # 总管理员不显示所属单位，项目管理员显示所属单位
+        company = None if is_admin else (user.get("company") or user.get("department") if user else None)
+        project = None if is_admin else (user.get("project") if user else None)
+        grid = None if is_admin else (user.get("grid") if user else None)
+        team = None if is_admin else (user.get("team") if user else None)
+        
         LogService().create_log(
             None,
             LogCreate(
@@ -265,6 +278,10 @@ def _write_login_log(username: str, success: bool, details: str):
                 target_name=username or "unknown",
                 details=details,
                 level="info" if success else "warning",
+                company=company,
+                project=project,
+                grid=grid,
+                team=team,
                 extra={"success": success},
             ),
         )

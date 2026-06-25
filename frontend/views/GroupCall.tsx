@@ -574,13 +574,25 @@ export default function GroupCall() {
   const recordingStartedAtRef = useRef<number | null>(null);
   const voiceRecordingRef = useRef<VoiceRecording | null>(null);
 
+  const loadDeviceCandidates = async () => {
+    try {
+      const primaryDevices = await deviceApi.getLocationDevices();
+      if (primaryDevices.length > 0) {
+        return primaryDevices;
+      }
+      return await deviceApi.getLocationCompatibleDevices();
+    } catch {
+      return await deviceApi.getLocationCompatibleDevices();
+    }
+  };
+
   const loadDevices = async () => {
     setLoadingDevices(true);
     setLoadingError('');
 
     try {
       const [response, orgTree] = await Promise.all([
-        deviceApi.getLocationDevices(),
+        loadDeviceCandidates(),
         unitApiClient.getTree().catch(() => [] as UnitTreeNode[]),
       ]);
       const orgLookup = collectOrgLookups(orgTree);

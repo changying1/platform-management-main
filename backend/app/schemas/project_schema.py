@@ -108,11 +108,19 @@ class ProjectBase(BaseModel):
 
     remark: Optional[str] = None
 
+    latitude: Optional[float] = None
+
+    longitude: Optional[float] = None
+
 
 
 class ProjectCreate(ProjectBase):
 
     """创建项目"""
+
+    latitude: float
+
+    longitude: float
 
     branch_id: Optional[int] = None
 
@@ -143,6 +151,10 @@ class ProjectUpdate(BaseModel):
     remark: Optional[str] = None
 
     branch_id: Optional[int] = None
+
+    latitude: Optional[float] = None
+
+    longitude: Optional[float] = None
 
     user_ids: Optional[List[int]] = None
 

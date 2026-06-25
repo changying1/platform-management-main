@@ -42,13 +42,45 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/layout_comm_mode"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="18dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="4dp">
+
+        <Button
+            android:id="@+id/btn_mode_app_voice"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="App语音通话"
+            android:textAllCaps="false"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btn_mode_jt808_message"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="定位工牌广播"
+            android:textAllCaps="false"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/layout_test_identity"
         android:layout_width="match_parent"
         android:layout_height="52dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="18dp"
-        android:paddingEnd="18dp">
+        android:paddingEnd="18dp"
+        android:visibility="gone">
 
         <TextView
             android:id="@+id/tv_current_identity"
@@ -68,6 +100,44 @@
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:text="切换身份"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_contact_filters"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="18dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="8dp">
+
+        <EditText
+            android:id="@+id/et_contact_search"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:background="@drawable/bg_spinner"
+            android:hint="搜索成员、单位、项目、网格、工队"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textColor="#263238"
+            android:textColorHint="#8AA0AE"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_org_filter"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="单位筛选：全部"
+            android:textAllCaps="false"
             android:textSize="13sp" />
     </LinearLayout>
 
@@ -106,6 +176,20 @@
         android:paddingStart="14dp"
         android:paddingEnd="14dp"
         android:paddingBottom="12dp" />
+
+    <Button
+        android:id="@+id/btn_jt808_broadcast"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginStart="18dp"
+        android:layout_marginEnd="18dp"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/bg_voice_primary_button"
+        android:text="JT808 语音转文字播报"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 
     <Button
         android:id="@+id/btn_start_call"

@@ -12,9 +12,6 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.fragment.app.Fragment;
-import androidx.viewpager2.adapter.FragmentStateAdapter;
-import androidx.viewpager2.widget.ViewPager2;
 
 import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
@@ -23,8 +20,6 @@ import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.data.model.call.AppVoiceMember;
 import com.app.myapplication.data.model.call.AppVoiceRoom;
 import com.app.myapplication.data.model.call.AppVoiceRoomActionRequest;
-import com.google.android.material.tabs.TabLayout;
-import com.google.android.material.tabs.TabLayoutMediator;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -56,31 +51,16 @@ public class GroupCallActivity extends AppCompatActivity {
 
         ImageButton back = findViewById(R.id.iv_back);
         TextView title = findViewById(R.id.tv_title);
-        TabLayout tabLayout = findViewById(R.id.tab_layout);
-        ViewPager2 viewPager = findViewById(R.id.view_pager);
 
-        title.setText("语音通话");
+        title.setText("\u8BED\u97F3\u901A\u8BDD");
         back.setOnClickListener(v -> finish());
 
-        viewPager.setAdapter(new FragmentStateAdapter(this) {
-            @NonNull
-            @Override
-            public Fragment createFragment(int position) {
-                if (position == 1) {
-                    return CallRecordsFragment.newInstance();
-                }
-                return VoiceCallFragment.newInstance();
-            }
-
-            @Override
-            public int getItemCount() {
-                return 2;
-            }
-        });
-
-        new TabLayoutMediator(tabLayout, viewPager, (tab, position) ->
-                tab.setText(position == 0 ? "发起通话" : "通话记录")
-        ).attach();
+        if (savedInstanceState == null) {
+            getSupportFragmentManager()
+                    .beginTransaction()
+                    .replace(R.id.fragment_container, VoiceCallFragment.newInstance())
+                    .commit();
+        }
     }
 
     @Override

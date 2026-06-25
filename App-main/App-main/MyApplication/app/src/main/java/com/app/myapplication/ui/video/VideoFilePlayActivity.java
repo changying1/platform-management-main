@@ -26,6 +26,10 @@ import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import com.app.myapplication.data.local.AppConfig;
+import com.app.myapplication.data.local.SessionManager;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public class VideoFilePlayActivity extends AppCompatActivity implements Player.Listener {
 
@@ -171,10 +175,21 @@ public class VideoFilePlayActivity extends AppCompatActivity implements Player.L
 
     private void initPlayer(String videoPath) {
         try {
+            Map<String, String> requestHeaders = new HashMap<>();
+            String token = SessionManager.getToken(this);
+            if (token != null && !token.trim().isEmpty()) {
+                String auth = token.trim();
+                if (!auth.toLowerCase().startsWith("bearer ")) {
+                    auth = "Bearer " + auth;
+                }
+                requestHeaders.put("Authorization", auth);
+            }
+
             DefaultHttpDataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory()
                     .setConnectTimeoutMs(10000)
                     .setReadTimeoutMs(10000)
-                    .setAllowCrossProtocolRedirects(true);
+                    .setAllowCrossProtocolRedirects(true)
+                    .setDefaultRequestProperties(requestHeaders);
 
             DataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpDataSourceFactory);
 

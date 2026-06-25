@@ -193,6 +193,13 @@ class AIManager:
     def _normalize_alarm_key(self, value) -> str:
         return re.sub(r"[\s_\-]+", "", str(value or "").strip().lower())
 
+    def _clean_alarm_display_message(self, value) -> str:
+        text = str(value or "").strip()
+        text = re.sub(r"[（(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[）)]", "", text)
+        text = re.sub(r"\bconfidence\s*[:：]?\s*\d{1,3}(?:\.\d+)?\s*%?", "", text, flags=re.I)
+        text = re.sub(r"置信度\s*[:：]?\s*\d{1,3}(?:\.\d+)?\s*%?", "", text)
+        return re.sub(r"\s{2,}", " ", text).strip()
+
     def _load_ai_alarm_level_map(self):
         loaded_map = {}
         for key, level in self.ai_alarm_level_map.items():
@@ -1435,6 +1442,7 @@ class AIManager:
             alarm_type = "unknown"
         if not alarm_msg:
             alarm_msg = "检测到异常"
+        alarm_msg = self._clean_alarm_display_message(alarm_msg)
 
         # 根据检测算法 code / 告警类型 / 中文名称获取对应的告警等级
         severity = self._resolve_ai_alarm_severity(alarm_type, algo_key=algo_key, details=details)

@@ -1,4 +1,4 @@
-﻿  import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+  import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
   import ReactDOM from 'react-dom';
   import Hls from 'hls.js';
   import {
@@ -80,6 +80,25 @@
       />
     </div>
   );
+
+  const OfflineVideoFallback = ({ virtual = false }: { virtual?: boolean }) => (
+    virtual ? (
+      <div className="absolute inset-0 flex items-center justify-center bg-black">
+        <div className="text-2xl font-bold text-red-500">无信号</div>
+      </div>
+    ) : (
+      <div className="absolute inset-0 flex items-center justify-center bg-white p-4">
+        <img
+          src="/images/logo.jpeg"
+          alt="公司 Logo"
+          className="block h-auto max-h-[76%] w-auto max-w-[76%] object-contain"
+        />
+      </div>
+    )
+  );
+
+  const isDeviceOffline = (device?: Pick<Video, "status"> | null) =>
+    String(device?.status || "").toLowerCase() === "offline";
 
   const getAlarmWebSocketUrl = () => {
     try {
@@ -648,7 +667,7 @@
     // --- 分页与网格状态 ---
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(9);
-    const gridOptions = [1, 4, 9, 16, 25];
+    const gridOptions = [1, 2, 4, 9, 16, 25];
     
     const [previewStreams, setPreviewStreams] = useState<Record<number, StreamUrl>>({});
     const [previewLoading, setPreviewLoading] = useState<Record<number, boolean>>({});
@@ -675,6 +694,29 @@
 
     const [selectedDevices, setSelectedDevices] = useState<number[]>([]);
     const [showDeviceSelector, setShowDeviceSelector] = useState(false);
+    const deviceSelectorRef = useRef<HTMLDivElement>(null);
+    const deviceSelectorBtnRef = useRef<HTMLButtonElement>(null);
+
+    // 点击外部关闭设备选择器
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (
+                showDeviceSelector &&
+                deviceSelectorRef.current &&
+                !deviceSelectorRef.current.contains(event.target as Node) &&
+                deviceSelectorBtnRef.current &&
+                !deviceSelectorBtnRef.current.contains(event.target as Node)
+            ) {
+                setShowDeviceSelector(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [showDeviceSelector]);
+
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [selectedProject, setSelectedProject] = useState<string>(
       videoCenterScope.isProjectScope && (videoCenterScope.projectId || videoCenterScope.projectName)
@@ -1597,28 +1639,10 @@ useEffect(() => {
     return deviceSelectorCandidates.filter((device) => selectedCandidateIds.includes(device.id));
   }, [deviceSelectorCandidates, selectedCandidateIds]);
 
-  type VirtualCameraCell = {
-    kind: "virtual";
-    id: string;
-    name: string;
+  type DisplayCell = {
+    kind: "real";
+    device: Video;
   };
-
-  type DisplayCell =
-    | {
-        kind: "real";
-        device: Video;
-      }
-    | VirtualCameraCell;
-
-  const virtualCameraCells = useMemo<VirtualCameraCell[]>(
-    () =>
-      Array.from({ length: 5 }, (_, index) => ({
-        kind: "virtual" as const,
-        id: `virtual-camera-${index + 1}`,
-        name: `摄像头 ${index + 1}`,
-      })),
-    []
-  );
 
   const realCells = useMemo<DisplayCell[]>(
     () =>
@@ -1629,10 +1653,7 @@ useEffect(() => {
     [filteredDevicesForGrid]
   );
 
-  const allDisplayCells = useMemo(
-    () => [...realCells, ...virtualCameraCells],
-    [realCells, virtualCameraCells]
-  );
+  const allDisplayCells = realCells;
 
   const totalPages = Math.max(1, Math.ceil(allDisplayCells.length / itemsPerPage));
 
@@ -1699,7 +1720,12 @@ useEffect(() => {
     setStreamUrl(null);
     setStreamInfo(null);
     setFullScreenStreamError(null);
-    setFullScreenStreamLoading(true);
+    setFullScreenStreamLoading(!isDeviceOffline(device));
+
+    if (isDeviceOffline(device)) {
+      setFullScreenStreamError("设备离线");
+      return false;
+    }
 
     try {
       const rulesPromise = withTimeout(getDeviceRules(device.id), 5000, '加载算法配置超时').catch((err) => {
@@ -1799,6 +1825,18 @@ useEffect(() => {
 
   const loadPreviewStream = useCallback(async (device: Video, force = false) => {
     if (!device) {
+      return;
+    }
+
+    if (isDeviceOffline(device)) {
+      setPreviewStreams((prev) => {
+        if (!prev[device.id]) return prev;
+        const next = { ...prev };
+        delete next[device.id];
+        return next;
+      });
+      setPreviewErrors((prev) => ({ ...prev, [device.id]: "" }));
+      setPreviewLoading((prev) => ({ ...prev, [device.id]: false }));
       return;
     }
 
@@ -2230,6 +2268,7 @@ useEffect(() => {
   {/* 自定义设备选择按钮 */}
   <div className="relative">
   <button
+      ref={deviceSelectorBtnRef}
       onClick={() => setShowDeviceSelector(!showDeviceSelector)}
       className="device-selector-btn px-3 py-1.5 text-sm bg-cyan-500/20 text-cyan-300 rounded-md hover:bg-cyan-500/30 flex items-center gap-2"
   >
@@ -2240,6 +2279,7 @@ useEffect(() => {
 
   {showDeviceSelector && ReactDOM.createPortal(
       <div 
+          ref={deviceSelectorRef}
           className="fixed bg-slate-800 border border-slate-700 rounded-md shadow-xl z-[9999] w-64 max-h-96 overflow-y-auto p-2"
           style={{
               top: (() => {
@@ -2320,7 +2360,6 @@ useEffect(() => {
             <h3 className="text-lg font-bold text-cyan-300">
               监控设备 
               <span className="text-sm text-slate-400 ml-2">(共{filteredDevicesForGrid.length}个设备)</span>
-              <span className="text-xs text-slate-500 ml-2">含5个虚拟占位</span>
             </h3>
             <div className="flex gap-2 items-center">
     <label className="text-xs text-slate-300 font-medium">每页视窗数：</label>
@@ -2352,28 +2391,6 @@ useEffect(() => {
     className="flex-1 min-h-0"
   >
     {paginatedCells.map((cell) => {
-      if (cell.kind === "virtual") {
-        return (
-          <div
-            key={cell.id}
-            className="relative min-w-0 min-h-0 overflow-hidden rounded-md border border-blue-300/20 bg-black shadow-[inset_0_0_18px_rgba(14,165,233,0.08),0_6px_14px_rgba(2,6,23,.5)]"
-          >
-            <div className="relative w-full h-full bg-black">
-              <div className="absolute inset-0 flex items-center justify-center bg-black">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-red-500">无信号</div>
-                </div>
-              </div>
-            </div>
-            <div className="absolute bottom-2 right-2 z-10">
-              <span className="text-base bg-slate-900/75 backdrop-blur px-5 py-2 rounded text-slate-300 border border-slate-700/60 shadow-sm">
-                {cell.name}
-              </span>
-            </div>
-          </div>
-        );
-      }
-
       const device = cell.device;
 
       return (
@@ -2386,12 +2403,16 @@ useEffect(() => {
           onDoubleClick={() => handleVideoDoubleClick(device)}
         >
           <div className="absolute inset-0">
-  {previewStreams[device.id] ? (
+  {isDeviceOffline(device) ? (
+    <OfflineVideoFallback />
+  ) : previewStreams[device.id] ? (
     <VideoPlayer
       key={previewStreams[device.id].url}
       src={previewStreams[device.id].url}
       playType={previewStreams[device.id].play_type}
       accessToken={previewStreams[device.id].access_token}
+      videoId={device.id}
+      deviceStatus={device.status}
     />
             ) : previewLoading[device.id] ? (
               <div className="h-full w-full flex items-center justify-center text-slate-300 text-sm">
@@ -2399,21 +2420,22 @@ useEffect(() => {
               </div>
             ) : previewErrors[device.id] ? (
               <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-xs text-rose-300 relative">
-                {isOfflineVideoError(previewErrors[device.id]) && (
-                  <div className="absolute inset-0 z-10">
-                    <ChinaRailwayLogoFallback compact />
-                  </div>
+                {isOfflineVideoError(previewErrors[device.id]) ? (
+                  <OfflineVideoFallback />
+                ) : (
+                  <>
+                    <span>{previewErrors[device.id]}</span>
+                    <button
+                      className="px-3 py-1 bg-rose-500 text-white rounded"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        loadPreviewStream(device, true);
+                      }}
+                    >
+                      重试
+                    </button>
+                  </>
                 )}
-                <span>{previewErrors[device.id]}</span>
-                <button
-                  className="px-3 py-1 bg-rose-500 text-white rounded"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    loadPreviewStream(device, true);
-                  }}
-                >
-                  重试
-                </button>
               </div>
             ) : (
               <button
@@ -2681,11 +2703,12 @@ useEffect(() => {
                       onDoubleClick={() => { setMaximizedVideo(null); setStreamUrl(null);setStreamInfo(null); setIsMonitorOnlyMode(false);  }}
                       >
                         
-                        <VideoPlayer
+                         <VideoPlayer
     src={streamUrl}
     playType={streamInfo?.play_type}
     accessToken={streamInfo?.access_token}
     videoId={maximizedVideo?.id}
+    deviceStatus={maximizedVideo?.status}
     onError={handlePlayerError}
   />
                         <canvas id="aiCanvas" ref={aiCanvasRef} className="absolute top-0 left-0 z-10 w-full h-full pointer-events-none" />
@@ -2705,7 +2728,7 @@ useEffect(() => {
                 ) : (
                   <div className="flex flex-col items-center justify-center flex-1 gap-3 text-slate-300 relative">
                     {isOfflineVideoError(fullScreenStreamError) ? (
-                      <ChinaRailwayLogoFallback />
+                      <OfflineVideoFallback />
                     ) : (
                       <>
                         <AlertCircle className="text-rose-300" size={28} />

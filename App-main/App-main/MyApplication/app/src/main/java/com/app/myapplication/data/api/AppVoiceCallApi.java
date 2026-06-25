@@ -6,6 +6,7 @@ import com.app.myapplication.data.model.call.AppVoiceRecord;
 import com.app.myapplication.data.model.call.AppVoiceRoom;
 import com.app.myapplication.data.model.call.AppVoiceRoomActionRequest;
 import com.app.myapplication.data.model.call.AppVoiceRoomCreateRequest;
+import com.app.myapplication.data.model.call.TtsBatchRecord;
 
 import java.util.List;
 import java.util.Map;
@@ -58,4 +59,10 @@ public interface AppVoiceCallApi {
 
     @GET("app/call/voice/records")
     Call<List<AppVoiceRecord>> getRecords(@Query("limit") int limit);
+
+    @GET("call/voice-records")
+    Call<List<AppVoiceRecord>> getWebVoiceRecords(@Query("limit") int limit);
+
+    @GET("call/tts/batches")
+    Call<List<TtsBatchRecord>> getTtsBatches(@Query("limit") int limit);
 }

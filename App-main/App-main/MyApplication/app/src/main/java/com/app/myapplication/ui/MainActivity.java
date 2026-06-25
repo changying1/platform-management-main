@@ -24,6 +24,7 @@ import com.app.myapplication.data.api.AlarmApi;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.data.model.AlarmFields;
+import com.app.myapplication.ui.alarm.AlarmAdapter;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
 import java.util.List;
@@ -145,7 +146,7 @@ public class MainActivity extends AppCompatActivity {
     private void showAlarmBanner(Alarm alarm) {
         String content = "【AI报警】" + (alarm.getDescription() == null || alarm.getDescription().trim().isEmpty()
                 ? alarm.getAlarmType()
-                : alarm.getDescription());
+                : AlarmAdapter.cleanDisplayDescription(alarm.getDescription()));
         alarmBanner.setText(content);
         alarmBanner.setVisibility(View.VISIBLE);
         alarmBanner.bringToFront();

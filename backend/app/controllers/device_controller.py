@@ -20,6 +20,7 @@ from app.schemas.device_schema import (
     TrajectoryPoint,
 )
 from app.services.Device.device_service import device_service
+from app.services.device_location_history_service import device_location_history_service
 from app.services.attendance_service import attendance_service
 from app.services.audit_log_service import write_audit_log
 from app.services.jt808_service import jt808_manager
@@ -419,6 +420,67 @@ def get_device_trajectories(
     except Exception as e:
         logger.error(f"批量获取设备轨迹失败: {e}")
         return []
+
+
+@router.get("/trajectories/summary")
+def get_device_trajectory_summaries(
+    hours: int = 24,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """获取轨迹列表摘要，不返回完整点位数组。"""
+    safe_hours = max(1, min(int(hours or 24), 24 * 90))
+    summaries = device_location_history_service.get_track_summaries(
+        safe_hours,
+        start_time,
+        end_time,
+    )
+    results = []
+    for summary in summaries:
+        device_id = str(summary.get("device_id") or "")
+        device = device_service.get_device_by_id(device_id) or {}
+        merged = {**summary, **device, "device_id": device_id}
+        if device and not _is_location_device(device):
+            continue
+        if _device_in_scope(merged, current_user):
+            results.append(
+                {
+                    key: value
+                    for key, value in merged.items()
+                    if key not in {"_id", "trajectory"}
+                }
+            )
+    return results
+
+
+@router.get("/trajectories/{device_id}/points")
+def get_device_trajectory_points(
+    device_id: str,
+    hours: int = 24,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """点击回放时按设备和时间范围加载完整点位。"""
+    device = device_service.get_device_by_id(device_id)
+    scope_source = device or device_location_history_service.collection.find_one({"device_id": device_id})
+    if (
+        not scope_source
+        or (device and not _is_location_device(device))
+        or not _device_in_scope(scope_source, current_user)
+    ):
+        raise HTTPException(status_code=404, detail="设备不存在")
+    safe_hours = max(1, min(int(hours or 24), 24 * 90))
+    return {
+        "device_id": device_id,
+        "points": device_location_history_service.get_device_points(
+            device_id,
+            safe_hours,
+            start_time,
+            end_time,
+        ),
+    }
 
 
 @router.get("/{device_id}", response_model=DeviceItem)

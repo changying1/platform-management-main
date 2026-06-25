@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 import math
 
@@ -317,6 +317,7 @@ class FenceService:
         fence_data: FenceCreate,
         company: str = "",
         project: str = "",
+        schedule: dict | None = None,
         scope_fields: dict | None = None,
         current_user: dict | None = None,
     ):
@@ -374,6 +375,9 @@ class FenceService:
         default_severity = get_fence_setting('fenceDefaultSeverity', 'medium')
 
         retention_days = get_fence_retention_days()
+        now = datetime.now()
+        schedule_start = (schedule or {}).get("start") or now.isoformat()
+        schedule_end = (schedule or {}).get("end") or (now + timedelta(days=retention_days)).isoformat()
 
         
 
@@ -399,9 +403,9 @@ class FenceService:
 
             "schedule": {
 
-                "start": datetime.now().isoformat(),
+                "start": schedule_start,
 
-                "end": (datetime.now() + timedelta(days=retention_days)).isoformat()
+                "end": schedule_end
 
             },
 
@@ -431,7 +435,7 @@ class FenceService:
 
         new_fence["_id"] = str(result.inserted_id)
 
-        self._write_fence_log("鍒涘缓鍥存爮", new_fence, current_user, details=f"鍒涘缓鍥存爮: {new_fence.get('name')}")
+        self._write_fence_log("创建围栏", new_fence, current_user, details=f"创建围栏: {new_fence.get('name')}")
 
 
 
@@ -617,10 +621,10 @@ class FenceService:
 
         changed_fields = sorted([key for key in update_data.keys() if key != "updatedAt"])
         self._write_fence_log(
-            "鏇存敼鍥存爮",
+            "更改围栏",
             updated_fence,
             current_user,
-            details=f"鏇存敼鍥存爮: {updated_fence.get('name')}",
+            details=f"更改围栏: {updated_fence.get('name')}",
             changed_fields=changed_fields,
             before=self._serialize_for_log(db_fence),
             after=self._serialize_for_log(updated_fence),
@@ -694,10 +698,10 @@ class FenceService:
             fences_collection.delete_one(delete_query)
 
             self._write_fence_log(
-                "鍒犻櫎鍥存爮",
+                "删除围栏",
                 db_fence,
                 current_user,
-                details=f"鍒犻櫎鍥存爮: {db_fence.get('name')}",
+                details=f"删除围栏: {db_fence.get('name')}",
                 deleted_fence_backup=backup,
                 affected_alarm_count=getattr(alarm_update, "modified_count", 0),
             )
@@ -784,6 +788,18 @@ class FenceService:
 
             return False
 
+        schedule = fence.get("schedule") or {}
+        try:
+            now_datetime = datetime.now()
+            start_datetime = self._parse_datetime_str(schedule.get("start"))
+            end_datetime = self._parse_datetime_str(schedule.get("end"))
+            if start_datetime and now_datetime < start_datetime:
+                return False
+            if end_datetime and now_datetime > end_datetime:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking fence validity dates: {e}")
+
         effective_time = fence.get("effective_time")
 
         if not effective_time or '-' not in effective_time:
@@ -820,6 +836,17 @@ class FenceService:
 
             return True
 
+
+    def _parse_datetime_str(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
 
 
     def _parse_time_str(self, time_str: str) -> time:

@@ -1,13 +1,12 @@
 package com.app.myapplication.ui.alarm;
 
-import android.util.Log;
+import android.graphics.Color;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -18,322 +17,260 @@ import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.ui.video.VideoFilePlayActivity;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHolder> {
-    private static final String TAG = "AlarmImage";
+    public interface OnAlarmActionListener {
+        void onDetails(Alarm alarm);
+        void onHandle(Alarm alarm);
+    }
 
-    private List<Alarm> alarmList;
-    private ArrayAdapter<String> levelAdapter;
-    private OnAlarmActionListener onAlarmActionListener;
-
-    // ✅ 本地临时保存用户在 Spinner 里选的级别（不提交后端）
-    // key = alarmId, value = "high"/"medium"/"low"
-    private final Map<Long, String> localSeverity = new HashMap<>();
-
-    // Spinner 显示的中文选项
-    private static final String[] LEVEL_CN = new String[]{"高危", "警告", "提示"};
+    private final List<Alarm> alarms = new ArrayList<>();
+    private OnAlarmActionListener listener;
+    private boolean canHandle;
 
     public void submitList(List<Alarm> list) {
-        this.alarmList = list;
+        alarms.clear();
+        if (list != null) alarms.addAll(list);
         notifyDataSetChanged();
     }
 
     public void setOnAlarmActionListener(OnAlarmActionListener listener) {
-        this.onAlarmActionListener = listener;
+        this.listener = listener;
     }
 
-    private String valueOr(String value, String fallback) {
-        return value == null || value.trim().isEmpty() || "null".equalsIgnoreCase(value.trim()) ? fallback : value;
+    public void setCanHandle(boolean canHandle) {
+        this.canHandle = canHandle;
+        notifyDataSetChanged();
+    }
+
+    @NonNull
+    @Override
+    public AlarmViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        return new AlarmViewHolder(LayoutInflater.from(parent.getContext())
+                .inflate(R.layout.item_alarm, parent, false));
     }
 
     @Override
-    public AlarmViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_alarm, parent, false);
-        return new AlarmViewHolder(view);
+    public void onBindViewHolder(@NonNull AlarmViewHolder h, int position) {
+        Alarm alarm = alarms.get(position);
+        String source = sourceType(alarm);
+        String status = safe(alarm.getDisplayStatus(), "pending");
+        String severity = normalizeSeverity(alarm.getDisplaySeverity());
+
+        h.alarmId.setText(buildDisplayId(alarm));
+        h.source.setText("fence".equals(source) ? "围栏" : "视频");
+        h.type.setText(displayType(alarm));
+        h.content.setText(safe(alarm.getDescription(), "暂无情况描述"));
+        h.device.setText("设备：" + safe(first(alarm.getDeviceName(), alarm.getDeviceId()), "未知设备")
+                + (isBlank(alarm.getDeviceId()) ? "" : "  ·  ID " + alarm.getDeviceId()));
+        h.orgPath.setText(buildOrgPath(alarm));
+        h.time.setText("告警时间：" + formatTime(alarm.getTimestamp()));
+        h.level.setText(severityText(severity));
+        h.status.setText(statusText(status));
+        styleBadge(h.level, severityColor(severity), severityBackground(severity));
+        styleBadge(h.status, statusColor(status), statusBackground(status));
+
+        boolean pending = "pending".equals(status);
+        h.handle.setVisibility(canHandle && pending ? View.VISIBLE : View.GONE);
+        h.image.setVisibility(hasImage(alarm) ? View.VISIBLE : View.GONE);
+        h.video.setVisibility(hasVideo(alarm) ? View.VISIBLE : View.GONE);
+
+        h.details.setOnClickListener(v -> {
+            if (listener != null) listener.onDetails(alarm);
+        });
+        h.itemView.setOnClickListener(v -> {
+            if (listener != null) listener.onDetails(alarm);
+        });
+        h.handle.setOnClickListener(v -> {
+            if (listener != null) listener.onHandle(alarm);
+        });
+        h.image.setOnClickListener(v -> openImage(h.itemView, alarm));
+        h.video.setOnClickListener(v -> openVideo(h.itemView, alarm));
     }
 
-    private String extractYMD(String ts) {
-        try {
-            if (ts == null) return "00000000";
-            if (ts.contains("T")) {
-                return ts.split("T")[0].replace("-", "");
-            } else if (ts.length() >= 10) {
-                return ts.substring(0, 10).replace("-", "");
-            }
-        } catch (Exception ignored) {}
-        return "00000000";
-    }
-
-    private String buildDisplayId(long rawId, String timestamp) {
-        String ymd = extractYMD(timestamp);
-        return "ALM-" + ymd + "-" + rawId;
-    }
-
-    private String statusAnyToCN(String s) {
-        if (s == null) return "待处理";
-        s = s.trim();
-        if ("resolved".equalsIgnoreCase(s) || "已处理".equals(s)) return "已处理";
-        if ("ignored".equalsIgnoreCase(s) || "已忽略".equals(s)) return "已忽略";
-        return "待处理";
-    }
-
-    // 兼容：status 可能是英文 pending/resolved，也可能已经被你 ViewModel 翻译成中文
-    private boolean isPendingStatus(String s) {
-        if (s == null) return false;
-        s = s.trim();
-        return "pending".equalsIgnoreCase(s) || "待处理".equals(s);
-    }
-
-    // 兼容：severity 可能是 high/medium/low，也可能是中文 高危/警告/提示
-    private String severityAnyToCN(String s) {
-        if (s == null) return "警告";
-        s = s.trim();
-        if ("high".equalsIgnoreCase(s) || "高危".equals(s) || "高".equals(s)) return "高危";
-        if ("low".equalsIgnoreCase(s) || "提示".equals(s) || "低".equals(s)) return "提示";
-        // medium / 警告 / 中 等都归为警告
-        return "警告";
-    }
-
-    private String cnToSeverityRaw(String cn) {
-        if ("高危".equals(cn)) return "high";
-        if ("提示".equals(cn)) return "low";
-        return "medium"; // 警告
-    }
-
-    private String severityAnyToRaw(String s) {
-        if (s == null) return "medium";
-        s = s.trim();
-        if ("high".equalsIgnoreCase(s) || "高危".equals(s) || "高".equals(s)) return "high";
-        if ("low".equalsIgnoreCase(s) || "提示".equals(s) || "低".equals(s)) return "low";
-        return "medium";
-    }
-
-    private int cnLevelIndex(String cn) {
-        if ("高危".equals(cn)) return 0;
-        if ("警告".equals(cn)) return 1;
-        return 2; // 提示
-    }
-
-    private String firstNonEmpty(String... values) {
-        for (String value : values) {
-            String text = valueOr(value, "");
-            if (!text.isEmpty()) return text;
+    private void openImage(View view, Alarm alarm) {
+        String url = AppConfig.toAbsoluteUrl(view.getContext(), first(
+                alarm.getImageUrlField(), alarm.getSnapshotUrl(), alarm.getAlarmImagePath(),
+                alarm.getImagePath(), alarm.getSnapshotPath()));
+        if (isBlank(url)) {
+            Toast.makeText(view.getContext(), "暂无告警截图", Toast.LENGTH_SHORT).show();
+            return;
         }
+        ImagePreviewActivity.start(view.getContext(), url);
+    }
+
+    private void openVideo(View view, Alarm alarm) {
+        String url = AppConfig.toAbsoluteUrl(view.getContext(), alarm.getVideoUrl());
+        if (isBlank(url) || alarm.getDurationSeconds() <= 0) {
+            Toast.makeText(view.getContext(), videoFailureMessage(alarm), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        VideoFilePlayActivity.start(view.getContext(), url, true, resolveAlarmSecond(alarm));
+    }
+
+    private static String videoFailureMessage(Alarm alarm) {
+        if (!isBlank(alarm.getRecordingError())) return "告警视频生成失败：" + alarm.getRecordingError();
+        if ("no_video_segment".equalsIgnoreCase(alarm.getRecordingStatus())) return "所选时段没有可用录像分段";
+        if ("failed".equalsIgnoreCase(alarm.getRecordingStatus())
+                || "video_failed".equalsIgnoreCase(alarm.getRecordingStatus())) return "录像分段合并失败";
+        return "暂无告警视频";
+    }
+
+    public static String sourceType(Alarm alarm) {
+        String source = safe(first(alarm.getSourceType(), alarm.getAlarmSource()), "").toLowerCase(Locale.ROOT);
+        String type = safe(alarm.getAlarmType(), "").toLowerCase(Locale.ROOT);
+        String desc = safe(alarm.getDescription(), "");
+        return "fence".equals(source) || alarm.getFenceId() != null
+                || type.contains("fence") || type.contains("围栏") || desc.contains("围栏")
+                ? "fence" : "video";
+    }
+
+    public static String displayType(Alarm alarm) {
+        String value = safe(alarm.getDisplayAlarmType(), "");
+        if (!value.isEmpty() && !"围栏告警".equals(value) && !"视频告警".equals(value)) return value;
+        return "fence".equals(sourceType(alarm)) ? "电子围栏闯入" : "视频识别告警";
+    }
+
+    public static String cleanDisplayDescription(String value) {
+        if (value == null) return "";
+        return value
+                .replaceAll("[\\uFF08(]\\s*\\d{1,3}(?:\\.\\d+)?\\s*%\\s*[\\uFF09)]", "")
+                .replaceAll("(?i)\\bconfidence\\s*[:\\uFF1A]?\\s*\\d{1,3}(?:\\.\\d+)?\\s*%?", "")
+                .replaceAll("\\u7F6E\\u4FE1\\u5EA6\\s*[:\\uFF1A]?\\s*\\d{1,3}(?:\\.\\d+)?\\s*%?", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+    }
+
+    public static String buildDisplayId(Alarm alarm) {
+        String date = safe(alarm.getTimestamp(), "").replace("-", "");
+        if (date.length() >= 8) date = date.substring(0, 8);
+        else date = "00000000";
+        return "ALM-" + date + "-" + alarm.getId();
+    }
+
+    public static String buildOrgPath(Alarm alarm) {
+        List<String> parts = new ArrayList<>();
+        add(parts, alarm.getBranchName());
+        add(parts, alarm.getProjectName());
+        add(parts, alarm.getGridName());
+        add(parts, alarm.getTeamName());
+        return parts.isEmpty() ? "组织归属：未分配" : "组织归属：" + android.text.TextUtils.join(" / ", parts);
+    }
+
+    public static String formatTime(String raw) {
+        if (isBlank(raw)) return "-";
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = {"yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss"};
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.US).parse(normalized);
+                if (date != null) return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(date);
+            } catch (Exception ignored) {}
+        }
+        return raw;
+    }
+
+    private static long resolveAlarmSecond(Alarm alarm) {
+        if (alarm.getAlarmSecond() != null) return Math.max(0, alarm.getAlarmSecond());
+        return alarm.getDurationSeconds() > 0 && alarm.getDurationSeconds() < 30
+                ? Math.max(0, alarm.getDurationSeconds() / 2) : 30;
+    }
+
+    private static boolean hasImage(Alarm alarm) {
+        return !isBlank(first(alarm.getImageUrlField(), alarm.getSnapshotUrl(),
+                alarm.getAlarmImagePath(), alarm.getImagePath(), alarm.getSnapshotPath()));
+    }
+
+    private static boolean hasVideo(Alarm alarm) {
+        if ("fence".equals(sourceType(alarm))) return false;
+        return !isBlank(alarm.getVideoUrl()) || !isBlank(alarm.getRecordingStatus());
+    }
+
+    private static String normalizeSeverity(String value) {
+        value = safe(value, "low").toLowerCase(Locale.ROOT);
+        if (value.equals("high") || value.equals("severe") || value.equals("critical") || value.equals("danger")) return "high";
+        if (value.equals("medium") || value.equals("warning")) return "medium";
+        return "low";
+    }
+
+    private static String severityText(String value) {
+        return "high".equals(value) ? "严重" : "medium".equals(value) ? "一般" : "提示";
+    }
+
+    private static String statusText(String value) {
+        return "resolved".equals(value) ? "已处理" : "ignored".equals(value) ? "已忽略" : "待处理";
+    }
+
+    private static int severityColor(String value) {
+        return "high".equals(value) ? Color.rgb(198, 40, 40)
+                : "medium".equals(value) ? Color.rgb(230, 81, 0) : Color.rgb(25, 103, 210);
+    }
+
+    private static int severityBackground(String value) {
+        return "high".equals(value) ? Color.rgb(255, 235, 238)
+                : "medium".equals(value) ? Color.rgb(255, 243, 224) : Color.rgb(232, 240, 254);
+    }
+
+    private static int statusColor(String value) {
+        return "resolved".equals(value) ? Color.rgb(46, 125, 50)
+                : "ignored".equals(value) ? Color.DKGRAY : Color.rgb(245, 124, 0);
+    }
+
+    private static int statusBackground(String value) {
+        return "resolved".equals(value) ? Color.rgb(232, 245, 233)
+                : "ignored".equals(value) ? Color.rgb(238, 238, 238) : Color.rgb(255, 248, 225);
+    }
+
+    private static void styleBadge(TextView view, int textColor, int backgroundColor) {
+        view.setTextColor(textColor);
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+        background.setColor(backgroundColor);
+        background.setCornerRadius(100);
+        view.setBackground(background);
+    }
+
+    private static void add(List<String> values, String value) {
+        if (!isBlank(value)) values.add(value.trim());
+    }
+
+    private static String first(String... values) {
+        for (String value : values) if (!isBlank(value)) return value.trim();
         return "";
     }
 
-    private String videoFailureMessage(Alarm alarm) {
-        String error = valueOr(alarm.getRecordingError(), "");
-        if (!error.isEmpty()) {
-            return "报警视频生成失败：" + error;
-        }
-        String status = alarm.getRecordingStatus();
-        if ("no_video_segment".equalsIgnoreCase(status)) {
-            return "报警视频生成失败：所选时间段没有可用录像分段";
-        }
-        if ("failed".equalsIgnoreCase(status) || "video_failed".equalsIgnoreCase(status)) {
-            return "报警视频生成失败：录像分段合并失败";
-        }
-        return "暂无报警视频";
+    private static String safe(String value, String fallback) {
+        return isBlank(value) ? fallback : value.trim();
     }
 
-    @Override
-    public void onBindViewHolder(@NonNull AlarmViewHolder holder, int position) {
-        Alarm alarm = alarmList.get(position);
-        if (alarm == null) return;
-
-        // ===== 基本字段 =====
-        String displayId = buildDisplayId(alarm.getId(), alarm.getTimestamp());
-        holder.tvAlarmId.setText("报警编号: " + displayId);
-        holder.tvAlarmType.setText("报警类型: " + valueOr(alarm.getDisplayAlarmType(), "未知报警类型"));
-        holder.tvAlarmContent.setText("报警内容: " + valueOr(alarm.getDescription(), "暂无报警内容"));
-        holder.tvDevice.setText("设备: " + valueOr(valueOr(alarm.getDeviceName(), alarm.getDeviceId()), "未知设备"));
-        holder.tvDeviceId.setText("设备ID: " + valueOr(alarm.getDeviceId(), "-"));
-        String personText = valueOr(alarm.getPersonName(), "未知");
-        if (alarm.getPersonnelId() != null && !alarm.getPersonnelId().trim().isEmpty()) {
-            personText = personText + " / " + alarm.getPersonnelId();
-        }
-        holder.tvPerson.setText("人员: " + personText);
-        holder.tvTime.setText("报警时间: " + (alarm.getTimestamp() == null ? "" : alarm.getTimestamp()));
-        holder.tvLocation.setText("位置: " + valueOr(alarm.getLocation(), "未知位置"));
-        holder.tvStatus.setText("状态: " + statusAnyToCN(alarm.getStatus()));
-        holder.btnImage.setOnClickListener(v -> {
-            String rawImagePath = firstNonEmpty(
-                    alarm.getImageUrlField(),
-                    alarm.getSnapshotUrl(),
-                    alarm.getAlarmImagePath(),
-                    alarm.getImagePath(),
-                    alarm.getSnapshotPath()
-            );
-            String finalImageUrl = AppConfig.toAbsoluteUrl(holder.itemView.getContext(), rawImagePath);
-            Log.d(TAG, "alarm_id=" + alarm.getId()
-                    + ", alarm_image_path=" + valueOr(alarm.getAlarmImagePath(), "")
-                    + ", image_url=" + valueOr(alarm.getImageUrlField(), "")
-                    + ", snapshot_url=" + valueOr(alarm.getSnapshotUrl(), "")
-                    + ", finalImageUrl=" + finalImageUrl);
-            if (finalImageUrl.isEmpty()) {
-                android.widget.Toast.makeText(holder.itemView.getContext(), "暂无报警截图", android.widget.Toast.LENGTH_SHORT).show();
-                return;
-            }
-            ImagePreviewActivity.start(holder.itemView.getContext(), finalImageUrl);
-        });
-        holder.btnVideo.setOnClickListener(v -> {
-            String url = AppConfig.toAbsoluteUrl(holder.itemView.getContext(), alarm.getVideoUrl());
-            boolean unavailable = alarm.getDurationSeconds() <= 0 || url.isEmpty()
-                    || "failed".equalsIgnoreCase(alarm.getRecordingStatus())
-                    || "video_failed".equalsIgnoreCase(alarm.getRecordingStatus())
-                    || "no_video_segment".equalsIgnoreCase(alarm.getRecordingStatus());
-            if (unavailable) {
-                android.widget.Toast.makeText(holder.itemView.getContext(), videoFailureMessage(alarm), android.widget.Toast.LENGTH_SHORT).show();
-                return;
-            }
-            VideoFilePlayActivity.start(holder.itemView.getContext(), url, true, resolveAlarmSecond(alarm));
-        });
-
-        boolean isPending = isPendingStatus(alarm.getStatus());
-
-        // ===== Spinner Adapter 只初始化一次（避免复用混乱）=====
-        if (levelAdapter == null) {
-            levelAdapter = new ArrayAdapter<>(
-                    holder.itemView.getContext(),
-                    android.R.layout.simple_spinner_item,
-                    LEVEL_CN
-            );
-            levelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        }
-        holder.spinnerLevel.setAdapter(levelAdapter);
-
-        // ===== Spinner 初始值：优先本地缓存，其次 alarm.getSeverity() =====
-        String rawSev = localSeverity.containsKey(alarm.getId())
-                ? localSeverity.get(alarm.getId())
-                : severityAnyToRaw(alarm.getSeverity());
-
-        String sevCN = severityAnyToCN(rawSev);
-
-        // 复用防抖：先移除旧监听，再 setSelection
-        holder.spinnerLevel.setOnItemSelectedListener(null);
-        holder.spinnerLevel.setSelection(cnLevelIndex(sevCN), false);
-
-        // pending 才能改
-        holder.spinnerLevel.setEnabled(isPending);
-
-        // ✅ Spinner 改动：只改前端
-        holder.spinnerLevel.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int pos, long id) {
-                if (!isPending) return;
-
-                String selectedCN = (String) parent.getItemAtPosition(pos);
-                String selectedRaw = cnToSeverityRaw(selectedCN);
-
-                // 1) 只存本地 raw（给“处置按钮提交后端”用）
-                localSeverity.put(alarm.getId(), selectedRaw);
-
-                // 2) **把 Alarm 对象的 severity 改成中文**
-                //    这样 ViewModel 的筛选（对 alarmData 中对象比较）才能筛到“前端改过的级别”
-                alarm.setSeverity(selectedCN);
-
-                // 如果你希望“当前已经开启了顶部级别筛选时”立即刷新列表，
-                // 可以在 Activity 里收到 onResolve/onDelete 外再触发一次 filterData()。
-                if (onAlarmActionListener != null) {
-                    onAlarmActionListener.onLocalSeverityChanged();
-                }
-            }
-
-            @Override
-            public void onNothingSelected(android.widget.AdapterView<?> parent) {}
-        });
-
-        // ===== 处置按钮：点击才提交后端（status=resolved + severity=raw）=====
-        holder.btnResolve.setVisibility(isPending ? View.VISIBLE : View.GONE);
-        holder.btnResolve.setOnClickListener(v -> {
-            if (onAlarmActionListener == null) return;
-
-            String finalRaw = localSeverity.containsKey(alarm.getId())
-                    ? localSeverity.get(alarm.getId())
-                    : severityAnyToRaw(alarm.getSeverity()); // 兼容 alarm.severity 已经被改成中文
-
-            onAlarmActionListener.onResolve(alarm.getId(), finalRaw);
-        });
-
-        // ===== 删除按钮 =====
-        holder.btnDelete.setOnClickListener(v -> {
-            if (onAlarmActionListener != null) {
-                onAlarmActionListener.onDelete(alarm.getId());
-            }
-        });
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty() || "null".equalsIgnoreCase(value.trim());
     }
 
-    private long resolveAlarmSecond(Alarm alarm) {
-        if (alarm.getAlarmSecond() != null) {
-            return Math.max(0, alarm.getAlarmSecond());
-        }
-        long alarmTime = parseTimeMillis(alarm.getTimestamp());
-        long startTime = parseTimeMillis(alarm.getStartTime());
-        if (alarmTime > 0 && startTime > 0) {
-            return Math.max(0, Math.round((alarmTime - startTime) / 1000.0));
-        }
-        int duration = alarm.getDurationSeconds();
-        return duration > 0 && duration < 30 ? Math.max(0, duration / 2) : 30;
-    }
+    @Override public int getItemCount() { return alarms.size(); }
 
-    private long parseTimeMillis(String raw) {
-        if (raw == null || raw.trim().isEmpty()) return 0;
-        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
-        String[] patterns = new String[]{
-                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
-                "yyyy-MM-dd'T'HH:mm:ss",
-                "yyyy-MM-dd HH:mm:ss"
-        };
-        for (String pattern : patterns) {
-            try {
-                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
-                if (date != null) return date.getTime();
-            } catch (Exception ignored) {}
-        }
-        return 0;
-    }
+    static class AlarmViewHolder extends RecyclerView.ViewHolder {
+        final TextView alarmId, source, type, content, device, orgPath, time, level, status;
+        final Button image, video, handle, details;
 
-    @Override
-    public int getItemCount() {
-        return alarmList == null ? 0 : alarmList.size();
-    }
-
-    public static class AlarmViewHolder extends RecyclerView.ViewHolder {
-        TextView tvAlarmId, tvAlarmType, tvAlarmContent, tvDevice, tvDeviceId, tvPerson, tvTime, tvLocation, tvStatus;
-        Spinner spinnerLevel;
-        Button btnResolve, btnDelete, btnImage, btnVideo;
-
-        public AlarmViewHolder(@NonNull View itemView) {
+        AlarmViewHolder(@NonNull View itemView) {
             super(itemView);
-            tvAlarmId = itemView.findViewById(R.id.tvAlarmId);
-            tvAlarmType = itemView.findViewById(R.id.tvAlarmType);
-            tvAlarmContent = itemView.findViewById(R.id.tvAlarmContent);
-            tvDevice = itemView.findViewById(R.id.tvDevice);
-            tvDeviceId = itemView.findViewById(R.id.tvDeviceId);
-            tvPerson = itemView.findViewById(R.id.tvPerson);
-            tvTime = itemView.findViewById(R.id.tvTime);
-            tvLocation = itemView.findViewById(R.id.tvLocation);
-            tvStatus = itemView.findViewById(R.id.tvStatus);
-            spinnerLevel = itemView.findViewById(R.id.spinnerLevel);
-            btnImage = itemView.findViewById(R.id.btnImage);
-            btnVideo = itemView.findViewById(R.id.btnVideo);
-            btnResolve = itemView.findViewById(R.id.btnResolve);
-            btnDelete = itemView.findViewById(R.id.btnDelete);
+            alarmId = itemView.findViewById(R.id.tvAlarmId);
+            source = itemView.findViewById(R.id.tvSourceBadge);
+            type = itemView.findViewById(R.id.tvAlarmType);
+            content = itemView.findViewById(R.id.tvAlarmContent);
+            device = itemView.findViewById(R.id.tvDevice);
+            orgPath = itemView.findViewById(R.id.tvOrgPath);
+            time = itemView.findViewById(R.id.tvTime);
+            level = itemView.findViewById(R.id.tvLevelBadge);
+            status = itemView.findViewById(R.id.tvStatusBadge);
+            image = itemView.findViewById(R.id.btnImage);
+            video = itemView.findViewById(R.id.btnVideo);
+            handle = itemView.findViewById(R.id.btnResolve);
+            details = itemView.findViewById(R.id.btnDetails);
         }
-    }
-
-    public interface OnAlarmActionListener {
-        void onResolve(long alarmId, String severity); // severity: high/medium/low
-        void onDelete(long alarmId);
-
-        // ✅ 新增：Spinner 改了级别（只改前端）后，通知外部可重新触发 filterData
-        // 不想用也可以空实现
-        void onLocalSeverityChanged();
     }
 }

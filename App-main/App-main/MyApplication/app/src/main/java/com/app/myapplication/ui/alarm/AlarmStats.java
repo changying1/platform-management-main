@@ -8,15 +8,20 @@ public class AlarmStats {
     private int highSeverityAlarms;
     private int mediumSeverityAlarms;
     private int lowSeverityAlarms;
+    private int fenceAlarms;
+    private int videoAlarms;
 
     public AlarmStats(int totalAlarms, int pendingAlarms, int resolvedAlarms,
-                      int highSeverityAlarms, int mediumSeverityAlarms, int lowSeverityAlarms) {
+                      int highSeverityAlarms, int mediumSeverityAlarms, int lowSeverityAlarms,
+                      int fenceAlarms, int videoAlarms) {
         this.totalAlarms = totalAlarms;
         this.pendingAlarms = pendingAlarms;
         this.resolvedAlarms = resolvedAlarms;
         this.highSeverityAlarms = highSeverityAlarms;
         this.mediumSeverityAlarms = mediumSeverityAlarms;
         this.lowSeverityAlarms = lowSeverityAlarms;
+        this.fenceAlarms = fenceAlarms;
+        this.videoAlarms = videoAlarms;
     }
 
     // Getter 和 Setter 方法
@@ -84,4 +89,7 @@ public class AlarmStats {
     public void setCriticalAlarms(int criticalAlarms) {
         this.highSeverityAlarms = criticalAlarms;
     }
+
+    public int getFenceAlarms() { return fenceAlarms; }
+    public int getVideoAlarms() { return videoAlarms; }
 }

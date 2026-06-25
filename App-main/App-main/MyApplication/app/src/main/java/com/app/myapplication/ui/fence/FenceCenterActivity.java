@@ -1,12 +1,15 @@
 package com.app.myapplication.ui.fence;
 
 import android.Manifest;
+import android.app.TimePickerDialog;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.location.Location;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -28,6 +31,10 @@ import com.amap.api.maps.CameraUpdateFactory;
 import com.amap.api.maps.MapView;
 import com.amap.api.maps.model.*;
 import com.amap.api.maps.model.MyLocationStyle;
+import com.amap.api.services.core.AMapException;
+import com.amap.api.services.core.PoiItem;
+import com.amap.api.services.poisearch.PoiResult;
+import com.amap.api.services.poisearch.PoiSearch;
 
 import org.json.JSONArray;
 
@@ -47,9 +54,12 @@ import java.util.concurrent.TimeUnit;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -77,6 +87,9 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         @GET("fence/regions")
         Call<JsonArray> getRegions();
+
+        @GET("api/responsibility-units/tree")
+        Call<JsonArray> getResponsibilityTree();
     }
 
 
@@ -93,7 +106,12 @@ public class FenceCenterActivity extends AppCompatActivity {
     private MapView mapView;
     private AMap aMap;
 
-    private Button btnNew, btnList, btnLocate;
+    private Button btnNew, btnList;
+    private ImageButton btnBackHome;
+    private View btnLocate;
+    private EditText etUnitFenceSearch;
+    private ListPopupWindow searchSuggestionsPopup;
+    private ArrayAdapter<String> searchSuggestionAdapter;
     private View panelAdd, panelList;
 
     private EditText etName, etRadius;
@@ -102,9 +120,11 @@ public class FenceCenterActivity extends AppCompatActivity {
     private RadioButton rbCircle, rbPolygon;
     private View groupCircle, groupPolygon;
     private Button btnUndo, btnClear, btnCancel, btnSave;
+    private Button btnSelectUnit;
 
     private Spinner spTriggerType;
     private Switch swEnable;
+    private Button btnEffectiveStart, btnEffectiveEnd;
 
     private RecyclerView rvFence;
     private RecyclerView rvDevice;
@@ -113,7 +133,7 @@ public class FenceCenterActivity extends AppCompatActivity {
     private Button btnTabDevice;
     private TextView tvListTitle;
 
-    private FenceListAdapter fenceAdapter;
+    private FenceTreeAdapter fenceAdapter;
     private com.app.myapplication.ui.device.DeviceListAdapter deviceAdapter;
 
     // -------------------------
@@ -126,8 +146,14 @@ public class FenceCenterActivity extends AppCompatActivity {
     private final List<UiFence> fences = new ArrayList<>();
     private final List<UiRegion> regions = new ArrayList<>();
     private final List<DeviceItem> devices = new ArrayList<>();
+    private final List<OrgOption> orgOptions = new ArrayList<>();
+    private final List<SearchTarget> organizationTargets = new ArrayList<>();
+    private final Map<String, String> organizationNameById = new HashMap<>();
+    private final List<SearchTarget> searchSuggestions = new ArrayList<>();
+    private boolean selectingSearchSuggestion = false;
 
     private boolean addMode = false;
+    private OrgOption selectedOrg = null;
 
     // �?编辑模式
     private boolean editMode = false;
@@ -185,6 +211,56 @@ public class FenceCenterActivity extends AppCompatActivity {
         }
     }
 
+    private static class SearchTarget {
+        final String type;
+        final String label;
+        final String name;
+        final String searchText;
+        final LatLng position;
+        final float zoom;
+        final DeviceItem device;
+
+        SearchTarget(String type, String name, LatLng position, float zoom) {
+            this(type, name, position, zoom, null, "");
+        }
+
+        SearchTarget(
+                String type,
+                String name,
+                LatLng position,
+                float zoom,
+                @Nullable DeviceItem device,
+                String extraSearchText
+        ) {
+            this.type = type;
+            this.name = name;
+            String deviceId = device == null || TextUtils.isEmpty(device.deviceId)
+                    ? "" : " (" + device.deviceId + ")";
+            this.label = type + " · " + name + deviceId;
+            this.searchText = (this.label + " " + extraSearchText).toLowerCase(Locale.ROOT);
+            this.position = position;
+            this.zoom = zoom;
+            this.device = device;
+        }
+    }
+
+    private static class OrgOption {
+        String type;
+        String label;
+        String company;
+        String project;
+        String grid;
+        String team;
+        String branchId;
+        String projectId;
+        String gridId;
+        String teamId;
+
+        String displayLabel() {
+            return label == null || label.trim().isEmpty() ? "未选择所属单位" : label;
+        }
+    }
+
     // -------------------------
     // Lifecycle
     // -------------------------
@@ -213,7 +289,9 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         btnNew = findViewById(R.id.btn_new);
         btnList = findViewById(R.id.btn_list);
+        btnBackHome = findViewById(R.id.btn_back_home);
         btnLocate = findViewById(R.id.btn_locate);
+        etUnitFenceSearch = findViewById(R.id.et_unit_fence_search);
 
         panelAdd = findViewById(R.id.panel_add);
         panelList = findViewById(R.id.panel_list);
@@ -234,9 +312,12 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         spTriggerType = findViewById(R.id.sp_trigger_type);
         swEnable = findViewById(R.id.sw_enable);
+        btnEffectiveStart = findViewById(R.id.btn_effective_start);
+        btnEffectiveEnd = findViewById(R.id.btn_effective_end);
 
         btnCancel = findViewById(R.id.btn_cancel);
         btnSave = findViewById(R.id.btn_save);
+        btnSelectUnit = findViewById(R.id.btn_select_unit);
 
         rvFence = findViewById(R.id.rv_fence);
         rvDevice = findViewById(R.id.rv_device);
@@ -261,8 +342,9 @@ public class FenceCenterActivity extends AppCompatActivity {
     private void initRecycler() {
         // 围栏列表
         rvFence.setLayoutManager(new LinearLayoutManager(this));
-        fenceAdapter = new FenceListAdapter(
+        fenceAdapter = new FenceTreeAdapter(
                 fences,
+                organizationNameById,
                 this::showFenceActions,
                 this::toggleFenceEnable,
                 this::confirmDeleteFence
@@ -335,6 +417,7 @@ public class FenceCenterActivity extends AppCompatActivity {
     }
 
     private void initUiLogic() {
+        btnBackHome.setOnClickListener(v -> finish());
         btnNew.setOnClickListener(v -> enterAddMode());
 
         btnList.setOnClickListener(v -> {
@@ -352,6 +435,46 @@ public class FenceCenterActivity extends AppCompatActivity {
         btnTabDevice.setOnClickListener(v -> showDeviceList());
 
         btnLocate.setOnClickListener(v -> ensurePermissionThenLocate());
+
+        searchSuggestionAdapter = new ArrayAdapter<>(
+                this,
+                R.layout.item_search_suggestion,
+                new ArrayList<>()
+        );
+        searchSuggestionsPopup = new ListPopupWindow(this);
+        searchSuggestionsPopup.setAnchorView(etUnitFenceSearch);
+        searchSuggestionsPopup.setAdapter(searchSuggestionAdapter);
+        searchSuggestionsPopup.setModal(false);
+        searchSuggestionsPopup.setOnItemClickListener((parent, view, position, id) -> {
+            if (position >= 0 && position < searchSuggestions.size()) {
+                selectSearchTarget(searchSuggestions.get(position));
+            }
+        });
+        etUnitFenceSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (!selectingSearchSuggestion) {
+                    searchUnitsAndFences(s == null ? "" : s.toString());
+                }
+            }
+        });
+        etUnitFenceSearch.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                searchUnitsAndFences(etUnitFenceSearch.getText() == null
+                        ? "" : etUnitFenceSearch.getText().toString());
+            } else if (searchSuggestionsPopup != null) {
+                v.postDelayed(() -> searchSuggestionsPopup.dismiss(), 150);
+            }
+        });
+        etUnitFenceSearch.setOnEditorActionListener((v, actionId, event) -> {
+            if (!searchSuggestions.isEmpty()) {
+                selectSearchTarget(searchSuggestions.get(0));
+            }
+            return true;
+        });
 
         rgShape.setOnCheckedChangeListener((g, id) -> {
             if (!addMode) return;
@@ -388,6 +511,10 @@ public class FenceCenterActivity extends AppCompatActivity {
             clearPolygonDraft();
             redrawPolygonPreviewLine();
         });
+
+        btnEffectiveStart.setOnClickListener(v -> showEffectiveTimePicker(btnEffectiveStart));
+        btnEffectiveEnd.setOnClickListener(v -> showEffectiveTimePicker(btnEffectiveEnd));
+        btnSelectUnit.setOnClickListener(v -> showOrgSelectDialog());
 
         btnCancel.setOnClickListener(v -> exitAddOrEditMode());
         btnSave.setOnClickListener(v -> saveFenceToServer());
@@ -535,6 +662,7 @@ public class FenceCenterActivity extends AppCompatActivity {
                     devices.clear();
                     devices.addAll(deviceList);
                     redrawAll();
+                    refreshActiveSearch();
                     android.util.Log.d("DebugMode", "设备列表已刷新，共 " + deviceList.size() + " 个设备");
                 });
             }
@@ -570,6 +698,8 @@ public class FenceCenterActivity extends AppCompatActivity {
         panelList.setVisibility(View.GONE);
 
         etName.setText("");
+        selectedOrg = null;
+        updateSelectedOrgText();
         rbCircle.setChecked(true);
 
         circleRadius = 50;
@@ -580,6 +710,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         spTriggerType.setSelection(0);
         swEnable.setChecked(true);
+        setEffectiveTimeUi("00:00-23:59");
 
         updateShapeUi();
         clearDraftOnly();
@@ -603,11 +734,14 @@ public class FenceCenterActivity extends AppCompatActivity {
         panelList.setVisibility(View.GONE);
 
         etName.setText(f.name == null ? "" : f.name);
+        selectedOrg = findOrgOptionForFence(f);
+        updateSelectedOrgText();
 
         String beh = (f.ruleType == null) ? BEHAVIOR_NO_ENTRY : f.ruleType;
         if (BEHAVIOR_NO_EXIT.equalsIgnoreCase(beh)) spTriggerType.setSelection(1);
         else spTriggerType.setSelection(0);
         swEnable.setChecked(f.enabled == null || f.enabled);
+        setEffectiveTimeUi(f.effectiveTime);
 
         clearDraftOnly();
 
@@ -643,6 +777,215 @@ public class FenceCenterActivity extends AppCompatActivity {
         }
 
         toast("编辑模式：修改后点保存即可更新");
+    }
+
+    private void showEffectiveTimePicker(@NonNull Button target) {
+        int[] current = parseTimePart(target.getText() == null ? null : target.getText().toString());
+        int hour = current == null ? 0 : current[0];
+        int minute = current == null ? 0 : current[1];
+        new TimePickerDialog(
+                this,
+                (view, selectedHour, selectedMinute) ->
+                        target.setText(String.format(Locale.CHINA, "%02d:%02d", selectedHour, selectedMinute)),
+                hour,
+                minute,
+                true
+        ).show();
+    }
+
+    private void setEffectiveTimeUi(String effectiveTime) {
+        String normalized = normalizeEffectiveTime(effectiveTime);
+        if (normalized == null) normalized = "00:00-23:59";
+        String[] parts = normalized.split("-", 2);
+        btnEffectiveStart.setText(parts[0]);
+        btnEffectiveEnd.setText(parts[1]);
+    }
+
+    private String getEffectiveTimeFromUi() {
+        String start = btnEffectiveStart.getText() == null ? "" : btnEffectiveStart.getText().toString();
+        String end = btnEffectiveEnd.getText() == null ? "" : btnEffectiveEnd.getText().toString();
+        return normalizeEffectiveTime(start + "-" + end);
+    }
+
+    private void showOrgSelectDialog() {
+        if (orgOptions.isEmpty()) {
+            toast("?????????????");
+            return;
+        }
+
+        int padding = dp(16);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(padding, 0, padding, 0);
+
+        EditText searchInput = new EditText(this);
+        searchInput.setSingleLine(true);
+        searchInput.setHint("?????????????");
+        searchInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        container.addView(searchInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(44)
+        ));
+
+        ListView listView = new ListView(this);
+        listView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
+        listView.setDividerHeight(0);
+        container.addView(listView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(420)
+        ));
+
+        List<OrgOption> filteredOptions = new ArrayList<>();
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_list_item_single_choice,
+                new ArrayList<>()
+        );
+        listView.setAdapter(adapter);
+        refreshOrgDialogOptions("", filteredOptions, adapter, listView);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("??????")
+                .setView(container)
+                .setNegativeButton("??", null)
+                .create();
+
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            if (position >= 0 && position < filteredOptions.size()) {
+                selectedOrg = filteredOptions.get(position);
+                updateSelectedOrgText();
+                dialog.dismiss();
+            }
+        });
+
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshOrgDialogOptions(s == null ? "" : s.toString(), filteredOptions, adapter, listView);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        dialog.setOnShowListener(d -> searchInput.requestFocus());
+        dialog.show();
+    }
+
+    private void refreshOrgDialogOptions(String query,
+                                         List<OrgOption> filteredOptions,
+                                         ArrayAdapter<String> adapter,
+                                         ListView listView) {
+        filteredOptions.clear();
+        List<String> labels = new ArrayList<>();
+        for (OrgOption option : orgOptions) {
+            if (matchesOrgQuery(option, query)) {
+                filteredOptions.add(option);
+                labels.add(option.displayLabel());
+            }
+        }
+
+        adapter.clear();
+        adapter.addAll(labels);
+        adapter.notifyDataSetChanged();
+
+        listView.clearChoices();
+        int checked = -1;
+        for (int i = 0; i < filteredOptions.size(); i++) {
+            if (sameOrgOption(selectedOrg, filteredOptions.get(i))) {
+                checked = i;
+                break;
+            }
+        }
+        if (checked >= 0) {
+            listView.setItemChecked(checked, true);
+        }
+    }
+
+    private boolean matchesOrgQuery(OrgOption option, String query) {
+        if (option == null) return false;
+        String keyword = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if (TextUtils.isEmpty(keyword)) return true;
+        String haystack = TextUtils.join(" ", new String[]{
+                option.displayLabel(),
+                option.company == null ? "" : option.company,
+                option.project == null ? "" : option.project,
+                option.grid == null ? "" : option.grid,
+                option.team == null ? "" : option.team
+        }).toLowerCase(Locale.ROOT);
+        return haystack.contains(keyword);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void updateSelectedOrgText() {
+        if (btnSelectUnit == null) return;
+        if (selectedOrg == null) {
+            btnSelectUnit.setText("?????????/??/??/???");
+        } else {
+            btnSelectUnit.setText("?????" + selectedOrg.displayLabel());
+        }
+    }
+
+    private boolean sameOrgOption(OrgOption a, OrgOption b) {
+        if (a == null || b == null) return false;
+        return safeEquals(a.type, b.type)
+                && safeEquals(a.branchId, b.branchId)
+                && safeEquals(a.projectId, b.projectId)
+                && safeEquals(a.gridId, b.gridId)
+                && safeEquals(a.teamId, b.teamId)
+                && safeEquals(a.label, b.label);
+    }
+
+    private boolean safeEquals(String a, String b) {
+        return TextUtils.equals(a == null ? "" : a.trim(), b == null ? "" : b.trim());
+    }
+
+    private OrgOption findOrgOptionForFence(UiFence fence) {
+        if (fence == null || orgOptions.isEmpty()) return null;
+        OrgOption best = null;
+        int bestScore = -1;
+        for (OrgOption option : orgOptions) {
+            int score = 0;
+            if (!TextUtils.isEmpty(fence.teamId) && safeEquals(fence.teamId, option.teamId)) score += 100;
+            if (!TextUtils.isEmpty(fence.gridId) && safeEquals(fence.gridId, option.gridId)) score += 40;
+            if (!TextUtils.isEmpty(fence.projectId) && safeEquals(fence.projectId, option.projectId)) score += 20;
+            if (!TextUtils.isEmpty(fence.branchId) && safeEquals(fence.branchId, option.branchId)) score += 10;
+            if (!TextUtils.isEmpty(fence.team) && safeEquals(fence.team, option.team)) score += 50;
+            if (!TextUtils.isEmpty(fence.grid) && safeEquals(fence.grid, option.grid)) score += 25;
+            if (!TextUtils.isEmpty(fence.project) && safeEquals(fence.project, option.project)) score += 12;
+            if (!TextUtils.isEmpty(fence.company) && safeEquals(fence.company, option.company)) score += 6;
+            if (score > bestScore) {
+                bestScore = score;
+                best = option;
+            }
+        }
+        return bestScore > 0 ? best : null;
+    }
+
+    private OrgOption findMatchingOrgOption(OrgOption source) {
+        if (source == null) return null;
+        for (OrgOption option : orgOptions) {
+            if (sameOrgOption(source, option)) return option;
+        }
+        return source;
+    }
+
+    private void applyOrgToFence(UiFence fence, OrgOption option) {
+        if (fence == null || option == null) return;
+        fence.company = option.company;
+        fence.project = option.project;
+        fence.grid = option.grid;
+        fence.team = option.team;
+        fence.branchId = option.branchId;
+        fence.projectId = option.projectId;
+        fence.gridId = option.gridId;
+        fence.teamId = option.teamId;
     }
 
     private void exitAddOrEditMode() {
@@ -817,6 +1160,383 @@ public class FenceCenterActivity extends AppCompatActivity {
         clearPolygonDraft();
     }
 
+    private void searchPlaces(String rawKeyword) {
+        String keyword = rawKeyword == null ? "" : rawKeyword.trim();
+        if (keyword.isEmpty()) {
+            toast("请输入地点名称");
+            return;
+        }
+
+        try {
+            PoiSearch.Query query = new PoiSearch.Query(keyword, "", "");
+            query.setPageSize(20);
+            query.setPageNum(1);
+            PoiSearch poiSearch = new PoiSearch(this, query);
+            poiSearch.setOnPoiSearchListener(new PoiSearch.OnPoiSearchListener() {
+                @Override
+                public void onPoiSearched(PoiResult result, int errorCode) {
+                    List<PoiItem> items = result == null ? null : result.getPois();
+                    if (errorCode != 1000 || items == null || items.isEmpty()) {
+                        toast("未找到相关地点");
+                        return;
+                    }
+
+                    String[] labels = new String[items.size()];
+                    for (int i = 0; i < items.size(); i++) {
+                        PoiItem item = items.get(i);
+                        String address = item.getSnippet();
+                        labels[i] = item.getTitle() + (TextUtils.isEmpty(address) ? "" : "\n" + address);
+                    }
+                    new AlertDialog.Builder(FenceCenterActivity.this)
+                            .setTitle("选择地点")
+                            .setItems(labels, (dialog, which) -> selectPlaceForFence(items.get(which)))
+                            .setNegativeButton("取消", null)
+                            .show();
+                }
+
+                @Override
+                public void onPoiItemSearched(PoiItem item, int errorCode) {
+                    // Keyword search uses the list callback above.
+                }
+            });
+            poiSearch.searchPOIAsyn();
+        } catch (AMapException e) {
+            android.util.Log.e("FenceCenter", "POI search failed", e);
+            toast("地点搜索服务不可用");
+        }
+    }
+
+    private void selectPlaceForFence(PoiItem item) {
+        if (item == null || item.getLatLonPoint() == null) return;
+        LatLng point = new LatLng(
+                item.getLatLonPoint().getLatitude(),
+                item.getLatLonPoint().getLongitude()
+        );
+        enterAddMode();
+        rbCircle.setChecked(true);
+        setCircleCenter(point);
+        aMap.animateCamera(CameraUpdateFactory.newLatLngZoom(point, 17f));
+    }
+
+    private void searchUnitsAndFences(String rawKeyword) {
+        String keyword = rawKeyword == null ? "" : rawKeyword.trim().toLowerCase(Locale.ROOT);
+        if (keyword.isEmpty()) {
+            searchSuggestions.clear();
+            if (searchSuggestionAdapter != null) {
+                searchSuggestionAdapter.clear();
+                searchSuggestionAdapter.notifyDataSetChanged();
+            }
+            if (searchSuggestionsPopup != null) searchSuggestionsPopup.dismiss();
+            return;
+        }
+
+        List<SearchTarget> results = new ArrayList<>();
+        for (SearchTarget target : organizationTargets) {
+            if (target.searchText.contains(keyword) && target.position != null) {
+                results.add(target);
+            }
+        }
+        for (UiFence fence : fences) {
+            String fenceName = fence == null || fence.name == null ? "" : fence.name.trim();
+            if (!fenceName.toLowerCase(Locale.ROOT).contains(keyword)) continue;
+            LatLng center = fence.getBestCenterLatLng();
+            if (center != null) {
+                results.add(new SearchTarget("围栏", fenceName, center, 17f));
+            }
+        }
+        for (DeviceItem device : devices) {
+            if (device == null || !device.hasLocation()) continue;
+            String deviceName = TextUtils.isEmpty(device.name) ? "" : device.name.trim();
+            String deviceId = TextUtils.isEmpty(device.deviceId) ? "" : device.deviceId.trim();
+            String deviceSearchText = String.join(" ",
+                    deviceName,
+                    deviceId,
+                    TextUtils.isEmpty(device.company) ? "" : device.company,
+                    TextUtils.isEmpty(device.project) ? "" : device.project,
+                    TextUtils.isEmpty(device.team) ? "" : device.team
+            ).toLowerCase(Locale.ROOT);
+            if (!deviceSearchText.contains(keyword)) continue;
+            String displayName = TextUtils.isEmpty(deviceName) ? deviceId : deviceName;
+            if (TextUtils.isEmpty(displayName)) continue;
+            results.add(new SearchTarget(
+                    "设备",
+                    displayName,
+                    new LatLng(device.lat, device.lng),
+                    18f,
+                    device,
+                    deviceSearchText
+            ));
+        }
+
+        results.sort((a, b) -> {
+            int priorityCompare = Integer.compare(searchTargetPriority(a), searchTargetPriority(b));
+            if (priorityCompare != 0) return priorityCompare;
+            boolean aNameMatched = a.name.toLowerCase(Locale.ROOT).contains(keyword);
+            boolean bNameMatched = b.name.toLowerCase(Locale.ROOT).contains(keyword);
+            if (aNameMatched != bNameMatched) return aNameMatched ? -1 : 1;
+            return a.label.compareTo(b.label);
+        });
+
+        if (results.isEmpty()) {
+            searchSuggestions.clear();
+            searchSuggestionAdapter.clear();
+            searchSuggestionAdapter.notifyDataSetChanged();
+            searchSuggestionsPopup.dismiss();
+            return;
+        }
+        if (results.size() > 12) {
+            results = new ArrayList<>(results.subList(0, 12));
+        }
+
+        searchSuggestions.clear();
+        searchSuggestions.addAll(results);
+        searchSuggestionAdapter.clear();
+        for (SearchTarget result : results) {
+            searchSuggestionAdapter.add(result.label);
+        }
+        searchSuggestionAdapter.notifyDataSetChanged();
+        if (etUnitFenceSearch.hasFocus()) searchSuggestionsPopup.show();
+    }
+
+    private void selectSearchTarget(@NonNull SearchTarget target) {
+        selectingSearchSuggestion = true;
+        etUnitFenceSearch.setText(target.name);
+        etUnitFenceSearch.setSelection(etUnitFenceSearch.length());
+        selectingSearchSuggestion = false;
+        searchSuggestionsPopup.dismiss();
+        panelList.setVisibility(View.GONE);
+        if (target.device != null) {
+            focusOnDevice(target.device);
+        } else {
+            aMap.animateCamera(CameraUpdateFactory.newLatLngZoom(target.position, target.zoom));
+        }
+    }
+
+    private void refreshActiveSearch() {
+        if (etUnitFenceSearch == null || !etUnitFenceSearch.hasFocus()) return;
+        searchUnitsAndFences(etUnitFenceSearch.getText() == null
+                ? "" : etUnitFenceSearch.getText().toString());
+    }
+
+    private int searchTargetPriority(SearchTarget target) {
+        if (target == null) return 99;
+        String type = target.type == null ? "" : target.type.toLowerCase(Locale.ROOT);
+        if (type.contains("项目") || type.contains("project")) return 10;
+        if (type.contains("网格") || type.contains("grid")) return 20;
+        if (type.contains("工队") || type.contains("作业队") || type.contains("team")) return 25;
+        if (type.contains("公司") || type.contains("单位") || type.contains("branch")) return 30;
+        if (type.contains("设备") || type.contains("device")) return 35;
+        if (type.contains("围栏") || type.contains("fence")) return 40;
+        return 50;
+    }
+
+    private LatLng collectOrganizationTargets(JsonObject node, String parentPath) {
+        String name = jsonString(node, "name");
+        String type = jsonString(node, "type");
+        rememberOrganizationName(node, name);
+        String path = TextUtils.isEmpty(parentPath) ? name : parentPath + " / " + name;
+        // Project records may contain stale latitude/longitude values while center
+        // is synchronized with the project's area boundary. Prefer that center for
+        // project searches; retain the existing coordinate priority for other units.
+        LatLng position = "project".equalsIgnoreCase(type) ? parseNodeCenter(node) : null;
+        if (position == null) position = parseNodePosition(node);
+
+        List<LatLng> childPositions = new ArrayList<>();
+        JsonArray children = node.has("children") && node.get("children").isJsonArray()
+                ? node.getAsJsonArray("children")
+                : null;
+        if (children != null) {
+            for (JsonElement child : children) {
+                if (child != null && child.isJsonObject()) {
+                    LatLng childPosition = collectOrganizationTargets(child.getAsJsonObject(), path);
+                    if (childPosition != null) childPositions.add(childPosition);
+                }
+            }
+        }
+
+        if (position == null && !childPositions.isEmpty()) {
+            double lat = 0;
+            double lng = 0;
+            for (LatLng child : childPositions) {
+                lat += child.latitude;
+                lng += child.longitude;
+            }
+            position = new LatLng(lat / childPositions.size(), lng / childPositions.size());
+        }
+
+        if (!TextUtils.isEmpty(name) && position != null) {
+            String typeName = organizationTypeName(type);
+            float zoom = "team".equalsIgnoreCase(type) ? 19f
+                    : "grid".equalsIgnoreCase(type) ? 17f
+                    : "project".equalsIgnoreCase(type) ? 15f : 13f;
+            organizationTargets.add(new SearchTarget(typeName, path, position, zoom));
+        }
+        return position;
+    }
+
+    private void collectOrganizationOptions(JsonObject node, @Nullable OrgOption parent) {
+        if (node == null) return;
+        String name = jsonString(node, "name");
+        String type = jsonString(node, "type").toLowerCase(Locale.ROOT);
+        if (TextUtils.isEmpty(name)) return;
+
+        OrgOption option = new OrgOption();
+        if (parent != null) {
+            option.company = parent.company;
+            option.project = parent.project;
+            option.grid = parent.grid;
+            option.team = parent.team;
+            option.branchId = parent.branchId;
+            option.projectId = parent.projectId;
+            option.gridId = parent.gridId;
+            option.teamId = parent.teamId;
+        }
+        option.type = type;
+
+        String id = firstNonEmpty(
+                jsonString(node, "id"),
+                jsonString(node, "unit_id"),
+                jsonString(node, type + "_id")
+        );
+        if ("branch".equals(type) || "company".equals(type)) {
+            option.company = name;
+            option.branchId = id;
+        } else if ("project".equals(type)) {
+            option.project = name;
+            option.projectId = firstNonEmpty(jsonString(node, "project_id"), id);
+            option.branchId = firstNonEmpty(option.branchId, jsonString(node, "branch_id"));
+        } else if ("grid".equals(type)) {
+            option.grid = name;
+            option.gridId = firstNonEmpty(jsonString(node, "grid_id"), id);
+            option.projectId = firstNonEmpty(option.projectId, jsonString(node, "project_id"));
+        } else if ("team".equals(type)) {
+            option.team = name;
+            option.teamId = firstNonEmpty(jsonString(node, "team_id"), id);
+            option.gridId = firstNonEmpty(option.gridId, jsonString(node, "grid_id"));
+            option.projectId = firstNonEmpty(option.projectId, jsonString(node, "project_id"));
+        }
+
+        if (isSelectableOrgType(type)) {
+            option.label = buildOrgLabel(option);
+            orgOptions.add(option);
+        }
+
+        JsonArray children = node.has("children") && node.get("children").isJsonArray()
+                ? node.getAsJsonArray("children")
+                : null;
+        if (children != null) {
+            for (JsonElement child : children) {
+                if (child != null && child.isJsonObject()) {
+                    collectOrganizationOptions(child.getAsJsonObject(), option);
+                }
+            }
+        }
+    }
+
+    private boolean isSelectableOrgType(String type) {
+        return "branch".equalsIgnoreCase(type)
+                || "company".equalsIgnoreCase(type)
+                || "project".equalsIgnoreCase(type)
+                || "grid".equalsIgnoreCase(type)
+                || "team".equalsIgnoreCase(type);
+    }
+
+    private String buildOrgLabel(OrgOption option) {
+        List<String> parts = new ArrayList<>();
+        addPart(parts, option.company);
+        addPart(parts, option.project);
+        addPart(parts, option.grid);
+        addPart(parts, option.team);
+        return TextUtils.join(" / ", parts);
+    }
+
+    private void addPart(List<String> parts, String value) {
+        if (!TextUtils.isEmpty(value) && !parts.contains(value.trim())) parts.add(value.trim());
+    }
+
+    private void rememberOrganizationName(JsonObject node, String name) {
+        if (TextUtils.isEmpty(name)) return;
+        String type = jsonString(node, "type").toLowerCase(Locale.ROOT);
+        List<String> keys = new ArrayList<>();
+        keys.add(jsonString(node, "id"));
+        keys.add(jsonString(node, "unit_id"));
+        if ("project".equals(type)) keys.add(jsonString(node, "project_id"));
+        if ("grid".equals(type)) keys.add(jsonString(node, "grid_id"));
+        if ("team".equals(type)) keys.add(jsonString(node, "team_id"));
+        for (String key : keys) {
+            if (TextUtils.isEmpty(key)) continue;
+            organizationNameById.put(key, name);
+            if (key.startsWith("synthetic-")) {
+                organizationNameById.put(key.substring("synthetic-".length()), name);
+            }
+        }
+    }
+
+    private LatLng parseNodePosition(JsonObject node) {
+        Double lat = jsonDouble(node, "latitude", "lat");
+        Double lng = jsonDouble(node, "longitude", "lng");
+        if (validCoordinate(lat, lng)) return new LatLng(lat, lng);
+
+        return parseNodeCenter(node);
+    }
+
+    private LatLng parseNodeCenter(JsonObject node) {
+        if (!node.has("center")) return null;
+        JsonElement centerElement = node.get("center");
+        try {
+            JsonArray center;
+            if (centerElement.isJsonArray()) {
+                center = centerElement.getAsJsonArray();
+            } else if (centerElement.isJsonPrimitive()) {
+                center = JsonParser.parseString(centerElement.getAsString()).getAsJsonArray();
+            } else {
+                return null;
+            }
+            if (center.size() < 2) return null;
+            double first = center.get(0).getAsDouble();
+            double second = center.get(1).getAsDouble();
+            if (validCoordinate(first, second)) return new LatLng(first, second);
+            if (validCoordinate(second, first)) return new LatLng(second, first);
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static boolean validCoordinate(Double lat, Double lng) {
+        return lat != null && lng != null
+                && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+                && !(lat == 0 && lng == 0);
+    }
+
+    private static Double jsonDouble(JsonObject object, String... keys) {
+        for (String key : keys) {
+            try {
+                if (object.has(key) && !object.get(key).isJsonNull()) {
+                    return object.get(key).getAsDouble();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static String jsonString(JsonObject object, String key) {
+        try {
+            return object.has(key) && !object.get(key).isJsonNull()
+                    ? object.get(key).getAsString().trim() : "";
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String organizationTypeName(String type) {
+        if ("branch".equalsIgnoreCase(type)) return "公司";
+        if ("project".equalsIgnoreCase(type)) return "项目";
+        if ("grid".equalsIgnoreCase(type)) return "网格";
+        if ("team".equalsIgnoreCase(type)) return "作业队";
+        return "单位";
+    }
+
     // -------------------------
     // Backend
     // -------------------------
@@ -832,7 +1552,7 @@ public class FenceCenterActivity extends AppCompatActivity {
                 for (JsonElement e : resp.body()) {
                     if (e != null && e.isJsonObject()) fences.add(UiFence.fromJson(e.getAsJsonObject()));
                 }
-                fenceAdapter.notifyDataSetChanged();
+                fenceAdapter.rebuild();
                 redrawAll();
             }
 
@@ -856,6 +1576,32 @@ public class FenceCenterActivity extends AppCompatActivity {
             @Override public void onFailure(@NonNull Call<JsonArray> call, @NonNull Throwable t) {}
         });
 
+        api.getResponsibilityTree().enqueue(new Callback<JsonArray>() {
+            @Override
+            public void onResponse(@NonNull Call<JsonArray> call, @NonNull Response<JsonArray> resp) {
+                        if (!resp.isSuccessful() || resp.body() == null) return;
+                        OrgOption previousSelection = selectedOrg;
+                        organizationTargets.clear();
+                        organizationNameById.clear();
+                        orgOptions.clear();
+                        for (JsonElement element : resp.body()) {
+                            if (element != null && element.isJsonObject()) {
+                                JsonObject node = element.getAsJsonObject();
+                                collectOrganizationTargets(node, "");
+                                collectOrganizationOptions(node, null);
+                            }
+                        }
+                        selectedOrg = findMatchingOrgOption(previousSelection);
+                        updateSelectedOrgText();
+                        fenceAdapter.rebuild();
+                    }
+
+            @Override
+            public void onFailure(@NonNull Call<JsonArray> call, @NonNull Throwable t) {
+                android.util.Log.w("FenceCenter", "Failed to load organization search data", t);
+            }
+        });
+
         // 加载设备数据
         deviceRepo.loadDevices(new DeviceRepository.DataCallback<List<DeviceItem>>() {
             @Override
@@ -863,6 +1609,7 @@ public class FenceCenterActivity extends AppCompatActivity {
                 devices.clear();
                 devices.addAll(data);
                 redrawAll();
+                refreshActiveSearch();
             }
 
             @Override
@@ -971,10 +1718,23 @@ public class FenceCenterActivity extends AppCompatActivity {
         draft.shapeType = isCircleMode() ? "CIRCLE" : "POLYGON";
         draft.ruleType = getBehaviorFromSpinner();
         draft.enabled = swEnable != null && swEnable.isChecked();
+        if (selectedOrg == null && editMode && editingOrigin != null) {
+            selectedOrg = findOrgOptionForFence(editingOrigin);
+            updateSelectedOrgText();
+        }
+        if (selectedOrg == null) {
+            toast("请选择所属单位");
+            return;
+        }
+        applyOrgToFence(draft, selectedOrg);
+        draft.effectiveTime = getEffectiveTimeFromUi();
+        if (draft.effectiveTime == null) {
+            toast("生效时间格式不正确");
+            return;
+        }
 
         if (editMode && editingOrigin != null) {
             draft.level = editingOrigin.level;
-            draft.effectiveTime = editingOrigin.effectiveTime;
             draft.remark = editingOrigin.remark;
         }
 
@@ -1093,7 +1853,7 @@ public class FenceCenterActivity extends AppCompatActivity {
 
         boolean old = fence.enabled != null && fence.enabled;
         fence.enabled = newEnabled;
-        fenceAdapter.notifyDataSetChanged();
+        fenceAdapter.rebuild();
         redrawAll();
 
         // 用当�?fence 生成 update body（字段不丢）
@@ -1108,7 +1868,7 @@ public class FenceCenterActivity extends AppCompatActivity {
             public void onResponse(@NonNull Call<JsonObject> call, @NonNull Response<JsonObject> resp) {
                 if (!resp.isSuccessful()) {
                     fence.enabled = old; // 回滚
-                    fenceAdapter.notifyDataSetChanged();
+                    fenceAdapter.rebuild();
                     redrawAll();
                     toast("启用状态更新失败 HTTP " + resp.code());
                     return;
@@ -1119,7 +1879,7 @@ public class FenceCenterActivity extends AppCompatActivity {
             @Override
             public void onFailure(@NonNull Call<JsonObject> call, @NonNull Throwable t) {
                 fence.enabled = old; // 回滚
-                fenceAdapter.notifyDataSetChanged();
+                fenceAdapter.rebuild();
                 redrawAll();
                 toast("启用状态更新失败 " + (t == null ? "unknown" : t.getMessage()));
             }
@@ -1131,14 +1891,43 @@ public class FenceCenterActivity extends AppCompatActivity {
     // -------------------------
     private void showFenceActions(UiFence f) {
         if (f == null) return;
-        String[] items = new String[]{"定位到地图", "编辑", "删除"};
+        String[] items = new String[]{"查看详情", "定位到地图", "编辑", "删除"};
         new AlertDialog.Builder(this)
                 .setTitle(f.name == null ? "围栏" : f.name)
                 .setItems(items, (d, which) -> {
-                    if (which == 0) focusFenceOnMap(f);
-                    else if (which == 1) enterEditMode(f);
-                    else if (which == 2) confirmDeleteFence(f);
+                    if (which == 0) showFenceDetail(f);
+                    else if (which == 1) focusFenceOnMap(f);
+                    else if (which == 2) enterEditMode(f);
+                    else if (which == 3) confirmDeleteFence(f);
                 })
+                .show();
+    }
+
+    private void showFenceDetail(@NonNull UiFence f) {
+        String shapeText = "POLYGON".equalsIgnoreCase(f.shapeType) ? "多边形" : "圆形";
+        String behaviorText = BEHAVIOR_NO_EXIT.equalsIgnoreCase(f.ruleType)
+                ? "禁出 (No Exit)"
+                : "禁入 (No Entry)";
+        String effectiveTime = normalizeEffectiveTime(f.effectiveTime);
+        if (effectiveTime == null) effectiveTime = "00:00-23:59";
+        String validityStart = formatValidityDateTime(f.scheduleStart);
+        String validityEnd = formatValidityDateTime(f.scheduleEnd);
+
+        StringBuilder detail = new StringBuilder()
+                .append("形状：").append(shapeText).append('\n')
+                .append("触发行为：").append(behaviorText).append('\n')
+                .append("有效期开始：").append(validityStart).append('\n')
+                .append("有效期结束：").append(validityEnd).append('\n')
+                .append("每日生效时段：").append(effectiveTime).append('\n')
+                .append("状态：").append(f.enabled == null || f.enabled ? "启用" : "停用");
+        if (!TextUtils.isEmpty(f.remark)) {
+            detail.append('\n').append("备注：").append(f.remark);
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(TextUtils.isEmpty(f.name) ? "围栏详情" : f.name)
+                .setMessage(detail.toString())
+                .setPositiveButton("确定", null)
                 .show();
     }
 
@@ -1347,7 +2136,7 @@ public class FenceCenterActivity extends AppCompatActivity {
         rvDevice.setVisibility(View.GONE);
         btnTabFence.setEnabled(false);
         btnTabDevice.setEnabled(true);
-        fenceAdapter.notifyDataSetChanged();
+        fenceAdapter.rebuild();
     }
 
     private void showDeviceList() {
@@ -1544,6 +2333,242 @@ public class FenceCenterActivity extends AppCompatActivity {
     // -------------------------
     // �?新的列表 Adapter（使�?item_fence.xml�?
     // -------------------------
+    static class FenceTreeAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+        private static final int TYPE_GROUP = 1;
+        private static final int TYPE_FENCE = 2;
+
+        interface OnClick { void onClick(UiFence f); }
+        interface OnToggle { void onToggle(UiFence f, boolean newEnabled); }
+        interface OnLong { void onLong(UiFence f); }
+
+        private final List<UiFence> source;
+        private final Map<String, String> organizationNameById;
+        private final OnClick onClick;
+        private final OnToggle onToggle;
+        private final OnLong onLong;
+        private final List<TreeRow> rows = new ArrayList<>();
+        private final Set<String> collapsedGroups = new LinkedHashSet<>();
+
+        FenceTreeAdapter(
+                List<UiFence> source,
+                Map<String, String> organizationNameById,
+                OnClick onClick,
+                OnToggle onToggle,
+                OnLong onLong
+        ) {
+            this.source = source;
+            this.organizationNameById = organizationNameById;
+            this.onClick = onClick;
+            this.onToggle = onToggle;
+            this.onLong = onLong;
+            rebuild();
+        }
+
+        void rebuild() {
+            GroupNode root = new GroupNode("", "", -1);
+            if (source != null) {
+                for (UiFence fence : source) {
+                    if (fence == null) continue;
+                    GroupNode parent = child(root, safeName(fence.company, "未分配公司"), "company", 0);
+                    if (!TextUtils.isEmpty(fence.project) || !TextUtils.isEmpty(fence.projectId)) {
+                        parent = child(parent, organizationName(fence.project, fence.projectId, "未分配项目"), "project", 1);
+                    }
+                    if (!TextUtils.isEmpty(fence.grid) || !TextUtils.isEmpty(fence.gridId)) {
+                        parent = child(parent, organizationName(fence.grid, fence.gridId, "未分配网格"), "grid", 2);
+                    }
+                    if (!TextUtils.isEmpty(fence.team) || !TextUtils.isEmpty(fence.teamId)) {
+                        parent = child(parent, organizationName(fence.team, fence.teamId, "未分配工队"), "team", 3);
+                    }
+                    parent.fences.add(fence);
+                }
+            }
+
+            rows.clear();
+            for (GroupNode company : root.children.values()) appendNode(company);
+            notifyDataSetChanged();
+        }
+
+        private GroupNode child(GroupNode parent, String name, String type, int depth) {
+            String key = parent.key + "/" + type + ":" + name;
+            GroupNode existing = parent.children.get(key);
+            if (existing != null) return existing;
+            GroupNode created = new GroupNode(key, name, depth);
+            created.type = type;
+            parent.children.put(key, created);
+            return created;
+        }
+
+        private void appendNode(GroupNode node) {
+            rows.add(TreeRow.group(node));
+            if (collapsedGroups.contains(node.key)) return;
+            for (UiFence fence : node.fences) rows.add(TreeRow.fence(fence, node.depth + 1));
+            for (GroupNode child : node.children.values()) appendNode(child);
+        }
+
+        private static String safeName(String value, String fallback) {
+            return TextUtils.isEmpty(value) ? fallback : value.trim();
+        }
+
+        private String organizationName(String explicitName, String id, String fallback) {
+            if (!TextUtils.isEmpty(explicitName)) return explicitName.trim();
+            if (!TextUtils.isEmpty(id) && organizationNameById != null) {
+                String mapped = organizationNameById.get(id.trim());
+                if (!TextUtils.isEmpty(mapped)) return mapped.trim();
+            }
+            return fallback;
+        }
+
+        private static int countFences(GroupNode node) {
+            int count = node.fences.size();
+            for (GroupNode child : node.children.values()) count += countFences(child);
+            return count;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return rows.get(position).group == null ? TYPE_FENCE : TYPE_GROUP;
+        }
+
+        @NonNull
+        @Override
+        public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            LayoutInflater inflater = LayoutInflater.from(parent.getContext());
+            if (viewType == TYPE_GROUP) {
+                return new GroupVH(inflater.inflate(R.layout.item_fence_group, parent, false));
+            }
+            return new FenceVH(inflater.inflate(R.layout.item_fence, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+            TreeRow row = rows.get(position);
+            if (holder instanceof GroupVH) bindGroup((GroupVH) holder, row.group);
+            else bindFence((FenceVH) holder, row.fence, row.depth);
+        }
+
+        private void bindGroup(GroupVH holder, GroupNode node) {
+            int start = dp(holder.itemView, 10 + node.depth * 16);
+            holder.itemView.setPadding(start, holder.itemView.getPaddingTop(),
+                    holder.itemView.getPaddingRight(), holder.itemView.getPaddingBottom());
+            holder.name.setText(node.name);
+            holder.count.setText(String.valueOf(countFences(node)));
+            holder.icon.setText("company".equals(node.type) ? "企"
+                    : "project".equals(node.type) ? "项"
+                    : "grid".equals(node.type) ? "网" : "队");
+            holder.arrow.setText(collapsedGroups.contains(node.key) ? "›" : "⌄");
+            holder.itemView.setOnClickListener(v -> {
+                if (!collapsedGroups.add(node.key)) collapsedGroups.remove(node.key);
+                rebuild();
+            });
+        }
+
+        private void bindFence(FenceVH holder, UiFence fence, int depth) {
+            RecyclerView.LayoutParams params = (RecyclerView.LayoutParams) holder.itemView.getLayoutParams();
+            params.setMarginStart(dp(holder.itemView, 10 + depth * 16));
+            params.setMarginEnd(0);
+            holder.itemView.setLayoutParams(params);
+
+            holder.name.setText(TextUtils.isEmpty(fence.name) ? "未命名围栏" : fence.name.trim());
+            String behavior = BEHAVIOR_NO_EXIT.equalsIgnoreCase(fence.ruleType) ? "禁出" : "禁入";
+            String effectiveTime = normalizeEffectiveTime(fence.effectiveTime);
+            if (effectiveTime == null) effectiveTime = "00:00-23:59";
+            String shape;
+            if ("POLYGON".equalsIgnoreCase(fence.shapeType)) {
+                shape = String.format(Locale.CHINA, "多边形 · 点数 %d", fence.points == null ? 0 : fence.points.size());
+            } else {
+                shape = String.format(Locale.CHINA, "圆形 · 半径 %.0fm",
+                        fence.radiusMeters == null ? 50.0 : fence.radiusMeters);
+            }
+            holder.desc.setText(shape + " · " + behavior + "\n每日生效时段 " + effectiveTime);
+
+            holder.enable.setOnCheckedChangeListener(null);
+            holder.enable.setChecked(fence.enabled == null || fence.enabled);
+            holder.enable.setOnCheckedChangeListener((buttonView, checked) -> {
+                if (onToggle != null) onToggle.onToggle(fence, checked);
+            });
+            holder.itemView.setOnClickListener(v -> {
+                if (onClick != null) onClick.onClick(fence);
+            });
+            holder.arrow.setOnClickListener(v -> {
+                if (onClick != null) onClick.onClick(fence);
+            });
+            holder.itemView.setOnLongClickListener(v -> {
+                if (onLong != null) onLong.onLong(fence);
+                return true;
+            });
+        }
+
+        private static int dp(View view, int value) {
+            return Math.round(value * view.getResources().getDisplayMetrics().density);
+        }
+
+        @Override public int getItemCount() { return rows.size(); }
+
+        static class GroupNode {
+            final String key;
+            final String name;
+            final int depth;
+            String type;
+            final Map<String, GroupNode> children = new LinkedHashMap<>();
+            final List<UiFence> fences = new ArrayList<>();
+
+            GroupNode(String key, String name, int depth) {
+                this.key = key;
+                this.name = name;
+                this.depth = depth;
+            }
+        }
+
+        static class TreeRow {
+            GroupNode group;
+            UiFence fence;
+            int depth;
+
+            static TreeRow group(GroupNode group) {
+                TreeRow row = new TreeRow();
+                row.group = group;
+                return row;
+            }
+
+            static TreeRow fence(UiFence fence, int depth) {
+                TreeRow row = new TreeRow();
+                row.fence = fence;
+                row.depth = depth;
+                return row;
+            }
+        }
+
+        static class GroupVH extends RecyclerView.ViewHolder {
+            final TextView icon;
+            final TextView name;
+            final TextView count;
+            final TextView arrow;
+
+            GroupVH(@NonNull View itemView) {
+                super(itemView);
+                icon = itemView.findViewById(R.id.tv_group_icon);
+                name = itemView.findViewById(R.id.tv_group_name);
+                count = itemView.findViewById(R.id.tv_group_count);
+                arrow = itemView.findViewById(R.id.tv_group_arrow);
+            }
+        }
+
+        static class FenceVH extends RecyclerView.ViewHolder {
+            final TextView name;
+            final TextView desc;
+            final SwitchCompat enable;
+            final ImageView arrow;
+
+            FenceVH(@NonNull View itemView) {
+                super(itemView);
+                name = itemView.findViewById(R.id.tv_fence_name);
+                desc = itemView.findViewById(R.id.tv_fence_desc);
+                enable = itemView.findViewById(R.id.sw_fence_enable);
+                arrow = itemView.findViewById(R.id.iv_arrow);
+            }
+        }
+    }
+
     static class FenceListAdapter extends RecyclerView.Adapter<FenceListAdapter.VH> {
 
         interface OnClick { void onClick(UiFence f); }
@@ -1581,12 +2606,16 @@ public class FenceCenterActivity extends AppCompatActivity {
             String shapeText = "POLYGON".equalsIgnoreCase(f.shapeType) ? "多边形" : "圆形";
 
             String desc;
+            String effectiveTime = normalizeEffectiveTime(f.effectiveTime);
+            if (effectiveTime == null) effectiveTime = "00:00-23:59";
             if ("POLYGON".equalsIgnoreCase(f.shapeType)) {
                 int n = (f.points == null) ? 0 : f.points.size();
-                desc = String.format(Locale.CHINA, "%s · 点数 %d · %s", shapeText, n, behText);
+                desc = String.format(Locale.CHINA, "%s · 点数 %d · %s%n每日生效时段 %s",
+                        shapeText, n, behText, effectiveTime);
             } else {
                 double r = (f.radiusMeters == null) ? 50.0 : f.radiusMeters;
-                desc = String.format(Locale.CHINA, "%s · 半径 %.0fm · %s", shapeText, r, behText);
+                desc = String.format(Locale.CHINA, "%s · 半径 %.0fm · %s%n每日生效时段 %s",
+                        shapeText, r, behText, effectiveTime);
             }
             h.tvDesc.setText(desc);
 
@@ -1629,8 +2658,16 @@ public class FenceCenterActivity extends AppCompatActivity {
     // UI models + 坐标兼容（关键：coordinates_json 默认�?[lng,lat] 解析/生成�?
     // -------------------------
     static class UiFence {
-        Integer id;
+        String id;
         String name;
+        String company;
+        String project;
+        String grid;
+        String team;
+        String branchId;
+        String projectId;
+        String gridId;
+        String teamId;
 
         String shapeType; // "CIRCLE" | "POLYGON"
 
@@ -1648,6 +2685,8 @@ public class FenceCenterActivity extends AppCompatActivity {
         Integer regionId;      // project_region_id
 
         String effectiveTime;  // effective_time
+        String scheduleStart;  // schedule.start
+        String scheduleEnd;    // schedule.end
         String remark;         // remark
 
         Integer violationCount = 0;
@@ -1659,15 +2698,20 @@ public class FenceCenterActivity extends AppCompatActivity {
                 return f;
             }
 
-            // 后端返回�?id 是字符串
-            f.id = optIntNullable(o, "id");
-            if (f.id == null) {
-                String idStr = optString(o, "id");
-                if (idStr != null) {
-                    try { f.id = Integer.parseInt(idStr); } catch (Exception ignored) {}
-                }
-            }
+            f.id = firstNonEmpty(
+                    optString(o, "id"),
+                    optString(o, "fence_id"),
+                    optString(o, "_id")
+            );
             f.name = optString(o, "name");
+            f.company = firstNonEmpty(optString(o, "company"), optString(o, "department"));
+            f.project = firstNonEmpty(optString(o, "project"), optString(o, "project_name"));
+            f.grid = firstNonEmpty(optString(o, "grid"), optString(o, "grid_name"));
+            f.team = firstNonEmpty(optString(o, "team"), optString(o, "team_name"), optString(o, "workTeam"));
+            f.branchId = firstNonEmpty(optString(o, "branch_id"), optString(o, "branchId"));
+            f.projectId = firstNonEmpty(optString(o, "project_id"), optString(o, "projectId"));
+            f.gridId = firstNonEmpty(optString(o, "grid_id"), optString(o, "gridId"));
+            f.teamId = firstNonEmpty(optString(o, "team_id"), optString(o, "teamId"));
 
             // 后端返回 type 字段�?Circle" | "Polygon"）或 shape 字段
             String shape = optString(o, "shape");
@@ -1743,18 +2787,20 @@ public class FenceCenterActivity extends AppCompatActivity {
                 f.level = optString(o, "alarm_type");
             }
             f.enabled = optBoolNullable(o, "is_active");
-            // 解析 schedule 对象
             JsonObject sched = optJsonObject(o, "schedule");
             if (sched != null) {
-                String start = optString(sched, "start");
-                String end = optString(sched, "end");
-                if (start != null && end != null) {
-                    f.effectiveTime = start + "-" + end;
+                f.scheduleStart = optString(sched, "start");
+                f.scheduleEnd = optString(sched, "end");
+            }
+            f.effectiveTime = normalizeEffectiveTime(optString(o, "effective_time"));
+            if (f.effectiveTime == null) {
+                if (sched != null) {
+                    String start = optString(sched, "start");
+                    String end = optString(sched, "end");
+                    f.effectiveTime = normalizeEffectiveTime(start + "-" + end);
                 }
             }
-            if (f.effectiveTime == null) {
-                f.effectiveTime = optString(o, "effective_time");
-            }
+            if (f.effectiveTime == null) f.effectiveTime = "00:00-23:59";
             f.remark = optString(o, "remark");
 
             return f;
@@ -1775,6 +2821,14 @@ public class FenceCenterActivity extends AppCompatActivity {
 
             body.addProperty("name", (name == null || name.trim().isEmpty()) ? "未命名围栏" : name.trim());
             body.addProperty("project_region_id", (regionId != null) ? regionId : (Integer) null);
+            addStringProperty(body, "company", company);
+            addStringProperty(body, "project", project);
+            addStringProperty(body, "grid", grid);
+            addStringProperty(body, "team", team);
+            addStringProperty(body, "branch_id", branchId);
+            addStringProperty(body, "project_id", projectId);
+            addStringProperty(body, "grid_id", gridId);
+            addStringProperty(body, "team_id", teamId);
 
             String shape = (shapeType == null) ? "circle" : shapeType.toLowerCase();
             body.addProperty("shape", shape);
@@ -1827,6 +2881,11 @@ public class FenceCenterActivity extends AppCompatActivity {
         public JsonObject buildFenceCreateBody() {
             // �?toCreateBody() 保持一致，使用后端 POST /fence/ 新格�?
             return toCreateBody();
+        }
+
+        private static void addStringProperty(JsonObject body, String key, String value) {
+            if (body == null || TextUtils.isEmpty(value)) return;
+            body.addProperty(key, value.trim());
         }
 
         private static String buildPolygonCoordinatesJsonLngLat(List<double[]> pts) {
@@ -1912,6 +2971,52 @@ public class FenceCenterActivity extends AppCompatActivity {
     private static String optString(JsonObject o, String key) {
         if (o == null || !o.has(key) || o.get(key).isJsonNull()) return null;
         try { return o.get(key).getAsString(); } catch (Exception e) { return null; }
+    }
+
+    private static String firstNonEmpty(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty() && !"null".equalsIgnoreCase(value.trim())) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static String normalizeEffectiveTime(String value) {
+        if (value == null) return null;
+        String[] parts = value.trim().replace('.', ':').split("-", 2);
+        if (parts.length != 2) return null;
+        int[] start = parseTimePart(parts[0]);
+        int[] end = parseTimePart(parts[1]);
+        if (start == null || end == null) return null;
+        return String.format(Locale.CHINA, "%02d:%02d-%02d:%02d",
+                start[0], start[1], end[0], end[1]);
+    }
+
+    @Nullable
+    private static int[] parseTimePart(String value) {
+        if (value == null) return null;
+        String[] parts = value.trim().replace('.', ':').split(":", 2);
+        if (parts.length != 2) return null;
+        try {
+            int hour = Integer.parseInt(parts[0]);
+            int minute = Integer.parseInt(parts[1]);
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+            return new int[]{hour, minute};
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static String formatValidityDateTime(String value) {
+        if (value == null || value.trim().isEmpty()) return "永久";
+        String text = value.trim().replace('T', ' ');
+        int timezoneIndex = Math.max(text.indexOf('Z'), Math.max(text.indexOf('+', 10), text.indexOf('-', 10)));
+        if (timezoneIndex > 0) text = text.substring(0, timezoneIndex);
+        if (text.length() >= 16) return text.substring(0, 16);
+        return text;
     }
 
     private static Integer optIntNullable(JsonObject o, String key) {

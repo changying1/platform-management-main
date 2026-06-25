@@ -4,13 +4,14 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -23,6 +24,8 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.amap.api.maps.AMap;
 import com.amap.api.maps.CameraUpdateFactory;
@@ -40,13 +43,15 @@ import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.TrackApi;
 import com.app.myapplication.data.model.TrajectoryPoint;
 import com.app.myapplication.data.model.TrackDevice;
-import com.app.myapplication.data.model.TrackDeviceListResponse;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -57,9 +62,12 @@ public class TrackPlaybackFragment extends Fragment {
     private MapView mapView;
     private AMap aMap;
     private Spinner spinnerDevice;
-    private Spinner spinnerTimeRange;
     private Spinner spinnerSpeed;
     private Button btnLoadTrack;
+    private Button btnStartTime;
+    private Button btnEndTime;
+    private Button btnSortOrder;
+    private Button btnClearTimeFilter;
     private ImageButton btnPlayPause;
     private ImageButton btnFirst;
     private ImageButton btnPrev;
@@ -75,12 +83,21 @@ public class TrackPlaybackFragment extends Fragment {
     private TextView tvCurrentTime;
     private TextView tvEndTime;
     private TextView tvCurrentSpeed;
-    private TextView tvTimeRange;
+    private TextView tvTrackRecordStatus;
     private LinearLayout layoutTrackInfo;
+    private View layoutPlaybackMap;
+    private View layoutPlaybackControls;
+    private RecyclerView rvTrackRecords;
 
     private TrackApi trackApi;
     private List<TrackDevice> deviceList = new ArrayList<>();
     private List<TrajectoryPoint> trackPoints = new ArrayList<>();
+    private List<TrackRecordItem> trackRecords = new ArrayList<>();
+    private TrackRecordAdapter trackRecordAdapter;
+    private boolean isLoadingTrackSummaries = false;
+    private Calendar startFilter;
+    private Calendar endFilter;
+    private boolean sortAsc = false;
 
     private Polyline trackPolyline;
     private Marker startMarker;
@@ -90,13 +107,11 @@ public class TrackPlaybackFragment extends Fragment {
     private int currentPointIndex = 0;
     private boolean isPlaying = false;
     private double playSpeed = 1.0;
-    private int timeRangeHours = 24;
+    private int timeRangeHours = 168;
 
     private Handler playHandler = new Handler(Looper.getMainLooper());
     private Runnable playRunnable;
 
-    private static final int[] TIME_RANGES = {6, 12, 24, 48, 72, 168, -1};
-    private static final String[] TIME_RANGE_LABELS = {"6小时", "12小时", "24小时", "48小时", "72小时", "7天", "自定义"};
     private static final double[] SPEEDS = {0.5, 1, 2, 4, 8, 16, 32};
     private static final String[] SPEED_LABELS = {"0.5x", "1x", "2x", "4x", "8x", "16x", "32x"};
 
@@ -112,8 +127,8 @@ public class TrackPlaybackFragment extends Fragment {
         initViews(view);
         initMap(view, savedInstanceState);
         initSpinners();
+        initTrackRecordList();
         initListeners();
-        loadDevices();
 
         return view;
     }
@@ -121,9 +136,12 @@ public class TrackPlaybackFragment extends Fragment {
     private void initViews(View view) {
         mapView = view.findViewById(R.id.mapView);
         spinnerDevice = view.findViewById(R.id.spinnerDevice);
-        spinnerTimeRange = view.findViewById(R.id.spinnerTimeRange);
         spinnerSpeed = view.findViewById(R.id.spinnerSpeed);
         btnLoadTrack = view.findViewById(R.id.btnLoadTrack);
+        btnStartTime = view.findViewById(R.id.btnStartTime);
+        btnEndTime = view.findViewById(R.id.btnEndTime);
+        btnSortOrder = view.findViewById(R.id.btnSortOrder);
+        btnClearTimeFilter = view.findViewById(R.id.btnClearTimeFilter);
         btnPlayPause = view.findViewById(R.id.btnPlayPause);
         btnFirst = view.findViewById(R.id.btnFirst);
         btnPrev = view.findViewById(R.id.btnPrev);
@@ -139,8 +157,12 @@ public class TrackPlaybackFragment extends Fragment {
         tvCurrentTime = view.findViewById(R.id.tvCurrentTime);
         tvEndTime = view.findViewById(R.id.tvEndTime);
         tvCurrentSpeed = view.findViewById(R.id.tvCurrentSpeed);
-        tvTimeRange = view.findViewById(R.id.tvTimeRange);
+        tvTrackRecordStatus = view.findViewById(R.id.tvTrackRecordStatus);
         layoutTrackInfo = view.findViewById(R.id.layoutTrackInfo);
+        layoutPlaybackMap = view.findViewById(R.id.layoutPlaybackMap);
+        layoutPlaybackControls = view.findViewById(R.id.layoutPlaybackControls);
+        rvTrackRecords = view.findViewById(R.id.rvTrackRecords);
+        setPlaybackAreaVisible(false);
     }
 
     private void initMap(View view, Bundle savedInstanceState) {
@@ -153,12 +175,6 @@ public class TrackPlaybackFragment extends Fragment {
     private void initSpinners() {
         if (getContext() == null) return;
 
-        ArrayAdapter<String> timeAdapter = new ArrayAdapter<>(getContext(),
-                android.R.layout.simple_spinner_item, TIME_RANGE_LABELS);
-        timeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerTimeRange.setAdapter(timeAdapter);
-        spinnerTimeRange.setSelection(2);
-
         ArrayAdapter<String> speedAdapter = new ArrayAdapter<>(getContext(),
                 android.R.layout.simple_spinner_item, SPEED_LABELS);
         speedAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -166,33 +182,47 @@ public class TrackPlaybackFragment extends Fragment {
         spinnerSpeed.setSelection(1);
     }
 
+    private void initTrackRecordList() {
+        if (getContext() == null) return;
+        trackRecordAdapter = new TrackRecordAdapter(trackRecords, this::loadTrackRecordPoints);
+        rvTrackRecords.setLayoutManager(new LinearLayoutManager(getContext()));
+        rvTrackRecords.setAdapter(trackRecordAdapter);
+    }
+
     private void initListeners() {
-        btnLoadTrack.setOnClickListener(v -> loadTrack());
-
-        spinnerTimeRange.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (TIME_RANGES[position] == -1) {
-                    // 自定义时间
-                    showCustomTimeDialog();
-                } else {
-                    timeRangeHours = TIME_RANGES[position];
-                    tvTimeRange.setText(TIME_RANGE_LABELS[position]);
-                }
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {}
+        btnLoadTrack.setOnClickListener(v -> loadTrackSummaries());
+        btnStartTime.setOnClickListener(v -> pickDateTime(startFilter, selected -> {
+            startFilter = selected;
+            updateTimeFilterButtons();
+            loadTrackSummaries();
+        }));
+        btnEndTime.setOnClickListener(v -> pickDateTime(endFilter, selected -> {
+            endFilter = selected;
+            updateTimeFilterButtons();
+            loadTrackSummaries();
+        }));
+        btnSortOrder.setOnClickListener(v -> {
+            sortAsc = !sortAsc;
+            updateTimeFilterButtons();
+            applyTrackRecordSort();
         });
+        btnClearTimeFilter.setOnClickListener(v -> {
+            startFilter = null;
+            endFilter = null;
+            updateTimeFilterButtons();
+            loadTrackSummaries();
+        });
+        updateTimeFilterButtons();
+        loadTrackSummaries();
 
-        spinnerSpeed.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        spinnerSpeed.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
                 playSpeed = SPEEDS[position];
             }
 
             @Override
-            public void onNothingSelected(AdapterView<?> parent) {}
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
 
         btnPlayPause.setOnClickListener(v -> togglePlay());
@@ -356,6 +386,7 @@ public class TrackPlaybackFragment extends Fragment {
 
         android.util.Log.d("TrackPlayback", "Displaying track with " + trackPoints.size() + " points");
 
+        setPlaybackAreaVisible(true);
         layoutTrackInfo.setVisibility(View.VISIBLE);
         tvDeviceInfo.setText(device.getDisplayHolder() + " - " +
                 (device.getName() != null ? device.getName() : device.getDeviceId()));
@@ -438,6 +469,7 @@ public class TrackPlaybackFragment extends Fragment {
         trackPoints.clear();
         currentPointIndex = 0;
         stopPlay();
+        setPlaybackAreaVisible(false);
     }
 
     private void clearMapOverlays() {
@@ -460,6 +492,16 @@ public class TrackPlaybackFragment extends Fragment {
         layoutTrackInfo.setVisibility(View.GONE);
         currentPointIndex = 0;
         stopPlay();
+    }
+
+    private void setPlaybackAreaVisible(boolean visible) {
+        int visibility = visible ? View.VISIBLE : View.GONE;
+        if (layoutPlaybackMap != null) {
+            layoutPlaybackMap.setVisibility(visibility);
+        }
+        if (layoutPlaybackControls != null) {
+            layoutPlaybackControls.setVisibility(visibility);
+        }
     }
 
     private BitmapDescriptor createTextMarker(String text, int bgColor) {
@@ -614,50 +656,356 @@ public class TrackPlaybackFragment extends Fragment {
         }
     }
 
-    private void showCustomTimeDialog() {
-        if (getContext() == null) return;
+    private void loadTrackSummaries() {
+        if (trackApi == null) return;
+        if (isLoadingTrackSummaries) return;
 
-        androidx.appcompat.app.AlertDialog.Builder builder = new androidx.appcompat.app.AlertDialog.Builder(getContext());
-        builder.setTitle("自定义时间范围");
+        isLoadingTrackSummaries = true;
+        btnLoadTrack.setEnabled(false);
+        btnLoadTrack.setText("刷新中...");
+        tvTrackRecordStatus.setText("正在加载轨迹记录...");
 
-        // 创建输入框
-        final android.widget.EditText input = new android.widget.EditText(getContext());
-        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        input.setHint("请输入天数 (至少1天)");
-        int currentDays = timeRangeHours / 24;
-        if (currentDays < 1) currentDays = 1;
-        input.setText(String.valueOf(currentDays));
+        trackApi.getTrajectorySummaries(timeRangeHours, toQueryTime(startFilter), toQueryTime(endFilter)).enqueue(new Callback<List<Map<String, Object>>>() {
+            @Override
+            public void onResponse(@NonNull Call<List<Map<String, Object>>> call,
+                                   @NonNull Response<List<Map<String, Object>>> response) {
+                btnLoadTrack.setEnabled(true);
+                btnLoadTrack.setText("刷新列表");
+                isLoadingTrackSummaries = false;
 
-        // 设置边距
-        int padding = (int) (16 * getResources().getDisplayMetrics().density);
-        input.setPadding(padding, padding, padding, padding);
-
-        builder.setView(input);
-
-        builder.setPositiveButton("确定", (dialog, which) -> {
-            String value = input.getText().toString().trim();
-            if (value.isEmpty()) {
-                showToast("请输入有效的天数");
-                return;
-            }
-            try {
-                int days = Integer.parseInt(value);
-                if (days < 1) {
-                    showToast("请输入至少1天");
-                    return;
+                if (response.isSuccessful() && response.body() != null) {
+                    trackRecords.clear();
+                    for (Map<String, Object> row : response.body()) {
+                        TrackRecordItem item = TrackRecordItem.from(row);
+                        if (item.deviceId != null && !item.deviceId.isEmpty()) {
+                            trackRecords.add(item);
+                        }
+                    }
+                    applyTrackRecordSort();
+                    if (trackRecordAdapter != null) {
+                        trackRecordAdapter.notifyDataSetChanged();
+                    }
+                    tvTrackRecordStatus.setText(trackRecords.isEmpty()
+                            ? "暂无轨迹记录"
+                            : "轨迹记录 " + trackRecords.size() + " 条（与网页端同接口/同权限）");
+                } else {
+                    tvTrackRecordStatus.setText("加载轨迹记录失败");
+                    showToast("加载轨迹记录失败");
                 }
-                timeRangeHours = days * 24;
-                tvTimeRange.setText(days + "天");
-            } catch (NumberFormatException e) {
-                showToast("请输入有效的数字");
+            }
+
+            @Override
+            public void onFailure(@NonNull Call<List<Map<String, Object>>> call,
+                                  @NonNull Throwable t) {
+                btnLoadTrack.setEnabled(true);
+                btnLoadTrack.setText("刷新列表");
+                isLoadingTrackSummaries = false;
+                tvTrackRecordStatus.setText("网络错误: " + t.getMessage());
+                showToast("网络错误: " + t.getMessage());
             }
         });
+    }
 
-        builder.setNegativeButton("取消", (dialog, which) -> {
-            dialog.cancel();
+    private void loadTrackRecordPoints(TrackRecordItem item) {
+        if (trackApi == null || item == null || item.deviceId == null || item.deviceId.isEmpty()) {
+            showToast("轨迹记录缺少设备ID");
+            return;
+        }
+
+        stopPlay();
+        tvTrackRecordStatus.setText("正在加载：" + item.getTitle());
+
+        trackApi.getTrajectoryPoints(
+                item.deviceId,
+                timeRangeHours,
+                firstNonEmpty(toQueryTime(startFilter), item.startTime),
+                firstNonEmpty(toQueryTime(endFilter), item.endTime)
+        )
+                .enqueue(new Callback<Map<String, Object>>() {
+                    @Override
+                    public void onResponse(@NonNull Call<Map<String, Object>> call,
+                                           @NonNull Response<Map<String, Object>> response) {
+                        if (response.isSuccessful() && response.body() != null) {
+                            List<TrajectoryPoint> points = extractTrajectoryPoints(response.body().get("points"));
+                            if (!points.isEmpty()) {
+                                trackPoints.clear();
+                                trackPoints.addAll(points);
+                                displayTrack(item.toTrackDevice());
+                                tvTrackRecordStatus.setText("正在回放：" + item.getTitle());
+                            } else {
+                                clearTrack();
+                                tvTrackRecordStatus.setText("该轨迹记录暂无点位");
+                                showToast("该轨迹记录暂无点位");
+                            }
+                        } else {
+                            tvTrackRecordStatus.setText("加载轨迹点失败");
+                            showToast("加载轨迹点失败");
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(@NonNull Call<Map<String, Object>> call,
+                                          @NonNull Throwable t) {
+                        tvTrackRecordStatus.setText("网络错误: " + t.getMessage());
+                        showToast("网络错误: " + t.getMessage());
+                    }
+                });
+    }
+
+    private List<TrajectoryPoint> extractTrajectoryPoints(Object raw) {
+        List<TrajectoryPoint> points = new ArrayList<>();
+        if (!(raw instanceof List<?>)) {
+            return points;
+        }
+        for (Object entry : (List<?>) raw) {
+            if (!(entry instanceof Map<?, ?>)) continue;
+            Map<?, ?> map = (Map<?, ?>) entry;
+            Double lat = asDouble(map.get("lat"));
+            Double lng = asDouble(map.get("lng"));
+            if (lat == null || lng == null) continue;
+            String timestamp = asString(firstNonNull(map.get("timestamp"), map.get("time")));
+            Double speed = asDouble(map.get("speed"));
+            Double direction = asDouble(map.get("direction"));
+            points.add(new TrajectoryPoint(lat, lng, timestamp, speed, direction));
+        }
+        return points;
+    }
+
+    private static Object firstNonNull(Object first, Object second) {
+        return first != null ? first : second;
+    }
+
+    private void applyTrackRecordSort() {
+        Collections.sort(trackRecords, (a, b) -> {
+            long left = parseMillis(a.startTime);
+            long right = parseMillis(b.startTime);
+            return sortAsc ? Long.compare(left, right) : Long.compare(right, left);
         });
+        if (trackRecordAdapter != null) {
+            trackRecordAdapter.notifyDataSetChanged();
+        }
+    }
 
-        builder.show();
+    private void updateTimeFilterButtons() {
+        if (btnStartTime == null) return;
+        btnStartTime.setText(startFilter == null ? "开始时间" : formatFilterButtonTime(startFilter));
+        btnEndTime.setText(endFilter == null ? "结束时间" : formatFilterButtonTime(endFilter));
+        btnSortOrder.setText(sortAsc ? "时间正序" : "时间倒序");
+    }
+
+    private void pickDateTime(Calendar initial, DateTimeCallback callback) {
+        Calendar base = initial == null ? Calendar.getInstance() : (Calendar) initial.clone();
+        new DatePickerDialog(requireContext(), (datePicker, year, month, day) -> {
+            Calendar picked = (Calendar) base.clone();
+            picked.set(Calendar.YEAR, year);
+            picked.set(Calendar.MONTH, month);
+            picked.set(Calendar.DAY_OF_MONTH, day);
+            new TimePickerDialog(requireContext(), (timePicker, hour, minute) -> {
+                picked.set(Calendar.HOUR_OF_DAY, hour);
+                picked.set(Calendar.MINUTE, minute);
+                picked.set(Calendar.SECOND, 0);
+                picked.set(Calendar.MILLISECOND, 0);
+                callback.onPicked(picked);
+            }, picked.get(Calendar.HOUR_OF_DAY), picked.get(Calendar.MINUTE), true).show();
+        }, base.get(Calendar.YEAR), base.get(Calendar.MONTH), base.get(Calendar.DAY_OF_MONTH)).show();
+    }
+
+    private static String toQueryTime(Calendar value) {
+        if (value == null) return null;
+        return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(value.getTime());
+    }
+
+    private static String formatFilterButtonTime(Calendar value) {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(value.getTime());
+    }
+
+    private static String firstNonEmpty(String first, String second) {
+        return first != null && !first.trim().isEmpty() ? first : second;
+    }
+
+    private static long parseMillis(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return 0;
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss"
+        };
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
+                if (date != null) return date.getTime();
+            } catch (Exception ignored) {}
+        }
+        return 0;
+    }
+
+    private interface DateTimeCallback {
+        void onPicked(Calendar calendar);
+    }
+
+    private static String asString(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static Double asDouble(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static class TrackRecordItem {
+        String deviceId;
+        String deviceName;
+        String holder;
+        String project;
+        String team;
+        String company;
+        String startTime;
+        String endTime;
+        String startCoordinate;
+        int pointCount;
+
+        static TrackRecordItem from(Map<String, Object> row) {
+            TrackRecordItem item = new TrackRecordItem();
+            item.deviceId = asString(row.get("device_id"));
+            item.deviceName = pickText(row, "name", "device_name", "deviceId");
+            item.holder = pickText(row, "holder", "person_name", "personName");
+            item.project = pickText(row, "project", "project_name");
+            item.team = pickText(row, "team", "team_name", "grid", "grid_name");
+            item.company = pickText(row, "company", "branch_name");
+            item.startTime = pickText(row, "start_time", "startTime");
+            item.endTime = pickText(row, "end_time", "endTime");
+            Object coordinate = firstNonNull(row.get("start_coordinate"), row.get("startCoordinate"));
+            if (coordinate == null) {
+                Double lat = asDouble(firstNonNull(row.get("start_lat"), row.get("lat")));
+                Double lng = asDouble(firstNonNull(row.get("start_lng"), row.get("lng")));
+                item.startCoordinate = lat != null && lng != null
+                        ? String.format(Locale.getDefault(), "%.5f, %.5f", lat, lng)
+                        : "-";
+            } else {
+                item.startCoordinate = asString(coordinate);
+            }
+            Double count = asDouble(firstNonNull(row.get("point_count"), row.get("count")));
+            item.pointCount = count == null ? 0 : count.intValue();
+            return item;
+        }
+
+        TrackDevice toTrackDevice() {
+            TrackDevice device = new TrackDevice();
+            device.setDeviceId(deviceId);
+            device.setName(deviceName);
+            device.setHolder(holder);
+            device.setCompany(company);
+            device.setProject(project);
+            device.setTeam(team);
+            device.setTrajectory(new ArrayList<>());
+            return device;
+        }
+
+        String getTitle() {
+            if (holder != null && !holder.isEmpty() && !"null".equals(holder)) {
+                return holder;
+            }
+            if (deviceName != null && !deviceName.isEmpty() && !"null".equals(deviceName)) {
+                return deviceName;
+            }
+            return deviceId;
+        }
+
+        String getDeviceLine() {
+            return (deviceName == null || deviceName.isEmpty() ? deviceId : deviceName)
+                    + " / " + deviceId
+                    + (pointCount > 0 ? " / " + pointCount + "个轨迹点" : "");
+        }
+
+        String getMetaLine() {
+            List<String> parts = new ArrayList<>();
+            if (startCoordinate != null && !startCoordinate.isEmpty() && !"-".equals(startCoordinate)) {
+                parts.add("起点 " + startCoordinate);
+            }
+            if (project != null && !project.isEmpty() && !"null".equals(project)) {
+                parts.add(project);
+            }
+            if (team != null && !team.isEmpty() && !"null".equals(team)) {
+                parts.add(team);
+            }
+            if (startTime != null && !startTime.isEmpty() && !"null".equals(startTime)) {
+                parts.add(startTime + (endTime != null && !endTime.isEmpty() && !"null".equals(endTime) ? " 至 " + endTime : ""));
+            }
+            return parts.isEmpty() ? "暂无轨迹描述" : android.text.TextUtils.join(" · ", parts);
+        }
+
+        private static String pickText(Map<String, Object> row, String... keys) {
+            for (String key : keys) {
+                Object value = row.get(key);
+                if (value != null) {
+                    String text = String.valueOf(value);
+                    if (!text.isEmpty() && !"null".equals(text)) return text;
+                }
+            }
+            return "";
+        }
+    }
+
+    private static class TrackRecordAdapter extends RecyclerView.Adapter<TrackRecordAdapter.ViewHolder> {
+        interface OnTrackClickListener {
+            void onClick(TrackRecordItem item);
+        }
+
+        private final List<TrackRecordItem> data;
+        private final OnTrackClickListener listener;
+
+        TrackRecordAdapter(List<TrackRecordItem> data, OnTrackClickListener listener) {
+            this.data = data;
+            this.listener = listener;
+        }
+
+        @NonNull
+        @Override
+        public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            View view = LayoutInflater.from(parent.getContext())
+                    .inflate(R.layout.item_track_record, parent, false);
+            return new ViewHolder(view);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            TrackRecordItem item = data.get(position);
+            holder.tvTitle.setText(item.getTitle());
+            holder.tvDevice.setText(item.getDeviceLine());
+            holder.tvMeta.setText(item.getMetaLine());
+            holder.itemView.setOnClickListener(v -> listener.onClick(item));
+            holder.tvAction.setOnClickListener(v -> listener.onClick(item));
+        }
+
+        @Override
+        public int getItemCount() {
+            return data.size();
+        }
+
+        static class ViewHolder extends RecyclerView.ViewHolder {
+            TextView tvTitle;
+            TextView tvDevice;
+            TextView tvMeta;
+            TextView tvAction;
+
+            ViewHolder(@NonNull View itemView) {
+                super(itemView);
+                tvTitle = itemView.findViewById(R.id.tvTrackTitle);
+                tvDevice = itemView.findViewById(R.id.tvTrackDevice);
+                tvMeta = itemView.findViewById(R.id.tvTrackMeta);
+                tvAction = itemView.findViewById(R.id.tvTrackAction);
+            }
+        }
     }
 
     @Override

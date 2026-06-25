@@ -19,6 +19,9 @@ public interface AlarmApi {
     @GET("/alarms/")
     Call<List<Alarm>> getAlarms();
 
+    @GET("/alarms/")
+    Call<List<Alarm>> getAlarmsLimited(@Query("limit") int limit);
+
     // 根据项目ID获取报警记录
     @GET("/alarms/")
     Call<List<Alarm>> getAlarmsByProject(@Query("project_id") long projectId);

@@ -245,6 +245,7 @@ const normalizeHistoricalFence = (snapshot: any): FenceData | null => {
       start: String(snapshot.schedule?.start || snapshot.scheduleStart || snapshot.effective_time?.start || snapshot.createdAt || new Date().toISOString()),
       end: String(snapshot.schedule?.end || snapshot.scheduleEnd || snapshot.effective_time?.end || snapshot.updatedAt || new Date().toISOString()),
     },
+    effective_time: typeof snapshot.effective_time === "string" ? snapshot.effective_time : "00:00-23:59",
     center: center || undefined,
     points: points.length > 0 ? points : undefined,
     radius: Number(snapshot.radius || geometry.radius || 100),
@@ -770,8 +771,90 @@ export default function FenceManagement() {
   }, [mapRef, setCenter]);
 
   const initialProjectFocusedRef = useRef(false);
+  const headquartersLocationAttemptedRef = useRef(false);
+
   useEffect(() => {
-    if (!mapReady || initialProjectFocusedRef.current || !initialFocusProject) return;
+    if (
+      !mapReady ||
+      currentProjectScope.isProjectScope ||
+      headquartersLocationAttemptedRef.current
+    ) return;
+
+    headquartersLocationAttemptedRef.current = true;
+
+    const moveToCurrentLocation = (lat: number, lng: number) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      setCenter([lat, lng]);
+      mapRef.current?.setZoom(17);
+      initialProjectFocusedRef.current = true;
+    };
+
+    const locateWithAmap = () => {
+      const AMap = window.AMap;
+      if (!AMap?.plugin) return;
+      AMap.plugin("AMap.Geolocation", () => {
+        const geolocation = new AMap.Geolocation({
+          enableHighAccuracy: true,
+          timeout: 10000,
+          convert: true,
+          noIpLocate: 0,
+          noGeoLocation: 0,
+        });
+        geolocation.getCurrentPosition((status: string, result: any) => {
+          const position = status === "complete" ? result?.position : null;
+          if (position) {
+            moveToCurrentLocation(Number(position.lat), Number(position.lng));
+          } else {
+            console.warn("高德定位失败，保留默认地图视角:", result);
+          }
+        });
+      });
+    };
+
+    if (!navigator.geolocation || !window.isSecureContext) {
+      locateWithAmap();
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      ({ coords }) => {
+        const AMap = window.AMap;
+        if (AMap?.convertFrom) {
+          AMap.convertFrom([coords.longitude, coords.latitude], "gps", (status: string, result: any) => {
+            const location = status === "complete" ? result?.locations?.[0] : null;
+            if (location) {
+              moveToCurrentLocation(Number(location.lat), Number(location.lng));
+            } else {
+              moveToCurrentLocation(coords.latitude, coords.longitude);
+            }
+          });
+          return;
+        }
+        moveToCurrentLocation(coords.latitude, coords.longitude);
+      },
+      (error) => {
+        console.warn("浏览器定位失败，尝试高德定位:", error.message);
+        locateWithAmap();
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [currentProjectScope.isProjectScope, mapReady, mapRef, setCenter]);
+
+  useEffect(() => {
+    if (
+      !mapReady ||
+      !currentProjectScope.isProjectScope ||
+      initialProjectFocusedRef.current ||
+      !initialFocusProject
+    ) return;
 
     if (currentProjectScope.isProjectScope && scopedProjectFilterValue && (filter.project !== scopedProjectFilterValue || filter.grid)) {
       setFilter({ ...filter, project: scopedProjectFilterValue, grid: undefined });
@@ -2049,6 +2132,12 @@ const handleEditFence = (fence: FenceData) => {
           onSelectDevice={(device) => {
             focusDevice(device);
           }}
+          onNavigateToLocation={(lat, lng, zoom) => {
+            setCenter([lat, lng]);
+            if (zoom) {
+              mapRef.current?.setZoom(zoom);
+            }
+          }}
           onEditFence={handleEditFence}
           onDeleteFence={handleDeleteClick}
           canDeleteFence={canDeleteFence}
@@ -2064,7 +2153,9 @@ const handleEditFence = (fence: FenceData) => {
     void endCollectMode();
     setShowAddModal(false);
     setPendingFenceData(null);
+    setEditingFenceId(null);
   }}
+  initialData={pendingFenceData}
   onNext={(data) => {
     setPendingFenceData(data);
     if (data.shape === "circle") {
@@ -2125,7 +2216,12 @@ const handleEditFence = (fence: FenceData) => {
       deviceIds: [],
       workerCount: 0,
     };
-    addFence(newFence);
+    if (editingFenceId) {
+      updateFence(editingFenceId, newFence);
+      setEditingFenceId(null);
+    } else {
+      addFence(newFence);
+    }
     resetDrawing();
     void endCollectMode();
     setShowAddModal(false);

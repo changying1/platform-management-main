@@ -104,6 +104,12 @@ public interface ManagementApi {
     Call<List<JsonObject>> getLocationDevices(
         @HeaderMap Map<String, String> headers
     );
+
+    @POST("device/add")
+    Call<JsonObject> addLocationDevice(
+        @HeaderMap Map<String, String> headers,
+        @Body JsonObject device
+    );
     
     /**
      * 获取设备列表 - 对应 Web 端 /api/devices

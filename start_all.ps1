@@ -3,6 +3,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $Root "backend"
@@ -265,8 +268,8 @@ if ($FullBackend) {
 } else {
     Write-Host "Tip: use .\start_all.ps1 -FullBackend to also start lifecycle services."
 }
-Write-Host "`n💡 AI 助手服务说明:"
-Write-Host "  - AI 接口已集成到主后端，无需单独启动"
-Write-Host "  - 健康检查: http://localhost:9000/api/ai/health"
-Write-Host "  - 如需使用 AI 功能，请确保 Ollama 已安装并运行"
+Write-Host "`nAI assistant service notes:"
+Write-Host "  - AI API is integrated into the backend; no separate service is required."
+Write-Host "  - Health check: http://localhost:9000/api/ai/health"
+Write-Host "  - To use AI features, make sure Ollama is installed and running."
 Write-Host "============================================================"
