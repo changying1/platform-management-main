@@ -1901,6 +1901,79 @@ class VideoService:
                 return None
             return float(match.group(0))
 
+    def _normalize_hikiot_flow_unit(self, unit: Any) -> str:
+        text = str(unit or "").strip().upper()
+        if not text:
+            return ""
+        unit_aliases = {
+            "K": "KB",
+            "KB": "KB",
+            "M": "MB",
+            "MB": "MB",
+            "G": "GB",
+            "GB": "GB",
+            "T": "TB",
+            "TB": "TB",
+        }
+        return unit_aliases.get(text, text)
+
+    def _hikiot_flow_value_to_gb(self, value: Optional[float], unit: str) -> Optional[float]:
+        if value is None:
+            return None
+        normalized_unit = self._normalize_hikiot_flow_unit(unit) or "GB"
+        if normalized_unit == "TB":
+            return float(value) * 1024
+        if normalized_unit == "MB":
+            return float(value) / 1024
+        if normalized_unit == "KB":
+            return float(value) / (1024 * 1024)
+        return float(value)
+
+    def _extract_hikiot_flow_unit(self, card: dict, keys: tuple[str, ...]) -> str:
+        if not isinstance(card, dict):
+            return ""
+        for key in keys:
+            unit = self._normalize_hikiot_flow_unit(card.get(key))
+            if unit:
+                return unit
+        return ""
+
+    def _parse_hikiot_flow_item(
+        self,
+        card: dict,
+        value_key: str,
+        unit_keys: tuple[str, ...],
+        default_unit: str = "",
+    ) -> dict:
+        raw = card.get(value_key) if isinstance(card, dict) else None
+        unit = self._extract_hikiot_flow_unit(card, unit_keys)
+        value_source = raw
+        if isinstance(raw, dict):
+            value_source = (
+                raw.get("parsedValue")
+                if raw.get("parsedValue") is not None
+                else raw.get("value", raw.get("rawValue", raw.get("raw")))
+            )
+            unit = (
+                self._normalize_hikiot_flow_unit(raw.get("unit"))
+                or self._normalize_hikiot_flow_unit(raw.get("flowUnit"))
+                or unit
+            )
+
+        value = self._parse_hikiot_flow_value_gb(value_source)
+        if isinstance(value_source, str):
+            match = re.search(r"-?\d+(?:\.\d+)?\s*([KMGT]?B|[KMGT])\b", value_source, re.IGNORECASE)
+            if match:
+                unit = self._normalize_hikiot_flow_unit(match.group(1)) or unit
+
+        unit = unit or self._normalize_hikiot_flow_unit(default_unit) or "GB"
+        return {
+            "value": value,
+            "unit": unit,
+            "raw": raw,
+            "value_gb": self._hikiot_flow_value_to_gb(value, unit),
+        }
+
     def _extract_hikiot_total_flow_gb(self, card: dict) -> Optional[float]:
         total_flow = card.get("totalFlow") if isinstance(card, dict) else None
         if isinstance(total_flow, dict):
@@ -1922,7 +1995,16 @@ class VideoService:
         total_gb: Optional[float],
         card_no: str,
         expired_at: Any,
+        traffic: Optional[dict] = None,
     ) -> dict:
+        traffic = traffic or {}
+        traffic_total = traffic.get("total") or {"value": total_gb, "unit": "GB", "raw": total_gb}
+        traffic_used = traffic.get("used") or {"value": used_gb, "unit": "GB", "raw": used_gb}
+        traffic_remaining = traffic.get("remaining") or {"value": remaining_gb, "unit": "GB", "raw": remaining_gb}
+        display_unit = traffic.get("display_unit") or traffic_used.get("unit") or traffic_total.get("unit") or traffic_remaining.get("unit") or "GB"
+        total_flow_display = self._format_traffic_candidate_text(traffic_total.get("value"), traffic_total.get("unit")) if traffic_total.get("value") is not None else "--"
+        used_flow_display = self._format_traffic_candidate_text(traffic_used.get("value"), traffic_used.get("unit")) if traffic_used.get("value") is not None else "--"
+        remaining_flow_display = self._format_traffic_candidate_text(traffic_remaining.get("value"), traffic_remaining.get("unit")) if traffic_remaining.get("value") is not None else "--"
         display_remaining_gb = (
             max(0.0, float(remaining_gb) - HIKIOT_DISPLAY_RESERVED_GB)
             if remaining_gb is not None
@@ -1959,6 +2041,26 @@ class VideoService:
             "weekly_remaining_text": self._format_gb(display_remaining_gb) if display_remaining_gb is not None else "--",
             "monthly_threshold_text": self._format_gb(total_gb) if total_gb is not None else "--",
             "estimated_remaining_text": self._format_gb(display_remaining_gb) if display_remaining_gb is not None else "--",
+            "traffic": {
+                "total": traffic_total,
+                "used": traffic_used,
+                "remaining": traffic_remaining,
+                "display_unit": display_unit,
+            },
+            "traffic_display_unit": display_unit,
+            "total_flow_value": traffic_total.get("value"),
+            "total_flow_unit": traffic_total.get("unit") or display_unit,
+            "total_flow_raw": traffic_total.get("raw"),
+            "total_flow_display": total_flow_display,
+            "used_flow_value": traffic_used.get("value"),
+            "used_flow_unit": traffic_used.get("unit") or display_unit,
+            "used_flow_raw": traffic_used.get("raw"),
+            "used_flow_display": used_flow_display,
+            "residual_flow_value": traffic_remaining.get("value"),
+            "residual_flow_unit": traffic_remaining.get("unit") or display_unit,
+            "residual_flow_raw": traffic_remaining.get("raw"),
+            "remaining_flow_unit": traffic_remaining.get("unit") or display_unit,
+            "remaining_flow_display": remaining_flow_display,
         }
 
     def _refresh_hikiot_video_traffic(self, db: Session, video_id: int):
@@ -1978,9 +2080,47 @@ class VideoService:
         except Exception as exc:
             return {"success": False, "message": f"Hikiot娴侀噺鎺ュ彛鏌ヨ澶辫触: {exc}"}
 
-        used_gb = self._parse_hikiot_flow_value_gb(card.get("usedFlow"))
-        remaining_gb = self._parse_hikiot_flow_value_gb(card.get("residualFlow"))
-        total_gb = self._extract_hikiot_total_flow_gb(card)
+        display_unit = self._extract_hikiot_flow_unit(card, ("flowUnit", "unit"))
+        total_flow = self._parse_hikiot_flow_item(
+            card,
+            "totalFlow",
+            ("totalFlowUnit", "total_flow_unit", "totalUnit", "total_unit", "flowUnit", "flow_unit", "unit"),
+            display_unit,
+        )
+        used_flow = self._parse_hikiot_flow_item(
+            card,
+            "usedFlow",
+            ("usedFlowUnit", "used_flow_unit", "usedUnit", "used_unit", "flowUnit", "flow_unit", "unit"),
+            display_unit,
+        )
+        remaining_flow = self._parse_hikiot_flow_item(
+            card,
+            "residualFlow",
+            (
+                "residualFlowUnit",
+                "residual_flow_unit",
+                "residualUnit",
+                "residual_unit",
+                "remainingFlowUnit",
+                "remaining_flow_unit",
+                "remainingUnit",
+                "remaining_unit",
+                "flowUnit",
+                "flow_unit",
+                "unit",
+            ),
+            display_unit,
+        )
+        display_unit = display_unit or used_flow.get("unit") or total_flow.get("unit") or remaining_flow.get("unit") or "GB"
+        traffic = {
+            "total": {key: total_flow.get(key) for key in ("value", "unit", "raw")},
+            "used": {key: used_flow.get(key) for key in ("value", "unit", "raw")},
+            "remaining": {key: remaining_flow.get(key) for key in ("value", "unit", "raw")},
+            "display_unit": display_unit,
+        }
+        used_gb = used_flow.get("value_gb")
+        remaining_gb = remaining_flow.get("value_gb")
+        total_gb = total_flow.get("value_gb")
         expired_at = card.get("expiredTimes")
         card_no = self._get_hikiot_card_no(card, sim_card_id if has_sim_card_id else None)
         now = datetime.utcnow()
@@ -2004,6 +2144,7 @@ class VideoService:
             total_gb=total_gb,
             card_no=card_no,
             expired_at=expired_at,
+            traffic=traffic,
         )
         status_summary = self._build_device_status_summary(db, refreshed)
         return {
@@ -4657,7 +4798,16 @@ class VideoService:
         now = datetime.now()
         cycle_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         used_gb, ocr_text, traffic_updated_at = self._get_stored_traffic_usage_gb(db_video)
-        traffic_fields = self._build_traffic_summary_fields(used_gb, ocr_text)
+        if getattr(db_video, "traffic_source", None) == "hikiot":
+            traffic_fields = self._build_hikiot_traffic_summary_fields(
+                used_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_used_gb", None)),
+                remaining_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_remaining_gb", None)),
+                total_gb=self._parse_hikiot_flow_value_gb(getattr(db_video, "traffic_total_gb", None)),
+                card_no=self._normalize_card_match_value(getattr(db_video, "traffic_sim_card_id", None)),
+                expired_at=getattr(db_video, "traffic_card_expired_at", None),
+            )
+        else:
+            traffic_fields = self._build_traffic_summary_fields(used_gb, ocr_text)
         status_summary = self._build_device_status_summary(db, db_video)
         self._sync_traffic_ocr_alarm(db, db_video, traffic_fields)
         status_summary = self._build_device_status_summary(db, db_video)

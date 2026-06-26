@@ -44,6 +44,7 @@ class AlarmOut(AlarmCreate):
     device_name: Optional[str] = None
     person_name: Optional[str] = None
     personnel_id: Optional[str] = None
+    alarm_boxes: Optional[list[dict]] = None
     image_url: Optional[str] = None
     snapshot_url: Optional[str] = None
     picture_url: Optional[str] = None
@@ -52,6 +53,13 @@ class AlarmOut(AlarmCreate):
     duration: Optional[float] = None
     duration_seconds: Optional[float] = None
     alarm_second: Optional[int] = None
+    recording_start_time: Optional[datetime] = None
+    recording_end_time: Optional[datetime] = None
+    recording_time_offset_seconds: Optional[float] = None
+    record_anchor_time: Optional[datetime] = None
+    box_rendered: Optional[bool] = None
+    box_start_second: Optional[int] = None
+    box_end_second: Optional[int] = None
     video_duration: Optional[float] = None
     clip_duration: Optional[float] = None
     start_time: Optional[datetime] = None

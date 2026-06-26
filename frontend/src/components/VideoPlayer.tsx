@@ -31,9 +31,20 @@ interface MonitoringSummary {
   total_flow_display?: string;
   used_flow_display?: string;
   remaining_flow_display?: string;
+  total_flow_value?: string | number | null;
+  used_flow_value?: string | number | null;
+  residual_flow_value?: string | number | null;
+  traffic_display_unit?: string;
   total_flow_unit?: string;
   used_flow_unit?: string;
+  residual_flow_unit?: string;
   remaining_flow_unit?: string;
+  traffic?: {
+    total?: { value?: string | number | null; unit?: string; raw?: unknown };
+    used?: { value?: string | number | null; unit?: string; raw?: unknown };
+    remaining?: { value?: string | number | null; unit?: string; raw?: unknown };
+    display_unit?: string;
+  };
   monthly_threshold_text?: string;
   estimated_remaining_text?: string;
   traffic_status?: string;
@@ -53,17 +64,60 @@ const hasRecognizedTraffic = (summary?: MonitoringSummary | null): boolean => {
   return !!text && text !== '--' && text !== '等待识别' && text !== '识别中';
 };
 
+const trafficUnit = (data: any, field: 'total' | 'used' | 'remaining'): string | undefined => {
+  const flatUnitKey =
+    field === 'total' ? 'total_flow_unit' : field === 'used' ? 'used_flow_unit' : 'residual_flow_unit';
+  const aliasUnitKey = field === 'remaining' ? 'remaining_flow_unit' : flatUnitKey;
+  return (
+    data?.traffic?.[field]?.unit ||
+    data?.[flatUnitKey] ||
+    data?.[aliasUnitKey] ||
+    data?.traffic_display_unit ||
+    data?.traffic?.display_unit ||
+    undefined
+  );
+};
+
+const trafficValue = (data: any, field: 'total' | 'used' | 'remaining'): unknown => {
+  if (field === 'total') return data?.traffic?.total?.value ?? data?.total_flow_value ?? data?.totalFlow ?? data?.total_flow;
+  if (field === 'used') return data?.traffic?.used?.value ?? data?.used_flow_value ?? data?.usedFlow ?? data?.used_flow;
+  return data?.traffic?.remaining?.value ?? data?.residual_flow_value ?? data?.residualFlow ?? data?.residual_flow ?? data?.remaining_flow;
+};
+
+const formatTrafficValue = (value: unknown, unit?: unknown): string => {
+  if (value === null || value === undefined || value === '') return '--';
+  const raw = String(value).trim();
+  if (!raw) return '--';
+  if (/[a-zA-Z\u4e00-\u9fa5]+$/.test(raw)) return raw;
+
+  const numeric = Number(value);
+  const unitText = String(unit || 'GB').trim();
+  if (!Number.isFinite(numeric)) return `${raw}${unitText}`;
+  return `${Math.max(0, numeric).toFixed(2).replace(/\.?0+$/, '')}${unitText}`;
+};
+
+const formatTrafficField = (data: any, field: 'total' | 'used' | 'remaining'): string => {
+  const text = formatTrafficValue(trafficValue(data, field), trafficUnit(data, field));
+  return text === '--' ? '' : text;
+};
+
 const normalizeTrafficSummary = (data: any, previous: MonitoringSummary | null): MonitoringSummary => {
   const next: MonitoringSummary = {
     weekly_used_text: data?.weekly_used_text,
     weekly_quota_text: data?.weekly_quota_text,
     weekly_remaining_text: data?.weekly_remaining_text,
-    total_flow_display: data?.total_flow_display || data?.totalFlow || data?.total_flow,
-    used_flow_display: data?.used_flow_display || data?.usedFlow || data?.used_flow,
-    remaining_flow_display: data?.remaining_flow_display || data?.residualFlow || data?.residual_flow || data?.remaining_flow,
-    total_flow_unit: data?.total_flow_unit,
-    used_flow_unit: data?.used_flow_unit,
-    remaining_flow_unit: data?.remaining_flow_unit,
+    total_flow_display: data?.total_flow_display || formatTrafficField(data, 'total'),
+    used_flow_display: data?.used_flow_display || formatTrafficField(data, 'used'),
+    remaining_flow_display: data?.remaining_flow_display || formatTrafficField(data, 'remaining'),
+    total_flow_value: trafficValue(data, 'total') as string | number | null,
+    used_flow_value: trafficValue(data, 'used') as string | number | null,
+    residual_flow_value: trafficValue(data, 'remaining') as string | number | null,
+    traffic_display_unit: data?.traffic_display_unit || data?.traffic?.display_unit,
+    total_flow_unit: trafficUnit(data, 'total'),
+    used_flow_unit: trafficUnit(data, 'used'),
+    residual_flow_unit: trafficUnit(data, 'remaining'),
+    remaining_flow_unit: trafficUnit(data, 'remaining'),
+    traffic: data?.traffic,
     monthly_threshold_text: data?.monthly_threshold_text,
     estimated_remaining_text: data?.estimated_remaining_text,
     traffic_status: data?.traffic_status,
@@ -82,9 +136,15 @@ const normalizeTrafficSummary = (data: any, previous: MonitoringSummary | null):
       total_flow_display: previous?.total_flow_display,
       used_flow_display: previous?.used_flow_display,
       remaining_flow_display: previous?.remaining_flow_display,
+      total_flow_value: previous?.total_flow_value,
+      used_flow_value: previous?.used_flow_value,
+      residual_flow_value: previous?.residual_flow_value,
+      traffic_display_unit: previous?.traffic_display_unit,
       total_flow_unit: previous?.total_flow_unit,
       used_flow_unit: previous?.used_flow_unit,
+      residual_flow_unit: previous?.residual_flow_unit,
       remaining_flow_unit: previous?.remaining_flow_unit,
+      traffic: previous?.traffic,
       traffic_status: previous?.traffic_status || next.traffic_status,
       last_traffic_ocr_time: previous?.last_traffic_ocr_time || next.last_traffic_ocr_time,
     };
@@ -112,39 +172,33 @@ const hasRecognizedTrafficValue = (summary?: MonitoringSummary | null): boolean 
   return !!text && text !== '--';
 };
 
-const formatTrafficValue = (value: unknown, unit?: unknown): string => {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  if (/[a-zA-Z\u4e00-\u9fa5]+$/.test(raw)) return raw;
-
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return '';
-  const unitText = String(unit ?? '').trim();
-  return `${Math.max(0, numeric).toFixed(3).replace(/\.?0+$/, '')}${unitText || 'GB'}`;
-};
-
 const normalizeRecognizeTrafficSummary = (data: any, previous: MonitoringSummary | null): MonitoringSummary => {
   const trafficText =
     data?.used_flow_display ||
-    data?.usedFlow ||
-    data?.used_flow ||
+    formatTrafficField(data, 'used') ||
     data?.traffic_text ||
     data?.traffic_ocr_text ||
     data?.weekly_used_text ||
-    formatTrafficValue(data?.used_traffic_gb, 'GB') ||
-    formatTrafficValue(data?.traffic_value, data?.traffic_unit);
+    (data?.used_traffic_gb === null || data?.used_traffic_gb === undefined ? '' : formatTrafficValue(data?.used_traffic_gb)) ||
+    (data?.traffic_value === null || data?.traffic_value === undefined ? '' : formatTrafficValue(data?.traffic_value, data?.traffic_unit));
 
   return {
     ...previous,
     weekly_used_text: data?.weekly_used_text || trafficText,
     weekly_quota_text: data?.weekly_quota_text || previous?.weekly_quota_text,
     weekly_remaining_text: data?.weekly_remaining_text || previous?.weekly_remaining_text,
-    total_flow_display: data?.total_flow_display || data?.totalFlow || data?.total_flow || previous?.total_flow_display,
-    used_flow_display: data?.used_flow_display || data?.usedFlow || data?.used_flow || trafficText || previous?.used_flow_display,
-    remaining_flow_display: data?.remaining_flow_display || data?.residualFlow || data?.residual_flow || data?.remaining_flow || previous?.remaining_flow_display,
-    total_flow_unit: data?.total_flow_unit || previous?.total_flow_unit,
-    used_flow_unit: data?.used_flow_unit || data?.traffic_unit || previous?.used_flow_unit,
-    remaining_flow_unit: data?.remaining_flow_unit || previous?.remaining_flow_unit,
+    total_flow_display: data?.total_flow_display || formatTrafficField(data, 'total') || previous?.total_flow_display,
+    used_flow_display: data?.used_flow_display || formatTrafficField(data, 'used') || trafficText || previous?.used_flow_display,
+    remaining_flow_display: data?.remaining_flow_display || formatTrafficField(data, 'remaining') || previous?.remaining_flow_display,
+    total_flow_value: (trafficValue(data, 'total') as string | number | null) ?? previous?.total_flow_value,
+    used_flow_value: (trafficValue(data, 'used') as string | number | null) ?? previous?.used_flow_value,
+    residual_flow_value: (trafficValue(data, 'remaining') as string | number | null) ?? previous?.residual_flow_value,
+    traffic_display_unit: data?.traffic_display_unit || data?.traffic?.display_unit || previous?.traffic_display_unit,
+    total_flow_unit: trafficUnit(data, 'total') || previous?.total_flow_unit,
+    used_flow_unit: trafficUnit(data, 'used') || data?.traffic_unit || previous?.used_flow_unit,
+    residual_flow_unit: trafficUnit(data, 'remaining') || previous?.residual_flow_unit,
+    remaining_flow_unit: trafficUnit(data, 'remaining') || previous?.remaining_flow_unit,
+    traffic: data?.traffic || previous?.traffic,
     monthly_threshold_text: data?.monthly_threshold_text || previous?.monthly_threshold_text,
     estimated_remaining_text: data?.estimated_remaining_text || previous?.estimated_remaining_text,
     traffic_status: data?.traffic_status || previous?.traffic_status,
@@ -568,12 +622,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     : '等待识别';
   const thresholdText =
     monitoringSummary?.total_flow_display ||
+    (monitoringSummary?.total_flow_value === null || monitoringSummary?.total_flow_value === undefined
+      ? ''
+      : formatTrafficValue(monitoringSummary?.total_flow_value, monitoringSummary?.total_flow_unit || monitoringSummary?.traffic_display_unit)) ||
     monitoringSummary?.monthly_threshold_text ||
     monitoringSummary?.weekly_quota_text ||
-    formatTrafficValue(monitoringSummary?.traffic_value, monitoringSummary?.total_flow_unit) ||
-    '30.00GB';
+    (monitoringSummary?.traffic_value === null || monitoringSummary?.traffic_value === undefined
+      ? ''
+      : formatTrafficValue(monitoringSummary?.traffic_value, monitoringSummary?.total_flow_unit || monitoringSummary?.traffic_display_unit)) ||
+    formatTrafficValue(30);
   const remainingText =
     monitoringSummary?.remaining_flow_display ||
+    (monitoringSummary?.residual_flow_value === null || monitoringSummary?.residual_flow_value === undefined
+      ? ''
+      : formatTrafficValue(
+          monitoringSummary?.residual_flow_value,
+          monitoringSummary?.residual_flow_unit || monitoringSummary?.remaining_flow_unit || monitoringSummary?.traffic_display_unit,
+        )) ||
     monitoringSummary?.estimated_remaining_text ||
     monitoringSummary?.weekly_remaining_text ||
     '--';

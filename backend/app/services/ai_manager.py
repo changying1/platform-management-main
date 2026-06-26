@@ -778,11 +778,12 @@ class AIManager:
     # =========================
     def _save_alarm_image(self, frame, device_id, details=None, alarm_trace_id: str | None = None):
         try:
-            # 1. 如果有报警详情，先在图片上绘制报警框
+            # 1. 先规范化报警详情里的框，再在图片上绘制
+            details = self._normalize_alarm_details_for_frame(details, frame)
             draw_frame = frame.copy()
             boxes = []
             if details and isinstance(details, dict):
-                boxes = details.get("boxes") or []
+                boxes = details.get("alarm_boxes") or details.get("boxes") or []
 
             if boxes:
                 draw_frame = self._draw_boxes_on_frame(draw_frame, boxes)
@@ -914,43 +915,69 @@ class AIManager:
         if not isinstance(details, dict):
             return []
 
-        candidates = []
-        for key in (
-            "boxes",
-            "bbox",
-            "bounding_box",
-            "detections",
-            "results",
-            "detection_results",
-            "target_boxes",
-            "alarm_boxes",
-        ):
-            value = details.get(key)
+        def _append_candidate(value, candidates, source_key: str | None = None):
             if not value:
-                continue
+                return
             if isinstance(value, list):
                 if len(value) >= 4 and all(isinstance(v, (int, float, str)) for v in value[:4]):
-                    candidates.append(value)
+                    candidates.append((source_key or "coords", list(value[:4])))
                 else:
-                    candidates.extend(value)
+                    for item in value:
+                        _append_candidate(item, candidates, source_key=source_key)
+            elif isinstance(value, tuple):
+                if len(value) >= 4 and all(isinstance(v, (int, float, str)) for v in value[:4]):
+                    candidates.append((source_key or "coords", list(value[:4])))
+                else:
+                    for item in list(value):
+                        _append_candidate(item, candidates, source_key=source_key)
             elif isinstance(value, dict):
-                nested = None
-                for nested_key in ("boxes", "bbox", "detections", "results", "alarm_boxes"):
+                for nested_key in (
+                    "alarm_boxes",
+                    "boxes",
+                    "target_boxes",
+                    "detections",
+                    "detection_results",
+                    "results",
+                    "bbox",
+                    "bounding_box",
+                ):
                     nested_value = value.get(nested_key)
                     if nested_value:
-                        nested = nested_value
-                        break
-                if isinstance(nested, list):
-                    candidates.extend(nested)
-                else:
-                    candidates.append(value)
+                        _append_candidate(nested_value, candidates, source_key=nested_key)
+                        return
+                candidates.append(value)
+
+        candidates = []
+        for key in (
+            "alarm_boxes",
+            "boxes",
+            "target_boxes",
+            "detections",
+            "detection_results",
+            "results",
+            "bbox",
+            "bounding_box",
+            "coords_norm",
+            "coords",
+        ):
+            _append_candidate(details.get(key), candidates, source_key=key)
 
         boxes = []
         for item in candidates:
             if isinstance(item, dict):
                 boxes.append(copy.deepcopy(item))
-            elif isinstance(item, (list, tuple)) and len(item) >= 4:
-                boxes.append({"bbox": list(item[:4])})
+            elif isinstance(item, tuple) and len(item) == 2:
+                source_key, values = item
+                values = list(values[:4])
+                source_key = str(source_key or "coords")
+                if source_key in {"bbox", "bounding_box"}:
+                    boxes.append({source_key: values})
+                elif source_key == "coords_norm" or source_key == "coords":
+                    boxes.append({source_key: values})
+                elif source_key == "x_y_w_h":
+                    boxes.append({"bbox": values})
+                else:
+                    boxes.append({"coords": values})
         return boxes
 
     def _normalize_box_coords_for_frame(self, box, frame_shape):
@@ -967,16 +994,28 @@ class AIManager:
 
         raw_values = None
         source_kind = "xyxy"
-        if isinstance(box.get("coords"), (list, tuple)) and len(box.get("coords")) >= 4:
+        source_field = ""
+        if isinstance(box.get("coords_norm"), (list, tuple)) and len(box.get("coords_norm")) >= 4:
+            raw_values = list(box.get("coords_norm")[:4])
+            source_field = "coords_norm"
+        elif isinstance(box.get("coords"), (list, tuple)) and len(box.get("coords")) >= 4:
             raw_values = list(box.get("coords")[:4])
+            source_field = "coords"
         elif isinstance(box.get("bbox"), (list, tuple)) and len(box.get("bbox")) >= 4:
             raw_values = list(box.get("bbox")[:4])
             source_kind = "xywh"
+            source_field = "bbox"
         elif isinstance(box.get("bounding_box"), (list, tuple)) and len(box.get("bounding_box")) >= 4:
             raw_values = list(box.get("bounding_box")[:4])
             source_kind = "xywh"
+            source_field = "bounding_box"
         elif all(k in box for k in ("x1", "y1", "x2", "y2")):
             raw_values = [box.get("x1"), box.get("y1"), box.get("x2"), box.get("y2")]
+            source_field = "x1_y1_x2_y2"
+        elif all(k in box for k in ("x", "y", "w", "h")):
+            raw_values = [box.get("x"), box.get("y"), box.get("w"), box.get("h")]
+            source_kind = "xywh"
+            source_field = "x_y_w_h"
 
         if raw_values is None:
             return None
@@ -1020,6 +1059,7 @@ class AIManager:
 
         normalized_box = copy.deepcopy(box)
         normalized_box["original_coords"] = list(raw_values)
+        normalized_box["source"] = normalized_box.get("source") or source_field or "ai_detection_snapshot"
         normalized_box["coords"] = [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
         normalized_box["coords_norm"] = [
             x1 / frame_w,
@@ -1037,16 +1077,28 @@ class AIManager:
 
         normalized_details = copy.deepcopy(details)
         frame_shape = getattr(frame, "shape", None)
-        for key in ("boxes", "alarm_boxes"):
-            boxes = normalized_details.get(key)
-            if not isinstance(boxes, list):
-                continue
-            normalized_boxes = []
-            for box in boxes:
-                normalized_box = self._normalize_box_coords_for_frame(box, frame_shape)
-                if normalized_box is not None:
-                    normalized_boxes.append(normalized_box)
-            normalized_details[key] = normalized_boxes
+        candidate_boxes = self._extract_alarm_boxes(normalized_details)
+        normalized_boxes = []
+        for box in candidate_boxes:
+            normalized_box = self._normalize_box_coords_for_frame(box, frame_shape)
+            if normalized_box is not None:
+                normalized_boxes.append(normalized_box)
+
+        if normalized_boxes:
+            normalized_details["alarm_boxes"] = normalized_boxes
+            normalized_details["boxes"] = normalized_boxes
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_BOX_NORMALIZED] bbox_count={} frame_width={} frame_height={}",
+                len(normalized_boxes),
+                int(frame_shape[1]) if frame_shape and len(frame_shape) > 1 else 0,
+                int(frame_shape[0]) if frame_shape else 0,
+            )
+        else:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_BOX_NORMALIZED] bbox_count=0 reason=no_valid_bbox",
+            )
         if not normalized_details.get("boxes") and isinstance(normalized_details.get("alarm_boxes"), list):
             normalized_details["boxes"] = normalized_details["alarm_boxes"]
         return normalized_details
@@ -1131,8 +1183,8 @@ class AIManager:
         video_path,
         boxes,
         trigger_offset_seconds,
-        draw_window_before=5.0,
-        draw_window_after=5.0,
+        draw_window_before=1.0,
+        draw_window_after=2.0,
         alarm_trace_id=None,
     ):
         if not boxes:
@@ -1557,13 +1609,67 @@ class AIManager:
             extra_reason or "",
         )
 
+    def _resolve_alarm_boxes_for_video(self, alarm_id, details=None, fallback_boxes=None):
+        alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
+        alarm_record_details = alarm_record.get("details") if isinstance(alarm_record.get("details"), dict) else {}
+        sources = []
+        for container_name, container in (
+            ("alarm_record", alarm_record),
+            ("alarm_record.details", alarm_record_details),
+            ("details", details if isinstance(details, dict) else {}),
+        ):
+            if not isinstance(container, dict):
+                continue
+            for key in (
+                "alarm_boxes",
+                "boxes",
+                "target_boxes",
+                "detections",
+                "detection_results",
+                "results",
+                "bbox",
+                "bounding_box",
+                "coords_norm",
+                "coords",
+            ):
+                value = container.get(key)
+                if value:
+                    sources.append((f"{container_name}.{key}", value))
+
+        if fallback_boxes:
+            sources.append(("fallback_boxes", fallback_boxes))
+
+        resolved = []
+        source_name = "missing"
+        for source_name, value in sources:
+            candidate_details = {"alarm_boxes": value}
+            resolved = self._extract_alarm_boxes(candidate_details)
+            if resolved:
+                break
+
+        if resolved:
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_VIDEO_BOX_SOURCE] alarm_id={} bbox_count={} box_source={}",
+                alarm_id,
+                len(resolved),
+                source_name,
+            )
+        else:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_VIDEO_BOX_SOURCE] alarm_id={} bbox_count=0 box_source=missing",
+                alarm_id,
+            )
+        return resolved, source_name
+
     def _validate_alarm_video_result(
         self,
         result,
-        snapshot_time: datetime,
+        record_anchor_time: datetime,
         clip_start: datetime,
         clip_end: datetime,
-        min_after_snapshot_seconds: float = 3.0,
+        min_after_anchor_seconds: float = 3.0,
     ):
         recording_path = (result or {}).get("recording_path") or ""
         recording_full_path = (result or {}).get("recording_full_path") or ""
@@ -1585,36 +1691,36 @@ class AIManager:
         actual_end = self._coerce_alarm_datetime(result.get("end_time"))
         if actual_end is None:
             actual_end = actual_start + timedelta(seconds=duration_seconds)
-        covers_snapshot_time = actual_start <= snapshot_time <= actual_end
-        alarm_offset = (snapshot_time - actual_start).total_seconds()
-        has_video_after_snapshot = (duration_seconds - alarm_offset) >= float(min_after_snapshot_seconds)
+        covers_anchor_time = actual_start <= record_anchor_time <= actual_end
+        alarm_offset = (record_anchor_time - actual_start).total_seconds()
+        has_video_after_anchor = (duration_seconds - alarm_offset) >= float(min_after_anchor_seconds)
         timing = {
             "duration_seconds": duration_seconds,
             "actual_clip_start": actual_start,
             "actual_clip_end": actual_end,
             "alarm_second": alarm_offset,
-            "covers_snapshot_time": bool(covers_snapshot_time),
-            "has_video_after_snapshot": bool(has_video_after_snapshot),
-            "min_after_snapshot_seconds": float(min_after_snapshot_seconds),
+            "covers_anchor_time": bool(covers_anchor_time),
+            "has_video_after_anchor": bool(has_video_after_anchor),
+            "min_after_anchor_seconds": float(min_after_anchor_seconds),
         }
-        if not covers_snapshot_time:
+        if not covers_anchor_time:
             raise ValueError(
-                f"snapshot_time_not_covered: snapshot_time={self._format_alarm_video_time(snapshot_time)} "
+                f"record_anchor_time_not_covered: record_anchor_time={self._format_alarm_video_time(record_anchor_time)} "
                 f"actual_start={self._format_alarm_video_time(actual_start)} "
                 f"actual_end={self._format_alarm_video_time(actual_end)}"
             )
         if alarm_offset < 0 or duration_seconds <= alarm_offset:
             raise ValueError(
-                f"snapshot_time_not_covered: duration_seconds={duration_seconds:.3f} alarm_second={alarm_offset:.3f}"
+                f"record_anchor_time_not_covered: duration_seconds={duration_seconds:.3f} alarm_second={alarm_offset:.3f}"
             )
-        if not has_video_after_snapshot:
+        if not has_video_after_anchor:
             raise ValueError(
-                f"snapshot_tail_not_ready: duration_seconds={duration_seconds:.3f} "
-                f"alarm_second={alarm_offset:.3f} min_after={min_after_snapshot_seconds:.3f}"
+                f"record_anchor_tail_not_ready: duration_seconds={duration_seconds:.3f} "
+                f"alarm_second={alarm_offset:.3f} min_after={min_after_anchor_seconds:.3f}"
             )
         return timing
 
-    def _save_alarm_clip_async(
+    def _save_alarm_clip_async_legacy(
         self,
         alarm_id: int,
         device_id: str,
@@ -1870,11 +1976,28 @@ class AIManager:
         details=None,
         boxes=None,
     ):
-        if boxes is None:
-            boxes = self._extract_alarm_boxes(details)
-        boxes = boxes if isinstance(boxes, list) else []
+        fallback_boxes = []
+        try:
+            if isinstance(boxes, list):
+                fallback_boxes = boxes
+        except Exception:
+            fallback_boxes = []
+        if not fallback_boxes and isinstance(details, dict):
+            detail_boxes = (
+                details.get("boxes")
+                or details.get("detections")
+                or details.get("detection_results")
+                or details.get("target_boxes")
+                or details.get("alarm_boxes")
+                or []
+            )
+            try:
+                if isinstance(detail_boxes, list):
+                    fallback_boxes = detail_boxes
+            except Exception:
+                fallback_boxes = []
 
-        def _worker():
+        def _worker(fallback_boxes=fallback_boxes, details=details, alarm_id=alarm_id):
             try:
                 video_id = int(device_id)
             except Exception:
@@ -1910,14 +2033,19 @@ class AIManager:
                 )
                 return
 
-            clip_start = snapshot_time - timedelta(seconds=30)
-            clip_end = snapshot_time + timedelta(seconds=30)
+            try:
+                recording_time_offset_seconds = float(os.getenv("ALARM_VIDEO_RECORDING_TIME_OFFSET_SECONDS", "8"))
+            except (TypeError, ValueError):
+                recording_time_offset_seconds = 8.0
+            record_anchor_time = snapshot_time + timedelta(seconds=recording_time_offset_seconds)
+            clip_start = record_anchor_time - timedelta(seconds=30)
+            clip_end = record_anchor_time + timedelta(seconds=30)
             retry_interval_seconds = 5
             try:
-                min_after_snapshot_seconds = float(os.getenv("ALARM_VIDEO_MIN_AFTER_SNAPSHOT_SECONDS", "3"))
+                min_after_anchor_seconds = float(os.getenv("ALARM_VIDEO_MIN_AFTER_SNAPSHOT_SECONDS", "3"))
             except (TypeError, ValueError):
-                min_after_snapshot_seconds = 3.0
-            min_after_snapshot_seconds = max(0.0, min(min_after_snapshot_seconds, 10.0))
+                min_after_anchor_seconds = 3.0
+            min_after_anchor_seconds = max(0.0, min(min_after_anchor_seconds, 10.0))
             try:
                 configured_wait = int(os.getenv("ALARM_VIDEO_MAX_WAIT_SECONDS", "120"))
             except (TypeError, ValueError):
@@ -1931,24 +2059,47 @@ class AIManager:
 
             self._emit_alarm_log(
                 "info",
-                "[ALARM_VIDEO_SCHEDULED] trace_id={} alarm_id={} device_id={} detection_time={} snapshot_time={} source={} clip_start={} clip_end={} retry_interval={} max_wait={} min_after_snapshot={}",
+                "[ALARM_VIDEO_SCHEDULED] trace_id={} alarm_id={} device_id={} detection_time={} snapshot_time={} record_anchor_time={} source={} clip_start={} clip_end={} retry_interval={} max_wait={} min_after_anchor={} recording_time_offset_seconds={}",
                 alarm_trace_id or "-",
                 alarm_id,
                 device_id,
                 self._format_alarm_video_time(detection_time or snapshot_time),
                 self._format_alarm_video_time(snapshot_time),
+                self._format_alarm_video_time(record_anchor_time),
                 alarm_time_source,
                 self._format_alarm_video_time(clip_start),
                 self._format_alarm_video_time(clip_end),
                 retry_interval_seconds,
                 max_wait_seconds,
-                min_after_snapshot_seconds,
+                min_after_anchor_seconds,
+                recording_time_offset_seconds,
             )
 
-            if not boxes:
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_VIDEO_BOX_RESOLVE_START] alarm_id={} fallback_count={}",
+                alarm_id,
+                len(fallback_boxes or []),
+            )
+            resolved_boxes, box_source = self._resolve_alarm_boxes_for_video(
+                alarm_id,
+                details=details,
+                fallback_boxes=fallback_boxes,
+            )
+            video_boxes = resolved_boxes or []
+            box_rendered = False
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_VIDEO_BOX_RESOLVE_OK] alarm_id={} box_source={} box_count={}",
+                alarm_id,
+                box_source,
+                len(video_boxes),
+            )
+            if not video_boxes:
                 self._emit_alarm_log(
-                    "warning",
-                    "[ALARM_VIDEO_BOX_MISSING] alarm_id={} reason=no_bbox_in_detection_result",
+                    "info",
+                    "[ALARM_VIDEO_BOX_SKIPPED] trace_id={} alarm_id={} reason=no_boxes",
+                    alarm_trace_id or "-",
                     alarm_id,
                 )
 
@@ -1957,7 +2108,7 @@ class AIManager:
                 attempt += 1
                 segments, covers_alarm_time, missing_reason = self._collect_alarm_video_segments(
                     video_id,
-                    snapshot_time,
+                    record_anchor_time,
                     clip_start,
                     clip_end,
                 )
@@ -1966,12 +2117,12 @@ class AIManager:
                 self._log_alarm_video_state(
                     alarm_id,
                     device_id,
-                    snapshot_time,
+                    record_anchor_time,
                     clip_start,
                     clip_end,
                     segments,
                     covers_alarm_time,
-                    boxes,
+                    video_boxes,
                     recording_status="generating" if covers_alarm_time else "waiting",
                     extra_reason=missing_reason,
                 )
@@ -2006,52 +2157,53 @@ class AIManager:
                     recording_full_path = result.get("recording_full_path")
                     timing = self._validate_alarm_video_result(
                         result,
-                        snapshot_time,
+                        record_anchor_time,
                         clip_start,
                         clip_end,
-                        min_after_snapshot_seconds=min_after_snapshot_seconds,
+                        min_after_anchor_seconds=min_after_anchor_seconds,
                     )
                     duration_seconds = timing["duration_seconds"]
 
                     actual_start = timing["actual_clip_start"]
                     actual_end = timing["actual_clip_end"]
-                    expected_alarm_second = timing["alarm_second"]
-                    final_alarm_second = int(round(expected_alarm_second))
+                    final_alarm_second = int(round(timing["alarm_second"]))
                     alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
                     alarm_image_path = alarm_record.get("alarm_image_path") or ""
                     try:
                         matched_alarm_second, match_score = self._locate_alarm_frame_in_video(
                             recording_full_path,
                             alarm_image_path,
-                            expected_alarm_second,
+                            timing["alarm_second"],
                         )
                         self._emit_alarm_log(
                             "info",
-                            "[ALARM_VIDEO_FRAME_MATCHED] alarm_id={} expected_by_snapshot={} matched={} score={:.4f}",
+                            "[ALARM_VIDEO_FRAME_MATCHED] alarm_id={} expected_by_anchor={} matched={} score={:.4f}",
                             alarm_id,
-                            int(round(expected_alarm_second)),
+                            int(round(timing["alarm_second"])),
                             matched_alarm_second,
                             match_score,
                         )
                     except Exception as match_error:
                         self._emit_alarm_log(
                             "warning",
-                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected_by_snapshot={} final={} reason={}",
+                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected_by_anchor={} final={} reason={}",
                             alarm_id,
-                            int(round(expected_alarm_second)),
+                            int(round(timing["alarm_second"])),
                             final_alarm_second,
                             match_error,
                         )
 
                     final_alarm_second = max(0, min(final_alarm_second, max(0, int(duration_seconds) - 1)))
 
-                    box_rendered = False
-                    if boxes:
+                    box_render_error_text = ""
+                    if video_boxes:
                         try:
                             self._draw_alarm_boxes_on_video(
                                 recording_full_path,
-                                boxes,
+                                video_boxes,
                                 final_alarm_second,
+                                draw_window_before=1.0,
+                                draw_window_after=2.0,
                                 alarm_trace_id=alarm_trace_id,
                             )
                             try:
@@ -2069,42 +2221,56 @@ class AIManager:
                                 alarm_trace_id or "-",
                                 alarm_id,
                                 recording_full_path,
-                                len(boxes),
+                                len(video_boxes),
                             )
                             box_rendered = True
                         except Exception as box_error:
-                            raise ValueError(f"alarm_video_box_render_failed: {box_error}") from box_error
+                            box_render_error_text = f"box render failed: {box_error}"
+                            self._emit_alarm_log(
+                                "error",
+                                "[ALARM_VIDEO_BOX_FAILED] trace_id={} alarm_id={} error={}",
+                                alarm_trace_id or "-",
+                                alarm_id,
+                                box_error,
+                            )
+                            box_rendered = False
 
-                    timing = self._validate_alarm_video_result(
-                        result,
-                        snapshot_time,
-                        clip_start,
-                        clip_end,
-                        min_after_snapshot_seconds=min_after_snapshot_seconds,
-                    )
-                    duration_seconds = timing["duration_seconds"]
-                    actual_start = timing["actual_clip_start"]
-                    actual_end = timing["actual_clip_end"]
-                    final_alarm_second = max(0, min(final_alarm_second, max(0, int(duration_seconds) - 1)))
                     self._update_alarm_recording_status(
                         alarm_id,
                         "saved",
                         result.get("recording_path"),
                         None,
                         duration_seconds=round(float(duration_seconds), 2),
-                        start_time=result.get("start_time") or self._format_alarm_video_time(clip_start),
-                        end_time=result.get("end_time") or self._format_alarm_video_time(clip_end),
+                        start_time=self._format_alarm_video_time(actual_start),
+                        end_time=self._format_alarm_video_time(actual_end),
                         alarm_second=final_alarm_second,
+                    )
+                    self._update_alarm_fields(
+                        alarm_id,
+                        {
+                            "recording_status": "saved",
+                            "recording_path": result.get("recording_path") or "",
+                            "recording_error": box_render_error_text[:255] if box_render_error_text else "",
+                            "duration_seconds": round(float(duration_seconds), 2),
+                            "alarm_second": final_alarm_second,
+                            "recording_start_time": self._format_alarm_video_time(actual_start),
+                            "recording_end_time": self._format_alarm_video_time(actual_end),
+                            "recording_time_offset_seconds": recording_time_offset_seconds,
+                            "record_anchor_time": self._format_alarm_video_time(record_anchor_time),
+                            "box_rendered": box_rendered,
+                            "box_start_second": max(0, final_alarm_second - 1),
+                            "box_end_second": min(int(duration_seconds), final_alarm_second + 2),
+                        },
                     )
                     self._log_alarm_video_state(
                         alarm_id,
                         device_id,
-                        snapshot_time,
+                        record_anchor_time,
                         clip_start,
                         clip_end,
                         segments,
                         True,
-                        boxes,
+                        video_boxes,
                         output_path=result.get("recording_path") or "",
                         duration_seconds=duration_seconds,
                         recording_status="saved",
@@ -2121,19 +2287,20 @@ class AIManager:
                     )
                     self._emit_alarm_log(
                         "info",
-                        "[ALARM_VIDEO_FINAL] trace_id={} alarm_id={} detection_time={} snapshot_time={} clip_requested_start={} clip_requested_end={} actual_clip_start={} actual_clip_end={} actual_duration={:.2f} alarm_second_by_snapshot={:.2f} covers_snapshot_time={} has_video_after_snapshot={} box_rendered={} final_recording_status={}",
+                        "[ALARM_VIDEO_FINAL] trace_id={} alarm_id={} detection_time={} snapshot_time={} record_anchor_time={} clip_requested_start={} clip_requested_end={} actual_clip_start={} actual_clip_end={} actual_duration={:.2f} alarm_second={:.2f} covers_anchor_time={} has_video_after_anchor={} box_rendered={} final_recording_status={}",
                         alarm_trace_id or "-",
                         alarm_id,
                         self._format_alarm_video_time(detection_time or snapshot_time),
                         self._format_alarm_video_time(snapshot_time),
+                        self._format_alarm_video_time(record_anchor_time),
                         self._format_alarm_video_time(clip_start),
                         self._format_alarm_video_time(clip_end),
                         self._format_alarm_video_time(actual_start),
                         self._format_alarm_video_time(actual_end),
                         float(duration_seconds),
                         float(timing["alarm_second"]),
-                        timing["covers_snapshot_time"],
-                        timing["has_video_after_snapshot"],
+                        timing["covers_anchor_time"],
+                        timing["has_video_after_anchor"],
                         box_rendered,
                         "saved",
                     )
@@ -2141,9 +2308,9 @@ class AIManager:
                 except Exception as exc:
                     last_error = exc
                     error_text = str(exc)
-                    if "alarm_time_not_covered" in error_text or "snapshot_time_not_covered" in error_text:
+                    if "alarm_time_not_covered" in error_text or "record_anchor_time_not_covered" in error_text:
                         failure_status = "alarm_time_not_covered"
-                    elif "snapshot_tail_not_ready" in error_text:
+                    elif "record_anchor_tail_not_ready" in error_text:
                         failure_status = "alarm_time_not_covered"
                     elif "alarm_video_box_render_failed" in error_text:
                         failure_status = "alarm_video_box_render_failed"
@@ -2167,12 +2334,12 @@ class AIManager:
             self._log_alarm_video_state(
                 alarm_id,
                 device_id,
-                snapshot_time,
+                record_anchor_time,
                 clip_start,
                 clip_end,
                 last_segments,
                 last_covers_alarm_time,
-                boxes,
+                video_boxes,
                 recording_status=failure_status,
                 extra_reason=str(last_error or ""),
             )
@@ -2254,15 +2421,16 @@ class AIManager:
         # 2) {"alarm": true, "boxes": [{"type": "...", "msg": "..."}]}
         alarm_type = self._extract_alarm_type(details)
         alarm_msg = details.get("msg") if isinstance(details, dict) else None
-        boxes = self._extract_alarm_boxes(details)
+        normalized_details = copy.deepcopy(details) if isinstance(details, dict) else {}
+        boxes = self._extract_alarm_boxes(normalized_details)
 
         box_count = len(boxes)
         person_info = {}
         person_name = ""
         personnel_id = ""
 
-        if isinstance(details, dict) and isinstance(details.get("boxes"), list) and details["boxes"]:
-            first_box = details["boxes"][0] or {}
+        if isinstance(normalized_details, dict) and isinstance(normalized_details.get("boxes"), list) and normalized_details["boxes"]:
+            first_box = normalized_details["boxes"][0] or {}
             alarm_msg = alarm_msg or first_box.get("msg")
 
             person_info = first_box.get("person") or {}
@@ -2314,6 +2482,13 @@ class AIManager:
             if snapshot_at is None:
                 snapshot_at = detected_at
 
+            if isinstance(normalized_details, dict):
+                normalized_details["alarm_boxes"] = boxes
+                normalized_details["boxes"] = boxes
+                normalized_details["snapshot_time"] = snapshot_at
+                normalized_details["image_time"] = snapshot_at
+                normalized_details["capture_time"] = snapshot_at
+
             project_id = self._infer_project_id_from_device(device_id)
             payload = {
                 "id": next_id,
@@ -2341,6 +2516,7 @@ class AIManager:
                 "recording_error": "",
                 "alarm_image_path": bound_image_path or "",
                 "alarm_boxes": boxes,
+                "details": normalized_details,
 
                 # 人脸识别融合后的人员信息
                 "personnel_id": personnel_id,
@@ -2386,6 +2562,10 @@ class AIManager:
                 "alarm_image_path": saved_payload.get("alarm_image_path", bound_image_path or ""),
                 "recording_status": saved_payload.get("recording_status", "pending"),
                 "alarm_boxes": boxes,
+                "alarm_second": saved_payload.get("alarm_second"),
+                "recording_start_time": saved_payload.get("recording_start_time"),
+                "recording_end_time": saved_payload.get("recording_end_time"),
+                "duration_seconds": saved_payload.get("duration_seconds"),
             }
             push_alarm_threadsafe(websocket_payload)
             return next_id

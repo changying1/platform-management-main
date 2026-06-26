@@ -399,6 +399,27 @@ export interface VideoMonitoringSummary {
   estimated_remaining_gb?: number | null;
   remaining_gb?: number | null;
   traffic_remaining_gb?: number | null;
+  traffic_total_gb?: number | null;
+  traffic_display_unit?: string;
+  total_flow_value?: number | string | null;
+  total_flow_unit?: string;
+  total_flow_raw?: unknown;
+  total_flow_display?: string;
+  used_flow_value?: number | string | null;
+  used_flow_unit?: string;
+  used_flow_raw?: unknown;
+  used_flow_display?: string;
+  residual_flow_value?: number | string | null;
+  residual_flow_unit?: string;
+  residual_flow_raw?: unknown;
+  remaining_flow_unit?: string;
+  remaining_flow_display?: string;
+  traffic?: {
+    total?: { value?: number | string | null; unit?: string; raw?: unknown };
+    used?: { value?: number | string | null; unit?: string; raw?: unknown };
+    remaining?: { value?: number | string | null; unit?: string; raw?: unknown };
+    display_unit?: string;
+  };
   remaining_formula?: string;
   monthly_threshold_text?: string;
   estimated_remaining_text?: string;

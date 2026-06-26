@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { getAlarmPlaybackVideos, type SavedPlaybackVideo } from '../src/api/videoApi';
@@ -24,13 +24,6 @@ import {
   ArrowUp,
   ArrowUpDown
 } from 'lucide-react';
-
-const cleanAlarmDisplayText = (value?: string | null) => String(value || '')
-  .replace(/[\uFF08(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[\uFF09)]/g, '')
-  .replace(/\bconfidence\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/gi, '')
-  .replace(/\u7F6E\u4FE1\u5EA6\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/g, '')
-  .replace(/\s{2,}/g, ' ')
-  .trim();
 
 // 告警记录类型
 interface AlarmRecord {
@@ -244,24 +237,9 @@ export default function AlarmRecords() {
   const [stats, setStats] = useState({ total: 0, pending: 0, fence: 0, video: 0 });
   const [selectedAlarm, setSelectedAlarm] = useState<AlarmRecord | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
-// 获取默认日期范围（结束时间为当前时间，开始时间为空表示无限制）
-const getDefaultDateRange = () => {
-  const end = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return {
-    startDate: '',
-    startTime: '',
-    endDate: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
-    endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
-  };
-};
-
-const defaultDateRange = getDefaultDateRange();
 const [searchKeyword, setSearchKeyword] = useState('');
-const [startDate, setStartDate] = useState<string>(defaultDateRange.startDate);
-const [startTime, setStartTime] = useState<string>(defaultDateRange.startTime);
-const [endDate, setEndDate] = useState<string>(defaultDateRange.endDate);
-const [endTime, setEndTime] = useState<string>(defaultDateRange.endTime);
+const [startDate, setStartDate] = useState<string>('');
+const [endDate, setEndDate] = useState<string>('');
 const [showProcessModal, setShowProcessModal] = useState(false);
 const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null);
 const [processRemark, setProcessRemark] = useState('');
@@ -373,7 +351,7 @@ const isOfflineAlarm = (item: AlarmResponse) => {
     item.description,
     rawItem.alarm_content,
     rawItem.message,
-  ].join(' ').toLowerCase();
+  ].filter(Boolean).join(' ').toLowerCase();
   return text.includes('offline') || text.includes('离线');
 };
 
@@ -458,113 +436,672 @@ const loadAlarms = async () => {
     const data = await alarmApi.getAlarms(undefined, undefined, 500);
     if (requestSeq !== loadSeqRef.current || requestedTab !== activeTab) return;
     const mapped = data
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed">
-            <thead className="border-b border-blue-400/20 bg-slate-800/50">
-              <tr>
-                {renderSortHeader('type', '类型', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('situation', '情况描述', 'w-[14%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('level', '等级', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('person', '告警对象', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('device', '告警设备', 'w-[13%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('location', '告警地点', 'w-[7%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('branch', '分公司', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('project', '项目', 'w-[8%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('grid', '网格', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('team', '工队', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('status', '处置', 'w-[5%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                {renderSortHeader('time', '告警时间', 'w-[6%] px-3 py-3 text-left text-sm font-semibold text-slate-300')}
-                <th className="w-[11%] px-3 py-3 text-right text-sm font-semibold text-slate-300">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-700">
-              {sortedAlarms.map(alarm => (
-                <tr
-                   key={alarm.recordKey}
-                   onClick={() => setSelectedAlarm(alarm)}
-                   className={`hover:bg-slate-800/30 cursor-pointer transition-colors ${
-                     alarm.status === 'pending' ? 'bg-red-500/5' : ''
-                   }`}
-                 >
-                   <td className="px-3 py-3 align-top">
-                     <div className="flex items-center gap-2 min-w-0">
-                       <div className={`w-8 h-8 rounded-lg flex shrink-0 items-center justify-center ${
-                         alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
-                       }`}>
-                         {alarm.type === 'fence' ? (
-                           <ShieldAlert size={16} className="text-blue-400" />
-                         ) : (
-                           <Video size={16} className="text-purple-400" />
-                         )}
-                       </div>
-                       <span className="truncate text-base font-semibold text-white" title={getAlarmTypeText(alarm)}>
-                         {getAlarmTypeText(alarm)}
-                       </span>
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div
-                       className="text-base leading-7 text-slate-300 overflow-hidden"
-                       style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
-                       title={getSituationText(alarm)}
-                     >
-                       {getSituationText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                      <span className={`text-sm px-2.5 py-1 rounded-full border ${getLevelColor(alarm.level)}`}>
-                        {getLevelText(alarm.level)}
+      .filter((item) => !isOfflineAlarm(item))
+      .filter((item) => requestedTab === 'all' || getAlarmSourceType(item) === requestedTab)
+      .map(mapAlarmFromApi)
+      .sort((a, b) => parseAlarmTimestamp(b.time).getTime() - parseAlarmTimestamp(a.time).getTime());
+
+    alarmLoadCountsRef.current = { raw: data.length, normalized: mapped.length };
+    setAlarms(mapped);
+    setStats({
+      total: mapped.length,
+      pending: mapped.filter((alarm) => alarm.status === 'pending').length,
+      fence: mapped.filter((alarm) => alarm.sourceType === 'fence').length,
+      video: mapped.filter((alarm) => alarm.sourceType === 'video').length,
+    });
+    console.log('[AlarmRecord] raw=', data.length, 'normalized=', mapped.length);
+  } catch (error) {
+    console.error('加载告警记录失败:', error);
+  }
+};
+
+useEffect(() => {
+  loadAlarms();
+}, [activeTab]);
+
+// 监听新告警事件
+useEffect(() => {
+  const handleAlarmAdded = async () => {
+    await loadAlarms();
+  };
+
+  window.addEventListener('alarmAdded', handleAlarmAdded as EventListener);
+  return () => window.removeEventListener('alarmAdded', handleAlarmAdded as EventListener);
+}, [activeTab]);
+
+  const clearDateFilter = () => {
+  setStartDate('');
+  setEndDate('');
+};
+
+  const getLevelColor = (level: string) => {
+    switch (level) {
+      case 'high': return 'bg-red-500/20 text-red-400 border-red-500/30';
+      case 'medium': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+      default: return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+    }
+  };
+
+  const getLevelText = (level: string) => {
+    switch (level) {
+      case 'high': return '严重';
+      case 'medium': return '一般';
+      default: return '提示';
+    }
+  };
+
+  const getAlarmTypeText = (alarm: AlarmRecord) => {
+    const raw = String(alarm.title || '').trim();
+    if (raw && raw !== '围栏告警' && raw !== '视频告警') return raw;
+    return alarm.type === 'fence' ? '电子围栏闯入' : '视频识别告警';
+  };
+
+  const getSituationText = (alarm: AlarmRecord) => {
+    const description = String(alarm.description || '').trim();
+    if (description && description !== alarm.title) return description;
+    const target = alarm.deviceName || alarm.personName || '未知对象';
+    const location = alarm.location && alarm.location !== '未提供位置' ? alarm.location : '';
+    return [target, location].filter(Boolean).join(' ');
+  };
+
+  const getAlarmDeviceText = (alarm: AlarmRecord) =>
+    [alarm.deviceName, alarm.deviceId ? `ID:${alarm.deviceId}` : ''].filter(Boolean).join(' / ') || '-';
+
+  const getAlarmPersonText = (alarm: AlarmRecord) => alarm.personName || '-';
+
+  const getAlarmLocationText = (alarm: AlarmRecord) =>
+    alarm.type === 'fence' && alarm.location && alarm.location !== '未提供位置' ? alarm.location : '-';
+
+  const displayValue = (value?: string | number | null) => {
+    const text = String(value ?? '').trim();
+    if (!text || ['-', 'string', 'null', 'undefined', '未知', '未提供位置'].includes(text)) return '-';
+    if (/^未分配/.test(text)) return '-';
+    return text;
+  };
+
+  const getDefaultSortDirection = (key: AlarmSortKey): AlarmSortDirection => key === 'time' ? 'desc' : 'asc';
+
+  const handleSort = (key: AlarmSortKey) => {
+    setSortConfig(current => {
+      if (current.key !== key) return { key, direction: getDefaultSortDirection(key) };
+      return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+    });
+  };
+
+  const getSortValue = (alarm: AlarmRecord, key: AlarmSortKey) => {
+    const levelOrder = { high: 3, medium: 2, low: 1 };
+    const statusOrder = { pending: 3, resolved: 2, ignored: 1 };
+    switch (key) {
+      case 'type': return getAlarmTypeText(alarm);
+      case 'situation': return getSituationText(alarm);
+      case 'level': return levelOrder[alarm.level] || 0;
+      case 'person': return getAlarmPersonText(alarm);
+      case 'device': return getAlarmDeviceText(alarm);
+      case 'location': return getAlarmLocationText(alarm);
+      case 'branch': return alarm.branchName || '-';
+      case 'project': return alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-');
+      case 'grid': return alarm.gridName || '-';
+      case 'team': return alarm.team || '-';
+      case 'status': return statusOrder[alarm.status] || 0;
+      case 'time': return parseAlarmTimestamp(alarm.time).getTime() || 0;
+      default: return '';
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'bg-yellow-500/20 text-yellow-400';
+      case 'resolved': return 'bg-green-500/20 text-green-400';
+      default: return 'bg-slate-500/20 text-slate-400';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'pending': return '待处理';
+      case 'resolved': return '已处理';
+      default: return '已忽略';
+    }
+  };
+const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignored') => {
+  setProcessingAlarm(alarm);
+  setProcessAction(action);
+  setProcessRemark('');
+  setProcessError('');
+  setShowProcessModal(true);
+};
+
+const openAlarmVideo = async (alarm: AlarmRecord) => {
+  if (isPlaybackGeneratingStatus(alarm.recordingStatus)) {
+    alert('告警回放生成中');
+    return;
+  }
+
+  if (isPlaybackFailedStatus(alarm.recordingStatus)) {
+    alert(alarm.recordingError || '暂未找到该告警回放视频');
+    return;
+  }
+
+  let videoPath = alarm.videoPath;
+
+  if (!videoPath && isPlaybackReadyStatus(alarm.recordingStatus)) {
+    const deviceId = Number(alarm.deviceId);
+    if (!Number.isFinite(deviceId) || deviceId <= 0) {
+      alert('暂未找到该告警回放视频');
+      return;
+    }
+
+    try {
+      const videos = await getAlarmPlaybackVideos(deviceId, 120);
+      const matchedVideo = findAlarmPlaybackVideo(videos, alarm.id);
+      videoPath = resolveAlarmVideoUrl(getAlarmVideoPathValue(matchedVideo));
+    } catch (error) {
+      console.error('查询告警回放失败:', error);
+      alert('暂未找到该告警回放视频');
+      return;
+    }
+  }
+
+  if (!videoPath) {
+    alert('暂未找到该告警回放视频');
+    return;
+  }
+
+  const playableAlarm = { ...alarm, videoPath };
+  console.log('[ALARM_RECORD_BINDING]', {
+    alarm_id: alarm.id,
+    snapshot: alarm.snapshot || '',
+    videoPath,
+    alarmSecond: alarm.alarmSecond,
+  });
+  setSelectedVideoAlarm(playableAlarm);
+  setPreviewVideo(videoPath);
+  setAlarms((current) =>
+    current.map((item) => item.id === alarm.id ? { ...item, videoPath } : item)
+  );
+  setSelectedAlarm((current) =>
+    current?.id === alarm.id ? { ...current, videoPath } : current
+  );
+};
+
+const handleConfirmProcess = async () => {
+  if (!processingAlarm || isProcessingAlarm) return;
+
+  const currentUser = localStorage.getItem('username') || '未知用户';
+
+  try {
+    setIsProcessingAlarm(true);
+    setProcessError('');
+    if (processAction === 'resolved') {
+      await alarmApi.resolveAlarm(Number(processingAlarm.id), {
+        handler: currentUser,
+        remark: processRemark,
+      });
+    } else {
+      await alarmApi.updateAlarm(Number(processingAlarm.id), {
+        status: 'ignored',
+        handler: currentUser,
+        remark: processRemark,
+      });
+    }
+
+    await loadAlarms();
+    window.dispatchEvent(new CustomEvent('alarmStatusChanged', {
+      detail: {
+        alarmId: processingAlarm.id,
+        deviceId: processingAlarm.deviceId,
+        sourceType: processingAlarm.sourceType,
+        status: processAction,
+      },
+    }));
+
+    setShowProcessModal(false);
+    setProcessingAlarm(null);
+    setSelectedAlarm(null);
+  } catch (error) {
+    console.error('处理告警失败:', error);
+    setProcessError('处理失败，请检查后端服务或当前账号权限后重试。');
+  } finally {
+    setIsProcessingAlarm(false);
+  }
+};
+
+  const getAlarmCompanyName = (alarm: AlarmRecord) => alarm.branchName || '未分配分公司';
+  const getAlarmProjectName = (alarm: AlarmRecord) =>
+    alarm.projectName ||
+    (alarm.projectId !== undefined && alarm.projectId !== null
+      ? `项目 ${alarm.projectId}`
+      : '未分配项目');
+  const getAlarmGridName = (alarm: AlarmRecord) => alarm.gridName || '未分配网格';
+  const getAlarmTeamName = (alarm: AlarmRecord) => alarm.team || '未分配工队';
+  const alarmMatchesKeyword = (alarm: AlarmRecord, keyword: string) => {
+    const terms = normalizeAlarmSearchText(keyword).split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return true;
+
+    const haystack = [
+      alarm.title,
+      alarm.description,
+      alarm.level,
+      alarm.status,
+      alarm.type,
+      alarm.sourceType,
+      alarm.deviceName,
+      alarm.deviceId,
+      alarm.location,
+      alarm.fenceId,
+      alarm.fenceName,
+      alarm.projectId,
+      getAlarmCompanyName(alarm),
+      getAlarmProjectName(alarm),
+      getAlarmGridName(alarm),
+      getAlarmTeamName(alarm),
+      alarm.personName,
+      getAlarmPersonText(alarm),
+      getAlarmDeviceText(alarm),
+      getAlarmLocationText(alarm),
+      getSituationText(alarm),
+      getAlarmTypeText(alarm),
+    ].map(normalizeAlarmSearchText).join(' ');
+
+    return terms.every((term) => haystack.includes(term));
+  };
+
+  const companyOptions = Array.from(new Set(alarms.map(getAlarmCompanyName))).filter(Boolean);
+  const projectOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .map(getAlarmProjectName)
+  )).filter(Boolean);
+  const gridOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .filter((alarm) => selectedProject === 'all' || getAlarmProjectName(alarm) === selectedProject)
+      .map(getAlarmGridName)
+  )).filter(Boolean);
+  const teamOptions = Array.from(new Set(
+    alarms
+      .filter((alarm) => selectedCompany === 'all' || getAlarmCompanyName(alarm) === selectedCompany)
+      .filter((alarm) => selectedProject === 'all' || getAlarmProjectName(alarm) === selectedProject)
+      .filter((alarm) => selectedGrid === 'all' || getAlarmGridName(alarm) === selectedGrid)
+      .map(getAlarmTeamName)
+  )).filter(Boolean);
+
+  const filteredAlarms = alarms.filter(alarm => {
+    // 类型筛选
+    if (activeTab !== 'all' && alarm.sourceType !== activeTab) return false;
+    // 状态筛选
+    if (filterStatus !== 'all' && alarm.status !== filterStatus) return false;
+    if (selectedCompany !== 'all') {
+      const companyName = getAlarmCompanyName(alarm);
+      if (companyName !== selectedCompany) {
+        return false;
+      }
+    }
+
+    if (selectedProject !== 'all') {
+      const projectName = getAlarmProjectName(alarm);
+      if (projectName !== selectedProject) {
+        return false;
+      }
+    }
+
+    if (selectedGrid !== 'all') {
+      if (getAlarmGridName(alarm) !== selectedGrid) {
+        return false;
+      }
+    }
+
+    // 工队筛选
+    if (selectedTeam !== 'all') {
+      if (getAlarmTeamName(alarm) !== selectedTeam) {
+        return false;
+      }
+    }
+
+    // 关键词搜索
+    if (!alarmMatchesKeyword(alarm, searchKeyword)) return false;
+
+    // 日期范围筛选
+    const alarmDate = parseAlarmTimestamp(alarm.time);
+    const filterStart = parseAlarmFilterDateTime(startDate);
+    const filterEnd = parseAlarmFilterDateTime(endDate);
+    if (filterStart && alarmDate < filterStart) return false;
+    if (filterEnd && alarmDate > filterEnd) return false;
+    return true;
+  });
+
+  useEffect(() => {
+    console.log(
+      '[AlarmRecord] raw=',
+      alarmLoadCountsRef.current.raw,
+      'normalized=',
+      alarmLoadCountsRef.current.normalized,
+      'filtered=',
+      filteredAlarms.length
+    );
+  }, [filteredAlarms.length]);
+
+  const sortedAlarms = [...filteredAlarms].sort((a, b) => {
+    const aValue = getSortValue(a, sortConfig.key);
+    const bValue = getSortValue(b, sortConfig.key);
+    let result = 0;
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      result = aValue - bValue;
+    } else {
+      result = String(aValue).localeCompare(String(bValue), 'zh-CN', {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    }
+    return sortConfig.direction === 'asc' ? result : -result;
+  });
+
+  const sortOptions: { key: AlarmSortKey; label: string }[] = [
+    { key: 'time', label: '告警时间' },
+    { key: 'level', label: '严重等级' },
+    { key: 'status', label: '处理状态' },
+    { key: 'type', label: '告警类型' },
+    { key: 'device', label: '告警设备' },
+    { key: 'project', label: '项目' },
+    { key: 'team', label: '工队' },
+  ];
+
+  return (
+    <div className="h-full overflow-auto p-6 pb-28 xl:pr-24">
+      {/* 标题 + 统计卡片 */}
+      <div className="flex justify-between items-start mb-6">
+        {/* 标题 */}
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Bell size={28} className="text-cyan-400" />
+            告警记录
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">查看和管理所有围栏告警及视频分析告警</p>
+        </div>
+
+        {/* 统计卡片 - 右上角紧凑布局 */}
+        <div className="flex gap-3">
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-cyan-400/30 px-4 py-1.5 flex items-center gap-2">
+            <Bell size={24} className="text-cyan-400" />
+            <span className="text-slate-400 text-lg">总数</span>
+            <span className="text-cyan-400 font-bold text-2xl">{stats.total}</span>
+          </div>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-yellow-400/30 px-4 py-1.5 flex items-center gap-2">
+            <AlertTriangle size={24} className="text-yellow-400" />
+            <span className="text-slate-400 text-lg">待处理</span>
+            <span className="text-yellow-400 font-bold text-2xl">{stats.pending}</span>
+          </div>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-blue-400/30 px-4 py-1.5 flex items-center gap-2">
+            <ShieldAlert size={24} className="text-blue-400" />
+            <span className="text-slate-400 text-lg">围栏</span>
+            <span className="text-blue-400 font-bold text-2xl">{stats.fence}</span>
+          </div>
+          <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg border border-purple-400/30 px-4 py-1.5 flex items-center gap-2">
+            <Video size={24} className="text-purple-400" />
+            <span className="text-slate-400 text-lg">视频</span>
+            <span className="text-purple-400 font-bold text-2xl">{stats.video}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 筛选栏 */}
+      <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-cyan-400/30 p-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Tab切换 */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setActiveTab('all')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'all'
+                  ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-400/50'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              全部
+            </button>
+            <button
+              onClick={() => setActiveTab('fence')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                activeTab === 'fence'
+                  ? 'bg-blue-500/30 text-blue-300 border border-blue-400/50'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ShieldAlert size={14} />
+              围栏告警
+            </button>
+            <button
+              onClick={() => setActiveTab('video')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                activeTab === 'video'
+                  ? 'bg-purple-500/30 text-purple-300 border border-purple-400/50'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Video size={14} />
+              视频告警
+            </button>
+          </div>
+
+          {/* 状态筛选 */}
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+          >
+            <option value="all">全部状态</option>
+            <option value="pending">待处理</option>
+            <option value="resolved">已处理</option>
+            <option value="ignored">已忽略</option>
+          </select>
+          {/* 四级单位筛选 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {scopeState.showCompanyFilter && (
+              <select
+                value={selectedCompany}
+                onChange={(e) => {
+                  setSelectedCompany(e.target.value);
+                  setSelectedProject('all');
+                  setSelectedGrid('all');
+                  setSelectedTeam('all');
+                }}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+              >
+                <option value="all">所有分公司</option>
+                {companyOptions.map((company) => <option key={company} value={company}>{company}</option>)}
+              </select>
+            )}
+            {scopeState.showProjectFilter && (
+              <select
+                value={selectedProject}
+                onChange={(e) => {
+                  setSelectedProject(e.target.value);
+                  setSelectedGrid('all');
+                  setSelectedTeam('all');
+                }}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+              >
+                <option value="all">所有项目</option>
+                {projectOptions.map((project) => <option key={project} value={project}>{project}</option>)}
+              </select>
+            )}
+            <select
+              value={selectedGrid}
+              onChange={(e) => {
+                setSelectedGrid(e.target.value);
+                setSelectedTeam('all');
+              }}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+            >
+              <option value="all">所有网格</option>
+              {gridOptions.map((grid) => <option key={grid} value={grid}>{grid}</option>)}
+            </select>
+            <select
+              value={selectedTeam}
+              onChange={(e) => setSelectedTeam(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 min-w-[130px]"
+            >
+              <option value="all">所有工队</option>
+              {teamOptions.map((team) => <option key={team} value={team}>{team}</option>)}
+            </select>
+          </div>
+
+{/* 时间范围筛选 */}
+<div className="flex items-center gap-2">
+  <Calendar size={14} className="text-slate-400" />
+  <input
+    type="datetime-local"
+    step="60"
+    value={startDate}
+    onChange={(e) => setStartDate(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+  />
+  <span className="text-slate-500">-</span>
+  <input
+    type="datetime-local"
+    step="60"
+    value={endDate}
+    onChange={(e) => setEndDate(e.target.value)}
+    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"
+  />
+  {(startDate || endDate) && (
+    <button onClick={clearDateFilter} className="px-2 py-1 text-sm text-cyan-400">清除</button>
+  )}
+</div>
+
+          {/* 搜索框 */}
+          <div className="flex-1 min-w-[200px] relative">
+            <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+            <input
+              type="text"
+              placeholder="搜索报警编号/设备/人员/位置/内容"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 告警列表 - 卡片型 */}
+      <div className="bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-700/50 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-400/20 bg-slate-800/50 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <Filter size={15} className="text-cyan-400" />
+            <span>共 {filteredAlarms.length} 条</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-500">排序</span>
+            {sortOptions.map(({ key, label }) => {
+              const active = sortConfig.key === key;
+              const Icon = active ? (sortConfig.direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleSort(key)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
+                    active
+                      ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
+                      : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-cyan-400/30 hover:text-cyan-200'
+                  }`}
+                  title={`点击按${label}排序`}
+                >
+                  {label}
+                  <Icon size={13} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-3 p-4 pb-8">
+          {sortedAlarms.map(alarm => {
+            const typeText = displayValue(getAlarmTypeText(alarm));
+            const situationText = displayValue(getSituationText(alarm));
+            const personText = displayValue(getAlarmPersonText(alarm));
+            const deviceName = displayValue(alarm.deviceName);
+            const deviceId = displayValue(alarm.deviceId);
+            const locationText = displayValue(alarm.location && alarm.location !== '未提供位置' ? alarm.location : getAlarmLocationText(alarm));
+            const companyText = displayValue(alarm.branchName);
+            const projectText = displayValue(alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : ''));
+            const gridText = displayValue(alarm.gridName);
+            const teamText = displayValue(alarm.team);
+
+            return (
+              <article
+                key={alarm.recordKey}
+                onClick={() => setSelectedAlarm(alarm)}
+                className={`group cursor-pointer rounded-lg border px-4 py-3 transition-all hover:border-cyan-400/35 hover:bg-slate-800/45 ${
+                  alarm.status === 'pending'
+                    ? 'border-red-400/20 bg-red-500/5'
+                    : 'border-slate-700/70 bg-slate-950/25'
+                }`}
+              >
+                <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_auto] lg:items-start">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                      alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                    }`}>
+                      {alarm.type === 'fence' ? (
+                        <ShieldAlert size={20} className="text-blue-400" />
+                      ) : (
+                        <Video size={20} className="text-purple-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-white" title={typeText}>
+                        {typeText}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        <span className={`rounded-full border px-2 py-0.5 text-xs ${getLevelColor(alarm.level)}`}>
+                          {getLevelText(alarm.level)}
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${getStatusColor(alarm.status)}`}>
+                          {getStatusText(alarm.status)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                      <div className="min-w-0 flex-1 text-slate-200" title={situationText}>
+                        <span className="text-slate-500">情况：</span>
+                        <span className="break-words">{situationText}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-slate-300">
+                        <User size={14} className="text-slate-500" />
+                        <span className="text-slate-500">对象</span>
+                        <span>{personText}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-slate-300">
+                        <Video size={14} className="text-slate-500" />
+                        <span className="text-slate-500">设备</span>
+                        <span>{deviceName}</span>
+                        <span className="text-slate-600">/</span>
+                        <span>ID:{deviceId}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin size={13} className="text-slate-500" />
+                        地点：<b className="font-normal text-slate-300">{locationText}</b>
                       </span>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmPersonText(alarm)}>
-                       {getAlarmPersonText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmDeviceText(alarm)}>
-                       {getAlarmDeviceText(alarm)}
-                     </div>
-                     <div className="text-xs text-slate-500 mt-1">设备ID: {alarm.deviceId || '-'}</div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={getAlarmLocationText(alarm)}>
-                       {getAlarmLocationText(alarm)}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.branchName || '-'}>
-                       {alarm.branchName || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}>
-                       {alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : '-')}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.gridName || '-'}>
-                       {alarm.gridName || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="truncate text-base leading-7 text-slate-200" title={alarm.team || '-'}>
-                       {alarm.team || '-'}
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <span className={`text-sm px-2.5 py-1 rounded-full ${getStatusColor(alarm.status)}`}>
-                       {getStatusText(alarm.status)}
-                     </span>
-                   </td>
-                   <td className="px-3 py-3 align-top">
-                     <div className="flex items-start gap-1 text-sm text-slate-300">
-                       <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
-                       <span className="leading-5">{formatAlarmTimestamp(alarm.time)}</span>
-                     </div>
-                   </td>
-                   <td className="px-3 py-3 text-right align-top">
-                    <div className="flex flex-row flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
+                      <span>分公司：<b className="font-normal text-slate-300">{companyText}</b></span>
+                      <span>项目：<b className="font-normal text-slate-300">{projectText}</b></span>
+                      <span>网格：<b className="font-normal text-slate-300">{gridText}</b></span>
+                      <span>工队：<b className="font-normal text-slate-300">{teamText}</b></span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 lg:min-w-[360px] lg:items-end">
+                    <div className="flex items-center gap-1 text-xs text-slate-400">
+                      <Clock size={14} className="text-slate-500" />
+                      <span>{formatAlarmTimestamp(alarm.time)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
@@ -723,7 +1260,7 @@ const loadAlarms = async () => {
                 </div>
                 <div className="col-span-2">
                   <span className="text-slate-400">报警信息：</span>
-                  <p className="text-slate-200 mt-1">{cleanAlarmDisplayText(selectedAlarm.description)}</p>
+                  <p className="text-slate-200 mt-1">{selectedAlarm.description}</p>
                 </div>
                 {selectedAlarm.recordingStatus && (
                   <div>
@@ -815,7 +1352,7 @@ const loadAlarms = async () => {
         <div className="bg-slate-800/50 rounded-lg p-3">
           <div className="text-sm text-slate-400 mb-1">告警信息</div>
           <div className="text-white font-medium">{processingAlarm.title}</div>
-          <div className="text-xs text-slate-400 mt-1">{cleanAlarmDisplayText(processingAlarm.description)}</div>
+          <div className="text-xs text-slate-400 mt-1">{processingAlarm.description}</div>
         </div>
 
         <div>
