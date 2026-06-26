@@ -43,7 +43,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:gravity="center"
-                android:text="设备中心"
+                android:text="实时监控"
                 android:textColor="#0B1220"
                 android:textSize="24sp"
                 android:textStyle="bold"/>
@@ -235,8 +235,10 @@
 
         <!-- 分页 -->
         <LinearLayout
+            android:id="@+id/pagination_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:visibility="gone"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingStart="12dp"

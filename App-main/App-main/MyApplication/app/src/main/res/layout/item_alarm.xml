@@ -1,149 +1,150 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="8dp"
-    android:elevation="4dp">
+    android:layout_marginHorizontal="2dp"
+    android:layout_marginVertical="6dp"
+    app:cardCornerRadius="14dp"
+    app:cardElevation="2dp"
+    app:strokeColor="#1F6750A4"
+    app:strokeWidth="1dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:padding="14dp">
 
-        <TextView
-            android:id="@+id/tvAlarmId"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="报警编号: ALM-20240807-1"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvAlarmId"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="ALM-20260623-1"
+                android:textColor="#332D41"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvSourceBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#E8DEF8"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="视频"
+                android:textColor="#6750A4"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tvAlarmType"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="报警类型: 电子围栏入侵"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/tvDevice"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="设备: 设备1"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/tvDeviceId"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="设备ID: 1"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/tvTime"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="报警时间: 2024-08-07 16:11:56"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/tvLocation"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="位置: 未知"
-            android:textSize="14sp" />
+            android:layout_marginTop="8dp"
+            android:maxLines="2"
+            android:textColor="#332D41"
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvAlarmContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="报警信息: "
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="#665F6D"
             android:textSize="14sp" />
 
         <TextView
-            android:id="@+id/tvPerson"
+            android:id="@+id/tvDevice"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="人员: 未知"
-            android:textSize="14sp" />
+            android:layout_marginTop="8dp"
+            android:textColor="#49454F"
+            android:textSize="13sp" />
 
         <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="wrap_content"
+            android:id="@+id/tvOrgPath"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="状态: 待处理"
-            android:textSize="14sp" />
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="#79747E"
+            android:textSize="12sp" />
 
-        <Spinner
-            android:id="@+id/spinnerLevel"
-            android:layout_width="wrap_content"
+        <TextView
+            android:id="@+id/tvTime"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
+            android:layout_marginTop="3dp"
+            android:textColor="#79747E"
+            android:textSize="12sp" />
+
+        <TextView android:id="@+id/tvDeviceId" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/tvLocation" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/tvPerson" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/tvStatus" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <Spinner android:id="@+id/spinnerLevel" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:orientation="vertical">
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tvLevelBadge"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="严重"
+                android:textStyle="bold" />
 
-            <Button
-                android:id="@+id/btnImage"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:text="图片" />
-
-            <Button
-                android:id="@+id/btnVideo"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="视频" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tvStatusBadge"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnResolve"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:background="#4CAF50"
-                android:text="处置"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnDelete"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
                 android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:background="#F44336"
-                android:text="删除"
-                android:textColor="#FFFFFF" />
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="待处理"
+                android:textStyle="bold" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDetails"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="详情" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <Button android:id="@+id/btnImage" android:layout_width="wrap_content" android:layout_height="40dp" android:text="图片" />
+            <Button android:id="@+id/btnVideo" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginStart="6dp" android:text="视频" />
+            <Button android:id="@+id/btnResolve" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginStart="6dp" android:text="处置" />
         </LinearLayout>
     </LinearLayout>
-    </LinearLayout>
-</androidx.cardview.widget.CardView>
+</com.google.android.material.card.MaterialCardView>

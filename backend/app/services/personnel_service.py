@@ -37,9 +37,34 @@ def _permission_level_for(role: str | None, explicit_level: str | None) -> str:
     return PERMISSION_BY_ROLE.get(str(role or ""), "project_safety_admin")
 
 
+def _login_user_id_for_personnel(doc: dict) -> str:
+    personnel_id = str(doc.get("_id") or "")
+    username = (
+        doc.get("loginUsername")
+        or doc.get("employeeId")
+        or doc.get("phone")
+        or doc.get("username")
+        or ""
+    ).strip()
+
+    clauses = []
+    if personnel_id:
+        clauses.append({"personnel_id": personnel_id})
+    if username:
+        clauses.append({"username": username})
+    if not clauses:
+        return ""
+
+    user = get_mongo_collection("users").find_one({"$or": clauses}, {"_id": 0, "id": 1})
+    if not user or user.get("id") is None:
+        return ""
+    return str(user.get("id"))
+
+
 def _to_out(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),
+        "userId": _login_user_id_for_personnel(doc),
         "username": doc.get("username", ""),
         "dept": doc.get("dept", ""),
         "phone": doc.get("phone", ""),

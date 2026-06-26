@@ -20,6 +20,7 @@ import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.local.AppConfig;
 import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.data.model.AlarmFields;
+import com.app.myapplication.ui.alarm.AlarmAdapter;
 import com.app.myapplication.ui.alarm.ImagePreviewActivity;
 
 import java.text.SimpleDateFormat;
@@ -120,7 +121,7 @@ public class AlarmEventsFragment extends Fragment {
         item.deviceId = alarm.getDeviceId();
         item.type = alarm.getAlarmType();
         item.level = alarm.getSeverity();
-        item.msg = alarm.getDescription();
+        item.msg = AlarmAdapter.cleanDisplayDescription(alarm.getDescription());
         item.timestamp = alarm.getTimestamp();
         item.personnel = alarm.getPersonName();
         item.deviceName = firstNonEmpty(alarm.getDeviceName(), item.deviceId, "unknown");

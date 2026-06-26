@@ -11,7 +11,7 @@ import retrofit2.http.Query;
 
 public interface CallApi {
 
-    @GET("devices/")
+    @GET("device/devices")
     Call<List<Map<String, Object>>> getJT808Devices(@Query("skip") int skip, @Query("limit") int limit);
 
     @POST("call/tts/send")

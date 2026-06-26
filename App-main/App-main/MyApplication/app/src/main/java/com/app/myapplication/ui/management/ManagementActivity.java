@@ -1,6 +1,5 @@
 package com.app.myapplication.ui.management;
 
-import android.content.Intent;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -15,7 +14,6 @@ import androidx.viewpager2.widget.ViewPager2;
 import com.app.myapplication.R;
 import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.ui.management.adapter.ManagementPagerAdapter;
-import com.app.myapplication.ui.management.fragment.CameraManagementFragment;
 import com.app.myapplication.ui.management.fragment.GridManagementFragment;
 import com.app.myapplication.ui.management.fragment.PermissionManagementFragment;
 import com.app.myapplication.ui.management.fragment.PersonManagementFragment;
@@ -26,16 +24,16 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 管理中心 - 对应 Web 端 ManagementPanel
- * 包含：责任管理、项目管理、网格管理、工队管理、人员管理、设备管理、权限管理
+ * 包含：责任管理、项目管理、网格管理、工队管理、人员管理、权限管理
  */
 public class ManagementActivity extends AppCompatActivity {
+    public static final String EXTRA_INITIAL_TAB = "initial_tab";
+    public static final String TAB_PERSON = "person";
+    private static final boolean SHOW_EXTENDED_MANAGEMENT_TABS = true;
 
     private TabLayout tabLayout;
     private ViewPager2 viewPager;
@@ -66,16 +64,17 @@ public class ManagementActivity extends AppCompatActivity {
     }
 
     private void setupTabs() {
-        // 直接显示所有 7 个管理 Tab，与 Web 端保持一致
+        // 设备管理在主界面独立入口；扩展组织/权限 Tab 暂时隐藏，代码保留便于后续恢复。
         // 权限控制由后端 API 控制，不在前端限制
-        
-        tabs.add(new ManagementTab("responsibility", "责任管理", R.drawable.ic_responsibility));
-        tabs.add(new ManagementTab("project", "项目管理", R.drawable.ic_project));
-        tabs.add(new ManagementTab("grid", "网格管理", R.drawable.ic_grid));
-        tabs.add(new ManagementTab("team", "工队管理", R.drawable.ic_team));
+
+        if (SHOW_EXTENDED_MANAGEMENT_TABS) {
+            tabs.add(new ManagementTab("responsibility", "责任管理", R.drawable.ic_responsibility));
+            tabs.add(new ManagementTab("project", "项目管理", R.drawable.ic_project));
+            tabs.add(new ManagementTab("grid", "网格管理", R.drawable.ic_grid));
+            tabs.add(new ManagementTab("team", "工队管理", R.drawable.ic_team));
+            tabs.add(new ManagementTab("permission", "权限管理", R.drawable.ic_permission));
+        }
         tabs.add(new ManagementTab("person", "人员管理", R.drawable.ic_person));
-        tabs.add(new ManagementTab("device", "设备管理", R.drawable.ic_device));
-        tabs.add(new ManagementTab("permission", "权限管理", R.drawable.ic_permission));
     }
 
     private void setupViewPager() {
@@ -97,10 +96,6 @@ public class ManagementActivity extends AppCompatActivity {
                     break;
                 case "person":
                     fragments.add(new PersonManagementFragment());
-                    break;
-                case "device":
-                    // 设备管理包含两个子页面，使用特殊处理
-                    fragments.add(new CameraManagementFragment());
                     break;
                 case "permission":
                     fragments.add(new PermissionManagementFragment());
@@ -143,6 +138,19 @@ public class ManagementActivity extends AppCompatActivity {
             @Override
             public void onTabReselected(TabLayout.Tab tab) {}
         });
+
+        int initialIndex = findTabIndex(getIntent().getStringExtra(EXTRA_INITIAL_TAB));
+        if (initialIndex >= 0) {
+            viewPager.setCurrentItem(initialIndex, false);
+        }
+    }
+
+    private int findTabIndex(String tabId) {
+        if (tabId == null || tabId.isEmpty()) return -1;
+        for (int i = 0; i < tabs.size(); i++) {
+            if (tabId.equals(tabs.get(i).id)) return i;
+        }
+        return -1;
     }
 
     private void updateTabStyle(TabLayout.Tab tab, boolean selected) {

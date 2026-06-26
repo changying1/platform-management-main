@@ -55,7 +55,8 @@ class FenceItem(BaseModel):
     type: str
     behavior: str
     severity: str
-    schedule: Schedule
+    schedule: Schedule
+    effective_time: str = "00:00-23:59"
     center: Optional[List[float]] = None
     radius: Optional[float] = None
     points: Optional[List[List[float]]] = None
@@ -160,6 +161,7 @@ def _fence_to_item(fence: dict) -> dict:
         "behavior": fence.get("behavior"),
         "severity": fence.get("severity"),
         "schedule": fence.get("schedule"),
+        "effective_time": fence.get("effective_time") or "00:00-23:59",
         "center": fence.get("geometry", {}).get("center"),
         "radius": fence.get("geometry", {}).get("radius"),
         "points": fence.get("geometry", {}).get("points"),
@@ -195,7 +197,8 @@ def get_fences(current_user: dict = Depends(get_current_user)):
             "type": _shape_label(fence),
             "behavior": fence.get("behavior"),
             "severity": fence.get("severity"),
-            "schedule": fence.get("schedule"),
+            "schedule": fence.get("schedule"),
+            "effective_time": fence.get("effective_time") or "00:00-23:59",
             "center": fence.get("geometry", {}).get("center"),
             "radius": fence.get("geometry", {}).get("radius"),
             "points": fence.get("geometry", {}).get("points"),
@@ -280,6 +283,10 @@ def add_fence(payload: FenceCreate, current_user: dict = Depends(get_current_use
         service_payload,
         company=payload.company,
         project=payload.project,
+        schedule=payload.schedule.model_dump() if payload.schedule else {
+            "start": payload.startTime,
+            "end": payload.endTime,
+        },
         scope_fields=scope_fields,
         current_user=current_user,
     )
@@ -298,7 +305,8 @@ def add_fence(payload: FenceCreate, current_user: dict = Depends(get_current_use
         "type": _shape_label(new_fence),
         "behavior": new_fence.get("behavior"),
         "severity": new_fence.get("severity"),
-        "schedule": new_fence.get("schedule"),
+        "schedule": new_fence.get("schedule"),
+        "effective_time": new_fence.get("effective_time") or "00:00-23:59",
         "center": new_fence.get("geometry", {}).get("center"),
         "radius": new_fence.get("geometry", {}).get("radius"),
         "points": new_fence.get("geometry", {}).get("points"),

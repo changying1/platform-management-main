@@ -17,6 +17,24 @@ public class Alarm {
     @SerializedName("project_id")
     private Long projectId;
 
+    @SerializedName(value = "branch_name", alternate = {"company", "department"})
+    private String branchName;
+
+    @SerializedName(value = "project_name", alternate = {"project"})
+    private String projectName;
+
+    @SerializedName(value = "grid_name", alternate = {"grid"})
+    private String gridName;
+
+    @SerializedName(value = "team_name", alternate = {"team", "work_team", "workTeam"})
+    private String teamName;
+
+    @SerializedName("handler")
+    private String handler;
+
+    @SerializedName("remark")
+    private String remark;
+
     @SerializedName("alarm_type")
     private String alarmType;
 
@@ -169,6 +187,13 @@ public class Alarm {
     public void setProjectId(Long projectId) {
         this.projectId = projectId;
     }
+
+    public String getBranchName() { return branchName; }
+    public String getProjectName() { return projectName; }
+    public String getGridName() { return gridName; }
+    public String getTeamName() { return teamName; }
+    public String getHandler() { return handler; }
+    public String getRemark() { return remark; }
 
     public String getAlarmType() {
         return alarmType;

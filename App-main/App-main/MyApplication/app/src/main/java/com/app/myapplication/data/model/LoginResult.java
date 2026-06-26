@@ -17,6 +17,11 @@ public class LoginResult {
     @SerializedName(value = "userId", alternate = {"user_id", "id"})
     public String userId;
 
+    public String username;
+
+    @SerializedName("full_name")
+    public String fullName;
+
     @SerializedName(value = "nickname", alternate = {"nick_name", "name", "username"})
     public String nickname;
 
@@ -25,4 +30,11 @@ public class LoginResult {
 
     public String role;
     public List<String> permissions;
+
+    // ✅ 权限信息
+    @SerializedName("permission_level")
+    public String permissionLevel;
+    public String company;
+    public String project;
+    public String team;
 }

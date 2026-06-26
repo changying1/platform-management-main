@@ -251,6 +251,8 @@ CRUISE_TASKS_LOCK = threading.Lock()
 class VideoService:
     _ezviz_status_worker_lock = threading.Lock()
     _ezviz_status_worker_started = False
+    _playback_index_lock = threading.Lock()
+    _playback_index_cache: dict[str, Any] = {"expires_at": 0.0, "recordings": [], "alarms": []}
 
     def __init__(self):
 
@@ -2747,7 +2749,7 @@ class VideoService:
 
                 "low",
 
-                f"视频设备 {db_video.name} 休眠",
+                f"视频设备 {db_video.name} 处于待机/休眠",
 
                 bool(status_summary.get("sleeping")),
 
@@ -2771,7 +2773,7 @@ class VideoService:
 
                 "high",
 
-                f"鐟欏棝顣剁拋鎯ь槵 {db_video.name} 鐎涙ê鍋嶅鍌氱埗",
+                f"视频设备 {db_video.name} 存储异常",
 
                 bool(status_summary.get("storage_abnormal")),
 
@@ -5324,7 +5326,7 @@ class VideoService:
 
             if missing:
 
-                raise ValueError(f"娴犮儰绗呮０鍕枂閻愰€涚瑝鐎涙ê婀? {', '.join(missing)}")
+                raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
 
 
 
@@ -5562,7 +5564,7 @@ class VideoService:
 
         if "offline" in msg_lower or "设备不在线" in msg or "设备离线" in msg:
 
-            return "DEVICE_OFFLINE", "鐠佹儳顦粋鑽ゅ殠閹存牔绗夐崣顖濇彧"
+            return "DEVICE_OFFLINE", "设备离线或不可达"
 
         if "ptz" in msg_lower and ("not" in msg_lower or "不支持" in msg):
 
@@ -6553,7 +6555,7 @@ class VideoService:
 
         except Exception as e:
 
-            # 閺屾劒绨洪幗鍕剼婢剁繝绗夐弨顖涘瘮妫板嫮鐤嗛悙?閹存牕缍嬮崜宥堢箾閹恒儲娈忛弮鏈电瑝閸欘垳鏁?濮濄倕顦╅梽宥囬獓娑撹櫣鈹栭崚妤勩€?闁灝鍘ら崜宥囶伂閹镐胶鐢婚崙铏瑰箛 400?
+            # 某些摄像头不支持预置点，或当前连接暂时不可用；此处降级为空列表，避免前端持续出现 400
 
             logger.warning(f"GetPresets failed for video_id={video_id}: {e}")
 
@@ -6606,11 +6608,11 @@ class VideoService:
 
             print("=" * 50)
 
-            print("Calling EZVIZ add preset")
+            print("调用萤石云添加预置点")
 
             print(f"Payload: {payload}")
 
-            # ?娣囶喗鏁奸敍姘灡瀵ょ儤鏌婃０鍕枂閻愯妞傛稉宥勭炊 index(preset_token?
+            # 修改：创建新预置点时不传 index(preset_token)
 
             # if preset_token:
 
@@ -6620,13 +6622,13 @@ class VideoService:
 
 
 
-            print(f"閽€銈囩叾娴滄垵鎼? {body}")
+            print(f"萤石云响应: {body}")
 
-            print(f"閸濆秴绨?code: {body.get('code')}")
+            print(f"响应 code: {body.get('code')}")
 
-            print(f"閸濆秴绨?msg: {body.get('msg')}")
+            print(f"响应 msg: {body.get('msg')}")
 
-            print(f"閸濆秴绨?data: {body.get('data')}")
+            print(f"响应 data: {body.get('data')}")
 
             print("=" * 50)
 
@@ -6679,7 +6681,7 @@ class VideoService:
 
 
 
-        # ?閸掔娀娅庢稉瀣桨鏉╂瑥鍤戠悰?閸掓稑缂撻弬浼搭暕缂冾喚鍋ｆ稉宥堝厴?PresetToken
+        # 删除下面这几行，创建新预置点不需要 PresetToken
 
         # if preset_token:
 
@@ -6689,7 +6691,7 @@ class VideoService:
 
         try:
 
-            # SetPreset 鏉╂柨娲栭幗鍕剼婢跺鏁撻幋鎰畱 PresetToken
+            # SetPreset 返回摄像头生成的 PresetToken
 
             created_token = ptz.SetPreset(req)
 
@@ -6699,13 +6701,13 @@ class VideoService:
 
             if not created_token:
 
-                raise ValueError("閹藉嫬鍎氭径瀛樻弓鏉╂柨娲栨０鍕枂?token")
+                raise ValueError("摄像头未返回预置点 token")
 
 
 
             return {
 
-                "token": str(created_token),  # 閸欘亙濞囬悽銊︽啔閸嶅繐銇旀潻鏂挎礀?token
+                "token": str(created_token),  # 只使用摄像头返回的 token
 
                 "name": name or f"Preset-{created_token}"
 
@@ -6713,7 +6715,7 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"閸掓稑缂撴０鍕枂閻愮懓銇? {e}")
+            raise ValueError(f"创建预置点失败: {e}")
 
     # def set_preset(self, mongo_db, video_id: int, name: Optional[str] = None, preset_token: Optional[str] = None):
     #     db_video = db.query(VideoDevice).filter(VideoDevice.id == video_id).first()
@@ -6842,7 +6844,7 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"鐠嬪啰鏁ゆ０鍕枂閻愮懓銇? {e}")
+            raise ValueError(f"调用预置点失败: {e}")
 
 
 
@@ -6888,14 +6890,14 @@ class VideoService:
 
         except Exception as e:
 
-            raise ValueError(f"閸掔娀娅庢０鍕枂閻愮懓銇? {e}")
+            raise ValueError(f"删除预置点失败: {e}")
 
 
 
     def remove_presets_bulk(self, mongo_db, video_id: int, preset_tokens: list[str]):
         if not preset_tokens:
 
-            raise ValueError("preset_tokens 娑撳秷鍏樻稉铏光敄")
+            raise ValueError("preset_tokens 不能为空")
 
 
 
@@ -7114,7 +7116,7 @@ class VideoService:
 
             if missing:
 
-                raise ValueError(f"娴犮儰绗呮０鍕枂閻愰€涚瑝鐎涙ê婀? {', '.join(missing)}")
+                raise ValueError(f"以下预置点不存在: {', '.join(missing)}")
 
         elif not self._is_ezviz_ptz(db_video):
 
@@ -7285,7 +7287,7 @@ class VideoService:
 
     # -------------------------------------------------------------------------
 
-    # 閺嶇绺炬稉姘: 濞ｈ濮?閸掔娀娅?閺囧瓨鏌?
+    # 核心业务: 添加/删除/更新
 
     # -------------------------------------------------------------------------
 
@@ -8616,7 +8618,14 @@ class VideoService:
                 file_path,
             ]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_seconds,
+                )
             except subprocess.TimeoutExpired:
                 logger.warning(
                     "ffprobe duration timeout file=%s timeout_seconds=%.1f",
@@ -8640,7 +8649,14 @@ class VideoService:
         ffmpeg_path = self._get_ffmpeg_path()
         probe_cmd = [ffmpeg_path, "-hide_banner", "-i", file_path]
         try:
-            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=timeout_seconds)
+            result = subprocess.run(
+                probe_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_seconds,
+            )
         except subprocess.TimeoutExpired:
             logger.warning(
                 "ffmpeg duration probe timeout file=%s timeout_seconds=%.1f",
@@ -8657,6 +8673,14 @@ class VideoService:
             f"returncode={result.returncode} stderr={(result.stderr or '').strip()[-800:]}"
         )
         return None
+
+    @staticmethod
+    def _parse_duration_text(output: str) -> Optional[float]:
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output or "")
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
     def _probe_segment_duration_seconds(self, file_path: str) -> Optional[float]:
         return self._probe_video_duration(file_path, timeout_seconds=8.0)
@@ -9101,7 +9125,7 @@ class VideoService:
 
         if not raw:
 
-            raise ValueError("閺冨爼妫块崣鍌涙殶娑撳秷鍏樻稉铏光敄")
+            raise ValueError("时间参数不能为空")
 
 
 
@@ -10373,6 +10397,280 @@ class VideoService:
 
 
         return clips
+
+    @staticmethod
+    def _playback_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _parse_playback_filter_time(value: Optional[str]) -> Optional[datetime]:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return None
+
+    def _build_playback_file_index(self) -> tuple[list[dict], list[dict]]:
+        now = time.time()
+        cached = self._playback_index_cache
+        if now < float(cached.get("expires_at") or 0):
+            return cached["recordings"], cached["alarms"]
+
+        with self._playback_index_lock:
+            cached = self._playback_index_cache
+            if now < float(cached.get("expires_at") or 0):
+                return cached["recordings"], cached["alarms"]
+
+            recordings: list[dict] = []
+            alarms: list[dict] = []
+            segment_seconds = RECORD_SEGMENT_SECONDS
+
+            for root in self._get_all_record_roots():
+                if not os.path.isdir(root):
+                    continue
+                for device_entry in os.scandir(root):
+                    if not device_entry.is_dir():
+                        continue
+                    device_id = device_entry.name
+                    try:
+                        entries = os.scandir(device_entry.path)
+                    except OSError:
+                        continue
+                    with entries:
+                        for entry in entries:
+                            if not entry.is_file() or not entry.name.lower().endswith(".mp4"):
+                                continue
+                            try:
+                                stat = entry.stat()
+                            except OSError:
+                                continue
+                            if stat.st_size < 64 * 1024:
+                                continue
+                            started_at = self._parse_segment_start(entry.path)
+                            if not started_at:
+                                started_at = datetime.fromtimestamp(stat.st_mtime)
+                            thumbnail_path = f"{entry.path}.jpg"
+                            recordings.append({
+                                "device_id": str(device_id),
+                                "name": entry.name,
+                                "size_bytes": int(stat.st_size),
+                                "start_at": started_at,
+                                "end_at": started_at + timedelta(seconds=segment_seconds),
+                                "updated_at": datetime.fromtimestamp(stat.st_mtime),
+                                "web_path": self._to_backend_static_web_path(entry.path),
+                                "thumbnail_path": self._to_backend_static_web_path(thumbnail_path)
+                                if os.path.isfile(thumbnail_path)
+                                else "",
+                            })
+
+            alarm_pattern = re.compile(
+                r"^alarm_(?P<alarm_id>[^_]+)_(?P<device_id>[^_]+)_"
+                r"(?P<start>\d{8}_\d{6})_(?P<end>\d{8}_\d{6})\.mp4$",
+                re.IGNORECASE,
+            )
+            seen_alarm_paths: set[str] = set()
+            for root in self._get_all_alarm_video_roots():
+                if not os.path.isdir(root):
+                    continue
+                for dir_path, _, file_names in os.walk(root):
+                    for file_name in file_names:
+                        if not file_name.lower().endswith(".mp4"):
+                            continue
+                        file_path = os.path.join(dir_path, file_name)
+                        normalized_path = os.path.normcase(os.path.abspath(file_path))
+                        if normalized_path in seen_alarm_paths:
+                            continue
+                        seen_alarm_paths.add(normalized_path)
+                        match = alarm_pattern.match(file_name)
+                        if not match:
+                            continue
+                        try:
+                            stat = os.stat(file_path)
+                            started_at = datetime.strptime(match.group("start"), "%Y%m%d_%H%M%S")
+                            ended_at = datetime.strptime(match.group("end"), "%Y%m%d_%H%M%S")
+                        except (OSError, ValueError):
+                            continue
+                        alarms.append({
+                            "alarm_id": match.group("alarm_id"),
+                            "device_id": match.group("device_id"),
+                            "name": file_name,
+                            "size_bytes": int(stat.st_size),
+                            "start_at": started_at,
+                            "end_at": ended_at,
+                            "updated_at": datetime.fromtimestamp(stat.st_mtime),
+                            "web_path": self._to_backend_static_web_path(file_path),
+                        })
+
+            self._playback_index_cache = {
+                "expires_at": time.time() + 10.0,
+                "recordings": recordings,
+                "alarms": alarms,
+            }
+            return recordings, alarms
+
+    def query_playbacks(
+        self,
+        current_user: dict,
+        media_type: str = "manual",
+        page: int = 1,
+        page_size: int = 40,
+        device_id: Optional[str] = None,
+        company: Optional[str] = None,
+        project: Optional[str] = None,
+        grid: Optional[str] = None,
+        team: Optional[str] = None,
+        keyword: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        sort_order: str = "desc",
+    ) -> dict:
+        docs = [self._enrich_video_org_scope(doc) for doc in self._video_collection().find({}, {"_id": 0})]
+        docs = [
+            doc for doc in docs
+            if doc and in_scope(doc, current_user, **self._scope_kwargs())
+        ]
+
+        filters = {
+            "company": self._playback_text(company),
+            "project": self._playback_text(project),
+            "grid": self._playback_text(grid),
+            "team": self._playback_text(team),
+        }
+        requested_device = self._playback_text(device_id)
+        keyword_text = self._playback_text(keyword).lower()
+
+        def matches_device(doc: dict) -> bool:
+            if requested_device and self._playback_text(doc.get("id")) != requested_device:
+                return False
+            values = {
+                "company": self._playback_text(doc.get("company") or doc.get("department")),
+                "project": self._playback_text(doc.get("project")),
+                "grid": self._playback_text(doc.get("grid_name") or doc.get("grid")),
+                "team": self._playback_text(doc.get("team_name") or doc.get("team") or doc.get("workTeam")),
+            }
+            if any(value and values[key] != value for key, value in filters.items()):
+                return False
+            if keyword_text:
+                haystack = " ".join([
+                    self._playback_text(doc.get("name")),
+                    self._playback_text(doc.get("id")),
+                    *values.values(),
+                ]).lower()
+                if keyword_text not in haystack:
+                    return False
+            return True
+
+        device_map = {
+            self._playback_text(doc.get("id")): doc
+            for doc in docs
+            if matches_device(doc) and self._playback_text(doc.get("id"))
+        }
+        recordings, alarms = self._build_playback_file_index()
+        source = alarms if media_type == "alarm" else recordings
+        filter_start = self._parse_playback_filter_time(start_time)
+        filter_end = self._parse_playback_filter_time(end_time)
+        if filter_end and len(str(end_time or "").strip()) == 16:
+            filter_end += timedelta(seconds=59, milliseconds=999)
+
+        matched: list[dict] = []
+        for item in source:
+            doc = device_map.get(self._playback_text(item.get("device_id")))
+            if not doc:
+                continue
+            item_start = item["start_at"]
+            item_end = item["end_at"]
+            if filter_start and item_end < filter_start:
+                continue
+            if filter_end and item_start > filter_end:
+                continue
+            matched.append({**item, "device": doc})
+
+        matched.sort(key=lambda item: item["start_at"], reverse=str(sort_order or "desc").lower() != "asc")
+        bounded_page_size = max(1, min(int(page_size), 100))
+        bounded_page = max(1, int(page))
+        total = len(matched)
+        offset = (bounded_page - 1) * bounded_page_size
+        page_items = matched[offset: offset + bounded_page_size]
+
+        alarm_docs_by_id: dict[str, dict] = {}
+        if media_type == "alarm":
+            alarm_ids = {
+                self._playback_text(item.get("alarm_id"))
+                for item in page_items
+                if self._playback_text(item.get("alarm_id"))
+            }
+            query_ids: list[Any] = []
+            for alarm_id in alarm_ids:
+                query_ids.append(alarm_id)
+                if alarm_id.isdigit():
+                    query_ids.append(int(alarm_id))
+            if query_ids:
+                try:
+                    for alarm_doc in self._alarm_collection().find({"id": {"$in": query_ids}}, {"_id": 0}):
+                        key = self._playback_text(alarm_doc.get("id"))
+                        if key:
+                            alarm_docs_by_id[key] = alarm_doc
+                except Exception as exc:
+                    logger.warning(f"Failed to merge alarm metadata for playbacks: {exc}")
+
+        result_items = []
+        for item in page_items:
+            doc = item["device"]
+            duration_seconds = max(1, int((item["end_at"] - item["start_at"]).total_seconds()))
+            alarm_doc = alarm_docs_by_id.get(self._playback_text(item.get("alarm_id")), {})
+            alarm_image_path = (
+                alarm_doc.get("alarm_image_path")
+                or alarm_doc.get("screenshot_path")
+                or alarm_doc.get("thumbnail_path")
+                or item.get("thumbnail_path")
+                or ""
+            )
+            result_item = {
+                "alarm_id": item.get("alarm_id"),
+                "device_id": self._playback_text(doc.get("id")),
+                "device_name": doc.get("name") or "",
+                "company": doc.get("company") or doc.get("department") or "",
+                "project": doc.get("project") or "",
+                "project_id": doc.get("project_id") or "",
+                "grid": doc.get("grid_name") or doc.get("grid") or "",
+                "grid_id": doc.get("grid_id") or "",
+                "team": doc.get("team_name") or doc.get("team") or doc.get("workTeam") or "",
+                "team_id": doc.get("team_id") or "",
+                "name": item["name"],
+                "size_bytes": item["size_bytes"],
+                "duration_seconds": duration_seconds,
+                "start_time": item["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": item["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                "created_at": item["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                "updated_at": item["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                "web_path": item["web_path"],
+                "thumbnail_path": item.get("thumbnail_path") or "",
+            }
+            if media_type == "alarm":
+                result_item.update({
+                    "alarm_type": alarm_doc.get("alarm_type") or "",
+                    "description": alarm_doc.get("description") or "",
+                    "alarm_image_path": alarm_image_path,
+                    "screenshot_path": alarm_doc.get("screenshot_path") or alarm_image_path,
+                    "image_url": alarm_image_path,
+                    "snapshot_url": alarm_image_path,
+                    "picture_url": alarm_image_path,
+                    "recording_status": alarm_doc.get("recording_status") or "",
+                    "recording_error": alarm_doc.get("recording_error") or "",
+                    "alarm_second": alarm_doc.get("alarm_second") or item.get("alarm_second") or 30,
+                })
+            result_items.append(result_item)
+
+        return {
+            "code": 0,
+            "data": result_items,
+            "total": total,
+            "page": bounded_page,
+            "page_size": bounded_page_size,
+            "total_pages": (total + bounded_page_size - 1) // bounded_page_size,
+        }
 
 
 

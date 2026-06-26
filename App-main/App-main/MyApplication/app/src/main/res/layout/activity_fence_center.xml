@@ -38,6 +38,17 @@
             android:gravity="center_vertical"
             android:padding="10dp">
 
+            <ImageButton
+                android:id="@+id/btn_back_home"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginEnd="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="返回主页"
+                android:padding="9dp"
+                android:src="@android:drawable/ic_media_previous"
+                android:tint="#6B4BB4" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_list"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -63,21 +74,68 @@
                 app:iconPadding="8dp"
                 app:iconGravity="textStart"/>
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_locate"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="42dp"
-                android:layout_weight="1"
-                android:layout_marginStart="10dp"
-                android:text="定位"
-                android:textAllCaps="false"
-                app:icon="@android:drawable/ic_menu_mylocation"
-                app:iconPadding="8dp"
-                app:iconGravity="textStart"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/search_card"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="8dp"
+        android:backgroundTint="#F2FFFFFF"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        app:strokeColor="#1A000000"
+        app:strokeWidth="1dp"
+        app:layout_constraintTop_toBottomOf="@id/top_action_card"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="8dp">
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="搜索地点，选中后画围栏"
+                android:visibility="gone"
+                app:startIconDrawable="@android:drawable/ic_menu_search">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/et_place_search"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textSize="14sp"/>
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:hint="搜索公司、项目、网格、工队、设备或围栏"
+                app:startIconDrawable="@android:drawable/ic_menu_mylocation">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/et_unit_fence_search"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textSize="14sp"/>
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- 新增/编辑围栏面板（底部圆角卡片） -->
     <com.google.android.material.card.MaterialCardView
@@ -126,6 +184,19 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"/>
                 </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_select_unit"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:text="选择所属单位（公司/项目/网格/工队）"
+                    android:textAllCaps="false"
+                    app:icon="@android:drawable/ic_menu_myplaces"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp" />
 
                 <!-- 形状选择 -->
                 <com.google.android.material.card.MaterialCardView
@@ -250,6 +321,46 @@
                         android:layout_weight="1"/>
                 </LinearLayout>
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="生效时间"
+                    android:textStyle="bold"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_effective_start"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="42dp"
+                        android:layout_weight="1"
+                        android:text="00:00"
+                        android:textAllCaps="false"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="10dp"
+                        android:text="至"
+                        android:textColor="#8A000000"/>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_effective_end"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="42dp"
+                        android:layout_weight="1"
+                        android:text="23:59"
+                        android:textAllCaps="false"/>
+                </LinearLayout>
+
                 <Switch
                     android:id="@+id/sw_enable"
                     android:layout_width="wrap_content"
@@ -299,9 +410,10 @@
         android:id="@+id/panel_list"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:layout_marginTop="8dp"
         android:visibility="gone"
         android:background="#66000000"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/search_card"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -409,6 +521,23 @@
     </FrameLayout>
 
     <!-- 调试模式按钮 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btn_locate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="124dp"
+        android:contentDescription="我的位置"
+        android:src="@android:drawable/ic_menu_mylocation"
+        app:backgroundTint="#FFFFFFFF"
+        app:borderWidth="0dp"
+        app:elevation="8dp"
+        app:fabCustomSize="48dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:maxImageSize="24dp"
+        app:tint="#6750A4" />
+
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btn_debug_mode"
         android:layout_width="wrap_content"

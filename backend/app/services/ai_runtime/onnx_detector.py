@@ -94,7 +94,8 @@ def postprocess(
 
     boxes, scores, class_ids = [], [], []
     for pred in predictions:
-        if pred.shape[0] < 6:
+        # 兼容 YOLOv8 格式的单类模型，每个预测向量最少包含 5 个元素 (x, y, w, h, score)
+        if pred.shape[0] < 5:
             continue
 
         obj_conf = float(pred[4])

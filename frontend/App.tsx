@@ -930,7 +930,18 @@ const AppHeader = ({
         : null;
 
       const pendingAlarmNotices: HeaderNotice[] = alarmItems
-        .filter((alarm: any) => String(alarm.status || '').toLowerCase() !== 'resolved')
+        .filter((alarm: any) => {
+          const alarmText = [
+            alarm.alarm_type,
+            alarm.type,
+            alarm.description,
+            alarm.alarm_content,
+            alarm.message,
+          ].join(' ').toLowerCase();
+          return String(alarm.status || '').toLowerCase() !== 'resolved'
+            && !alarmText.includes('offline')
+            && !alarmText.includes('离线');
+        })
         .slice(0, 8)
         .map((alarm: any) => {
           const severity = String(alarm.severity || alarm.level || '').toLowerCase();
@@ -949,7 +960,7 @@ const AppHeader = ({
       const abnormalDeviceNotices: HeaderNotice[] = deviceItems
         .filter((device: any) => {
           const status = String(device.status || '').toLowerCase();
-          return status === 'offline' || status === 'fault' || device.is_fault || device.low_battery || device.storage_abnormal || device.weak_signal;
+          return status === 'fault' || device.is_fault || device.low_battery || device.storage_abnormal || device.weak_signal;
         })
         .slice(0, 8)
         .map((device: any) => {

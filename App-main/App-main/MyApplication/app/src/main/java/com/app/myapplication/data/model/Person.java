@@ -12,6 +12,7 @@ public class Person {
     private String workType;
     private String workTeam;
     private String project;
+    private String grid;
     private String company;
     private String status; // active, inactive, on_leave, resigned
     private String entryDate;
@@ -56,6 +57,9 @@ public class Person {
     
     public String getProject() { return project; }
     public void setProject(String project) { this.project = project; }
+
+    public String getGrid() { return grid; }
+    public void setGrid(String grid) { this.grid = grid; }
     
     public String getCompany() { return company; }
     public void setCompany(String company) { this.company = company; }

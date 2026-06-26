@@ -5,7 +5,7 @@ import { API_BASE_URL, attachAuthInterceptor } from "./config";
 // 创建 axios 实例
 const apiClient = attachAuthInterceptor(axios.create({
   baseURL: API_BASE_URL,
-  timeout: 5000, // 请求超时时间
+  timeout: 15000, // 请求超时时间
   headers: {
     "Content-Type": "application/json",
     // 如果有 token 验证，可以在这里添加 Authorization
@@ -57,6 +57,11 @@ export interface LocationDevice {
 export const deviceApi = {
   getLocationDevices: async () => {
     const response = await apiClient.get<LocationDevice[]>("/device/list");
+    return response.data;
+  },
+
+  getLocationCompatibleDevices: async () => {
+    const response = await apiClient.get<LocationDevice[]>("/device/devices");
     return response.data;
   },
 

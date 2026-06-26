@@ -1,6 +1,7 @@
 package com.app.myapplication.data.api;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 
 import com.app.myapplication.data.local.AppConfig;
@@ -40,6 +41,12 @@ public class ApiClient {
                         okhttp3.Response response = chain.proceed(builder.build());
                         if (response.code() == 401) {
                             session.clear();
+                            String path = original.url().encodedPath();
+                            if (!path.endsWith("/api/auth/login")) {
+                                Intent intent = new Intent(appCtx, com.app.myapplication.ui.login.LoginActivity.class);
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                                appCtx.startActivity(intent);
+                            }
                         }
                         return response;
                     })

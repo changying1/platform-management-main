@@ -16,7 +16,7 @@ val ezvizAppKey = providers.gradleProperty("EZVIZ_APP_KEY")
     .get()
 
 val useHlsDebugStream = providers.gradleProperty("USE_HLS_DEBUG_STREAM")
-    .orElse(localProperties.getProperty("USE_HLS_DEBUG_STREAM") ?: "false")
+    .orElse(localProperties.getProperty("USE_HLS_DEBUG_STREAM") ?: "true")
     .get()
     .toBooleanStrictOrNull() ?: false
 
@@ -60,15 +60,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    splits {
-        abi {
-            isEnable = !useHlsDebugStream
-            reset()
-            include("armeabi-v7a")
-            isUniversalApk = false
-        }
-    }
-
     packaging {
         jniLibs {
             if (useHlsDebugStream) {
@@ -108,6 +99,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
 
     implementation("com.amap.api:3dmap:9.8.3")
+    implementation("com.amap.api:search:9.7.0")
     implementation("org.osmdroid:osmdroid-android:6.1.17")
 
     implementation("com.hikvision.ezviz:ezviz-sdk:4.8.0")

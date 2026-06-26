@@ -45,7 +45,8 @@
             android:layout_height="match_parent"
             android:layout_weight="2"
             android:orientation="vertical"
-            android:background="@color/gray_50">
+            android:background="@drawable/bg_content_panel"
+            android:layout_margin="8dp">
 
             <TextView
                 android:layout_width="match_parent"
@@ -84,14 +85,17 @@
         <View
             android:layout_width="1dp"
             android:layout_height="match_parent"
-            android:background="@color/divider" />
+            android:background="@color/divider"
+            android:visibility="gone" />
 
         <!-- 右侧权限配置 -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="3"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:background="@drawable/bg_content_panel"
+            android:layout_margin="8dp">
 
             <TextView
                 android:id="@+id/tv_selected_role"
@@ -99,7 +103,7 @@
                 android:layout_height="40dp"
                 android:gravity="center_vertical"
                 android:paddingHorizontal="12dp"
-                android:text="请选择角色"
+                android:text="模块权限展示（只读）"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp"
                 android:textStyle="bold" />
@@ -151,7 +155,8 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical|end"
-        android:paddingHorizontal="16dp">
+        android:paddingHorizontal="16dp"
+        android:visibility="gone">
 
         <Button
             android:id="@+id/btn_reset"

@@ -3,10 +3,10 @@
     <item
         android:id="@+id/nav_apps"
         android:icon="@null"
-        android:title="应用" />
+        android:title="&#x5E94;&#x7528;" />
 
     <item
         android:id="@+id/nav_me"
         android:icon="@null"
-        android:title="我的" />
+        android:title="&#x6211;&#x7684;" />
 </menu>

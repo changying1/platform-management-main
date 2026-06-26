@@ -1,11 +1,10 @@
-import threading
+﻿import threading
 import time
 import cv2
 import os
 import uuid
 import re
 import json
-import copy
 import requests
 import subprocess
 import numpy as np
@@ -70,7 +69,7 @@ class AIManager:
         self.alarm_state_lock = threading.Lock()
         # 全局共享冷却时间映射，解决重启监控或多路干扰导致的冷却失效
         self.global_last_alarm_time = {}
-        
+
         self.ai_service = AIService(shared_cooldown_map=self.global_last_alarm_time)
         self.video_service = VideoService()
         self.base_dir = os.path.dirname(
@@ -223,6 +222,13 @@ class AIManager:
 
     def _normalize_alarm_key(self, value) -> str:
         return re.sub(r"[\s_\-]+", "", str(value or "").strip().lower())
+
+    def _clean_alarm_display_message(self, value) -> str:
+        text = str(value or "").strip()
+        text = re.sub(r"[（(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[）)]", "", text)
+        text = re.sub(r"\bconfidence\s*[:：]?\s*\d{1,3}(?:\.\d+)?\s*%?", "", text, flags=re.I)
+        text = re.sub(r"置信度\s*[:：]?\s*\d{1,3}(?:\.\d+)?\s*%?", "", text)
+        return re.sub(r"\s{2,}", " ", text).strip()
 
     def _load_ai_alarm_level_map(self):
         loaded_map = {}
@@ -421,90 +427,99 @@ class AIManager:
             return None
 
     def _snapshot_monitor_loop(self, device_id, device_serial, channel_no, algo_type_str, stop_event, monitor_id=""):
+        import traceback
+
+        started_at_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
-        # 萤石抓图接口开销较高，默认 1.2s 一帧，必要时可通过环境变量调优。
         interval_seconds = max(0.8, float(os.getenv("AI_EVZIZ_SNAPSHOT_INTERVAL_SECONDS", "1.0")))
 
-        print(f"📸 萤石抓图检测启动: serial={device_serial}, channel={channel_no}, interval={interval_seconds}s")
+        print(f"[AI] ezviz snapshot monitor started: serial={device_serial}, channel={channel_no}, interval={interval_seconds}s, started_at={started_at_str}")
 
         started_at = time.time()
-        while not stop_event.is_set():
-            loop_started_at = time.time()
-            frame = self._fetch_ezviz_snapshot_frame(device_serial, channel_no)
+        try:
+            while not stop_event.is_set():
+                loop_started_at = time.time()
+                frame = self._fetch_ezviz_snapshot_frame(device_serial, channel_no)
 
-            if frame is None:
-                self._emit_alarm_log(
-                    "warning",
-                    "[ALARM_SNAPSHOT_FRAME_EMPTY] device_id={} serial={} channel={}",
-                    device_id,
-                    device_serial,
-                    channel_no,
-                )
-                if stop_event.wait(1.0):
-                    break
-                continue
+                if frame is None:
+                    self._emit_alarm_log(
+                        "warning",
+                        "[ALARM_SNAPSHOT_FRAME_EMPTY] device_id={} serial={} channel={}",
+                        device_id,
+                        device_serial,
+                        channel_no,
+                    )
+                    if stop_event.wait(1.0):
+                        break
+                    continue
 
-            detection_results = []
-            try:
-                for algo_key in active_algos:
-                    if algo_key not in self.algo_handlers:
-                        print(f"⚠️ 未识别算法类型: {algo_key}")
-                        detection_results.append(f"{algo_key}:unknown")
-                        continue
-
-                    is_alarm, details = self.algo_handlers[algo_key](frame)
-                    detection_results.append(self._format_detection_result(algo_key, is_alarm, details))
-
-                    if is_alarm:
-                        alarm_type = self._extract_alarm_type(details)
-                        alarm_trace_id = self._new_alarm_trace_id()
-                        self._emit_alarm_log(
-                            "info",
-                            "[ALARM_TRIGGERED] trace_id={} mode=ezviz_snapshot device_id={} algo={} alarm_type={}",
-                            alarm_trace_id,
-                            device_id,
-                            algo_key,
-                            alarm_type or algo_key,
-                        )
-                        if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
-                            self._emit_alarm_log(
-                                "info",
-                                "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
-                                alarm_trace_id,
-                                device_id,
-                                alarm_type or algo_key,
-                                self.alarm_cooldown_seconds,
-                            )
+                detection_results = []
+                try:
+                    for algo_key in active_algos:
+                        if algo_key not in self.algo_handlers:
+                            print(f"Unknown AI algorithm type: {algo_key}")
+                            detection_results.append(f"{algo_key}:unknown")
                             continue
 
-                        details = self._normalize_alarm_details_for_frame(details, frame)
-                        img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
-            except Exception as logic_error:
-                print(f"⚠️ 抓图检测逻辑异常: {logic_error}")
+                        is_alarm, details = self.algo_handlers[algo_key](frame)
+                        detection_results.append(self._format_detection_result(algo_key, is_alarm, details))
 
-            elapsed_second = max(1, int(time.time() - started_at) + 1)
-            self._emit_second_detection_log("ezviz_snapshot", device_id, elapsed_second, detection_results, monitor_id)
-            elapsed = time.time() - loop_started_at
-            wait_seconds = max(0.0, interval_seconds - elapsed)
-            if stop_event.wait(wait_seconds):
-                break
+                        if is_alarm:
+                            alarm_type = self._extract_alarm_type(details)
+                            alarm_trace_id = self._new_alarm_trace_id()
+                            self._emit_alarm_log(
+                                "info",
+                                "[ALARM_TRIGGERED] trace_id={} mode=ezviz_snapshot device_id={} algo={} alarm_type={}",
+                                alarm_trace_id,
+                                device_id,
+                                algo_key,
+                                alarm_type or algo_key,
+                            )
+                            if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
+                                self._emit_alarm_log(
+                                    "info",
+                                    "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
+                                    alarm_trace_id,
+                                    device_id,
+                                    alarm_type or algo_key,
+                                    self.alarm_cooldown_seconds,
+                                )
+                                continue
 
-        print(f"--- 抓图监控线程已退出: {device_id} ---")
+                            details = self._normalize_alarm_details_for_frame(details, frame)
+                            img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
+                            self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
+                except Exception as logic_error:
+                    print(f"Snapshot detection logic error: {logic_error}")
 
-        exit_reason = "stop_event_set" if stop_event.is_set() else "loop_ended"
-        self._emit_alarm_log(
-            "warning",
-            "[ALARM_SNAPSHOT_MONITOR_EXIT] device_id={} monitor_id={} serial={} channel={} reason={}",
-            device_id,
-            monitor_id or "-",
-            device_serial,
-            channel_no,
-            exit_reason,
-        )
-        monitor = self.active_monitors.get(str(device_id))
-        if monitor and monitor.get("stop_event") is stop_event:
-            self.active_monitors.pop(str(device_id), None)
+                elapsed_second = max(1, int(time.time() - started_at) + 1)
+                self._emit_second_detection_log("ezviz_snapshot", device_id, elapsed_second, detection_results, monitor_id)
+                elapsed = time.time() - loop_started_at
+                wait_seconds = max(0.0, interval_seconds - elapsed)
+                if stop_event.wait(wait_seconds):
+                    break
+        except BaseException as thread_error:
+            logger.error(
+                f"[THREAD_CRASH] ezviz snapshot monitor {device_id} crashed; started_at={started_at_str}",
+                exc_info=True,
+            )
+            print(f"[THREAD_CRASH] ezviz snapshot monitor {device_id} crashed: {thread_error}")
+            traceback.print_exc()
+        finally:
+            print(f"--- snapshot monitor thread exited: {device_id} (started_at={started_at_str}) ---")
+            exit_reason = "stop_event_set" if stop_event.is_set() else "loop_ended"
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_SNAPSHOT_MONITOR_EXIT] device_id={} monitor_id={} serial={} channel={} reason={}",
+                device_id,
+                monitor_id or "-",
+                device_serial,
+                channel_no,
+                exit_reason,
+            )
+            monitor = self.active_monitors.get(str(device_id))
+            if monitor and monitor.get("stop_event") is stop_event:
+                self.active_monitors.pop(str(device_id), None)
 
     def get_device_rules(self, device_id):
         device_id = str(device_id)
@@ -648,7 +663,10 @@ class AIManager:
         return None, None
 
     def _monitor_loop(self, device_id, rtsp_url, record_rtsp_url, algo_type_str, stop_event):
-        print(f"📷 正在连接视频流: {rtsp_url}")
+        import traceback
+        from datetime import datetime
+        started_at_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        print(f"📷 正在连接视频流: {rtsp_url} (启动时间: {started_at_str})")
 
         # ========= DEBUG 模式 =========
         DEBUG_MODE = os.getenv("AI_DEBUG", "0") == "1"
@@ -667,87 +685,93 @@ class AIManager:
                     self._save_alarm_to_db(device_id, details, "", algo_key=algo)
                 time.sleep(5)
 
-            print(f"--- DEBUG线程已退出: {device_id} ---")
+            print(f"--- DEBUG线程已退出: {device_id} (该线程启动于: {started_at_str}) ---")
             return
 
         # ========= 正常视频逻辑 =========
+        cap = None
         try:
-            cap, used_url = self._open_video_capture(rtsp_url)
-
-            if cap is None:
-                print("❌ 视频流打开失败")
-                return
-            print(f"✅ 视频流连接成功: {used_url}")
-
-            # AI 拉流成功后再启动录像，避免部分设备因并发连接导致 AI 打不开。
             try:
-                video_id = int(device_id)
-                if record_rtsp_url:
-                    self.video_service.start_ffmpeg_recording(video_id, record_rtsp_url)
+                cap, used_url = self._open_video_capture(rtsp_url)
+
+                if cap is None:
+                    print(f"❌ 视频流打开失败 (线程启动于: {started_at_str})")
+                    return
+                print(f"✅ 视频流连接成功: {used_url} (线程启动于: {started_at_str})")
+
+                # AI 拉流成功后再启动录像，避免部分设备因并发连接导致 AI 打不开。
+                try:
+                    video_id = int(device_id)
+                    if record_rtsp_url:
+                        self.video_service.start_ffmpeg_recording(video_id, record_rtsp_url)
+                except Exception as e:
+                    print(f"⚠️ 启动分段录像失败(不影响AI检测): {e}")
+
             except Exception as e:
-                print(f"⚠️ 启动分段录像失败(不影响AI检测): {e}")
+                print(f"❌ 视频流异常: {e} (线程启动于: {started_at_str})")
+                return
 
-        except Exception as e:
-            print(f"❌ 视频流异常: {e}")
-            return
+            active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
+            frame_interval = 5
+            frame_count = 0
 
-        active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
-        frame_interval = 5
-        frame_count = 0
+            while not stop_event.is_set():
+                ret, frame = cap.read()
 
-        while not stop_event.is_set():
-            ret, frame = cap.read()
+                if not ret:
+                    time.sleep(2)
+                    continue
 
-            if not ret:
-                time.sleep(2)
-                continue
+                frame_count += 1
+                if frame_count % frame_interval != 0:
+                    continue
 
-            frame_count += 1
-            if frame_count % frame_interval != 0:
-                continue
+                try:
+                    for algo_key in active_algos:
 
-            try:
-                for algo_key in active_algos:
-
-                    if algo_key not in self.algo_handlers:
-                        print(f"⚠️ 未识别算法类型: {algo_key}")
-                        continue
-
-                    is_alarm, details = self.algo_handlers[algo_key](frame)
-
-                    if is_alarm:
-                        alarm_type = self._extract_alarm_type(details)
-                        alarm_trace_id = self._new_alarm_trace_id()
-                        self._emit_alarm_log(
-                            "info",
-                            "[ALARM_TRIGGERED] trace_id={} mode=rtsp device_id={} algo={} alarm_type={}",
-                            alarm_trace_id,
-                            device_id,
-                            algo_key,
-                            alarm_type or algo_key,
-                        )
-                        if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
-                            self._emit_alarm_log(
-                                "info",
-                                "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
-                                alarm_trace_id,
-                                device_id,
-                                alarm_type or algo_key,
-                                self.alarm_cooldown_seconds,
-                            )
+                        if algo_key not in self.algo_handlers:
+                            print(f"⚠️ 未识别算法类型: {algo_key}")
                             continue
 
-                        details = self._normalize_alarm_details_for_frame(details, frame)
-                        img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                        self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
+                        is_alarm, details = self.algo_handlers[algo_key](frame)
 
-            except Exception as logic_error:
-                print(f"⚠️ 逻辑异常: {logic_error}")
+                        if is_alarm:
+                            alarm_type = self._extract_alarm_type(details)
+                            alarm_trace_id = self._new_alarm_trace_id()
+                            self._emit_alarm_log(
+                                "info",
+                                "[ALARM_TRIGGERED] trace_id={} mode=rtsp device_id={} algo={} alarm_type={}",
+                                alarm_trace_id,
+                                device_id,
+                                algo_key,
+                                alarm_type or algo_key,
+                            )
+                            if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
+                                self._emit_alarm_log(
+                                    "info",
+                                    "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
+                                    alarm_trace_id,
+                                    device_id,
+                                    alarm_type or algo_key,
+                                    self.alarm_cooldown_seconds,
+                                )
+                                continue
 
-            time.sleep(0.02)
+                            img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
+                            self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
 
-        cap.release()
-        print(f"--- 监控线程已退出: {device_id} ---")
+                except Exception as logic_error:
+                    print(f"⚠️ 逻辑异常: {logic_error}")
+
+                time.sleep(0.02)
+        except BaseException as thread_error:
+            logger.error(f"❌ [线程崩溃] RTSP监控线程 {device_id} 发生致命异常退出! 启动时间: {started_at_str}", exc_info=True)
+            print(f"❌ [线程崩溃] RTSP监控线程 {device_id} 发生致命异常! 异常信息: {thread_error}")
+            traceback.print_exc()
+        finally:
+            if cap is not None:
+                cap.release()
+            print(f"--- 监控线程已退出: {device_id} (该线程启动于: {started_at_str}) ---")
 
     # =========================
     # 保存报警图片
@@ -755,7 +779,6 @@ class AIManager:
     def _save_alarm_image(self, frame, device_id, details=None, alarm_trace_id: str | None = None):
         try:
             # 1. 如果有报警详情，先在图片上绘制报警框
-            details = self._normalize_alarm_details_for_frame(details, frame)
             draw_frame = frame.copy()
             boxes = []
             if details and isinstance(details, dict):
@@ -1043,7 +1066,7 @@ class AIManager:
             if not os.path.exists(font_path):
                 # 尝试其他常见中文字体名
                 font_path = r"C:\Windows\Fonts\msyh.ttc"
-            
+
             try:
                 # 字体大小根据图片高度动态调整
                 font_size = max(18, int(frame.shape[0] * 0.03))
@@ -1052,39 +1075,15 @@ class AIManager:
                 # 极端情况回退默认
                 font = ImageFont.load_default()
 
-            frame_h, frame_w = frame.shape[:2]
-
-            for raw_box in boxes:
-                box = raw_box if isinstance(raw_box, dict) else {}
-                coords_norm = box.get("coords_norm")
-                if isinstance(coords_norm, (list, tuple)) and len(coords_norm) >= 4:
-                    try:
-                        x1 = int(round(float(coords_norm[0]) * frame_w))
-                        y1 = int(round(float(coords_norm[1]) * frame_h))
-                        x2 = int(round(float(coords_norm[2]) * frame_w))
-                        y2 = int(round(float(coords_norm[3]) * frame_h))
-                    except (TypeError, ValueError):
-                        continue
-                else:
-                    normalized_box = self._normalize_box_coords_for_frame(box, frame.shape)
-                    if normalized_box is None:
-                        continue
-                    coords = normalized_box.get("coords")
-                    if not coords or len(coords) < 4:
-                        continue
-                    try:
-                        x1, y1, x2, y2 = [int(round(float(v))) for v in coords[:4]]
-                    except (TypeError, ValueError):
-                        continue
-
-                x1 = max(0, min(frame_w - 1, x1))
-                y1 = max(0, min(frame_h - 1, y1))
-                x2 = max(0, min(frame_w - 1, x2))
-                y2 = max(0, min(frame_h - 1, y2))
-                if x2 <= x1 or y2 <= y1:
-                    continue
+            for box in boxes:
+                coords = box.get("coords")
                 label_type = box.get("type", "异常")
                 msg = box.get("msg", "")
+
+                if not coords or len(coords) < 4:
+                    continue
+
+                x1, y1, x2, y2 = map(int, coords)
 
                 # 绘制红色报警框 (线宽动态)
                 line_width = max(2, int(frame.shape[0] * 0.005))
@@ -1110,28 +1109,15 @@ class AIManager:
                 # 绘制文字背景条
                 try:
                     # 使用 textbbox 获取文本尺寸 (Pillow 8.0+)
-                    bbox = draw.textbbox((0, 0), display_text, font=font)
-                    text_w = bbox[2] - bbox[0]
-                    text_h = bbox[3] - bbox[1]
-                    text_x = max(0, min(x1, max(0, frame_w - text_w - 10)))
-                    text_y = y1 - text_h - 10
-                    if text_y < 0:
-                        text_y = min(max(0, frame_h - text_h - 10), y2 + 5)
-                    text_y = max(0, text_y)
+                    bbox = draw.textbbox((x1, y1 - 10), display_text, font=font)
                     # 往上或往下绘制背景，防止文字出界 (简化始终画在框顶部附近，略带半透明)
-                    bg_rect = [
-                        max(0, text_x - 5),
-                        max(0, text_y - 5),
-                        min(frame_w - 1, text_x + text_w + 5),
-                        min(frame_h - 1, text_y + text_h + 5),
-                    ]
+                    bg_rect = [bbox[0]-5, bbox[1]-5, bbox[2]+5, bbox[3]+5]
                     draw.rectangle(bg_rect, fill=(255, 0, 0, 180))
                 except Exception:
-                    text_x = x1
-                    text_y = max(0, y1 - font_size - 10)
+                    pass
 
                 # 绘制白色文字
-                draw.text((text_x, text_y), display_text, font=font, fill=(255, 255, 255))
+                draw.text((x1, y1 - font_size - 10), display_text, font=font, fill=(255, 255, 255))
 
             # Pillow 转回 OpenCV
             return cv2.cvtColor(np.asarray(img_pil), cv2.COLOR_RGB2BGR)
@@ -1665,13 +1651,7 @@ class AIManager:
                 return
 
             clip_before_seconds, clip_after_seconds = self._get_alarm_clip_window_seconds()
-            segment_seconds = RECORD_SEGMENT_SECONDS
-            if hasattr(self.video_service, "_get_record_segment_seconds"):
-                try:
-                    segment_seconds = self.video_service._get_record_segment_seconds()
-                except Exception:
-                    segment_seconds = RECORD_SEGMENT_SECONDS
-            mature_buffer = segment_seconds + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
+            mature_buffer = RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS
             wait_seconds = clip_after_seconds + mature_buffer
             self._emit_alarm_log(
                 "info",
@@ -1776,7 +1756,6 @@ class AIManager:
                             final_alarm_second,
                             match_error,
                         )
-                    final_alarm_second = _clamp_alarm_second(final_alarm_second)
 
                     if boxes:
                         try:
@@ -2304,6 +2283,7 @@ class AIManager:
             alarm_type = "unknown"
         if not alarm_msg:
             alarm_msg = "检测到异常"
+        alarm_msg = self._clean_alarm_display_message(alarm_msg)
 
         # 根据检测算法 code / 告警类型 / 中文名称获取对应的告警等级
         severity = self._resolve_ai_alarm_severity(alarm_type, algo_key=algo_key, details=details)

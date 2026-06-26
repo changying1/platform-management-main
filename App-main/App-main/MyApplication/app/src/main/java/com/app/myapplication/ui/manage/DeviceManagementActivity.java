@@ -1,17 +1,29 @@
 package com.app.myapplication.ui.manage;
 
+import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
@@ -21,22 +33,35 @@ import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.ManagementApi;
 import com.app.myapplication.data.api.VideoApi;
+import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.data.model.VideoDevice;
 import com.app.myapplication.data.model.manage.LocationDevice;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
 
 public class DeviceManagementActivity extends AppCompatActivity {
-
-    private TabLayout tabLayout;
-    private ViewPager2 viewPager;
+    private static final String[] CAMERA_PLATFORM_LABELS = {"自定义", "海康威视", "大华", "通用协议"};
+    private static final String[] CAMERA_PLATFORM_VALUES = {"custom", "hikvision", "dahua", "onvif"};
+    private static final String[] CAMERA_TYPE_LABELS = {"摄像头", "球机", "枪机"};
+    private static final String[] CAMERA_TYPE_VALUES = {"camera", "ptz", "bullet"};
+    private static final String[] LOCATION_TYPE_LABELS = {"定位终端", "超宽带手环", "超宽带工牌", "高精度手环", "高精度工牌", "无线定位"};
+    private static final String[] LOCATION_TYPE_VALUES = {"jt808", "uwb_band", "uwb_badge", "rtk_band", "rtk_badge", "wifi"};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,19 +69,13 @@ public class DeviceManagementActivity extends AppCompatActivity {
         setContentView(R.layout.activity_device_management);
 
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
-
-        tabLayout = findViewById(R.id.tab_layout);
-        viewPager = findViewById(R.id.view_pager);
-
-        DevicePagerAdapter pagerAdapter = new DevicePagerAdapter(this);
-        viewPager.setAdapter(pagerAdapter);
-
-        new TabLayoutMediator(tabLayout, viewPager, (tab, position) -> {
-            tab.setText(position == 0 ? "摄像头" : "定位装置");
-        }).attach();
+        ViewPager2 viewPager = findViewById(R.id.view_pager);
+        TabLayout tabLayout = findViewById(R.id.tab_layout);
+        viewPager.setAdapter(new DevicePagerAdapter(this));
+        new TabLayoutMediator(tabLayout, viewPager, (tab, position) ->
+                tab.setText(position == 0 ? "摄像头" : "定位装置")).attach();
     }
 
-    // ==================== 摄像头 Fragment ====================
     public static class CameraFragment extends androidx.fragment.app.Fragment {
         private RecyclerView recyclerView;
         private CameraAdapter adapter;
@@ -64,11 +83,30 @@ public class DeviceManagementActivity extends AppCompatActivity {
         private SwipeRefreshLayout swipeRefresh;
         private EditText etSearch;
         private TextView tvEmpty;
+        private OrgNode selectedFilterOrg;
+        private final List<OrgNode> selectableOrgTreeNodes = new ArrayList<>();
+        private EditText activeScanField;
+
+        private final ActivityResultLauncher<ScanOptions> scanLauncher =
+                registerForActivityResult(new ScanContract(), result -> {
+                    if (result != null && !TextUtils.isEmpty(result.getContents()) && activeScanField != null) {
+                        activeScanField.setText(extractSerialFromScan(result.getContents()));
+                        activeScanField.setSelection(activeScanField.length());
+                    }
+                });
+
+        private final ActivityResultLauncher<String> cameraPermissionLauncher =
+                registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
+                    if (granted) {
+                        launchScanner();
+                    } else {
+                        Toast.makeText(requireContext(), "需要相机权限才能扫码", Toast.LENGTH_SHORT).show();
+                    }
+                });
 
         @Override
         public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
             View root = inflater.inflate(R.layout.fragment_device_list, container, false);
-
             etSearch = root.findViewById(R.id.et_search);
             tvEmpty = root.findViewById(R.id.tv_empty);
             swipeRefresh = root.findViewById(R.id.swipe_refresh);
@@ -77,25 +115,40 @@ public class DeviceManagementActivity extends AppCompatActivity {
             adapter = new CameraAdapter();
             recyclerView.setAdapter(adapter);
 
-            root.findViewById(R.id.btn_search).setOnClickListener(v -> filterCameras());
+            root.findViewById(R.id.btn_search).setOnClickListener(v -> applyCameraFilters());
+            root.findViewById(R.id.fab_add).setOnClickListener(v -> showAddModeDialog());
+            TextView orgFilter = root.findViewById(R.id.btn_org_filter);
+            TextView clearOrg = root.findViewById(R.id.btn_clear_org_filter);
+            orgFilter.setText("单位筛选：全部");
+            orgFilter.setOnClickListener(v -> showOrgTreePicker("按单位筛选", selectedFilterOrg, org -> {
+                selectedFilterOrg = org;
+                orgFilter.setText("单位筛选：" + org.path);
+                applyCameraFilters();
+            }));
+            clearOrg.setText("清除筛选");
+            clearOrg.setOnClickListener(v -> {
+                selectedFilterOrg = null;
+                orgFilter.setText("单位筛选：全部");
+                applyCameraFilters();
+            });
             swipeRefresh.setOnRefreshListener(this::loadCameras);
 
             loadCameras();
+            loadSelectableOrgTree(this, selectableOrgTreeNodes);
             return root;
         }
 
         private void loadCameras() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(VideoApi.class)
-                    .getDevices()
+                    .getDevices(5000)
                     .enqueue(new Callback<List<VideoDevice>>() {
                         @Override
                         public void onResponse(Call<List<VideoDevice>> call, Response<List<VideoDevice>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
                                 cameraList = response.body();
-                                adapter.setData(cameraList);
-                                tvEmpty.setVisibility(cameraList.isEmpty() ? View.VISIBLE : View.GONE);
+                                applyCameraFilters();
                             } else {
                                 Toast.makeText(requireContext(), "加载失败", Toast.LENGTH_SHORT).show();
                             }
@@ -104,22 +157,21 @@ public class DeviceManagementActivity extends AppCompatActivity {
                         @Override
                         public void onFailure(Call<List<VideoDevice>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
-                            Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                            Toast.makeText(requireContext(), "网络错误：" + t.getMessage(), Toast.LENGTH_SHORT).show();
                         }
                     });
         }
 
-        private void filterCameras() {
-            String keyword = etSearch.getText().toString().trim().toLowerCase();
-            if (keyword.isEmpty()) {
-                adapter.setData(cameraList);
-                return;
-            }
+        private void applyCameraFilters() {
+            String keyword = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
             List<VideoDevice> filtered = new ArrayList<>();
             for (VideoDevice d : cameraList) {
-                String name = d.getName() != null ? d.getName() : "";
-                String ip = d.getIpAddress() != null ? d.getIpAddress() : "";
-                if (name.toLowerCase().contains(keyword) || ip.contains(keyword)) {
+                String name = safe(d.getName());
+                String address = safe(d.getIpAddress());
+                boolean keywordMatch = keyword.isEmpty()
+                        || name.toLowerCase(Locale.ROOT).contains(keyword)
+                        || address.toLowerCase(Locale.ROOT).contains(keyword);
+                if (keywordMatch && orgMatches(selectedFilterOrg, d.getCompany(), d.getProject(), d.getGrid(), d.getTeam())) {
                     filtered.add(d);
                 }
             }
@@ -127,28 +179,157 @@ public class DeviceManagementActivity extends AppCompatActivity {
             tvEmpty.setVisibility(filtered.isEmpty() ? View.VISIBLE : View.GONE);
         }
 
-        private void deleteCamera(int cameraId) {
+        private void showAddModeDialog() {
             new AlertDialog.Builder(requireContext())
-                    .setTitle("确认删除")
-                    .setMessage("确定要删除此摄像头吗？")
-                    .setPositiveButton("删除", (dialog, which) -> {
-                        ApiClient.get(requireContext()).create(VideoApi.class)
-                                .deleteCamera(cameraId)
-                                .enqueue(new Callback<java.util.Map<String, Object>>() {
-                                    @Override
-                                    public void onResponse(Call<java.util.Map<String, Object>> call, Response<java.util.Map<String, Object>> response) {
-                                        Toast.makeText(requireContext(), "删除成功", Toast.LENGTH_SHORT).show();
-                                        loadCameras();
-                                    }
-
-                                    @Override
-                                    public void onFailure(Call<java.util.Map<String, Object>> call, Throwable t) {
-                                        Toast.makeText(requireContext(), "删除失败", Toast.LENGTH_SHORT).show();
-                                    }
-                                });
+                    .setTitle("添加摄像头")
+                    .setItems(new String[]{"一般添加", "批量添加"}, (dialog, which) -> {
+                        if (which == 0) {
+                            showCameraForm(false, new DeviceDefaults());
+                        } else {
+                            showCameraDefaultsDialog();
+                        }
                     })
-                    .setNegativeButton("取消", null)
                     .show();
+        }
+
+        private void showCameraDefaultsDialog() {
+            LinearLayout root = formRoot(requireContext());
+            OrgPicker org = addOrgPicker(root, "所属单位 *", null, this::showOrgTreePicker);
+            EditText port = addInput(root, "端口", "80");
+            EditText username = addInput(root, "账号", "admin");
+            EditText password = addInput(root, "密码", "");
+            Spinner platform = addSpinner(root, "平台类型", CAMERA_PLATFORM_LABELS);
+            Spinner type = addSpinner(root, "设备类型", CAMERA_TYPE_LABELS);
+
+            new AlertDialog.Builder(requireContext())
+                    .setTitle("批量添加共同项")
+                    .setView(scroll(root))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("开始录入", (dialog, which) -> {
+                        DeviceDefaults defaults = new DeviceDefaults();
+                        defaults.orgNode = org.selected;
+                        defaults.port = value(port);
+                        defaults.username = value(username);
+                        defaults.password = value(password);
+                        defaults.platformType = spinnerValue(platform, CAMERA_PLATFORM_VALUES);
+                        defaults.deviceType = spinnerValue(type, CAMERA_TYPE_VALUES);
+                        showCameraForm(true, defaults);
+                    })
+                    .show();
+        }
+
+        private void showCameraForm(boolean batchMode, DeviceDefaults defaults) {
+            LinearLayout root = formRoot(requireContext());
+            CameraForm form = new CameraForm();
+            form.name = addInput(root, "设备名称 *", "");
+            form.address = addInput(root, "设备地址", "");
+            form.serial = addInput(root, "设备序列号", "");
+            Button scan = new Button(requireContext());
+            scan.setText("扫码填写序列号");
+            root.addView(scan);
+            scan.setOnClickListener(v -> {
+                activeScanField = form.serial;
+                ensureCameraPermission();
+            });
+            form.channel = addInput(root, "通道号", "1");
+            form.port = addInput(root, "端口", emptyDefault(defaults.port, "80"));
+            form.username = addInput(root, "账号", emptyDefault(defaults.username, "admin"));
+            form.password = addInput(root, "密码", defaults.password);
+            form.installLocation = addInput(root, "安装位置", "");
+            form.manager = addInput(root, "负责人", "");
+            form.managerPhone = addInput(root, "负责人电话", "");
+            form.remark = addInput(root, "备注", "");
+            form.org = addOrgPicker(root, "所属单位 *", defaults.orgNode, this::showOrgTreePicker);
+            form.platform = addSpinner(root, "平台类型", CAMERA_PLATFORM_LABELS);
+            form.type = addSpinner(root, "设备类型", CAMERA_TYPE_LABELS);
+            selectSpinnerByValue(form.platform, CAMERA_PLATFORM_VALUES, defaults.platformType);
+            selectSpinnerByValue(form.type, CAMERA_TYPE_VALUES, defaults.deviceType);
+
+            AlertDialog dialog = new AlertDialog.Builder(requireContext())
+                    .setTitle(batchMode ? "批量添加摄像头" : "一般添加摄像头")
+                    .setView(scroll(root))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton(batchMode ? "保存并继续" : "保存", null)
+                    .show();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> submitCamera(form, batchMode, dialog));
+        }
+
+        private void submitCamera(CameraForm form, boolean batchMode, AlertDialog dialog) {
+            if (value(form.name).isEmpty()) {
+                form.name.setError("设备名称必填");
+                return;
+            }
+            if (form.org.selected == null) {
+                Toast.makeText(requireContext(), "请选择所属单位", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            VideoDevice req = new VideoDevice();
+            req.setName(value(form.name));
+            req.setIpAddress(value(form.address));
+            req.setDeviceSerial(value(form.serial));
+            req.setChannelNo(intValue(form.channel, 1));
+            req.setPort(intValue(form.port, 80));
+            req.setUsername(value(form.username));
+            req.setPassword(value(form.password));
+            req.setPlatformType(spinnerValue(form.platform, CAMERA_PLATFORM_VALUES));
+            req.setDeviceType(spinnerValue(form.type, CAMERA_TYPE_VALUES));
+            req.setCompany(form.org.selected.company);
+            req.setProject(form.org.selected.project);
+            req.setGrid(form.org.selected.grid);
+            req.setTeam(form.org.selected.team);
+            req.setInstallLocation(value(form.installLocation));
+            req.setManager(value(form.manager));
+            req.setManagerPhone(value(form.managerPhone));
+            req.setRemark(value(form.remark));
+            req.setStatus("offline");
+            req.setIsActive(1);
+
+            ApiClient.get(requireContext()).create(VideoApi.class)
+                    .addCamera(req)
+                    .enqueue(new Callback<VideoDevice>() {
+                        @Override
+                        public void onResponse(Call<VideoDevice> call, Response<VideoDevice> response) {
+                            if (response.isSuccessful()) {
+                                Toast.makeText(requireContext(), "添加成功", Toast.LENGTH_SHORT).show();
+                                loadCameras();
+                                if (batchMode) {
+                                    form.name.setText("");
+                                    form.address.setText("");
+                                    form.serial.setText("");
+                                } else {
+                                    dialog.dismiss();
+                                }
+                            } else {
+                                Toast.makeText(requireContext(), "添加失败", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Call<VideoDevice> call, Throwable t) {
+                            Toast.makeText(requireContext(), "网络错误：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }
+
+        private void ensureCameraPermission() {
+            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                launchScanner();
+            } else {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+            }
+        }
+
+        private void launchScanner() {
+            ScanOptions options = new ScanOptions();
+            options.setPrompt("请扫描设备二维码");
+            options.setBeepEnabled(true);
+            options.setOrientationLocked(false);
+            scanLauncher.launch(options);
+        }
+
+        private void showOrgTreePicker(String title, OrgNode selected, OrgPickCallback callback) {
+            showSharedOrgTreePicker(requireContext(), title, selectableOrgTreeNodes, selected, callback);
         }
 
         class CameraAdapter extends RecyclerView.Adapter<CameraAdapter.VH> {
@@ -169,15 +350,18 @@ public class DeviceManagementActivity extends AppCompatActivity {
             @Override
             public void onBindViewHolder(@NonNull VH holder, int position) {
                 VideoDevice item = data.get(position);
-                holder.tvName.setText(item.getName() != null ? item.getName() : "-");
-                holder.tvIp.setText("IP: " + (item.getIpAddress() != null ? item.getIpAddress() : "-"));
-                holder.tvPort.setText("端口: " + (item.getPort() != null ? item.getPort() : 80));
-
-                String status = item.getStatus() != null ? item.getStatus() : "offline";
+                holder.tvName.setText(emptyDefault(item.getName(), "-"));
+                holder.tvDeviceId.setText(emptyDefault(item.getDeviceSerial(), "-"));
+                holder.tvType.setText(cameraTypeLabel(item.getDeviceType()));
+                holder.tvIp.setText("地址：" + emptyDefault(item.getIpAddress(), "-"));
+                holder.tvPort.setText("端口：" + (item.getPort() != null ? item.getPort() : 80));
+                holder.tvProject.setText("单位：" + orgPath(item.getCompany(), item.getProject(), item.getGrid(), item.getTeam()));
+                String status = emptyDefault(item.getStatus(), "offline");
                 holder.tvStatus.setText(status.equals("online") ? "在线" : "离线");
                 holder.tvStatus.setBackgroundResource(status.equals("online") ? R.drawable.bg_circle_green : R.drawable.bg_circle_gray);
-
-                holder.btnDelete.setOnClickListener(v -> deleteCamera(item.getId()));
+                if (holder.btnDelete != null) {
+                    holder.btnDelete.setVisibility(View.GONE);
+                }
             }
 
             @Override
@@ -186,14 +370,17 @@ public class DeviceManagementActivity extends AppCompatActivity {
             }
 
             class VH extends RecyclerView.ViewHolder {
-                TextView tvName, tvIp, tvPort, tvStatus;
+                TextView tvName, tvDeviceId, tvType, tvIp, tvPort, tvProject, tvStatus;
                 ImageView btnDelete;
 
                 VH(View itemView) {
                     super(itemView);
                     tvName = itemView.findViewById(R.id.tv_name);
+                    tvDeviceId = itemView.findViewById(R.id.tv_device_id);
+                    tvType = itemView.findViewById(R.id.tv_type);
                     tvIp = itemView.findViewById(R.id.tv_ip);
                     tvPort = itemView.findViewById(R.id.tv_port);
+                    tvProject = itemView.findViewById(R.id.tv_project);
                     tvStatus = itemView.findViewById(R.id.tv_status);
                     btnDelete = itemView.findViewById(R.id.btn_delete);
                 }
@@ -201,7 +388,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
         }
     }
 
-    // ==================== 定位装置 Fragment ====================
     public static class LocationDeviceFragment extends androidx.fragment.app.Fragment {
         private RecyclerView recyclerView;
         private LocationAdapter adapter;
@@ -209,11 +395,12 @@ public class DeviceManagementActivity extends AppCompatActivity {
         private SwipeRefreshLayout swipeRefresh;
         private EditText etSearch;
         private TextView tvEmpty;
+        private OrgNode selectedFilterOrg;
+        private final List<OrgNode> selectableOrgTreeNodes = new ArrayList<>();
 
         @Override
         public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
             View root = inflater.inflate(R.layout.fragment_device_list, container, false);
-
             etSearch = root.findViewById(R.id.et_search);
             tvEmpty = root.findViewById(R.id.tv_empty);
             swipeRefresh = root.findViewById(R.id.swipe_refresh);
@@ -222,72 +409,83 @@ public class DeviceManagementActivity extends AppCompatActivity {
             adapter = new LocationAdapter();
             recyclerView.setAdapter(adapter);
 
-            root.findViewById(R.id.btn_search).setOnClickListener(v -> filterDevices());
+            root.findViewById(R.id.btn_search).setOnClickListener(v -> applyDeviceFilters());
+            root.findViewById(R.id.fab_add).setOnClickListener(v -> showAddModeDialog());
+            TextView orgFilter = root.findViewById(R.id.btn_org_filter);
+            TextView clearOrg = root.findViewById(R.id.btn_clear_org_filter);
+            orgFilter.setText("单位筛选：全部");
+            orgFilter.setOnClickListener(v -> showOrgTreePicker("按单位筛选", selectedFilterOrg, org -> {
+                selectedFilterOrg = org;
+                orgFilter.setText("单位筛选：" + org.path);
+                applyDeviceFilters();
+            }));
+            clearOrg.setText("清除筛选");
+            clearOrg.setOnClickListener(v -> {
+                selectedFilterOrg = null;
+                orgFilter.setText("单位筛选：全部");
+                applyDeviceFilters();
+            });
             swipeRefresh.setOnRefreshListener(this::loadDevices);
 
             loadDevices();
+            loadSelectableOrgTree(this, selectableOrgTreeNodes);
             return root;
-        }
-
-        private java.util.Map<String, String> getAuthHeaders() {
-            java.util.Map<String, String> headers = new java.util.HashMap<>();
-            String token = com.app.myapplication.data.local.SessionManager.getToken(requireContext());
-            if (token != null && !token.isEmpty()) {
-                headers.put("Authorization", "Bearer " + token);
-            }
-            return headers;
         }
 
         private void loadDevices() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(ManagementApi.class)
-                    .getLocationDevices(getAuthHeaders())
-                    .enqueue(new Callback<List<com.google.gson.JsonObject>>() {
+                    .getLocationDevices(authHeaders(requireContext()))
+                    .enqueue(new Callback<List<JsonObject>>() {
                         @Override
-                        public void onResponse(Call<List<com.google.gson.JsonObject>> call, Response<List<com.google.gson.JsonObject>> response) {
+                        public void onResponse(Call<List<JsonObject>> call, Response<List<JsonObject>> response) {
                             swipeRefresh.setRefreshing(false);
                             if (response.isSuccessful() && response.body() != null) {
                                 deviceList = parseDeviceList(response.body());
-                                adapter.setData(deviceList);
-                                tvEmpty.setVisibility(deviceList.isEmpty() ? View.VISIBLE : View.GONE);
+                                applyDeviceFilters();
                             } else {
                                 Toast.makeText(requireContext(), "加载失败", Toast.LENGTH_SHORT).show();
                             }
                         }
 
                         @Override
-                        public void onFailure(Call<List<com.google.gson.JsonObject>> call, Throwable t) {
+                        public void onFailure(Call<List<JsonObject>> call, Throwable t) {
                             swipeRefresh.setRefreshing(false);
-                            Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                            Toast.makeText(requireContext(), "网络错误：" + t.getMessage(), Toast.LENGTH_SHORT).show();
                         }
                     });
         }
 
-        private List<LocationDevice> parseDeviceList(List<com.google.gson.JsonObject> jsonList) {
+        private List<LocationDevice> parseDeviceList(List<JsonObject> jsonList) {
             List<LocationDevice> list = new ArrayList<>();
-            for (com.google.gson.JsonObject json : jsonList) {
+            for (JsonObject json : jsonList) {
                 LocationDevice item = new LocationDevice();
-                item.setDeviceId(json.has("device_id") ? json.get("device_id").getAsString() : "");
-                item.setName(json.has("name") ? json.get("name").getAsString() : "");
-                item.setType(json.has("type") ? json.get("type").getAsString() : "");
-                item.setHolder(json.has("holder") ? json.get("holder").getAsString() : "");
-                item.setStatus(json.has("status") ? json.get("status").getAsString() : "offline");
+                item.setDeviceId(jsonText(json, "device_id"));
+                item.setName(jsonText(json, "name"));
+                item.setType(jsonText(json, "type"));
+                item.setCompany(jsonText(json, "company"));
+                item.setProject(jsonText(json, "project"));
+                item.setGrid(jsonText(json, "grid"));
+                item.setTeam(jsonText(json, "team"));
+                item.setHolder(jsonText(json, "holder"));
+                item.setHolderPhone(jsonText(json, "holder_phone"));
+                item.setStatus(emptyDefault(jsonText(json, "status"), "offline"));
+                item.setRemark(jsonText(json, "remark"));
                 list.add(item);
             }
             return list;
         }
 
-        private void filterDevices() {
-            String keyword = etSearch.getText().toString().trim().toLowerCase();
-            if (keyword.isEmpty()) {
-                adapter.setData(deviceList);
-                return;
-            }
+        private void applyDeviceFilters() {
+            String keyword = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
             List<LocationDevice> filtered = new ArrayList<>();
             for (LocationDevice d : deviceList) {
-                String name = d.getName() != null ? d.getName() : "";
-                String deviceId = d.getDeviceId() != null ? d.getDeviceId() : "";
-                if (name.toLowerCase().contains(keyword) || deviceId.toLowerCase().contains(keyword)) {
+                String name = safe(d.getName());
+                String deviceId = safe(d.getDeviceId());
+                boolean keywordMatch = keyword.isEmpty()
+                        || name.toLowerCase(Locale.ROOT).contains(keyword)
+                        || deviceId.toLowerCase(Locale.ROOT).contains(keyword);
+                if (keywordMatch && orgMatches(selectedFilterOrg, d.getCompany(), d.getProject(), d.getGrid(), d.getTeam())) {
                     filtered.add(d);
                 }
             }
@@ -295,28 +493,118 @@ public class DeviceManagementActivity extends AppCompatActivity {
             tvEmpty.setVisibility(filtered.isEmpty() ? View.VISIBLE : View.GONE);
         }
 
-        private void deleteDevice(String deviceId) {
+        private void showAddModeDialog() {
             new AlertDialog.Builder(requireContext())
-                    .setTitle("确认删除")
-                    .setMessage("确定要删除此定位装置吗？")
-                    .setPositiveButton("删除", (dialog, which) -> {
-                        ApiClient.get(requireContext()).create(ManagementApi.class)
-                                .deleteDevice(getAuthHeaders(), deviceId)
-                                .enqueue(new Callback<Void>() {
-                                    @Override
-                                    public void onResponse(Call<Void> call, Response<Void> response) {
-                                        Toast.makeText(requireContext(), "删除成功", Toast.LENGTH_SHORT).show();
-                                        loadDevices();
-                                    }
-
-                                    @Override
-                                    public void onFailure(Call<Void> call, Throwable t) {
-                                        Toast.makeText(requireContext(), "删除失败", Toast.LENGTH_SHORT).show();
-                                    }
-                                });
+                    .setTitle("添加定位设备")
+                    .setItems(new String[]{"一般添加", "批量添加"}, (dialog, which) -> {
+                        if (which == 0) {
+                            showLocationForm(false, new DeviceDefaults());
+                        } else {
+                            showLocationDefaultsDialog();
+                        }
                     })
-                    .setNegativeButton("取消", null)
                     .show();
+        }
+
+        private void showLocationDefaultsDialog() {
+            LinearLayout root = formRoot(requireContext());
+            OrgPicker org = addOrgPicker(root, "所属单位 *", null, this::showOrgTreePicker);
+            Spinner type = addSpinner(root, "设备类型", LOCATION_TYPE_LABELS);
+            EditText holder = addInput(root, "持有人", "");
+
+            new AlertDialog.Builder(requireContext())
+                    .setTitle("批量添加共同项")
+                    .setView(scroll(root))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("开始录入", (dialog, which) -> {
+                        DeviceDefaults defaults = new DeviceDefaults();
+                        defaults.orgNode = org.selected;
+                        defaults.deviceType = spinnerValue(type, LOCATION_TYPE_VALUES);
+                        defaults.holder = value(holder);
+                        showLocationForm(true, defaults);
+                    })
+                    .show();
+        }
+
+        private void showLocationForm(boolean batchMode, DeviceDefaults defaults) {
+            LinearLayout root = formRoot(requireContext());
+            LocationForm form = new LocationForm();
+            form.name = addInput(root, "设备名称 *", "");
+            form.deviceId = addInput(root, "设备编号", "");
+            form.phoneNum = addInput(root, "设备识别码 *", "");
+            form.holder = addInput(root, "持有人", defaults.holder);
+            form.holderPhone = addInput(root, "持有人电话", "");
+            form.remark = addInput(root, "备注", "");
+            form.org = addOrgPicker(root, "所属单位 *", defaults.orgNode, this::showOrgTreePicker);
+            form.type = addSpinner(root, "设备类型", LOCATION_TYPE_LABELS);
+            selectSpinnerByValue(form.type, LOCATION_TYPE_VALUES, defaults.deviceType);
+
+            AlertDialog dialog = new AlertDialog.Builder(requireContext())
+                    .setTitle(batchMode ? "批量添加定位设备" : "一般添加定位设备")
+                    .setView(scroll(root))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton(batchMode ? "保存并继续" : "保存", null)
+                    .show();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> submitLocationDevice(form, batchMode, dialog));
+        }
+
+        private void submitLocationDevice(LocationForm form, boolean batchMode, AlertDialog dialog) {
+            if (value(form.name).isEmpty()) {
+                form.name.setError("设备名称必填");
+                return;
+            }
+            if (value(form.phoneNum).isEmpty()) {
+                form.phoneNum.setError("设备识别码必填");
+                return;
+            }
+            if (form.org.selected == null) {
+                Toast.makeText(requireContext(), "请选择所属单位", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            JsonObject req = new JsonObject();
+            put(req, "name", value(form.name));
+            put(req, "device_id", value(form.deviceId));
+            put(req, "phone_num", value(form.phoneNum));
+            put(req, "type", spinnerValue(form.type, LOCATION_TYPE_VALUES));
+            put(req, "company", form.org.selected.company);
+            put(req, "project", form.org.selected.project);
+            put(req, "grid", form.org.selected.grid);
+            put(req, "team", form.org.selected.team);
+            put(req, "holder", value(form.holder));
+            put(req, "holder_phone", value(form.holderPhone));
+            put(req, "remark", value(form.remark));
+            put(req, "status", "offline");
+
+            ApiClient.get(requireContext()).create(ManagementApi.class)
+                    .addLocationDevice(authHeaders(requireContext()), req)
+                    .enqueue(new Callback<JsonObject>() {
+                        @Override
+                        public void onResponse(Call<JsonObject> call, Response<JsonObject> response) {
+                            if (response.isSuccessful()) {
+                                Toast.makeText(requireContext(), "添加成功", Toast.LENGTH_SHORT).show();
+                                loadDevices();
+                                if (batchMode) {
+                                    form.name.setText("");
+                                    form.deviceId.setText("");
+                                    form.phoneNum.setText("");
+                                } else {
+                                    dialog.dismiss();
+                                }
+                            } else {
+                                Toast.makeText(requireContext(), "添加失败", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Call<JsonObject> call, Throwable t) {
+                            Toast.makeText(requireContext(), "网络错误：" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }
+
+        private void showOrgTreePicker(String title, OrgNode selected, OrgPickCallback callback) {
+            showSharedOrgTreePicker(requireContext(), title, selectableOrgTreeNodes, selected, callback);
         }
 
         class LocationAdapter extends RecyclerView.Adapter<LocationAdapter.VH> {
@@ -337,28 +625,19 @@ public class DeviceManagementActivity extends AppCompatActivity {
             @Override
             public void onBindViewHolder(@NonNull VH holder, int position) {
                 LocationDevice item = data.get(position);
-                holder.tvName.setText(item.getName() != null ? item.getName() : "-");
-                holder.tvDeviceId.setText("设备ID: " + (item.getDeviceId() != null ? item.getDeviceId() : "-"));
-                holder.tvType.setText("类型: " + formatType(item.getType()));
-                holder.tvHolder.setText("持有人: " + (item.getHolder() != null ? item.getHolder() : "-"));
-
-                String status = item.getStatus() != null ? item.getStatus() : "offline";
+                holder.tvName.setText(emptyDefault(item.getName(), "-"));
+                holder.tvDeviceId.setText("编号：" + emptyDefault(item.getDeviceId(), "-"));
+                holder.tvType.setText(locationTypeLabel(item.getType()));
+                holder.tvHolder.setText("持有人：" + emptyDefault(item.getHolder(), "-"));
+                if (holder.tvBindPerson != null) {
+                    holder.tvBindPerson.setText("单位：" + orgPath(item.getCompany(), item.getProject(), item.getGrid(), item.getTeam()));
+                }
+                String status = emptyDefault(item.getStatus(), "offline");
                 holder.tvStatus.setText(status.equals("online") ? "在线" : status.equals("fault") ? "故障" : "离线");
                 int bgRes = status.equals("online") ? R.drawable.bg_circle_green : status.equals("fault") ? R.drawable.bg_circle_red : R.drawable.bg_circle_gray;
                 holder.tvStatus.setBackgroundResource(bgRes);
-
-                holder.btnDelete.setOnClickListener(v -> deleteDevice(item.getDeviceId()));
-            }
-
-            private String formatType(String type) {
-                if (type == null) return "-";
-                switch (type) {
-                    case "uwb_band": return "UWB手环";
-                    case "uwb_badge": return "UWB工牌";
-                    case "rtk_band": return "RTK手环";
-                    case "rtk_badge": return "RTK工牌";
-                    case "wifi": return "Wi-Fi定位";
-                    default: return type;
+                if (holder.btnDelete != null) {
+                    holder.btnDelete.setVisibility(View.GONE);
                 }
             }
 
@@ -368,7 +647,7 @@ public class DeviceManagementActivity extends AppCompatActivity {
             }
 
             class VH extends RecyclerView.ViewHolder {
-                TextView tvName, tvDeviceId, tvType, tvHolder, tvStatus;
+                TextView tvName, tvDeviceId, tvType, tvHolder, tvBindPerson, tvStatus;
                 ImageView btnDelete;
 
                 VH(View itemView) {
@@ -377,6 +656,7 @@ public class DeviceManagementActivity extends AppCompatActivity {
                     tvDeviceId = itemView.findViewById(R.id.tv_device_id);
                     tvType = itemView.findViewById(R.id.tv_type);
                     tvHolder = itemView.findViewById(R.id.tv_holder);
+                    tvBindPerson = itemView.findViewById(R.id.tv_bind_person);
                     tvStatus = itemView.findViewById(R.id.tv_status);
                     btnDelete = itemView.findViewById(R.id.btn_delete);
                 }
@@ -384,9 +664,413 @@ public class DeviceManagementActivity extends AppCompatActivity {
         }
     }
 
-    // ==================== ViewPager Adapter ====================
-    static class DevicePagerAdapter extends androidx.viewpager2.adapter.FragmentStateAdapter {
+    private static LinearLayout formRoot(Context context) {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(32, 8, 32, 0);
+        return root;
+    }
 
+    private static ScrollView scroll(View child) {
+        ScrollView scrollView = new ScrollView(child.getContext());
+        scrollView.addView(child);
+        return scrollView;
+    }
+
+    private static EditText addInput(LinearLayout root, String hint, String text) {
+        EditText input = new EditText(root.getContext());
+        input.setHint(hint);
+        input.setSingleLine(true);
+        input.setText(text == null ? "" : text);
+        root.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return input;
+    }
+
+    private static Spinner addSpinner(LinearLayout root, String label, String[] labels) {
+        TextView title = new TextView(root.getContext());
+        title.setText(label);
+        title.setTextSize(13);
+        title.setPadding(0, 12, 0, 0);
+        root.addView(title);
+        Spinner spinner = new Spinner(root.getContext());
+        spinner.setAdapter(new ArrayAdapter<>(root.getContext(), android.R.layout.simple_spinner_dropdown_item, labels));
+        root.addView(spinner);
+        return spinner;
+    }
+
+    private static OrgPicker addOrgPicker(LinearLayout root, String label, OrgNode selected, OrgPickerLauncher launcher) {
+        TextView title = new TextView(root.getContext());
+        title.setText(label);
+        title.setTextSize(13);
+        title.setPadding(0, 12, 0, 4);
+        root.addView(title);
+        Button button = new Button(root.getContext());
+        OrgPicker picker = new OrgPicker(button, selected);
+        picker.refresh();
+        button.setOnClickListener(v -> launcher.open("选择所属单位", picker.selected, org -> {
+            picker.selected = org;
+            picker.refresh();
+        }));
+        root.addView(button);
+        return picker;
+    }
+
+    private static void showSharedOrgTreePicker(Context context, String title, List<OrgNode> nodes, OrgNode selected, OrgPickCallback callback) {
+        if (nodes.isEmpty()) {
+            Toast.makeText(context, "暂无可选单位", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        Set<String> expanded = new HashSet<>();
+        if (selected != null) {
+            String[] parts = selected.key.split("\\|", -1);
+            String company = parts.length > 0 ? parts[0] : "";
+            String project = parts.length > 1 ? parts[1] : "";
+            String grid = parts.length > 2 ? parts[2] : "";
+            if (!company.isEmpty()) expanded.add(company + "|||");
+            if (!project.isEmpty()) expanded.add(company + "|" + project + "||");
+            if (!grid.isEmpty()) expanded.add(company + "|" + project + "|" + grid + "|");
+        }
+        AlertDialog dialog = new AlertDialog.Builder(context)
+                .setTitle(title)
+                .setView(scroll(root))
+                .setNegativeButton("取消", null)
+                .create();
+        Runnable[] render = new Runnable[1];
+        render[0] = () -> {
+            root.removeAllViews();
+            for (OrgNode node : visibleNodes(nodes, expanded)) {
+                TextView row = new TextView(context);
+                boolean hasChildren = hasChildren(nodes, node);
+                String toggle = hasChildren ? (expanded.contains(node.key) ? "-  " : "+  ") : "   ";
+                row.setText(indent(node.level) + toggle + node.name);
+                row.setTextSize(15);
+                row.setPadding(12, 14, 12, 14);
+                row.setOnClickListener(v -> {
+                    if (hasChildren) {
+                        if (expanded.contains(node.key)) {
+                            expanded.remove(node.key);
+                        } else {
+                            expanded.add(node.key);
+                        }
+                        render[0].run();
+                    } else {
+                        callback.pick(node);
+                        dialog.dismiss();
+                    }
+                });
+                row.setOnLongClickListener(v -> {
+                    callback.pick(node);
+                    dialog.dismiss();
+                    return true;
+                });
+                root.addView(row);
+            }
+        };
+        render[0].run();
+        dialog.show();
+    }
+
+    private static List<OrgNode> visibleNodes(List<OrgNode> nodes, Set<String> expanded) {
+        List<OrgNode> result = new ArrayList<>();
+        for (OrgNode node : nodes) {
+            if (node.level == 0 || ancestorsExpanded(node, expanded)) {
+                result.add(node);
+            }
+        }
+        return result;
+    }
+
+    private static boolean ancestorsExpanded(OrgNode node, Set<String> expanded) {
+        if (node.level == 0) return true;
+        if (!expanded.contains(node.company + "|||")) return false;
+        if (node.level >= 2 && !expanded.contains(node.company + "|" + node.project + "||")) return false;
+        return node.level < 3 || expanded.contains(node.company + "|" + node.project + "|" + node.grid + "|");
+    }
+
+    private static boolean hasChildren(List<OrgNode> nodes, OrgNode parent) {
+        for (OrgNode node : nodes) {
+            if (node.level == parent.level + 1 && isParent(parent, node)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isParent(OrgNode parent, OrgNode child) {
+        if (parent.level == 0) return parent.company.equals(child.company);
+        if (parent.level == 1) return parent.company.equals(child.company) && parent.project.equals(child.project);
+        if (parent.level == 2) return parent.company.equals(child.company) && parent.project.equals(child.project) && parent.grid.equals(child.grid);
+        return false;
+    }
+
+    private static String indent(int level) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < level; i++) {
+            builder.append("    ");
+        }
+        return builder.toString();
+    }
+
+    private static void loadSelectableOrgTree(androidx.fragment.app.Fragment fragment, List<OrgNode> target) {
+        ApiClient.get(fragment.requireContext()).create(ManagementApi.class)
+                .getResponsibilityTree(authHeaders(fragment.requireContext()))
+                .enqueue(new Callback<List<JsonObject>>() {
+                    @Override
+                    public void onResponse(Call<List<JsonObject>> call, Response<List<JsonObject>> response) {
+                        target.clear();
+                        if (response.isSuccessful() && response.body() != null) {
+                            for (JsonObject node : response.body()) {
+                                collectOrgTreeNode(target, node, "", "", "", "");
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Call<List<JsonObject>> call, Throwable t) {
+                        target.clear();
+                    }
+                });
+    }
+
+    private static void collectOrgTreeNode(List<OrgNode> target, JsonObject node, String company, String project, String grid, String team) {
+        String name = jsonText(node, "name");
+        String type = normalizeUnitType(jsonText(node, "type"));
+        String nextCompany = company;
+        String nextProject = project;
+        String nextGrid = grid;
+        String nextTeam = team;
+        if ("company".equals(type)) nextCompany = name;
+        else if ("project".equals(type)) nextProject = name;
+        else if ("grid".equals(type)) nextGrid = name;
+        else if ("team".equals(type)) nextTeam = name;
+        else if (company.isEmpty()) nextCompany = name;
+
+        OrgNode org = new OrgNode(nextCompany, nextProject, nextGrid, nextTeam);
+        if (!org.path.isEmpty() && !containsOrg(target, org.key)) {
+            target.add(org);
+        }
+
+        JsonElement children = node.get("children");
+        if (children != null && children.isJsonArray()) {
+            for (JsonElement child : children.getAsJsonArray()) {
+                if (child.isJsonObject()) {
+                    collectOrgTreeNode(target, child.getAsJsonObject(), nextCompany, nextProject, nextGrid, nextTeam);
+                }
+            }
+        }
+    }
+
+    private static boolean containsOrg(List<OrgNode> nodes, String key) {
+        for (OrgNode node : nodes) {
+            if (node.key.equals(key)) return true;
+        }
+        return false;
+    }
+
+    private static boolean orgMatches(OrgNode selected, String company, String project, String grid, String team) {
+        if (selected == null) return true;
+        return selected.company.equals(safe(company))
+                && (selected.project.isEmpty() || selected.project.equals(safe(project)))
+                && (selected.grid.isEmpty() || selected.grid.equals(safe(grid)))
+                && (selected.team.isEmpty() || selected.team.equals(safe(team)));
+    }
+
+    private static Map<String, String> authHeaders(Context context) {
+        Map<String, String> headers = new HashMap<>();
+        String token = SessionManager.getToken(context);
+        if (token != null && !token.isEmpty()) {
+            headers.put("Authorization", "Bearer " + token);
+        }
+        return headers;
+    }
+
+    private static String extractSerialFromScan(String raw) {
+        String text = raw.trim();
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (String key : new String[]{"device_serial=", "serial=", "sn=", "code="}) {
+            int index = lower.indexOf(key);
+            if (index >= 0) {
+                String value = text.substring(index + key.length());
+                int end = value.indexOf('&');
+                return end >= 0 ? value.substring(0, end) : value;
+            }
+        }
+        return text;
+    }
+
+    private static String normalizeUnitType(String type) {
+        String lower = safe(type).toLowerCase(Locale.ROOT);
+        if (lower.contains("project") || "项目".equals(type)) return "project";
+        if (lower.contains("grid") || "网格".equals(type)) return "grid";
+        if (lower.contains("team") || "工队".equals(type)) return "team";
+        return "company";
+    }
+
+    private static String jsonText(JsonObject json, String key) {
+        if (json == null || !json.has(key) || json.get(key).isJsonNull()) return "";
+        return json.get(key).getAsString();
+    }
+
+    private static String value(EditText editText) {
+        return editText.getText().toString().trim();
+    }
+
+    private static int intValue(EditText editText, int fallback) {
+        try {
+            return Integer.parseInt(value(editText));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static String spinnerValue(Spinner spinner, String[] values) {
+        int index = spinner.getSelectedItemPosition();
+        return index >= 0 && index < values.length ? values[index] : values[0];
+    }
+
+    private static void selectSpinnerByValue(Spinner spinner, String[] values, String value) {
+        if (value == null) return;
+        for (int i = 0; i < values.length; i++) {
+            if (value.equals(values[i])) {
+                spinner.setSelection(i);
+                return;
+            }
+        }
+    }
+
+    private static void put(JsonObject json, String key, String value) {
+        if (value != null && !value.isEmpty()) {
+            json.addProperty(key, value);
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String emptyDefault(String value, String fallback) {
+        return value == null || value.isEmpty() ? fallback : value;
+    }
+
+    private static String cameraTypeLabel(String value) {
+        for (int i = 0; i < CAMERA_TYPE_VALUES.length; i++) {
+            if (CAMERA_TYPE_VALUES[i].equals(value)) return CAMERA_TYPE_LABELS[i];
+        }
+        return "摄像头";
+    }
+
+    private static String locationTypeLabel(String value) {
+        for (int i = 0; i < LOCATION_TYPE_VALUES.length; i++) {
+            if (LOCATION_TYPE_VALUES[i].equals(value)) return LOCATION_TYPE_LABELS[i];
+        }
+        return "定位终端";
+    }
+
+    private static String orgPath(String company, String project, String grid, String team) {
+        List<String> parts = new ArrayList<>();
+        if (!safe(company).isEmpty()) parts.add(company);
+        if (!safe(project).isEmpty()) parts.add(project);
+        if (!safe(grid).isEmpty()) parts.add(grid);
+        if (!safe(team).isEmpty()) parts.add(team);
+        return parts.isEmpty() ? "-" : TextUtils.join(" / ", parts);
+    }
+
+    private interface OrgPickCallback {
+        void pick(OrgNode node);
+    }
+
+    private interface OrgPickerLauncher {
+        void open(String title, OrgNode selected, OrgPickCallback callback);
+    }
+
+    private static class OrgPicker {
+        final Button button;
+        OrgNode selected;
+
+        OrgPicker(Button button, OrgNode selected) {
+            this.button = button;
+            this.selected = selected;
+        }
+
+        void refresh() {
+            button.setText(selected == null ? "请选择所属单位" : selected.path);
+        }
+    }
+
+    private static class OrgNode {
+        final String company;
+        final String project;
+        final String grid;
+        final String team;
+        final String name;
+        final String path;
+        final String key;
+        final int level;
+
+        OrgNode(String company, String project, String grid, String team) {
+            this.company = safe(company);
+            this.project = safe(project);
+            this.grid = safe(grid);
+            this.team = safe(team);
+            if (!this.team.isEmpty()) {
+                level = 3;
+                name = this.team;
+            } else if (!this.grid.isEmpty()) {
+                level = 2;
+                name = this.grid;
+            } else if (!this.project.isEmpty()) {
+                level = 1;
+                name = this.project;
+            } else {
+                level = 0;
+                name = this.company;
+            }
+            path = orgPath(this.company, this.project, this.grid, this.team);
+            key = this.company + "|" + this.project + "|" + this.grid + "|" + this.team;
+        }
+    }
+
+    private static class DeviceDefaults {
+        OrgNode orgNode;
+        String port = "80";
+        String username = "admin";
+        String password = "";
+        String platformType = "custom";
+        String deviceType = "camera";
+        String holder = "";
+    }
+
+    private static class CameraForm {
+        EditText name;
+        EditText address;
+        EditText serial;
+        EditText channel;
+        EditText port;
+        EditText username;
+        EditText password;
+        EditText installLocation;
+        EditText manager;
+        EditText managerPhone;
+        EditText remark;
+        Spinner platform;
+        Spinner type;
+        OrgPicker org;
+    }
+
+    private static class LocationForm {
+        EditText name;
+        EditText deviceId;
+        EditText phoneNum;
+        EditText holder;
+        EditText holderPhone;
+        EditText remark;
+        Spinner type;
+        OrgPicker org;
+    }
+
+    static class DevicePagerAdapter extends androidx.viewpager2.adapter.FragmentStateAdapter {
         DevicePagerAdapter(@NonNull AppCompatActivity activity) {
             super(activity);
         }

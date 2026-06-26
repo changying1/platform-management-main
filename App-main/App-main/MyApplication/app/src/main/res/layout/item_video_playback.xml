@@ -114,6 +114,17 @@
                 android:textColor="#6B7280"/>
 
             <ImageButton
+                android:id="@+id/btn_screenshot"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_play_button"
+                android:visibility="gone"
+                app:srcCompat="@android:drawable/ic_menu_gallery"
+                app:tint="#FFFFFF"
+                android:contentDescription="查看告警截图"/>
+
+            <ImageButton
                 android:id="@+id/btn_play"
                 android:layout_width="36dp"
                 android:layout_height="36dp"

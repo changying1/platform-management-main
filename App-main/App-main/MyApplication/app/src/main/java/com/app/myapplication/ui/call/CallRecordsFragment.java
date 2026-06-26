@@ -1,11 +1,17 @@
 package com.app.myapplication.ui.call;
 
 import android.content.Intent;
+import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -20,12 +26,18 @@ import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.AppVoiceCallApi;
 import com.app.myapplication.data.local.SessionManager;
+import com.app.myapplication.data.model.call.AppVoiceMember;
 import com.app.myapplication.data.model.call.AppVoiceRecord;
 import com.app.myapplication.data.model.call.AppVoiceRoom;
 
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -36,8 +48,18 @@ public class CallRecordsFragment extends Fragment {
     private RecyclerView rvRecords;
     private ProgressBar progressBar;
     private TextView tvEmpty;
-    private final List<Object> items = new ArrayList<>();
+    private EditText etKeyword;
+    private TextView btnSearch;
+    private Button btnStartTime;
+    private Button btnEndTime;
+    private Button btnSortOrder;
+    private Button btnClearTimeFilter;
+    private final List<Object> allItems = new ArrayList<>();
+    private final List<Object> displayItems = new ArrayList<>();
     private RecordAdapter adapter;
+    private Calendar startFilter;
+    private Calendar endFilter;
+    private boolean sortAsc = false;
 
     public static CallRecordsFragment newInstance() {
         return new CallRecordsFragment();
@@ -54,10 +76,54 @@ public class CallRecordsFragment extends Fragment {
         rvRecords = view.findViewById(R.id.rv_records);
         progressBar = view.findViewById(R.id.progress_bar);
         tvEmpty = view.findViewById(R.id.tv_empty);
+        etKeyword = view.findViewById(R.id.et_call_keyword);
+        btnSearch = view.findViewById(R.id.btn_call_search);
+        btnStartTime = view.findViewById(R.id.btn_start_time);
+        btnEndTime = view.findViewById(R.id.btn_end_time);
+        btnSortOrder = view.findViewById(R.id.btn_sort_order);
+        btnClearTimeFilter = view.findViewById(R.id.btn_clear_time_filter);
 
         adapter = new RecordAdapter();
         rvRecords.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvRecords.setAdapter(adapter);
+
+        btnSearch.setOnClickListener(v -> applyFilter());
+        btnStartTime.setOnClickListener(v -> pickDateTime(startFilter, selected -> {
+            startFilter = selected;
+            updateTimeFilterButtons();
+            applyFilter();
+        }));
+        btnEndTime.setOnClickListener(v -> pickDateTime(endFilter, selected -> {
+            endFilter = selected;
+            updateTimeFilterButtons();
+            applyFilter();
+        }));
+        btnSortOrder.setOnClickListener(v -> {
+            sortAsc = !sortAsc;
+            updateTimeFilterButtons();
+            applyFilter();
+        });
+        btnClearTimeFilter.setOnClickListener(v -> {
+            startFilter = null;
+            endFilter = null;
+            updateTimeFilterButtons();
+            applyFilter();
+        });
+        updateTimeFilterButtons();
+        etKeyword.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                applyFilter();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
 
         loadRoomsAndRecords();
     }
@@ -65,7 +131,9 @@ public class CallRecordsFragment extends Fragment {
     private void loadRoomsAndRecords() {
         progressBar.setVisibility(View.VISIBLE);
         tvEmpty.setVisibility(View.GONE);
-        items.clear();
+        allItems.clear();
+        displayItems.clear();
+        adapter.notifyDataSetChanged();
 
         SessionManager session = new SessionManager(requireContext());
         String userId = session.getUserId();
@@ -80,7 +148,7 @@ public class CallRecordsFragment extends Fragment {
             @Override
             public void onResponse(@NonNull Call<List<AppVoiceRoom>> call, @NonNull Response<List<AppVoiceRoom>> response) {
                 if (response.isSuccessful() && response.body() != null) {
-                    items.addAll(response.body());
+                    allItems.addAll(response.body());
                 }
                 loadRecords(api);
             }
@@ -99,21 +167,189 @@ public class CallRecordsFragment extends Fragment {
             public void onResponse(@NonNull Call<List<AppVoiceRecord>> call, @NonNull Response<List<AppVoiceRecord>> response) {
                 progressBar.setVisibility(View.GONE);
                 if (response.isSuccessful() && response.body() != null) {
-                    items.addAll(response.body());
+                    allItems.addAll(response.body());
                 } else {
                     Toast.makeText(requireContext(), "获取通话记录失败", Toast.LENGTH_SHORT).show();
                 }
-                adapter.notifyDataSetChanged();
-                tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+                applyFilter();
             }
 
             @Override
             public void onFailure(@NonNull Call<List<AppVoiceRecord>> call, @NonNull Throwable t) {
                 progressBar.setVisibility(View.GONE);
-                tvEmpty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+                applyFilter();
                 Toast.makeText(requireContext(), "网络错误: " + t.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void applyFilter() {
+        String keyword = etKeyword == null ? "" : etKeyword.getText().toString().trim().toLowerCase(Locale.ROOT);
+        displayItems.clear();
+        for (Object item : allItems) {
+            if (!matchesTimeFilter(item)) {
+                continue;
+            }
+            if (keyword.isEmpty() || matches(item, keyword)) {
+                displayItems.add(item);
+            }
+        }
+        Collections.sort(displayItems, (a, b) -> sortAsc
+                ? Long.compare(itemTimeMillis(a), itemTimeMillis(b))
+                : Long.compare(itemTimeMillis(b), itemTimeMillis(a)));
+        adapter.notifyDataSetChanged();
+        tvEmpty.setVisibility(displayItems.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean matchesTimeFilter(Object item) {
+        long value = itemTimeMillis(item);
+        if (startFilter != null && value < startFilter.getTimeInMillis()) return false;
+        if (endFilter != null && value > endFilter.getTimeInMillis()) return false;
+        return true;
+    }
+
+    private long itemTimeMillis(Object item) {
+        if (item instanceof AppVoiceRoom) {
+            return parseMillis(((AppVoiceRoom) item).createdAt);
+        }
+        if (item instanceof AppVoiceRecord) {
+            AppVoiceRecord record = (AppVoiceRecord) item;
+            return parseMillis(firstNonEmpty(record.startedAt, record.endedAt, record.createdAt));
+        }
+        return 0;
+    }
+
+    private boolean matches(Object item, String keyword) {
+        if (item instanceof AppVoiceRoom) {
+            return matchesRoom((AppVoiceRoom) item, keyword);
+        }
+        if (item instanceof AppVoiceRecord) {
+            return matchesRecord((AppVoiceRecord) item, keyword);
+        }
+        return false;
+    }
+
+    private boolean matchesRoom(AppVoiceRoom room, String keyword) {
+        if (contains(room.roomId, keyword)
+                || contains(room.title, keyword)
+                || contains(room.type, keyword)
+                || contains(room.status, keyword)
+                || contains(room.initiatorId, keyword)
+                || contains(room.createdAt, keyword)) {
+            return true;
+        }
+        if (room.members != null) {
+            for (AppVoiceMember member : room.members) {
+                if (matchesMember(member, keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesRecord(AppVoiceRecord record, String keyword) {
+        if (contains(record.title, keyword)
+                || contains(record.status, keyword)
+                || contains(record.roomId, keyword)
+                || contains(record.initiatorId, keyword)
+                || contains(record.from, keyword)
+                || contains(record.fromRole, keyword)
+                || contains(record.transcript, keyword)
+                || contains(record.startedAt, keyword)
+                || contains(record.endedAt, keyword)
+                || contains(record.createdAt, keyword)
+                || containsList(record.toNames, keyword)
+                || containsList(record.targetPhones, keyword)) {
+            return true;
+        }
+        if (record.members != null) {
+            for (AppVoiceMember member : record.members) {
+                if (matchesMember(member, keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesMember(AppVoiceMember member, String keyword) {
+        return member != null
+                && (contains(member.userId, keyword)
+                || contains(member.name, keyword)
+                || contains(member.clientType, keyword)
+                || contains(member.role, keyword)
+                || contains(member.status, keyword));
+    }
+
+    private boolean containsList(List<String> values, String keyword) {
+        if (values == null) return false;
+        for (String value : values) {
+            if (contains(value, keyword)) return true;
+        }
+        return false;
+    }
+
+    private boolean contains(String value, String keyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(keyword);
+    }
+
+    private void updateTimeFilterButtons() {
+        if (btnStartTime == null) return;
+        btnStartTime.setText(startFilter == null ? "开始时间" : formatFilterButtonTime(startFilter));
+        btnEndTime.setText(endFilter == null ? "结束时间" : formatFilterButtonTime(endFilter));
+        btnSortOrder.setText(sortAsc ? "时间正序" : "时间倒序");
+    }
+
+    private void pickDateTime(Calendar initial, DateTimeCallback callback) {
+        Calendar base = initial == null ? Calendar.getInstance() : (Calendar) initial.clone();
+        new DatePickerDialog(requireContext(), (datePicker, year, month, day) -> {
+            Calendar picked = (Calendar) base.clone();
+            picked.set(Calendar.YEAR, year);
+            picked.set(Calendar.MONTH, month);
+            picked.set(Calendar.DAY_OF_MONTH, day);
+            new TimePickerDialog(requireContext(), (timePicker, hour, minute) -> {
+                picked.set(Calendar.HOUR_OF_DAY, hour);
+                picked.set(Calendar.MINUTE, minute);
+                picked.set(Calendar.SECOND, 0);
+                picked.set(Calendar.MILLISECOND, 0);
+                callback.onPicked(picked);
+            }, picked.get(Calendar.HOUR_OF_DAY), picked.get(Calendar.MINUTE), true).show();
+        }, base.get(Calendar.YEAR), base.get(Calendar.MONTH), base.get(Calendar.DAY_OF_MONTH)).show();
+    }
+
+    private static String formatFilterButtonTime(Calendar value) {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(value.getTime());
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value;
+        }
+        return "";
+    }
+
+    private static long parseMillis(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return 0;
+        String normalized = raw.trim().replace("Z", "").replace("+00:00", "");
+        String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd HH:mm:ss"
+        };
+        for (String pattern : patterns) {
+            try {
+                Date date = new SimpleDateFormat(pattern, Locale.getDefault()).parse(normalized);
+                if (date != null) return date.getTime();
+            } catch (ParseException ignored) {
+            }
+        }
+        return 0;
+    }
+
+    private interface DateTimeCallback {
+        void onPicked(Calendar calendar);
     }
 
     private class RecordAdapter extends RecyclerView.Adapter<RecordAdapter.VH> {
@@ -126,12 +362,12 @@ public class CallRecordsFragment extends Fragment {
 
         @Override
         public void onBindViewHolder(@NonNull VH holder, int position) {
-            holder.bind(items.get(position));
+            holder.bind(displayItems.get(position));
         }
 
         @Override
         public int getItemCount() {
-            return items.size();
+            return displayItems.size();
         }
 
         class VH extends RecyclerView.ViewHolder {
@@ -163,7 +399,7 @@ public class CallRecordsFragment extends Fragment {
             }
 
             private void bindRoom(AppVoiceRoom room) {
-                tvCallType.setText("待接听".equals(room.status) ? "待接听" : statusText(room.status));
+                tvCallType.setText("calling".equals(room.status) ? "待接听" : statusText(room.status));
                 tvCallContent.setText(room.title == null ? "App 群组语音通话" : room.title);
                 tvDuration.setText("接听");
                 int count = room.members == null ? 0 : room.members.size();

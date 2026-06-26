@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -270,6 +270,41 @@ def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), curr
 def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
     """获取所有视频设备列表"""
     return service.get_videos(db, skip=skip, limit=limit, current_user=current_user)
+
+
+@router.get("/playbacks/query")
+def query_playbacks(
+    media_type: str = Query("manual", pattern="^(manual|alarm)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(40, ge=1, le=100),
+    device_id: Optional[str] = None,
+    company: Optional[str] = None,
+    project: Optional[str] = None,
+    grid: Optional[str] = None,
+    team: Optional[str] = None,
+    keyword: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """统一查询当前用户可见的回放记录，服务端完成筛选、排序和分页。"""
+    return service.query_playbacks(
+        current_user=current_user,
+        media_type=media_type,
+        page=page,
+        page_size=page_size,
+        device_id=device_id,
+        company=company,
+        project=project,
+        grid=grid,
+        team=team,
+        keyword=keyword,
+        start_time=start_time,
+        end_time=end_time,
+        sort_order=sort_order,
+    )
+
 
 @router.post("/", response_model=VideoOut)
 def create_video(video: VideoCreate, db=Depends(get_db), current_user: dict = Depends(get_current_user)):

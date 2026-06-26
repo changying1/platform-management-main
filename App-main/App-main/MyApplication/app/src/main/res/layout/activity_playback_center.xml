@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
@@ -22,10 +21,11 @@
             android:src="@android:drawable/ic_menu_revert" />
 
         <TextView
+            android:id="@+id/tv_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="回放中心"
+            android:text="视频回放"
             android:textSize="18sp"
             android:textStyle="bold"
             android:paddingStart="12dp" />
@@ -36,19 +36,8 @@
         android:layout_height="1dp"
         android:background="#E5E7EB" />
 
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/tab_layout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@android:color/white"
-        app:tabMode="fixed"
-        app:tabGravity="fill"
-        app:tabIndicatorColor="#2563EB"
-        app:tabSelectedTextColor="#2563EB"
-        app:tabTextColor="#6B7280" />
-
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/view_pager"
+    <FrameLayout
+        android:id="@+id/fragment_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 

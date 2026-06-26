@@ -5,18 +5,19 @@
     android:orientation="vertical"
     android:background="#0f172a">
 
-    <!-- 设备选择栏 -->
+    <!-- 轨迹记录加载栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="12dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:visibility="gone">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="设备:"
+            android:text="轨迹:"
             android:textColor="#94a3b8"
             android:textSize="14sp" />
 
@@ -27,56 +28,121 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_spinner" />
+            android:background="@drawable/bg_spinner"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvTrackListHint"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:gravity="center_vertical"
+            android:text="当前账号可见轨迹记录"
+            android:textColor="#94a3b8"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btnLoadTrack"
             android:layout_width="wrap_content"
             android:layout_height="40dp"
-            android:text="加载轨迹"
+            android:text="刷新列表"
             android:textSize="12sp"
             android:backgroundTint="#06b6d4"
             android:textColor="#ffffff" />
     </LinearLayout>
 
-    <!-- 时间范围选择 -->
     <LinearLayout
+        android:id="@+id/layoutTrackTimeFilter"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingHorizontal="12dp"
-        android:paddingBottom="8dp"
-        android:gravity="center_vertical">
+        android:paddingBottom="8dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="时间:"
-            android:textColor="#94a3b8"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/tvTimeRange"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="近24小时"
-            android:textColor="#ffffff"
-            android:textSize="14sp" />
-
-        <Spinner
-            android:id="@+id/spinnerTimeRange"
-            android:layout_width="120dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="36dp"
-            android:background="@drawable/bg_spinner" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnStartTime"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="开始时间"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnEndTime"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="结束时间"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnSortOrder"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="时间倒序"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnClearTimeFilter"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="清除筛选"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 与网页端一致的轨迹记录列表 -->
+    <LinearLayout
+        android:id="@+id/layoutTrackRecordPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvTrackRecordStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="6dp"
+            android:text="正在加载轨迹记录..."
+            android:textColor="#94a3b8"
+            android:textSize="12sp" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvTrackRecords"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:clipToPadding="false" />
     </LinearLayout>
 
     <!-- 地图容器 -->
     <FrameLayout
+        android:id="@+id/layoutPlaybackMap"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:visibility="gone">
 
         <com.amap.api.maps.MapView
             android:id="@+id/mapView"
@@ -115,11 +181,13 @@
 
     <!-- 播放控制栏 -->
     <LinearLayout
+        android:id="@+id/layoutPlaybackControls"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="12dp"
-        android:background="#1e293b">
+        android:background="#1e293b"
+        android:visibility="gone">
 
         <!-- 进度条 -->
         <LinearLayout

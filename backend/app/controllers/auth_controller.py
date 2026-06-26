@@ -256,6 +256,19 @@ def _can_switch_to_user(target_user: dict, current_user: dict) -> bool:
 
 def _write_login_log(username: str, success: bool, details: str):
     try:
+        # 获取用户所属单位信息
+        from app.core.database import get_mongo_collection
+        user = get_mongo_collection("users").find_one({"username": username}, {"_id": 0})
+        
+        # 判断是否为总管理员（admin）
+        is_admin = username.lower() == "admin" or (user and user.get("role", "").upper() in ["HQ", "ADMIN", "HEADQUARTERS_ADMIN"])
+        
+        # 总管理员不显示所属单位，项目管理员显示所属单位
+        company = None if is_admin else (user.get("company") or user.get("department") if user else None)
+        project = None if is_admin else (user.get("project") if user else None)
+        grid = None if is_admin else (user.get("grid") if user else None)
+        team = None if is_admin else (user.get("team") if user else None)
+        
         LogService().create_log(
             None,
             LogCreate(
@@ -265,6 +278,10 @@ def _write_login_log(username: str, success: bool, details: str):
                 target_name=username or "unknown",
                 details=details,
                 level="info" if success else "warning",
+                company=company,
+                project=project,
+                grid=grid,
+                team=team,
                 extra={"success": success},
             ),
         )
@@ -401,6 +418,30 @@ def login(req: LoginReq, response: Response):
     payload = _build_login_payload(user, response)
     _record_login_success(username)
     return payload
+
+
+@router.get("/me")
+def me(current_user: dict = Depends(get_current_user)):
+    permission_level = current_user.get("permission_level") or "project_safety_admin"
+    user_id = current_user.get("id")
+    return {
+        "userId": int(user_id) if user_id is not None else "",
+        "username": current_user.get("username") or "",
+        "full_name": current_user.get("full_name") or current_user.get("username") or "",
+        "role": current_user.get("role") or "",
+        "permission_level": permission_level,
+        "permissions": get_permissions_for_level(permission_level),
+        "department_id": current_user.get("department_id"),
+        "company": current_user.get("company") or current_user.get("department") or "",
+        "project": current_user.get("project") or "",
+        "project_id": current_user.get("project_id") or "",
+        "grid_id": current_user.get("grid_id") or "",
+        "grid_ids": current_user.get("grid_ids") or [],
+        "team_id": current_user.get("team_id") or "",
+        "team": current_user.get("team") or current_user.get("work_team") or "",
+        "must_change_password": bool(current_user.get("must_change_password")),
+        "password_expired": bool(current_user.get("password_expired")),
+    }
 
 
 @router.post("/change-password")

@@ -25,6 +25,9 @@ public class LocationDevice {
     @SerializedName("project")
     private String project;
 
+    @SerializedName("grid")
+    private String grid;
+
     @SerializedName("team")
     private String team;
 
@@ -65,6 +68,9 @@ public class LocationDevice {
 
     public String getProject() { return project; }
     public void setProject(String project) { this.project = project; }
+
+    public String getGrid() { return grid; }
+    public void setGrid(String grid) { this.grid = grid; }
 
     public String getTeam() { return team; }
     public void setTeam(String team) { this.team = team; }

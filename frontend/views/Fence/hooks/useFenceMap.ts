@@ -220,6 +220,7 @@ const initRichPlaceSearch = useCallback(() => {
 
     let activeMarker: any = null;
     let searchTimer: number | undefined;
+    let isComposing = false;
 
     const getLngLat = (poi: any) => {
       const location = poi?.location || poi?.entr_location || poi?.exit_location;
@@ -293,20 +294,40 @@ const initRichPlaceSearch = useCallback(() => {
       });
     };
 
-    input.addEventListener("input", () => {
+    const scheduleSearchTips = () => {
       window.clearTimeout(searchTimer);
       searchTimer = window.setTimeout(searchTips, 220);
+    };
+
+    input.addEventListener("compositionstart", (event) => {
+      isComposing = true;
+      event.stopPropagation();
+    });
+    input.addEventListener("compositionend", (event) => {
+      isComposing = false;
+      event.stopPropagation();
+      scheduleSearchTips();
+    });
+    input.addEventListener("input", (event) => {
+      event.stopPropagation();
+      if (isComposing || (event as InputEvent).isComposing) return;
+      scheduleSearchTips();
     });
     input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (isComposing || event.isComposing || event.keyCode === 229) return;
       if (event.key !== "Enter") return;
       const keyword = input.value.trim();
       if (!keyword) return;
+      event.preventDefault();
       placeSearch.search(keyword, (_status: string, result: any) => {
         const pois = result?.poiList?.pois || [];
         renderTips(pois);
         if (pois[0]) focusPoi(pois[0]);
       });
     });
+    input.addEventListener("keyup", (event) => event.stopPropagation());
+    input.addEventListener("keypress", (event) => event.stopPropagation());
     document.addEventListener("click", (event) => {
       if (event.target === input || panel.contains(event.target as Node)) return;
       panel.style.display = "none";

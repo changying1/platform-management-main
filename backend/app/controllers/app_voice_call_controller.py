@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
+from app.core.database import get_mongo_collection
+from app.core.security import get_current_user
 from app.schemas.app_voice_call_schema import (
     AgoraJoinInfoOut,
     AppVoiceMuteUpdate,
@@ -52,6 +54,43 @@ class AppVoiceCallSocketManager:
 
 
 socket_manager = AppVoiceCallSocketManager()
+
+
+@router.get("/users")
+def list_call_users(current_user: dict = Depends(get_current_user)):
+    current_user_id = str(current_user.get("id") or "")
+    users = get_mongo_collection("users")
+    docs = users.find(
+        {
+            "status": {"$in": ["active", "normal", "正常"]},
+            "id": {"$ne": current_user.get("id")},
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "username": 1,
+            "full_name": 1,
+            "role": 1,
+            "permission_level": 1,
+            "department": 1,
+            "company": 1,
+        },
+    ).sort("id", 1)
+
+    result = []
+    for user in docs:
+        user_id = str(user.get("id") or "")
+        if not user_id or user_id == current_user_id:
+            continue
+        result.append({
+            "userId": user_id,
+            "username": user.get("username") or "",
+            "name": user.get("full_name") or user.get("username") or user_id,
+            "role": user.get("role") or "",
+            "permissionLevel": user.get("permission_level") or "",
+            "department": user.get("department") or user.get("company") or "",
+        })
+    return result
 
 
 @router.post("/rooms", response_model=AppVoiceRoomOut)

@@ -13,8 +13,9 @@
   "alarmRepeatInterval": 5,
   "alarmAutoResolve": false,
   "alarmRetentionDays": 30,
-  "safetyProductionDays": 10,
-  "safetyProductionUpdatedDate": "2026-06-04",
+  "dashboardAlarmStatDays": 180,
+  "safetyProductionDays": 6,
+  "safetyProductionUpdatedDate": "2026-06-25",
   "alarmSevereFlash": true,
   "alarmSevereUpgrade": "sound",
   "alarmSosEnabled": true,
@@ -23,13 +24,20 @@
   "alarmOfflineEnabled": true,
   "alarmEscalationEnabled": true,
   "alarmEscalationMinutes": 5,
-  "videoRetentionDays": 16,
+  "videoRetentionDays": 360,
   "videoQuality": "high",
-  "videoSegmentMinutes": 0.5,
+  "videoSegmentMinutes": 30,
   "videoStorageType": "local",
   "videoStoragePath": "./backend/static",
+  "videoStorageFolders": {
+    "recordings": "recordings",
+    "alarm_videos": "alarm_videos",
+    "playback_videos": "playback_videos",
+    "temp_cache": "temp_cache",
+    "alarm_screenshots": "alarm_screenshots"
+  },
   "alarmVideoRetentionDays": 90,
-  "alarmVideoSurroundMinutes": 0.5,
+  "alarmVideoSurroundMinutes": 1,
   "alarmScreenshotRetentionDays": 90,
   "storageMaxSizeGB": 500,
   "storageWarningThreshold": 80,
@@ -96,6 +104,8 @@
     "dashboard",
     "monitor",
     "fence",
+    "grid",
+    "team",
     "device",
     "personnel",
     "alarm",
@@ -105,6 +115,8 @@
     "dashboard",
     "monitor",
     "fence",
+    "grid",
+    "team",
     "device",
     "personnel",
     "alarm"
@@ -113,6 +125,8 @@
     "dashboard",
     "monitor",
     "fence",
+    "grid.view",
+    "team.view",
     "device.view",
     "personnel.view",
     "alarm"
@@ -121,6 +135,8 @@
     "dashboard",
     "monitor",
     "fence",
+    "grid.view",
+    "team.view",
     "device.view",
     "personnel.view",
     "alarm.view"
@@ -128,6 +144,7 @@
   "teamAdminPermissions": [
     "dashboard",
     "monitor.view",
+    "team.view",
     "personnel.view",
     "alarm.view"
   ],
@@ -258,7 +275,5 @@
       "description": "不同岗位安全帽颜色规范检查"
     }
   ],
-  "alarmVolume": 30,
-  "trackSimplifyPrecision": 2,
-  "trackRecordInterval": 0
+  "detail": "未登录或登录已过期"
 }

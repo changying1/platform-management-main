@@ -9,7 +9,6 @@ const detectBackendUrl = (): string => {
 };
 
 const API_BASE_URL = detectBackendUrl();
-const CHINA_RAILWAY_LOGO = '/images/%E5%85%AC%E5%8F%B8logo.jpeg';
 const MAX_RETRIES = 8;
 const RETRY_DELAY_MS = 1200;
 const TRAFFIC_OCR_FIRST_DELAY_MS = 10 * 1000;
@@ -20,6 +19,7 @@ interface VideoPlayerProps {
   playType?: string;
   accessToken?: string;
   videoId?: number;
+  deviceStatus?: string;
   onError?: (error: string) => void;
   showTrafficPanel?: boolean;
 }
@@ -47,25 +47,6 @@ interface MonitoringSummary {
 }
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
-
-const ChinaRailwayLogoFallback: React.FC<{ onRetry?: () => void }> = ({ onRetry }) => (
-  <div className="absolute inset-0 z-20 flex items-center justify-center bg-white">
-    <img
-      src={CHINA_RAILWAY_LOGO}
-      alt="China Railway logo"
-      className="max-h-[70%] max-w-[70%] object-contain"
-    />
-    {onRetry && (
-      <button
-        type="button"
-        onClick={onRetry}
-        className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
-      >
-        重试
-      </button>
-    )}
-  </div>
-);
 
 const hasRecognizedTraffic = (summary?: MonitoringSummary | null): boolean => {
   const text = summary?.weekly_used_text || '';
@@ -199,7 +180,7 @@ const extractErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, onError, showTrafficPanel = true }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, videoId, deviceStatus, onError, showTrafficPanel = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -533,6 +514,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   initRef.current = initPlayer;
 
   useEffect(() => {
+    if (String(deviceStatus || '').toLowerCase() === 'offline') {
+      cleanupPlayer();
+      setConnectionStatus('error');
+      return;
+    }
+
     if (!src) {
       cleanupPlayer();
       setConnectionStatus('error');
@@ -546,7 +533,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     return () => {
       cleanupPlayer();
     };
-  }, [videoId, src, playType]);
+  }, [deviceStatus, videoId, src, playType]);
 
   useEffect(() => {
     fetchTrafficStatus();
@@ -570,8 +557,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
   }, [autoRecognizeTraffic, clearTrafficOcrTimers, videoId]);
 
   const showNativeVideo = !(src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen');
-  const shouldShowLogoFallback =
-    connectionStatus === 'error' ||
+  const isDeviceOffline =
+    String(deviceStatus || '').toLowerCase() === 'offline' ||
     monitoringSummary?.main_status === 'offline' ||
     monitoringSummary?.status_tags?.includes('VIDEO_DEVICE_OFFLINE');
 
@@ -592,6 +579,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     '--';
   const updateTimeText = formatBackendLocalTime(monitoringSummary?.last_traffic_ocr_time);
   const isTrafficAlarm = monitoringSummary?.traffic_status === 'alarm';
+
+  if (isDeviceOffline) {
+    return (
+      <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-white p-4">
+        <img
+          src="/images/logo.jpeg"
+          alt="公司 Logo"
+          className="block h-auto max-h-[76%] w-auto max-w-[76%] object-contain"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full bg-black rounded-lg overflow-hidden relative">
@@ -681,19 +680,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
             </button>
           </div>
         </div>
-      )}
-      {shouldShowLogoFallback && (
-        <ChinaRailwayLogoFallback
-          onRetry={
-            connectionStatus === 'error'
-              ? () => {
-                  retryCountRef.current = 0;
-                  setConnectionStatus('connecting');
-                  initPlayer();
-                }
-              : undefined
-          }
-        />
       )}
     </div>
   );
