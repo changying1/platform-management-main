@@ -97,12 +97,16 @@ public class Role {
      * 获取层级排名（与 Web 端 ROLE_RANK 对齐）
      */
     public static int getRoleRank(String level) {
-        switch (level) {
+        if (level == null) return 0;
+        String lower = level.trim().toLowerCase();
+        if (lower.equals("headquarters_admin") || lower.equals("admin") || lower.equals("hq")) {
+            return 5;
+        }
+        switch (lower) {
             case "team_admin": return 1;
             case "grid_admin": return 2;
             case "project_safety_admin": return 3;
             case "branch_admin": return 4;
-            case "headquarters_admin": return 5;
             default: return 0;
         }
     }
@@ -111,8 +115,12 @@ public class Role {
      * 获取层级标签（与 Web 端 levelLabel 对齐）
      */
     public static String getLevelLabel(String level) {
-        switch (level) {
-            case "headquarters_admin": return "总部管理员";
+        if (level == null) return "";
+        String lower = level.trim().toLowerCase();
+        if (lower.equals("headquarters_admin") || lower.equals("admin") || lower.equals("hq")) {
+            return "总部管理员";
+        }
+        switch (lower) {
             case "branch_admin": return "分公司管理员";
             case "project_safety_admin": return "项目管理员";
             case "grid_admin": return "网格管理员";

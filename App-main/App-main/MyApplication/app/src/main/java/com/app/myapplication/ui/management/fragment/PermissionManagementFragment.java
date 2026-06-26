@@ -165,7 +165,7 @@ public class PermissionManagementFragment extends BaseManagementFragment {
         managementApi.getAccounts(getAuthHeaders()).enqueue(new Callback<List<JsonObject>>() {
             @Override
             public void onResponse(Call<List<JsonObject>> call, Response<List<JsonObject>> response) {
-                if (response.isSuccessful() && response.body() != null) {
+                if (response.isSuccessful() && response.body() != null && !response.body().isEmpty()) {
                     List<JsonObject> apiData = response.body();
                     accountRoles.clear();
                     
@@ -176,21 +176,24 @@ public class PermissionManagementFragment extends BaseManagementFragment {
                         }
                     }
                     
-                    // 构建角色树 - 与 Web 端 buildRoleTreeFromAccounts 对齐
-                    roleTree.clear();
-                    roleTree.addAll(RoleTreeNode.buildRoleTreeFromAccounts(accountRoles));
-                    
+                    if (accountRoles.isEmpty()) {
+                        loadMockAccountRoles();
+                    } else {
+                        // 构建角色树 - 与 Web 端 buildRoleTreeFromAccounts 对齐
+                        roleTree.clear();
+                        roleTree.addAll(RoleTreeNode.buildRoleTreeFromAccounts(accountRoles));
+                    }
                 } else {
                     loadMockAccountRoles();
                 }
-                roleAdapter.notifyDataSetChanged();
+                roleAdapter.updateData(roleTree);
                 hideLoading();
             }
 
             @Override
             public void onFailure(Call<List<JsonObject>> call, Throwable t) {
                 loadMockAccountRoles();
-                roleAdapter.notifyDataSetChanged();
+                roleAdapter.updateData(roleTree);
                 hideLoading();
             }
         });
@@ -227,11 +230,15 @@ public class PermissionManagementFragment extends BaseManagementFragment {
      * 检查角色级别是否有效 - 与 Web 端 ROLE_RANK 对齐
      */
     private boolean isValidLevel(String level) {
-        return "headquarters_admin".equals(level) ||
-               "branch_admin".equals(level) ||
-               "project_safety_admin".equals(level) ||
-               "grid_admin".equals(level) ||
-               "team_admin".equals(level);
+        if (level == null) return false;
+        String lower = level.trim().toLowerCase();
+        return "headquarters_admin".equals(lower) ||
+               "branch_admin".equals(lower) ||
+               "project_safety_admin".equals(lower) ||
+               "grid_admin".equals(lower) ||
+               "team_admin".equals(lower) ||
+               "admin".equals(lower) ||
+               "hq".equals(lower);
     }
 
     /**
@@ -482,7 +489,7 @@ public class PermissionManagementFragment extends BaseManagementFragment {
             roleTree.clear();
             roleTree.addAll(filtered);
         }
-        roleAdapter.notifyDataSetChanged();
+        roleAdapter.updateData(roleTree);
     }
 
     private List<RoleTreeNode> filterNodes(List<RoleTreeNode> nodes, String keyword) {
