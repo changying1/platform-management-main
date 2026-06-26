@@ -5,9 +5,11 @@ import os
 import uuid
 import re
 import json
+import copy
 import requests
 import subprocess
 import numpy as np
+import sys
 from datetime import datetime, timedelta
 from app.services.ai_service import AIService
 from app.core.database import SessionLocal, get_mongo_db, get_next_sequence
@@ -28,6 +30,12 @@ from app.utils.config_manager import get_system_settings
 
 
 logger = get_logger("AIManager")
+
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 class AIManager:
@@ -400,30 +408,60 @@ class AIManager:
         }
 
         body = None
+        capture_errors = []
         for path in ["/api/lapp/device/capture", "/api/lapp/v2/device/capture"]:
             try:
                 body = self.video_service._call_ezviz_api(path, payload)
                 break
-            except Exception:
+            except Exception as exc:
+                capture_errors.append(f"{path}: {exc}")
                 body = None
 
         if body is None:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_SNAPSHOT_CAPTURE_FAILED] serial={} channel={} errors={}",
+                device_serial,
+                channel_no,
+                " | ".join(capture_errors) or "empty response",
+            )
             return None
 
         data = body.get("data") or {}
         pic_url = data.get("picUrl") or data.get("url") or data.get("picURL") or ""
         if not pic_url:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_SNAPSHOT_NO_PIC_URL] serial={} channel={} response={}",
+                device_serial,
+                channel_no,
+                json.dumps(body, ensure_ascii=False)[:800],
+            )
             return None
 
         try:
             response = requests.get(pic_url, timeout=8)
             if response.status_code != 200 or not response.content:
+                self._emit_alarm_log(
+                    "warning",
+                    "[ALARM_SNAPSHOT_DOWNLOAD_FAILED] serial={} channel={} status={} bytes={}",
+                    device_serial,
+                    channel_no,
+                    response.status_code,
+                    len(response.content or b""),
+                )
                 return None
 
             np_buf = np.frombuffer(response.content, dtype=np.uint8)
             frame = cv2.imdecode(np_buf, cv2.IMREAD_COLOR)
             return frame
         except Exception:
+            self._emit_alarm_log(
+                "warning",
+                "[ALARM_SNAPSHOT_DECODE_FAILED] serial={} channel={}",
+                device_serial,
+                channel_no,
+            )
             return None
 
     def _snapshot_monitor_loop(self, device_id, device_serial, channel_no, algo_type_str, stop_event, monitor_id=""):
@@ -772,6 +810,9 @@ class AIManager:
             if cap is not None:
                 cap.release()
             print(f"--- 监控线程已退出: {device_id} (该线程启动于: {started_at_str}) ---")
+            monitor = self.active_monitors.get(str(device_id))
+            if monitor and monitor.get("stop_event") is stop_event:
+                self.active_monitors.pop(str(device_id), None)
 
     # =========================
     # 保存报警图片
@@ -2034,9 +2075,9 @@ class AIManager:
                 return
 
             try:
-                recording_time_offset_seconds = float(os.getenv("ALARM_VIDEO_RECORDING_TIME_OFFSET_SECONDS", "8"))
+                recording_time_offset_seconds = float(os.getenv("ALARM_VIDEO_RECORDING_TIME_OFFSET_SECONDS", "0"))
             except (TypeError, ValueError):
-                recording_time_offset_seconds = 8.0
+                recording_time_offset_seconds = 0.0
             record_anchor_time = snapshot_time + timedelta(seconds=recording_time_offset_seconds)
             clip_start = record_anchor_time - timedelta(seconds=30)
             clip_end = record_anchor_time + timedelta(seconds=30)

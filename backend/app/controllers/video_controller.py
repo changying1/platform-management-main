@@ -27,6 +27,7 @@ from app.services.audit_log_service import write_audit_log
 import cv2
 import time
 import threading
+import re
 from datetime import datetime
 # --- 在现有的 import 语句下面添加 ---
 from app.services.ai_manager import ai_manager
@@ -117,6 +118,31 @@ class DeviceRulesUpdateRequest(BaseModel):
     rules: list[str] = []
 
 
+def _split_device_rule_value(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        result = []
+        for item in value:
+            result.extend(_split_device_rule_value(item))
+        return result
+    return [item.strip() for item in re.split(r"[,，、\s]+", str(value)) if item.strip()]
+
+
+def _get_persisted_device_rules(video_id: int | str) -> list[str]:
+    db_video = service._get_video_runtime_by_id(video_id)
+    if not db_video:
+        return []
+    seen = set()
+    result = []
+    for key in ("ai_rules", "algo_rules", "rules", "algo_type", "algos"):
+        for rule in _split_device_rule_value(getattr(db_video, key, None)):
+            if rule not in seen:
+                seen.add(rule)
+                result.append(rule)
+    return result
+
+
 class PlaybackSaveRequest(BaseModel):
     start_time: str
     end_time: str
@@ -154,12 +180,24 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db), current_user: dict
             if candidate.lower().startswith("rtsp://"):
                 rtsp_url = candidate
 
-    has_valid_rtsp = rtsp_url.lower().startswith("rtsp://")
-    is_ezviz_cloud = bool(db_video and getattr(db_video, "device_serial", None))
+    rtsp_url_lower = rtsp_url.lower()
+    stream_protocol = str(getattr(db_video, "stream_protocol", "") or "").lower() if db_video else ""
+    platform_type = str(getattr(db_video, "platform_type", "") or "").lower() if db_video else ""
+    access_source = str(getattr(db_video, "access_source", "") or "").lower() if db_video else ""
+    has_ezviz_serial = bool(db_video and getattr(db_video, "device_serial", None))
+    is_ezviz_pseudo_rtsp = "ezopen" in rtsp_url_lower
+    is_ezviz_cloud = has_ezviz_serial and (
+        platform_type == "ezviz"
+        or stream_protocol == "ezopen"
+        or access_source == "cloud"
+        or is_ezviz_pseudo_rtsp
+    )
+    has_valid_rtsp = rtsp_url_lower.startswith("rtsp://") and not is_ezviz_pseudo_rtsp
 
     print(
         f"[ALARM_API_START_REQ] device_id={device_id} has_valid_rtsp={has_valid_rtsp} "
-        f"is_ezviz_cloud={is_ezviz_cloud} algo_type={str(req.algo_type or '').strip() or 'helmet'}"
+        f"is_ezviz_cloud={is_ezviz_cloud} is_ezviz_pseudo_rtsp={is_ezviz_pseudo_rtsp} "
+        f"algo_type={str(req.algo_type or '').strip() or 'helmet'}"
     )
 
     if (not has_valid_rtsp) and (not is_ezviz_cloud):
@@ -336,7 +374,12 @@ def create_video(video: VideoCreate, db=Depends(get_db), current_user: dict = De
 def get_device_rules(video_id: int, current_user: dict = Depends(get_current_user)):
     """获取设备已配置的算法规则"""
     _require_video_scope(video_id, current_user)
-    return {"rules": ai_manager.get_device_rules(str(video_id))}
+    rules = ai_manager.get_device_rules(str(video_id))
+    if not rules:
+        rules = _get_persisted_device_rules(video_id)
+        if rules:
+            ai_manager.set_device_rules(str(video_id), rules)
+    return {"rules": rules}
 
 
 @router.put("/{video_id}/rules")
@@ -344,6 +387,7 @@ def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest, current_u
     """更新设备算法规则；若设备正在监控则热更新"""
     _require_video_scope(video_id, current_user)
     rules = ai_manager.set_device_rules(str(video_id), body.rules or [])
+    service._update_video_fields(video_id, {"ai_rules": ",".join(rules)})
 
     monitor = ai_manager.active_monitors.get(str(video_id))
     if monitor:
