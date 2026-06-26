@@ -5,6 +5,7 @@ import os
 import cv2
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
@@ -53,16 +54,43 @@ class FaceLibraryManager:
         if not url_path:
             return None
 
-        normalized = url_path.replace("\\", "/")
+        normalized = str(url_path).strip().replace("\\", "/")
+        backend_root = Path(__file__).resolve().parents[3]
+        cwd = Path.cwd()
+        candidates = []
         if normalized.startswith("/static/"):
-            backend_root = os.getcwd()
             relative_path = normalized.lstrip("/")
-            return os.path.join(backend_root, relative_path)
+            candidates.extend([
+                backend_root / relative_path,
+                cwd / relative_path,
+                cwd / "backend" / relative_path,
+            ])
+        elif os.path.isabs(normalized):
+            candidates.append(Path(normalized))
+        else:
+            relative_path = normalized.lstrip("/")
+            candidates.extend([
+                backend_root / relative_path,
+                cwd / relative_path,
+                cwd / "backend" / relative_path,
+            ])
 
-        if os.path.isabs(normalized):
-            return normalized
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
 
-        return os.path.join(os.getcwd(), normalized)
+        return str(candidates[0]) if candidates else None
+
+    def _read_image(self, img_path: str) -> Optional[np.ndarray]:
+        """Read image paths with non-ASCII characters reliably on Windows."""
+        try:
+            data = np.fromfile(img_path, dtype=np.uint8)
+            if data.size == 0:
+                return None
+            return cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except Exception as exc:
+            logger.warning("读取图片失败: %s, error=%s", img_path, exc)
+            return None
 
     def _load_face_database(self):
         """从 MongoDB 中的 personnel 集合扫描并录入人脸特征底库。"""
@@ -100,7 +128,7 @@ class FaceLibraryManager:
 
             try:
                 # 读取图像并做人脸区域初步提取以精细比对，或者直接将全图视作已对齐的人脸
-                img_bgr = cv2.imread(img_path)
+                img_bgr = self._read_image(img_path)
                 if img_bgr is None:
                     logger.warning("无法读取登记照片: %s", img_path)
                     continue

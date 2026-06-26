@@ -679,27 +679,48 @@ export default function GroupCall() {
     searchKeyword !== ''
   ].filter(Boolean).length;
 
+  const keywordMatchesDevice = (device: Jt808Device, keyword: string) => {
+    if (!keyword) return true;
+    const searchable = [
+      device.device_name,
+      device.phone,
+      device.id,
+      device.device_type,
+      device.company,
+      device.project,
+      device.grid,
+      device.team,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return searchable.includes(keyword);
+  };
+
   const companyTree = React.useMemo(() => buildCompanyTree(devices, organizationTree), [devices, organizationTree]);
+  const keywordFilteredDevices = React.useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    return devices.filter((device) => keywordMatchesDevice(device, keyword));
+  }, [devices, searchKeyword]);
+  const visibleCompanyTree = React.useMemo(() => {
+    if (!searchKeyword.trim()) return companyTree;
+    return buildCompanyTree(keywordFilteredDevices);
+  }, [companyTree, keywordFilteredDevices, searchKeyword]);
+
+  useEffect(() => {
+    if (!searchKeyword.trim()) return;
+    const firstCompany = visibleCompanyTree[0];
+    const firstProject = firstCompany?.projects[0];
+    const firstGrid = firstProject?.grids[0];
+    setExpandedCompany(firstCompany?.id || null);
+    setExpandedProject(firstProject?.id || null);
+    setExpandedGrid(firstGrid?.id || null);
+  }, [searchKeyword, visibleCompanyTree]);
 
   const filteredDevices = devices.filter((device) => {
     const keyword = searchKeyword.trim().toLowerCase();
-    if (keyword) {
-      const searchable = [
-        device.device_name,
-        device.phone,
-        device.id,
-        device.device_type,
-        device.company,
-        device.project,
-        device.grid,
-        device.team,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      if (!searchable.includes(keyword)) {
+    if (!keywordMatchesDevice(device, keyword)) {
         return false;
-      }
     }
 
     if (selectedCompany !== 'all') {
@@ -1282,7 +1303,11 @@ export default function GroupCall() {
                     </div>
 
                     <div className="max-h-[42vh] space-y-1 overflow-y-auto pr-1">
-                      {companyTree.map((company: CompanyFilterNode) => {
+                      {visibleCompanyTree.length === 0 ? (
+                        <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-4 text-center text-sm text-slate-400">
+                          没有匹配的组织或设备
+                        </div>
+                      ) : visibleCompanyTree.map((company: CompanyFilterNode) => {
                         const companyOpen = expandedCompany === company.id;
                         const companySelected = selectedCompany === company.id;
                         return (
@@ -1389,6 +1414,42 @@ export default function GroupCall() {
                           </div>
                         );
                       })}
+                      {searchKeyword.trim() && keywordFilteredDevices.length > 0 ? (
+                        <div className="mt-3 border-t border-slate-700 pt-3">
+                          <div className="mb-2 text-xs font-medium text-cyan-300">匹配设备</div>
+                          <div className="space-y-1">
+                            {keywordFilteredDevices.slice(0, 30).map((device) => {
+                              const selected = selectedPhones.includes(device.phone);
+                              return (
+                                <button
+                                  key={device.phone}
+                                  type="button"
+                                  onClick={() => togglePhoneSelection(device.phone)}
+                                  className={`w-full rounded-lg border px-2 py-2 text-left transition-all ${
+                                    selected
+                                      ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-100'
+                                      : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-cyan-400/40'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="min-w-0 truncate text-sm font-medium">{device.device_name || device.phone}</span>
+                                    <span className={`h-2 w-2 rounded-full ${device.is_online ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                                  </div>
+                                  <div className="mt-0.5 truncate text-xs text-slate-500">
+                                    {device.company || '未分配公司'} / {device.project || '未分配项目'} / {device.grid || '未分配网格'}
+                                  </div>
+                                  <div className="mt-0.5 truncate text-xs text-slate-500">终端号: {device.phone}</div>
+                                </button>
+                              );
+                            })}
+                            {keywordFilteredDevices.length > 30 ? (
+                              <div className="px-2 py-1 text-xs text-slate-500">
+                                还有 {keywordFilteredDevices.length - 30} 台设备，请继续输入关键词缩小范围
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     <button onClick={() => setShowFilter(false)} className="mt-3 w-full rounded-lg bg-cyan-500 py-1.5 text-xs text-white transition-all hover:bg-cyan-400">确定</button>

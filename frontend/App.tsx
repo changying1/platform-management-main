@@ -1438,6 +1438,118 @@ const getAlarmLevel = (severity?: unknown): AlarmLevel => {
   return 'medium';
 };
 
+const normalizeAlarmMatchKey = (value: unknown): string =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-]+/g, '');
+
+const normalizeConfiguredAlarmLevel = (value: unknown): AlarmLevel | '' => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (['high', 'severe', 'critical', 'danger', 'urgent', '紧急', '严重', '高危', '高级'].includes(normalized)) return 'high';
+  if (['medium', 'risk', 'warning', 'warn', '风险', '中级', '中等', '一般'].includes(normalized)) return 'medium';
+  if (['low', 'normal', 'info', '低', '低级'].includes(normalized)) return 'low';
+  return '';
+};
+
+const defaultAiAlarmLevels: Record<string, AlarmLevel> = {
+  head: 'high',
+  nohelmet: 'high',
+  helmetmissing: 'high',
+  safetyharnessmissing: 'high',
+  smoking: 'high',
+  personfall: 'high',
+  unauthorizedperson: 'high',
+  firedetected: 'high',
+  fire: 'high',
+  smoke: 'high',
+  flame: 'high',
+  reflectivevestmissing: 'high',
+  helmet: 'low',
+  safehat: 'low',
+};
+
+const alarmLevelAliasMap: Record<string, string[]> = {
+  helmetmissing: ['nohelmet', 'head'],
+  nohelmet: ['helmetmissing', 'head'],
+  head: ['helmetmissing', 'nohelmet'],
+  safetyharnessmissing: ['safetyharness', 'novest', 'clothes'],
+  reflectivevestmissing: ['reflection', 'reflectivevest'],
+  firedetected: ['fire', 'flame', 'smoke'],
+  personfall: ['fall'],
+  unauthorizedperson: ['unauthorized'],
+};
+
+const expandAlarmLevelAliases = (keys: string[]): string[] => {
+  const expanded = new Set(keys);
+  keys.forEach((key) => {
+    (alarmLevelAliasMap[key] || []).forEach((alias) => expanded.add(alias));
+  });
+  return Array.from(expanded);
+};
+
+const readAiAlarmLevelConfigs = (): any[] => {
+  try {
+    const settings = JSON.parse(localStorage.getItem('systemSettings') || '{}') || {};
+    return Array.isArray(settings.aiAlarmLevelConfigs) ? settings.aiAlarmLevelConfigs : [];
+  } catch {
+    return [];
+  }
+};
+
+const resolveRealtimeAlarmLevel = (payload: any, firstBox: any, type: string, message: string): AlarmLevel => {
+  const explicitLevel = [
+    payload?.severity,
+    payload?.level,
+    payload?.alarm_level,
+    payload?.alarmLevel,
+    firstBox?.severity,
+    firstBox?.level,
+  ].map(normalizeConfiguredAlarmLevel).find(Boolean);
+  if (explicitLevel) return explicitLevel;
+
+  const candidates = [
+    payload?.behavior_code,
+    payload?.behaviorCode,
+    payload?.algo_key,
+    payload?.algoKey,
+    payload?.algo,
+    payload?.code,
+    payload?.name,
+    payload?.alarm_type,
+    payload?.type,
+    firstBox?.behavior_code,
+    firstBox?.algo_key,
+    firstBox?.code,
+    firstBox?.name,
+    firstBox?.type,
+    type,
+    message,
+  ].filter((value) => value !== undefined && value !== null && String(value).trim());
+
+  const candidateKeys = candidates.map(normalizeAlarmMatchKey).filter(Boolean);
+  const expandedCandidateKeys = expandAlarmLevelAliases(candidateKeys);
+  const candidateText = normalizeAlarmMatchKey(candidates.join(' '));
+
+  for (const config of readAiAlarmLevelConfigs()) {
+    const level = normalizeConfiguredAlarmLevel(config?.level);
+    if (!level) continue;
+    const aliases = expandAlarmLevelAliases([config?.code, config?.name, config?.id, config?.description]
+      .map(normalizeAlarmMatchKey)
+      .filter(Boolean));
+    if (aliases.some((alias) => expandedCandidateKeys.includes(alias) || candidateText.includes(alias))) {
+      return level;
+    }
+  }
+
+  for (const key of expandedCandidateKeys) {
+    if (defaultAiAlarmLevels[key]) return defaultAiAlarmLevels[key];
+  }
+
+  return 'medium';
+};
+
 const normalizeRealtimeAlarm = (raw: any): RuntimeAlarm | null => {
   const payload = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) || {};
   const boxes = Array.isArray(payload.alarm_boxes)
@@ -1447,11 +1559,23 @@ const normalizeRealtimeAlarm = (raw: any): RuntimeAlarm | null => {
       : [];
   const firstBox = boxes[0] || {};
 
-  const type = String(firstBox.type || payload.type || payload.alarm_type || '').trim();
-  const message = String(firstBox.msg || payload.msg || payload.description || type || '').trim();
-  const deviceName = String(payload.device_name || payload.device_id || '报警设备').trim();
-  const location = String(payload.fence_name || payload.location || '系统报警').trim();
-  const level = getAlarmLevel(payload.severity || payload.level || firstBox.severity);
+  const translateAlarmText = (value: unknown) => String(value || '')
+    .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
+    .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
+    .replace(/\bsmoking\b/gi, '吸烟')
+    .replace(/\bphone\b/gi, '打电话')
+    .replace(/\bfire\b/gi, '烟火')
+    .replace(/\bflame\b/gi, '明火')
+    .replace(/\bsmoke\b/gi, '烟雾')
+    .replace(/\bno_vest\b/gi, '未穿反光衣')
+    .replace(/\bunknown\b/gi, '未知异常')
+    .trim();
+  const type = translateAlarmText(firstBox.type || payload.type || payload.alarm_type || '');
+  const message = translateAlarmText(firstBox.msg || payload.msg || payload.description || type || '');
+  const deviceName = String(payload.device_name || payload.video_name || '报警设备').trim();
+  const personName = String(payload.person_name || payload.trigger_person_name || firstBox.personName || '').trim();
+  const location = personName && personName !== '未知' ? `违规人员：${personName}` : String(payload.fence_name || payload.location || '未识别到违规人员').trim();
+  const level = resolveRealtimeAlarmLevel(payload, firstBox, type, message);
 
   if (!type && !message && !payload.alarm && !payload.id && boxes.length === 0) {
     return null;
@@ -1589,7 +1713,10 @@ export default function App() {
     if (settings.alarmPopup) {
       setRuntimeAlarm(alarm);
       if (alarmCloseTimerRef.current) clearTimeout(alarmCloseTimerRef.current);
-      alarmCloseTimerRef.current = setTimeout(() => setRuntimeAlarm(null), settings.alarmAutoResolve ? 30000 : 8000);
+      alarmCloseTimerRef.current = null;
+      if (level !== 'high') {
+        alarmCloseTimerRef.current = setTimeout(() => setRuntimeAlarm(null), settings.alarmAutoResolve ? 30000 : 8000);
+      }
     }
 
     if (level === 'high' && settings.alarmSevereUpgrade !== 'sound') {
@@ -1802,14 +1929,60 @@ export default function App() {
           
         </div>
       </div>
-      {runtimeAlarm && readAlarmRuntimeSettings().alarmPopup && (
+      {runtimeAlarm && readAlarmRuntimeSettings().alarmPopup && runtimeAlarm.level === 'high' && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/82 px-6 backdrop-blur-md">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(239,68,68,0.28),transparent_34%),linear-gradient(135deg,rgba(127,29,29,0.45),rgba(2,6,23,0.88))]" />
+          <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl border-2 border-red-400 bg-slate-950 shadow-[0_0_80px_rgba(239,68,68,0.55)]">
+            <div className="absolute inset-x-0 top-0 h-2 bg-red-500" />
+            <div className="grid gap-6 p-8 md:grid-cols-[180px_1fr] md:p-10">
+              <div className="flex items-center justify-center">
+                <div className="relative flex h-36 w-36 items-center justify-center rounded-full bg-red-600 shadow-[0_0_50px_rgba(248,113,113,0.85)] animate-pulse">
+                  <div className="absolute inset-[-18px] rounded-full border-4 border-red-400/50" />
+                  <AlertTriangle size={84} className="text-white" />
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-bold text-white">
+                  最高等级告警
+                </div>
+                <h2 className="mt-5 text-4xl font-black text-white md:text-5xl">立即处置</h2>
+                <div className="mt-3 text-xl font-semibold text-red-100">{runtimeAlarm.type}</div>
+                <div className="mt-6 grid gap-3 text-base text-slate-200 md:grid-cols-2">
+                  <div className="rounded-lg border border-red-400/30 bg-red-950/35 p-4">
+                    <div className="text-xs text-red-200/75">报警设备</div>
+                    <div className="mt-1 break-words text-lg font-semibold text-white">{runtimeAlarm.deviceName || '未知设备'}</div>
+                  </div>
+                  <div className="rounded-lg border border-red-400/30 bg-red-950/35 p-4">
+                    <div className="text-xs text-red-200/75">违规人员</div>
+                    <div className="mt-1 break-words text-lg font-semibold text-white">{runtimeAlarm.location || '未知区域'}</div>
+                  </div>
+                </div>
+                <div className="mt-5 rounded-xl border border-red-300/50 bg-red-500/15 p-5 text-2xl font-bold leading-snug text-red-50">
+                  {runtimeAlarm.message}
+                </div>
+                <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-red-100/80">该弹窗不会自动关闭，需人工确认后解除。</div>
+                  <button
+                    onClick={() => {
+                      setRuntimeAlarm(null);
+                      stopAlarmSound();
+                    }}
+                    className="rounded-lg bg-white px-8 py-3 text-base font-black text-red-700 shadow-lg shadow-red-950/40 transition hover:bg-red-100"
+                  >
+                    确认并停止警报
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {runtimeAlarm && readAlarmRuntimeSettings().alarmPopup && runtimeAlarm.level !== 'high' && (
         <div
           className={`fixed right-6 top-20 z-[10000] w-[360px] max-w-[calc(100vw-2rem)] rounded-lg border bg-slate-950/95 p-4 shadow-2xl backdrop-blur ${
-            runtimeAlarm.level === 'high'
-              ? `border-red-400/70 shadow-red-500/25 ${readAlarmRuntimeSettings().alarmSevereFlash ? 'animate-pulse' : ''}`
-              : runtimeAlarm.level === 'medium'
-                ? 'border-amber-400/60 shadow-amber-500/20'
-                : 'border-cyan-400/60 shadow-cyan-500/20'
+            runtimeAlarm.level === 'medium'
+              ? 'border-amber-400/60 shadow-amber-500/20'
+              : 'border-cyan-400/60 shadow-cyan-500/20'
           }`}
         >
           <div className="flex items-start justify-between gap-3">
@@ -1827,7 +2000,7 @@ export default function App() {
               <X size={16} />
             </button>
           </div>
-          <div className={`mt-3 text-sm ${runtimeAlarm.level === 'high' ? 'text-red-100' : runtimeAlarm.level === 'medium' ? 'text-amber-100' : 'text-cyan-100'}`}>
+          <div className={`mt-3 text-sm ${runtimeAlarm.level === 'medium' ? 'text-amber-100' : 'text-cyan-100'}`}>
             {runtimeAlarm.message}
           </div>
         </div>

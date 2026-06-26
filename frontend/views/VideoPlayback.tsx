@@ -1,4 +1,4 @@
-﻿
+
 const cleanAlarmDisplayText = (value?: string | null) => String(value || '')
   .replace(/[\uFF08(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[\uFF09)]/g, '')
   .replace(/\bconfidence\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/gi, '')
@@ -38,7 +38,9 @@ import {
   Calendar,
   Volume2,
   Pause,
-  Loader2
+  Loader2,
+  ArrowDown,
+  ArrowUp
 } from "lucide-react";
 import { usePlaybackStore } from "../src/playbackStore";
 import { SavedPlayback, Device } from "../src/playback";
@@ -2554,6 +2556,7 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [playbackSortOrder, setPlaybackSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [playbackTotal, setPlaybackTotal] = useState(0);
   const [playbackTotalPages, setPlaybackTotalPages] = useState(0);
   // 鉁?40:9 鏇寸獎鍗＄墖锛?0鍒椕?琛?= 40涓紝鍒氬ソ濉弧椤甸潰
@@ -3222,11 +3225,18 @@ useEffect(() => {
           return null;
         }
 
+        const videoDeviceId = String((video as any).device_id || (video as any).video_id || '').trim();
         const videoTime = new Date(getPlaybackEventTime(video)).getTime();
         let best: any = null;
         let bestDiff = Number.POSITIVE_INFINITY;
 
         for (const shot of screenshots) {
+          const shotDeviceId = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
+          // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+          if (videoDeviceId && shotDeviceId && shotDeviceId !== videoDeviceId) {
+            continue;
+          }
+
           const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
 
           if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
@@ -3245,7 +3255,7 @@ useEffect(() => {
           return best;
         }
 
-        return screenshots[0] || null;
+        return null;
       };
 
       // 馃摴 浼樺厛鐢ㄧ湡瀹炲父瑙勮棰戯紙鍙挱鏀撅級
@@ -3287,12 +3297,19 @@ useEffect(() => {
             return null;
           }
 
+          const videoDeviceId = String((video as any).device_id || (video as any).video_id || '').trim();
           const videoTime = new Date(getPlaybackEventTime(video)).getTime();
 
           let best: any = null;
           let bestDiff = Number.POSITIVE_INFINITY;
 
           for (const shot of screenshots) {
+            const shotDeviceId = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
+            // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+            if (videoDeviceId && shotDeviceId && shotDeviceId !== videoDeviceId) {
+              continue;
+            }
+
             const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
 
             if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
@@ -3331,6 +3348,27 @@ useEffect(() => {
           ? withMediaCacheKey(toVideoUrl(screenshotRawPath), matchedScreenshot?.updated_at || matchedScreenshot?.name)
           : '';
 
+        const translateAlarmText = (value: unknown) => String(value || '')
+          .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
+          .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
+          .replace(/\bsmoking\b/gi, '吸烟')
+          .replace(/\bphone\b/gi, '打电话')
+          .replace(/\bfire\b/gi, '烟火')
+          .replace(/\bflame\b/gi, '明火')
+          .replace(/\bsmoke\b/gi, '烟雾')
+          .replace(/\bno_vest\b/gi, '未穿反光衣')
+          .replace(/\bunknown\b/gi, '未知异常')
+          .trim();
+        const alarmTypeText = translateAlarmText((video as any).alarm_type || (video as any).type || '视频告警');
+        const alarmMessageText = translateAlarmText((video as any).description || alarmTypeText || '检测到异常行为');
+        const alarmPersonText = translateAlarmText(
+          (video as any).person_name ||
+          (video as any).trigger_person_name ||
+          (video as any).personnel_name ||
+          (video as any).personnel ||
+          '未知'
+        );
+        const alarmTimestamp = (video as any).alarm_time || startTime;
 
         const alarmSecond = (() => {
           const explicitAlarmSecond = Number(video.alarm_second);
@@ -3368,11 +3406,11 @@ useEffect(() => {
           createdAt,
           alarmSecond,  // 鉁?浼犵粰鎾斁鍣紒杩涘害鏉＄孩鐐瑰湪杩欓噷锛?
           alarmInfo: {
-              type: 'AI检测',
-              msg: '检测到异常行为',
+              type: alarmTypeText,
+              msg: alarmMessageText,
             score: 0.95,
-            timestamp: startTime,
-              personnel: '未知',
+            timestamp: alarmTimestamp,
+              personnel: alarmPersonText,
             screenshotUrl,
             screenshot: screenshotUrl
               ? {
@@ -3405,10 +3443,12 @@ useEffect(() => {
     }
 
     // 鉁?鏈€缁堟寜鏃堕棿鍊掑簭鎺掑垪锛堟柊鐨勫湪鍓嶏級
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const playbackSortTime = (item: ExtendedSavedPlayback) =>
+      new Date(item.type === 'alarm' ? (item.alarmInfo?.timestamp || item.startTime || item.createdAt) : (item.startTime || item.createdAt)).getTime();
+    list.sort((a, b) => playbackSortOrder === 'newest' ? playbackSortTime(b) - playbackSortTime(a) : playbackSortTime(a) - playbackSortTime(b));
 
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, devices]);
+  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, devices, playbackSortOrder]);
 
 
 // 鉁?鍒嗛〉璁＄畻 - 鏀惧湪 useEffect 澶栭潰
@@ -3483,10 +3523,14 @@ const enrichAlarmWithScreenshot = (playback: ExtendedSavedPlayback | null): Exte
   const currentUrl = getScreenshotUrl(playback);
   if (currentUrl) return playback;
 
+  const playbackDevice = String(playback.deviceId || playback.deviceKey || '').trim();
   const sameDeviceShots = (alarmScreenshots as any[]).filter((shot) => {
     const shotDevice = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
-    const playbackDevice = String(playback.deviceId || playback.deviceKey || '').trim();
-    return !playbackDevice || !shotDevice || shotDevice === playbackDevice;
+    // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+    if (playbackDevice && shotDevice && shotDevice !== playbackDevice) {
+      return false;
+    }
+    return true;
   });
 
   if (sameDeviceShots.length === 0) return playback;
@@ -3715,16 +3759,44 @@ return (
                     报警监控回放
                   </button>
                 </div>
+
+                {/* 鎺掑簭鍒囨崲 */}
+                <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1 ml-2">
+                  <button
+                    onClick={() => setPlaybackSortOrder('newest')}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1 ${
+                      playbackSortOrder === 'newest'
+                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                        : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/40'
+                    }`}
+                    title="时间最新的在前"
+                  >
+                    <ArrowDown size={14} />
+                    时间最新
+                  </button>
+                  <button
+                    onClick={() => setPlaybackSortOrder('oldest')}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-1 ${
+                      playbackSortOrder === 'oldest'
+                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30'
+                        : 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/40'
+                    }`}
+                    title="时间最早的在前"
+                  >
+                    <ArrowUp size={14} />
+                    时间最早
+                  </button>
+                </div>
               </div>
 
                 {/* 鍥哄畾绛涢€夋爮锛氭爲鐘剁粨鏋勶紙鍏徃 -> 椤圭洰/缃戞牸 -> 浣滀笟闃?璁惧锛?*/}
                 <div ref={videoFiltersRef} className="flex items-center gap-2 flex-1 ml-4">
                   {/* 鎼滅储妗?*/}
-                  <div className="relative w-[320px]">
+                  <div className="relative w-[220px]">
                     <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
                     <input
                       type="text"
-                      placeholder="搜索设备/人员/事件/公司/项目/网格/工队"
+                      placeholder="搜索设备/人员/事件"
                       value={searchKeyword}
                       onChange={(e) => setSearchKeyword(e.target.value)}
                       className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
@@ -3936,36 +4008,46 @@ return (
     setShowPlayer(true);
   }}
 onShowScreenshot={async (playback) => {
-  console.log("1. 鐐瑰嚮鎴浘");
+  console.log("1. 点击截图");
 
-  // 鍏堟墦寮€鎾斁鍣?
+  // 先打开播放器
   setCurrentPlayback(playback);
   setShowPlayer(true);
 
-  // 绛夊緟鎾斁鍣ㄦ覆鏌撳畬鎴?
+  // 等待播放器渲染完成
   await new Promise(r => setTimeout(r, 100));
 
-  setSelectedAlarm(enrichAlarmWithScreenshot(playback));
+  const enrichedAlarm = enrichAlarmWithScreenshot(playback);
+  setSelectedAlarm(enrichedAlarm);
   setShowScreenshotModal(true);
 
   if (videoPlayerRef.current) {
     const alarmTime = videoPlayerRef.current.getAlarmTimestamp();
-    console.log("2. 绾㈢偣鏃堕棿(绉?:", alarmTime);
+    console.log("2. 红点时间(秒):", alarmTime);
 
     if (alarmTime > 0) {
       await videoPlayerRef.current.seekTo(alarmTime);
       await new Promise(r => setTimeout(r, 200));
       const screenshotBase64 = await videoPlayerRef.current.captureFrame();
-      console.log("3. 鎴浘瀹屾垚, 闀垮害:", screenshotBase64?.length);
+      console.log("3. 截图完成, 长度:", screenshotBase64?.length);
 
-      if (screenshotBase64 && screenshotBase64.length > 100 && playback.alarmInfo) {
-        (playback.alarmInfo as any).screenshot = {
-          id: `screenshot_${Date.now()}`,
-          url: screenshotBase64,
-          thumbnail: screenshotBase64,
-          timestamp: new Date().toISOString()
-        };
-        setSelectedAlarm({ ...playback });
+      if (screenshotBase64 && screenshotBase64.length > 100 && enrichedAlarm?.alarmInfo) {
+        // 不修改原始 playback，而是直接更新 selectedAlarm
+        // 优先保留后端保存的截图，避免视频帧覆盖正确的告警截图
+        if (!enrichedAlarm.alarmInfo.screenshot) {
+          setSelectedAlarm({
+            ...enrichedAlarm,
+            alarmInfo: {
+              ...enrichedAlarm.alarmInfo,
+              screenshot: {
+                id: `screenshot_${Date.now()}`,
+                url: screenshotBase64,
+                thumbnail: screenshotBase64,
+                timestamp: new Date().toISOString()
+              }
+            }
+          });
+        }
       }
     }
   }
@@ -4220,14 +4302,14 @@ onShowScreenshot={async (playback) => {
 
           {/* 鍛婅鎴浘寮圭獥 */}
       {showScreenshotModal && selectedAlarm && selectedAlarm.alarmInfo && (
-        <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowScreenshotModal(false)}>
+        <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }}>
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center p-4 border-b border-cyan-400/30 bg-slate-900/50">
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
                 <AlertCircle size={20} className="text-red-400" />
                 报警详情
               </h3>
-              <button onClick={() => setShowScreenshotModal(false)} className="p-1 hover:bg-slate-700 rounded-lg">
+              <button onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }} className="p-1 hover:bg-slate-700 rounded-lg">
                 <X size={20} className="text-slate-400" />
               </button>
             </div>
@@ -4295,7 +4377,7 @@ onShowScreenshot={async (playback) => {
                     播放视频
                   </button>
                   <button
-                    onClick={() => setShowScreenshotModal(false)}
+                    onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }}
                     className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
                   >
                     关闭

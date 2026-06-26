@@ -10,6 +10,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $Root "backend"
 $FrontendDir = Join-Path $Root "frontend"
+$MediaServerDir = Join-Path $Root "media_server"
 $LogDir = Join-Path $Root "logs\startup"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -180,6 +181,52 @@ function Start-Backend {
     }
 }
 
+function Start-MediaServer {
+    if (-not (Test-Path $MediaServerDir)) {
+        Write-Host "[WARN] media_server directory not found. Skipping 8001 media server."
+        return
+    }
+
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        Write-Host "[WARN] npm.cmd not found. Please install Node.js or add npm to PATH."
+        return
+    }
+
+    Stop-LocalPort -Port 8001 -Name "media server HTTP"
+    Stop-LocalPort -Port 19350 -Name "media server RTMP"
+
+    $nodeModules = Join-Path $MediaServerDir "node_modules"
+    if (-not (Test-Path $nodeModules)) {
+        Write-Host "[..] Installing media_server dependencies..."
+        Push-Location $MediaServerDir
+        try {
+            & $npm.Source install
+        } finally {
+            Pop-Location
+        }
+    }
+
+    $mediaOut = Join-Path $LogDir "media_server.out.log"
+    $mediaErr = Join-Path $LogDir "media_server.err.log"
+
+    Write-Host "[..] Starting media server on 8001/19350..."
+    Start-Process -FilePath $npm.Source `
+        -ArgumentList "start" `
+        -WorkingDirectory $MediaServerDir `
+        -RedirectStandardOutput $mediaOut `
+        -RedirectStandardError $mediaErr `
+        -WindowStyle Hidden
+
+    $httpOk = Wait-LocalPort -Port 8001 -Seconds 15
+    $rtmpOk = Wait-LocalPort -Port 19350 -Seconds 15
+    if ($httpOk -and $rtmpOk) {
+        Write-Host "[OK] Media server started on http://localhost:8001 and rtmp://localhost:19350"
+    } else {
+        Write-Host "[WARN] Media server did not open 8001/19350. Check $mediaErr"
+    }
+}
+
 function Start-Ollama {
     if (Test-LocalPort -Port 11434) {
         Write-Host "[OK] Ollama already running on 11434"
@@ -253,6 +300,7 @@ Write-Host "Backend mode: $(if ($StableApiOnly) { 'stable API only' } else { 'fu
 Write-Host "============================================================"
 
 Start-Mongo
+Start-MediaServer
 Start-Ollama
 Start-Backend
 Start-Frontend
@@ -261,13 +309,9 @@ Write-Host "============================================================"
 Write-Host "Done."
 Write-Host "Frontend: http://localhost:3000  (or the 3001+ port printed above)"
 Write-Host "Backend:  http://localhost:9000"
+Write-Host "Media:    http://localhost:8001/live/{id}.flv  RTMP: rtmp://localhost:19350/live/{id}"
 Write-Host "MongoDB:  mongodb://127.0.0.1:27017"
 Write-Host "AI:       http://localhost:9000/api/ai (integrated in backend)"
-if ($FullBackend) {
-    Write-Host "JT808:    127.0.0.1:8989"
-} else {
-    Write-Host "Tip: use .\start_all.ps1 -FullBackend to also start lifecycle services."
-}
 Write-Host "`nAI assistant service notes:"
 Write-Host "  - AI API is integrated into the backend; no separate service is required."
 Write-Host "  - Health check: http://localhost:9000/api/ai/health"

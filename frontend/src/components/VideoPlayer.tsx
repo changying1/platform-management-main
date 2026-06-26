@@ -315,6 +315,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     console.info('[Traffic] recognize start', { videoId });
 
     try {
+      setTrafficOcrStatus('正在刷新流量状态');
+      const statusSummary = await fetchTrafficStatus();
+      if (hasRecognizedTrafficValue(statusSummary)) {
+        setTrafficOcrStatus('已通过接口获取');
+        return;
+      }
+      setTrafficOcrStatus('后端识别中');
       const result: any = await recognizeVideoTraffic(videoId);
       if (result?.success === false) {
         throw new Error(result?.message || '识别失败');
@@ -332,7 +339,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
       trafficRecognizingRef.current = false;
       setTrafficRecognizing(false);
     }
-  }, [trafficRecognizing, videoId]);
+  }, [fetchTrafficStatus, trafficRecognizing, videoId]);
 
   const autoRecognizeTraffic = useCallback(async () => {
     if (!videoId || trafficRecognizingRef.current) {
@@ -345,6 +352,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
     console.info('[Traffic] auto recognize start', { videoId });
 
     try {
+      const statusSummary = await fetchTrafficStatus();
+      if (hasRecognizedTrafficValue(statusSummary)) {
+        console.info('[Traffic] auto status refresh success', { videoId });
+        return;
+      }
       const result: any = await recognizeVideoTraffic(videoId);
       if (result?.success === false) {
         throw new Error(result?.message || 'traffic recognize failed');
@@ -359,7 +371,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, playType, accessToken, v
       trafficRecognizingRef.current = false;
       setTrafficRecognizing(false);
     }
-  }, [videoId]);
+  }, [fetchTrafficStatus, videoId]);
 
   const cleanupPlayer = useCallback(() => {
     clearRetryTimer();

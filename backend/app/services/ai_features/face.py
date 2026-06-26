@@ -46,6 +46,8 @@ def detect(frame: Any, **kwargs) -> dict:
                 det["raw_label"] = "face"
                 det["label"] = match_result["name"]
                 det["person"] = match_result["person"]
+                det["personName"] = match_result["name"]
+                det["personnel_id"] = match_result["personnel_id"]
                 det["similarity"] = match_result["similarity"]
                 logger.info("[人脸识别成功] 姓名=%s, 相似度=%.4f", match_result["name"], match_result["similarity"])
             else:

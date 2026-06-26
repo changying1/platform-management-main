@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { getAlarmPlaybackVideos, type SavedPlaybackVideo } from '../src/api/videoApi';
@@ -355,13 +355,36 @@ const isOfflineAlarm = (item: AlarmResponse) => {
   return text.includes('offline') || text.includes('离线');
 };
 
+const translateAlarmDisplayText = (value: unknown) => String(value || '')
+  .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
+  .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
+  .replace(/\bsmoking\b/gi, '吸烟')
+  .replace(/\bphone\b/gi, '打电话')
+  .replace(/\bfire\b/gi, '烟火')
+  .replace(/\bflame\b/gi, '明火')
+  .replace(/\bsmoke\b/gi, '烟雾')
+  .replace(/\bno_vest\b/gi, '未穿反光衣')
+  .replace(/\bunknown\b/gi, '未知异常')
+  .replace(/\bpending\b/gi, '生成中')
+  .replace(/\bgenerating\b/gi, '生成中')
+  .replace(/\bwaiting\b/gi, '等待录像片段')
+  .replace(/\bsaved\b/gi, '已生成')
+  .replace(/\bno_video_segment\b/gi, '未找到可用录像片段')
+  .replace(/\balarm_time_not_covered\b/gi, '录像未覆盖告警时刻')
+  .replace(/\bvideo_failed\b/gi, '录像生成失败')
+  .replace(/\bmissing_pre_and_post_segment\b/gi, '告警前后录像片段缺失')
+  .replace(/\bmissing_pre_segment\b/gi, '告警前录像片段缺失')
+  .replace(/\bmissing_post_segment\b/gi, '告警后录像片段缺失')
+  .replace(/\bselected time range has no usable recording segments\b/gi, '所选时间段没有可用录像片段')
+  .trim();
+
 const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
   const rawItem = item as any;
   const sourceType = getAlarmSourceType(item);
   const isFence = sourceType === 'fence';
 
   const rawType = String(item.alarm_type || '');
-  const title = rawType || (isFence ? '围栏告警' : '视频告警');
+  const title = translateAlarmDisplayText(rawType) || (isFence ? '围栏告警' : '视频告警');
   const timestamp = getAlarmDisplayTime(rawItem);
   const alarmCode = `ALM-${formatAlarmCodeDate(timestamp)}-${item.id}`;
 
@@ -388,7 +411,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
   return {
     id: String(item.id),
     alarmCode,
-    alarmType: rawType || title,
+    alarmType: title,
     recordKey: [
       sourceType,
       item.id,
@@ -398,7 +421,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     ].join('-'),
     type: isFence ? 'fence' : 'video',
     title,
-    description: item.description || personText || title,
+    description: translateAlarmDisplayText(item.description) || personText || title,
     time: timestamp,
     level: getLevelFromSeverity(item.severity),
     severityRaw: item.severity || '',
@@ -419,7 +442,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     endTime: rawItem.end_time || rawItem.recording_end_time,
     alarmSecond: rawItem.alarm_second ?? rawItem.alarmSecond,
     recordingStatus: item.recording_status,
-    recordingError: item.recording_error || item.error_message,
+    recordingError: translateAlarmDisplayText(item.recording_error || item.error_message),
     fenceId:
       item.fence_id !== undefined && item.fence_id !== null
         ? String(item.fence_id)
@@ -505,7 +528,7 @@ useEffect(() => {
   };
 
   const getAlarmDeviceText = (alarm: AlarmRecord) =>
-    [alarm.deviceName, alarm.deviceId ? `ID:${alarm.deviceId}` : ''].filter(Boolean).join(' / ') || '-';
+    alarm.deviceName || '-';
 
   const getAlarmPersonText = (alarm: AlarmRecord) => alarm.personName || '-';
 
@@ -1021,7 +1044,6 @@ const handleConfirmProcess = async () => {
             const situationText = displayValue(getSituationText(alarm));
             const personText = displayValue(getAlarmPersonText(alarm));
             const deviceName = displayValue(alarm.deviceName);
-            const deviceId = displayValue(alarm.deviceId);
             const locationText = displayValue(alarm.location && alarm.location !== '未提供位置' ? alarm.location : getAlarmLocationText(alarm));
             const companyText = displayValue(alarm.branchName);
             const projectText = displayValue(alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : ''));
@@ -1079,8 +1101,6 @@ const handleConfirmProcess = async () => {
                         <Video size={14} className="text-slate-500" />
                         <span className="text-slate-500">设备</span>
                         <span>{deviceName}</span>
-                        <span className="text-slate-600">/</span>
-                        <span>ID:{deviceId}</span>
                       </div>
                     </div>
 
@@ -1146,14 +1166,14 @@ const handleConfirmProcess = async () => {
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          if (window.confirm(`确认删除 ${alarm.alarmCode}？`)) {
-                            await alarmApi.deleteAlarm(Number(alarm.id));
+                          if (window.confirm(`确认隐藏 ${alarm.alarmCode}？隐藏后可在日志中查看快照详情`)) {
+                            await alarmApi.hideAlarm(Number(alarm.id));
                             await loadAlarms();
                           }
                         }}
-                        className="inline-flex items-center rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-all hover:bg-red-500/30"
+                        className="inline-flex items-center rounded-lg bg-slate-500/20 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-slate-500/30"
                       >
-                        删除
+                        隐藏
                       </button>
                     </div>
                   </div>
@@ -1247,15 +1267,10 @@ const handleConfirmProcess = async () => {
                   <span className="text-slate-400">设备：</span>
                   <span className="text-slate-200">{selectedAlarm.deviceName}</span>
                 </div>
-                <div>
-                  <span className="text-slate-400">设备ID：</span>
-                  <span className="text-slate-200">{selectedAlarm.deviceId || '-'}</span>
-                </div>
                 <div className="col-span-2">
-                  <span className="text-slate-400">人员：</span>
+                  <span className="text-slate-400">违规人员：</span>
                   <span className="text-slate-200">
                     {selectedAlarm.personName}
-                    {selectedAlarm.personnelId ? ` / ${selectedAlarm.personnelId}` : ''}
                   </span>
                 </div>
                 <div className="col-span-2">
@@ -1265,7 +1280,7 @@ const handleConfirmProcess = async () => {
                 {selectedAlarm.recordingStatus && (
                   <div>
                     <span className="text-slate-400">录像状态：</span>
-                    <span className="text-slate-200">{selectedAlarm.recordingStatus}</span>
+                    <span className="text-slate-200">{translateAlarmDisplayText(selectedAlarm.recordingStatus)}</span>
                   </div>
                 )}
                 {selectedAlarm.recordingError && (
@@ -1316,15 +1331,15 @@ const handleConfirmProcess = async () => {
               )}
               <button
                 onClick={async () => {
-                  if (window.confirm(`确认删除 ${selectedAlarm.alarmCode}？`)) {
-                    await alarmApi.deleteAlarm(Number(selectedAlarm.id));
+                  if (window.confirm(`确认隐藏 ${selectedAlarm.alarmCode}？隐藏后可在日志中查看快照详情`)) {
+                    await alarmApi.hideAlarm(Number(selectedAlarm.id));
                     setSelectedAlarm(null);
                     await loadAlarms();
                   }
                 }}
-                className="flex-1 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-all"
+                className="flex-1 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm font-medium transition-all"
               >
-                删除
+                隐藏
               </button>
               <button onClick={() => setSelectedAlarm(null)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all">
                 关闭

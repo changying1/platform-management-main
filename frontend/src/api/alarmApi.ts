@@ -170,6 +170,10 @@ export const alarmApi = {
     const response = await apiClient.delete(`/alarms/${id}`);
     return response.data;
   },
+  hideAlarm: async (id: number) => {
+    const response = await apiClient.put(`/alarms/${id}/hide`);
+    return response.data;
+  },
   getLogs: async (skip: number = 0, limit: number = 100) => {
     const response = await apiClient.get<LogResponse[]>('/logs/', { params: { skip, limit } });
     return response.data;

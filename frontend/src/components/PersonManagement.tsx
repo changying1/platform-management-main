@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Plus, Edit2, Trash2, X, Save, Loader, Users, Camera, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getAuthHeaders, withAuthTokenParam } from '../api/config';
@@ -264,6 +264,7 @@ const [personView, setPersonView] = useState<'general' | 'manager'>('general');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<Person | null>(null);
   const [loading, setLoading] = useState(false);
+const [savingPerson, setSavingPerson] = useState(false);
 const [showUploadModal, setShowUploadModal] = useState(false);
 const [uploadData, setUploadData] = useState<any[]>([]);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
@@ -1148,7 +1149,8 @@ const confirmImport = () => {
             }
 
             try {
-              setLoading(true);
+              if (savingPerson) return;
+              setSavingPerson(true);
 
               const payload = {
                 username: editingItem.name,
@@ -1191,7 +1193,8 @@ const confirmImport = () => {
                 });
 
                 if (!res.ok) {
-                  throw new Error('更新人员失败');
+                  const errorData = await res.json().catch(() => ({}));
+                  throw new Error(errorData.detail || errorData.message || '更新人员失败');
                 }
 
                 saved = await res.json();
@@ -1203,7 +1206,8 @@ const confirmImport = () => {
                 });
 
                 if (!res.ok) {
-                  throw new Error('新增人员失败');
+                  const errorData = await res.json().catch(() => ({}));
+                  throw new Error(errorData.detail || errorData.message || '新增人员失败');
                 }
 
                 saved = await res.json();
@@ -1242,12 +1246,13 @@ const confirmImport = () => {
               console.error(error);
               alert(error instanceof Error ? error.message : '保存失败');
             } finally {
-              setLoading(false);
+              setSavingPerson(false);
             }
           }}
-          className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900"
+          disabled={savingPerson}
+          className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 py-2 rounded text-sm font-bold text-slate-900"
         >
-          保存
+          {savingPerson ? '保存中...' : '保存'}
         </button>
         {canEditPersonnel && (
         <button 

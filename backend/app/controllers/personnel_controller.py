@@ -7,6 +7,7 @@ import os
 import shutil
 from uuid import uuid4
 import logging
+from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/api/personnel", tags=["Personnel"])
 service = PersonnelService()
@@ -106,7 +107,10 @@ def create_personnel(data: PersonnelCreate, current_user: dict = Depends(get_cur
     ensure_management_scope_bound(data)
     ensure_can_assign_permission(data.permissionLevel, current_user)
     ensure_target_in_scope(data, current_user)
-    return service.create_personnel(data, current_user=current_user)
+    try:
+        return service.create_personnel(data, current_user=current_user)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="人员已存在，请勿重复创建")
 
 
 @router.put("/{personnel_id}", response_model=PersonnelOut)
@@ -152,11 +156,9 @@ def upload_personnel_face(
         raise HTTPException(status_code=404, detail="Personnel not found")
 
     try:
-        from app.services.ai_features.face_fusion import reload_face_service_database as reload_fusion_faces
-        from app.services.ai_features.face_recognition import reload_face_service_database as reload_recognition_faces
+        from app.services.ai_runtime.face_library_manager import face_library_manager
 
-        reload_fusion_faces()
-        reload_recognition_faces()
+        face_library_manager.reload_database()
     except Exception as exc:
         logger.warning("Failed to reload face database after personnel face upload: %s", exc)
 

@@ -137,6 +137,16 @@ export interface Video {
   storage_abnormal?: boolean;
   low_battery?: boolean;
   weak_signal?: boolean;
+  ai_rules?: string | string[];
+  aiRules?: string | string[];
+  algo_rules?: string | string[];
+  algoRules?: string | string[];
+  rules?: string | string[];
+  algo_type?: string | string[];
+  algoType?: string | string[];
+  algos?: string | string[];
+  face_assist_enabled?: boolean;
+  faceAssistEnabled?: boolean;
   status: 'online' | 'offline';
   is_active: number;
   remark?: string;
@@ -270,6 +280,11 @@ export interface AIRule {
   desc: string;
   enabled?: boolean;
   reason?: string;
+  role?: 'behavior' | 'auxiliary' | string;
+  category?: string;
+  selectable?: boolean;
+  model_type?: string;
+  model_path?: string;
 }
 
 export interface PlaybackSavePayload {
@@ -1191,13 +1206,20 @@ export const getDeviceRules = async (deviceId: number): Promise<string[]> => {
   return Array.isArray(data?.rules) ? data.rules : [];
 };
 
-export const updateDeviceRules = async (deviceId: number, rules: string[]): Promise<string[]> => {
+export const updateDeviceRules = async (
+  deviceId: number,
+  rules: string[],
+  options: { faceAssistEnabled?: boolean } = {}
+): Promise<string[]> => {
   const response = await authFetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ rules }),
+    body: JSON.stringify({
+      rules,
+      face_assist_enabled: options.faceAssistEnabled,
+    }),
   });
 
   if (!response.ok) {
@@ -1249,6 +1271,11 @@ export const getAIRules = async (): Promise<AIRule[]> => {
       desc: String(item.desc || item.key),
       enabled: Boolean(item.enabled),
       reason: String(item.reason || ''),
+      role: String(item.role || ''),
+      category: String(item.category || ''),
+      selectable: item.selectable !== false,
+      model_type: String(item.model_type || ''),
+      model_path: String(item.model_path || ''),
     }));
 };
 /**

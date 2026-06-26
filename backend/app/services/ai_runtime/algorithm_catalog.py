@@ -22,6 +22,8 @@ def _dependency_available(model_type: str) -> tuple[bool, str]:
 def list_algorithms() -> list[dict[str, Any]]:
     algorithms: list[dict[str, Any]] = []
     for config in list_model_configs().values():
+        role = "auxiliary" if config.algorithm_code == "face" else "behavior"
+        category = "人员追溯辅助" if role == "auxiliary" else "行为检测"
         model_path, model_type, error = resolve_model_path(config)
         enabled = error is None
         reason = config.disabled_reason or error or ""
@@ -35,6 +37,9 @@ def list_algorithms() -> list[dict[str, Any]]:
                 "algorithm_code": config.algorithm_code,
                 "desc": config.algorithm_name,
                 "algorithm_name": config.algorithm_name,
+                "role": role,
+                "category": category,
+                "selectable": role == "behavior",
                 "model_type": model_type,
                 "model_path": str(model_path) if model_path else "",
                 "enabled": bool(enabled),

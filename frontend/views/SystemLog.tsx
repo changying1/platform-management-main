@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MenuKey } from '../types';
-import { alarmApi, LogResponse } from '../src/api/alarmApi';
+import { alarmApi, toStaticUrl, LogResponse } from '../src/api/alarmApi';
 import { API_BASE_URL, getAuthHeaders } from '../src/api/config';
 import { getStoredScopeState } from '../src/utils/authScope';
-import { 
-  FileText, 
-  Search, 
-  User, 
-  Shield, 
-  MapPin, 
-  Video, 
+import {
+  FileText,
+  Search,
+  User,
+  Shield,
+  MapPin,
+  Video,
   AlertTriangle,
   Settings,
   LogIn,
@@ -23,7 +23,8 @@ import {
   Calendar,
   Download,
   ExternalLink,
-  DatabaseBackup
+  DatabaseBackup,
+  Image
 } from 'lucide-react';
 
 interface SystemLog {
@@ -636,6 +637,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<SystemLog | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const selectedFenceBackup = selectedLog ? getDeletedFenceBackup(selectedLog) : null;
   
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
@@ -1195,6 +1197,17 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   <span className="text-slate-400">详细信息：</span>
                   <p className="text-slate-200 mt-1">{generateLogDetails(selectedLog)}</p>
                 </div>
+                {selectedLog.extra?.alarm_image_path && (
+                  <div className="col-span-2">
+                    <button
+                      onClick={() => setPreviewImage(toStaticUrl(selectedLog.extra!.alarm_image_path))}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm font-medium transition-all"
+                    >
+                      <Image size={16} />
+                      查看告警截图
+                    </button>
+                  </div>
+                )}
                 {selectedFenceBackup && (
                   <div className="col-span-2 mt-2 rounded-lg border border-cyan-400/20 bg-slate-950/40 p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
@@ -1276,6 +1289,31 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 关闭
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 截图预览弹窗 */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="relative bg-slate-900 rounded-2xl border border-cyan-400/30 shadow-2xl p-4 max-w-[90vw] max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute right-3 top-3 z-10 p-1.5 bg-black/50 hover:bg-black/70 rounded-lg"
+            >
+              <X size={18} className="text-white" />
+            </button>
+            <img
+              src={previewImage}
+              alt="告警截图"
+              className="max-w-[85vw] max-h-[82vh] rounded-lg object-contain"
+            />
           </div>
         </div>
       )}

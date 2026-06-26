@@ -1,5 +1,6 @@
 from datetime import datetime
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 from app.core.data_scope import in_scope, merge_filters, scope_filter
 from app.core.database import get_mongo_collection, get_next_sequence, get_personnel_collection
 from app.schemas.personnel_schema import PersonnelCreate, PersonnelUpdate
@@ -242,6 +243,23 @@ class PersonnelService:
 
     def create_personnel(self, data: PersonnelCreate, current_user: dict = None):
         doc = data.dict()
+        duplicate_or = []
+        for field in ("employeeId", "idCard", "phone"):
+            value = str(doc.get(field) or "").strip()
+            if value:
+                duplicate_or.append({field: value})
+        username = str(doc.get("username") or "").strip()
+        if username:
+            scoped_name_query = {"username": username}
+            for field in ("company", "project", "workTeam", "team"):
+                value = str(doc.get(field) or "").strip()
+                if value:
+                    scoped_name_query[field] = value
+            duplicate_or.append(scoped_name_query)
+        if duplicate_or:
+            existing = self.collection.find_one({"$or": duplicate_or})
+            if existing:
+                raise DuplicateKeyError("人员已存在，请勿重复创建")
 
         if doc.get("role") == "HQ Manager":
             doc["parentId"] = None

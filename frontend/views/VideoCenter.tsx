@@ -622,6 +622,7 @@
     const [currentWorkDurationSeconds, setCurrentWorkDurationSeconds] = useState(0);
     const cameraStartTimeRef = useRef<number | null>(null);
     const cameraWorkTimerRef = useRef<number | null>(null);
+    const aiMonitorStartKeyRef = useRef("");
     const [gridCols, setGridCols] = useState(3);
     const [showPlayer, setShowPlayer] = useState(false);
     const [currentDevice, setCurrentDevice] = useState<Video | null>(null);
@@ -894,6 +895,36 @@ useEffect(() => {
   setIsAIEnabled(activeAlgos.length > 0);
 }, [maximizedVideo, activeAlgos]);
 
+  useEffect(() => {
+    if (!maximizedVideo || !streamUrl || activeAlgos.length === 0) {
+      aiMonitorStartKeyRef.current = "";
+      return;
+    }
+
+    const algoString = activeAlgos.join(",");
+    const startKey = `${maximizedVideo.id}|${streamUrl}|${algoString}`;
+    if (aiMonitorStartKeyRef.current === startKey) return;
+    aiMonitorStartKeyRef.current = startKey;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await stopAIMonitoring(String(maximizedVideo.id));
+        if (cancelled) return;
+        await startAIMonitoring(String(maximizedVideo.id), streamUrl, algoString);
+        if (!cancelled) setIsAIEnabled(true);
+      } catch (err) {
+        console.warn("确保AI检测启动失败:", err);
+        aiMonitorStartKeyRef.current = "";
+        if (!cancelled) setIsAIEnabled(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [maximizedVideo?.id, streamUrl, activeAlgos]);
+
     useEffect(() => {
       if (!maximizedVideo) {
         setPlaybackSavedPath(null);
@@ -920,6 +951,26 @@ useEffect(() => {
     // --- ✅ 改进：AI 开关处理逻辑 ---
 
     // 1. 处理单个功能的开启/关闭
+  const applyAiMonitoringRules = async (rules: string[]) => {
+      if (!maximizedVideo) return;
+
+      const normalizedRules = Array.from(new Set((rules || []).filter(Boolean)));
+      await updateDeviceRules(maximizedVideo.id, normalizedRules);
+
+      await stopAIMonitoring(String(maximizedVideo.id));
+
+      if (normalizedRules.length > 0) {
+        await startAIMonitoring(
+          String(maximizedVideo.id),
+          streamUrl || streamInfo?.url || "",
+          normalizedRules.join(",")
+        );
+      }
+
+      setActiveAlgos(normalizedRules);
+      setIsAIEnabled(normalizedRules.length > 0);
+  };
+
   const handleSingleAI = async (type: string) => {
       if (!maximizedVideo || !type) return;
 
@@ -929,9 +980,7 @@ useEffect(() => {
 
       try {
         setAiLoading(true);
-        await updateDeviceRules(maximizedVideo.id, newAlgos);
-        setActiveAlgos(newAlgos);
-              setIsAIEnabled(newAlgos.length > 0);
+        await applyAiMonitoringRules(newAlgos);
       } catch (err: any) {
         alert(err?.message || '算法配置失败');
       } finally {
@@ -948,8 +997,7 @@ useEffect(() => {
 
       try {
         setAiLoading(true);
-        await updateDeviceRules(maximizedVideo.id, newAlgos);
-        setActiveAlgos(newAlgos);
+        await applyAiMonitoringRules(newAlgos);
       } catch (err: any) {
         alert(err?.message || '算法配置失败');
       } finally {
@@ -1085,6 +1133,120 @@ useEffect(() => {
       return { boxes, alarmLike };
     };
 
+    type RealtimeAlarmLevel = "low" | "medium" | "high";
+
+    const normalizeRealtimeAlarmLevel = (value: any): RealtimeAlarmLevel | "" => {
+      const text = String(value ?? "").trim().toLowerCase();
+      if (!text) return "";
+      if (["high", "severe", "critical", "danger", "urgent", "紧急", "严重", "高危", "高级"].includes(text)) return "high";
+      if (["medium", "risk", "warning", "warn", "风险", "中级", "中等", "一般"].includes(text)) return "medium";
+      if (["low", "normal", "info", "一般隐患", "低", "低级"].includes(text)) return "low";
+      return "";
+    };
+
+    const normalizeAlarmMatchKey = (value: any): string =>
+      String(value ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_\-]+/g, "");
+
+    const readAiAlarmLevelConfigs = (): any[] => {
+      try {
+        const settings = JSON.parse(localStorage.getItem("systemSettings") || "{}") || {};
+        return Array.isArray(settings.aiAlarmLevelConfigs) ? settings.aiAlarmLevelConfigs : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const defaultRealtimeAlarmLevels: Record<string, RealtimeAlarmLevel> = {
+      head: "high",
+      nohelmet: "high",
+      helmetmissing: "high",
+      safetyharnessmissing: "high",
+      smoking: "high",
+      personfall: "high",
+      unauthorizedperson: "high",
+      firedetected: "high",
+      fire: "high",
+      smoke: "high",
+      flame: "high",
+      reflectivevestmissing: "high",
+      helmet: "low",
+      safehat: "low",
+    };
+
+    const alarmLevelAliasMap: Record<string, string[]> = {
+      helmetmissing: ["nohelmet", "head"],
+      nohelmet: ["helmetmissing", "head"],
+      head: ["helmetmissing", "nohelmet"],
+      safetyharnessmissing: ["safetyharness", "novest", "clothes"],
+      reflectivevestmissing: ["reflection", "reflectivevest"],
+      firedetected: ["fire", "flame", "smoke"],
+      personfall: ["fall"],
+      unauthorizedperson: ["unauthorized"],
+    };
+
+    const expandAlarmLevelAliases = (keys: string[]): string[] => {
+      const expanded = new Set(keys);
+      keys.forEach((key) => {
+        (alarmLevelAliasMap[key] || []).forEach((alias) => expanded.add(alias));
+      });
+      return Array.from(expanded);
+    };
+
+    const resolveRealtimeAlarmLevel = (alarmLike: any, firstBox: any, alarmType: string, alarmMsg: string): RealtimeAlarmLevel => {
+      const explicitLevel = [
+        alarmLike?.severity,
+        alarmLike?.level,
+        alarmLike?.alarm_level,
+        alarmLike?.alarmLevel,
+        firstBox?.severity,
+        firstBox?.level,
+      ].map(normalizeRealtimeAlarmLevel).find(Boolean);
+      if (explicitLevel) return explicitLevel;
+
+      const candidates = [
+        alarmLike?.behavior_code,
+        alarmLike?.behaviorCode,
+        alarmLike?.algo_key,
+        alarmLike?.algoKey,
+        alarmLike?.algo,
+        alarmLike?.code,
+        alarmLike?.name,
+        alarmLike?.alarm_type,
+        alarmLike?.type,
+        firstBox?.behavior_code,
+        firstBox?.algo_key,
+        firstBox?.code,
+        firstBox?.name,
+        firstBox?.type,
+        alarmType,
+        alarmMsg,
+      ].filter((value) => value !== undefined && value !== null && String(value).trim());
+
+      const candidateKeys = candidates.map(normalizeAlarmMatchKey).filter(Boolean);
+      const expandedCandidateKeys = expandAlarmLevelAliases(candidateKeys);
+      const candidateText = normalizeAlarmMatchKey(candidates.join(" "));
+
+      for (const config of readAiAlarmLevelConfigs()) {
+        const level = normalizeRealtimeAlarmLevel(config?.level);
+        if (!level) continue;
+        const aliases = expandAlarmLevelAliases([config?.code, config?.name, config?.id, config?.description]
+          .map(normalizeAlarmMatchKey)
+          .filter(Boolean));
+        if (aliases.some((alias) => expandedCandidateKeys.includes(alias) || candidateText.includes(alias))) {
+          return level;
+        }
+      }
+
+      for (const key of expandedCandidateKeys) {
+        if (defaultRealtimeAlarmLevels[key]) return defaultRealtimeAlarmLevels[key];
+      }
+
+      return "medium";
+    };
+
     const getAlarmDeviceId = (alarmLike: any): string => {
       const value =
         alarmLike?.device_id ??
@@ -1210,12 +1372,7 @@ useEffect(() => {
           }, 3000);
 
           if (window.showFenceAlarm) {
-            let level: 'low' | 'medium' | 'high' = 'medium';
-            if (alarmType.includes('严重') || alarmType.includes('高') || alarmMsg.includes('严重')) {
-              level = 'high';
-            } else if (alarmType.includes('一般') || alarmType.includes('低')) {
-              level = 'low';
-            }
+            const level = resolveRealtimeAlarmLevel(alarmLike, firstBox, alarmType, alarmMsg);
             window.showFenceAlarm(deviceName, alarmMsg, fenceName, level, '视频AI检测报警');
           }
         };
@@ -1651,6 +1808,18 @@ useEffect(() => {
       setPreviewStreams((prev) => ({ ...prev, [device.id]: streamData }));
       setStreamInfo(streamData);
       setStreamUrl(streamData.url);
+      if (Array.isArray(rules) && rules.length > 0) {
+        try {
+          await stopAIMonitoring(String(device.id));
+          await startAIMonitoring(String(device.id), streamData.url || "", rules.join(","));
+          setIsAIEnabled(true);
+        } catch (aiErr) {
+          console.warn("启动AI检测失败:", aiErr);
+          setIsAIEnabled(false);
+        }
+      } else {
+        setIsAIEnabled(false);
+      }
       startCameraWorkDuration();
       return true;
     } catch (err: any) {

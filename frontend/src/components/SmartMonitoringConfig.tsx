@@ -26,6 +26,7 @@ import {
   startAIMonitoring,
   stopAIMonitoring,
   updateDeviceRules,
+  getDeviceRules,
   getAIRules,
   Video,
   AIRule,
@@ -34,7 +35,7 @@ import {
 interface SmartMonitoringConfigProps {
   devices: Video[];
   onClose?: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (selection?: { deviceIds: number[]; algoIds: string[] }) => void;
   embedded?: boolean;
   // ✅ 新增：初始选中的设备ID列表
   initialSelectedDeviceIds?: number[];
@@ -56,6 +57,48 @@ interface BindingConfig {
   algoIds: string[];
   autoStart: boolean;
 }
+
+interface AlgoItem {
+  id: string;
+  name: string;
+  desc?: string;
+  role?: string;
+  category?: string;
+  modelType?: string;
+  modelPath?: string;
+}
+
+const aiDisplayName: Record<string, string> = {
+  helmet: '安全帽检测',
+  person: '人员检测',
+  smoking: '吸烟检测',
+  fire: '烟火检测',
+  vest: '反光衣检测',
+  phone: '打电话检测',
+  face: '人脸识别追溯辅助',
+};
+
+const aiDisplayDesc: Record<string, string> = {
+  helmet: '检测人员是否正确佩戴安全帽',
+  person: '检测画面内人员出现',
+  smoking: '检测人员吸烟行为',
+  fire: '检测烟火风险',
+  vest: '检测人员是否穿戴反光衣',
+  phone: '检测人员打电话行为',
+};
+
+const splitRuleValue = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap(splitRuleValue);
+  }
+  if (typeof value !== 'string') {
+    return [];
+  }
+  return value
+    .split(/[,，、\s]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+};
 
 const textOf = (value: unknown): string => {
   if (value === null || value === undefined) return '';
@@ -134,7 +177,10 @@ export default function SmartMonitoringConfig({
   initialSelectedAlgoIds = []
 }: SmartMonitoringConfigProps) {
   
-  const [algos, setAlgos] = useState<Array<{ id: string; name: string; desc?: string }>>([]);
+  const [algos, setAlgos] = useState<AlgoItem[]>([]);
+  const [faceAssist, setFaceAssist] = useState<AlgoItem | null>(null);
+  const [faceAssistEnabled, setFaceAssistEnabled] = useState(true);
+  const [deviceRules, setDeviceRules] = useState<Map<number, string[]>>(new Map());
   const [filter, setFilter] = useState<DeviceFilter>({
     company: 'all',
     project: 'all',
@@ -178,6 +224,37 @@ export default function SmartMonitoringConfig({
     fetchAIRules();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDeviceRules = async () => {
+      if (devices.length === 0) {
+        setDeviceRules(new Map());
+        return;
+      }
+
+      const entries = await Promise.all(
+        devices.map(async (device) => {
+          try {
+            return [device.id, await getDeviceRules(device.id)] as const;
+          } catch {
+            return [device.id, []] as const;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setDeviceRules(new Map(entries));
+      }
+    };
+
+    loadDeviceRules();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [devices]);
+
   // ✅ 当 algos 首次加载完成后，同步初始选中的算法
   useEffect(() => {
     if (algos.length > 0 && !isAlgosLoaded) {
@@ -201,17 +278,36 @@ export default function SmartMonitoringConfig({
     }
   }, [initialSelectedDeviceIds]);
 
+  useEffect(() => {
+    if (selectedDevices.size === 0 || algos.length === 0 || deviceRules.size === 0) {
+      return;
+    }
+
+    const behaviorIds = new Set(algos.map(algo => algo.id));
+    const mergedRules = new Set<string>();
+    selectedDevices.forEach(deviceId => {
+      (deviceRules.get(deviceId) || []).forEach(ruleId => {
+        if (behaviorIds.has(ruleId) && ruleId !== 'face') {
+          mergedRules.add(ruleId);
+        }
+      });
+    });
+
+    setSelectedAlgos(prev => {
+      const next = Array.from(mergedRules);
+      if (prev.size === next.length && next.every(ruleId => prev.has(ruleId))) {
+        return prev;
+      }
+      return new Set(next);
+    });
+  }, [selectedDevices, deviceRules, algos]);
+
   // ✅ 删除重复的 useEffect（第 86 行附近的那个）
 
   const fetchAIRules = async () => {
     const defaultAlgos = [
-      { id: "helmet", name: "安全帽检测", desc: "检测安全帽佩戴情况" },
-      { id: "smoking", name: "抽烟检测", desc: "检测人员抽烟行为" },
-      { id: "signage", name: "现场标识类", desc: "识别现场安全标识" },
-      { id: "supervisor_count", name: "现场监督人数统计", desc: "统计监督人员数量" },
-      { id: "ladder_angle", name: "梯子角度类", desc: "检测梯子使用角度" },
-      { id: "hole_curb", name: "孔口挡坎违规类", desc: "检测孔口挡坎合规性" },
-      { id: "unauthorized_person", name: "围栏入侵管理类", desc: "检测非法入侵" },
+      { id: "helmet", name: "安全帽检测", desc: "检测人员是否正确佩戴安全帽" },
+      { id: "smoking", name: "吸烟检测", desc: "检测人员吸烟行为" },
     ];
     
     setAlgos(defaultAlgos);
@@ -221,13 +317,34 @@ export default function SmartMonitoringConfig({
       if (rules && rules.length > 0) {
         const mapped = rules.map((rule) => ({
           id: rule.key,
-          name: rule.desc || rule.key,
-          desc: rule.desc,
+          name: aiDisplayName[rule.key] || rule.desc || rule.key,
+          desc: rule.role === 'auxiliary' ? '用于行为告警后的违规人员追溯' : (aiDisplayDesc[rule.key] || rule.desc),
+          role: rule.role || 'behavior',
+          category: rule.category || '',
+          modelType: rule.model_type || '',
+          modelPath: rule.model_path || '',
         }));
-        setAlgos(mapped);
+        const auxiliaryFace = mapped.find(rule => rule.id === 'face' || rule.role === 'auxiliary') || null;
+        const behaviorRules = mapped.filter(rule => rule.id !== 'face' && rule.role !== 'auxiliary');
+        setFaceAssist(auxiliaryFace || {
+          id: 'face',
+          name: '人脸识别追溯辅助',
+          desc: '跟随所有行为检测自动运行，用于违规人员追溯',
+          role: 'auxiliary',
+          category: '人员追溯辅助',
+        });
+        setAlgos(behaviorRules);
+        setSelectedAlgos(prev => new Set(Array.from(prev).filter(id => behaviorRules.some(rule => rule.id === id))));
       }
     } catch (e) {
       console.log("后端AI规则暂不可用，使用默认列表");
+      setFaceAssist({
+        id: 'face',
+        name: '人脸识别追溯辅助',
+        desc: '跟随所有行为检测自动运行，用于违规人员追溯',
+        role: 'auxiliary',
+        category: '人员追溯辅助',
+      });
     }
   };
 
@@ -328,6 +445,51 @@ export default function SmartMonitoringConfig({
     return true;
   });
 
+  const getDeviceRuleIds = (device: Video) => {
+    const loadedRules = deviceRules.get(device.id);
+    if (loadedRules) {
+      const seenLoaded = new Set<string>();
+      return loadedRules.filter(ruleId => {
+        if (!ruleId || ruleId === 'face' || seenLoaded.has(ruleId)) {
+          return false;
+        }
+        seenLoaded.add(ruleId);
+        return true;
+      });
+    }
+
+    const source = device as Record<string, unknown>;
+    const rawRules = [
+      'ai_rules',
+      'aiRules',
+      'algo_rules',
+      'algoRules',
+      'rules',
+      'algo_type',
+      'algoType',
+      'algos',
+    ].flatMap(key => splitRuleValue(source[key]));
+    const seen = new Set<string>();
+    return rawRules.filter(ruleId => {
+      if (!ruleId || ruleId === 'face' || seen.has(ruleId)) {
+        return false;
+      }
+      seen.add(ruleId);
+      return true;
+    });
+  };
+
+  const getRuleDisplayName = (ruleId: string) =>
+    aiDisplayName[ruleId] || algos.find(algo => algo.id === ruleId)?.name || ruleId;
+
+  const getDeviceRuleNames = (device: Video) =>
+    getDeviceRuleIds(device).map(getRuleDisplayName);
+
+  const selectedDeviceList = devices.filter(device => selectedDevices.has(device.id));
+  const selectedAlgoNames = Array.from(selectedAlgos)
+    .filter(id => algos.some(algo => algo.id === id))
+    .map(getRuleDisplayName);
+
   // 选择所有过滤后的设备
   const selectAllFiltered = () => {
     const newSelected = new Set(selectedDevices);
@@ -353,6 +515,7 @@ export default function SmartMonitoringConfig({
 
   // 切换算法选择
   const toggleAlgo = (algoId: string) => {
+    if (algoId === 'face' || !algos.some(algo => algo.id === algoId)) return;
     const newSelected = new Set(selectedAlgos);
     if (newSelected.has(algoId)) {
       newSelected.delete(algoId);
@@ -383,8 +546,9 @@ export default function SmartMonitoringConfig({
     setConfigResults(new Map());
 
     const deviceArray = Array.from(selectedDevices);
-    const algoString = Array.from(selectedAlgos).join(',');
-    const algoList = Array.from(selectedAlgos);
+    const behaviorAlgoIds = new Set(algos.map(algo => algo.id));
+    const algoList = Array.from(selectedAlgos).filter(id => behaviorAlgoIds.has(id) && id !== 'face');
+    const algoString = algoList.join(',');
     const shouldStartMonitoring = autoStart && algoList.length > 0;
 
     for (let i = 0; i < deviceArray.length; i++) {
@@ -410,7 +574,12 @@ export default function SmartMonitoringConfig({
       }
 
       try {
-        await updateDeviceRules(deviceId, algoList);
+        const updatedRules = await updateDeviceRules(deviceId, algoList, { faceAssistEnabled });
+        setDeviceRules(prev => {
+          const next = new Map(prev);
+          next.set(deviceId, updatedRules);
+          return next;
+        });
 
         // 先停止现有的监控
         await stopAIMonitoring(String(deviceId));
@@ -421,7 +590,7 @@ export default function SmartMonitoringConfig({
           try {
             await startAIMonitoring(String(deviceId), streamSource, algoString);
           } catch (batchError: any) {
-            const selectedAlgoList = Array.from(selectedAlgos);
+            const selectedAlgoList = algoList;
             if (selectedAlgoList.length <= 1) {
               throw batchError;
             }
@@ -452,7 +621,10 @@ export default function SmartMonitoringConfig({
     }
 
     setConfiguring(false);
-    if (onSuccess) onSuccess();
+    onSuccess?.({
+      deviceIds: Array.from(selectedDevices),
+      algoIds: algoList,
+    });
     
     // 3秒后自动清除结果提示
     setTimeout(() => {
@@ -465,7 +637,8 @@ export default function SmartMonitoringConfig({
     totalDevices: devices.length,
     filteredDevices: filteredDevices.length,
     selectedDevices: selectedDevices.size,
-    selectedAlgos: selectedAlgos.size,
+    selectedAlgos: Array.from(selectedAlgos).filter(id => algos.some(algo => algo.id === id)).length,
+    configuredDevices: devices.filter(device => getDeviceRuleIds(device).length > 0).length,
   };
 
   const toggleGroup = (group: string) => {
@@ -505,6 +678,10 @@ export default function SmartMonitoringConfig({
               <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-1.5">
                 <span className="text-xl font-bold text-green-400">{stats.selectedDevices}</span>
                 <span className="text-sm text-slate-400">已选设备</span>
+              </div>
+              <div className="flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-1.5">
+                <span className="text-xl font-bold text-cyan-300">{stats.configuredDevices}</span>
+                <span className="text-sm text-slate-400">已配置设备</span>
               </div>
               <div className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 rounded-lg px-3 py-1.5">
                 <span className="text-xl font-bold text-purple-400">{stats.selectedAlgos}</span>
@@ -764,6 +941,23 @@ export default function SmartMonitoringConfig({
                               {getDeviceGrid(device) && `${getDeviceGrid(device)} / `}
                               {getDeviceTeam(device)}
                             </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                              <span className="text-[11px] text-slate-500">已启用</span>
+                              {getDeviceRuleNames(device).length > 0 ? (
+                                getDeviceRuleNames(device).map(ruleName => (
+                                  <span
+                                    key={ruleName}
+                                    className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[11px] leading-4 text-cyan-200"
+                                  >
+                                    {ruleName}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="rounded border border-slate-600 bg-slate-900/60 px-1.5 py-0.5 text-[11px] leading-4 text-slate-400">
+                                  暂未开启
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {configResults.has(device.id) && (
                             <div className={`text-xs ${configResults.get(device.id)?.success ? 'text-green-400' : 'text-red-400'}`}>
@@ -787,7 +981,7 @@ export default function SmartMonitoringConfig({
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
                   <Shield size={18} className="text-purple-400" />
-                  AI功能选择
+                  AI行为功能选择
                 </h3>
                 <div className="flex gap-2">
                   <button
@@ -804,6 +998,88 @@ export default function SmartMonitoringConfig({
                   </button>
                 </div>
               </div>
+
+              {selectedDeviceList.length > 0 && (
+                <div className="rounded-lg border border-slate-700 bg-slate-800/30 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-slate-200">已选设备当前配置</div>
+                    <div className="text-xs text-slate-400">{selectedDeviceList.length} 台设备</div>
+                  </div>
+                  <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                    {selectedDeviceList.map(device => {
+                      const currentRules = getDeviceRuleNames(device);
+                      return (
+                        <div
+                          key={device.id}
+                          className="rounded-md border border-slate-700/80 bg-slate-900/40 px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm text-slate-100">{device.name}</span>
+                            <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] ${
+                              currentRules.length > 0
+                                ? 'bg-cyan-500/15 text-cyan-200'
+                                : 'bg-slate-700 text-slate-300'
+                            }`}>
+                              {currentRules.length > 0 ? `${currentRules.length} 项已开启` : '未开启'}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {currentRules.length > 0 ? (
+                              currentRules.map(ruleName => (
+                                <span
+                                  key={ruleName}
+                                  className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[11px] text-cyan-200"
+                                >
+                                  {ruleName}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-slate-500">当前没有启用任何行为功能</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${
+                faceAssistEnabled
+                  ? 'bg-cyan-500/10 border-cyan-500/30'
+                  : 'bg-slate-900/50 border-slate-700 hover:border-slate-600'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={faceAssistEnabled}
+                    onChange={(event) => setFaceAssistEnabled(event.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500"
+                  />
+                  <div className="mt-0.5 rounded-md bg-cyan-500/20 p-1.5 text-cyan-300">
+                    <Users size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-100">
+                          人脸识别追溯辅助
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          不作为独立告警算法，开启后随行为检测运行，用于识别违规人员。
+                        </div>
+                      </div>
+                      <span className={`shrink-0 rounded px-2 py-1 text-xs ${
+                        faceAssist && faceAssistEnabled
+                          ? 'bg-green-500/15 text-green-300 border border-green-500/30'
+                          : 'bg-slate-700 text-slate-300 border border-slate-600'
+                      }`}>
+                        {faceAssist && faceAssistEnabled ? '已挂载' : '未挂载'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </label>
 
               {/* AI功能网格 */}
               <div className="bg-slate-800/30 rounded-lg border border-slate-700 p-4">
@@ -854,13 +1130,14 @@ export default function SmartMonitoringConfig({
               </div>
 
               {/* 配置摘要 */}
-              {selectedDevices.size > 0 && selectedAlgos.size > 0 && (
+              {selectedDevices.size > 0 && (
                 <div className="bg-cyan-500/10 rounded-lg border border-cyan-500/30 p-4">
                   <div className="text-sm text-cyan-300 mb-2">配置摘要</div>
                   <div className="text-xs text-slate-300 space-y-1">
                     <p>• 将为 <span className="text-cyan-400 font-semibold">{selectedDevices.size}</span> 个设备配置 AI 监控</p>
-                    <p>• 每个设备将启用 <span className="text-purple-400 font-semibold">{selectedAlgos.size}</span> 个 AI 功能</p>
-                    <p>• 功能列表: {Array.from(selectedAlgos).map(id => algos.find(a => a.id === id)?.name).join(', ')}</p>
+                    <p>• 每个设备将启用 <span className="text-purple-400 font-semibold">{stats.selectedAlgos}</span> 个 AI 行为功能</p>
+                    <p>• 将配置为: {selectedAlgoNames.length > 0 ? selectedAlgoNames.join('、') : '关闭所有行为检测'}</p>
+                    <p>• 人脸识别追溯辅助: {faceAssistEnabled ? '已挂载' : '未挂载'}</p>
                   </div>
                 </div>
               )}
