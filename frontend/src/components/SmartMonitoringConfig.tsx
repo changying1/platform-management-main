@@ -27,6 +27,7 @@ import {
   stopAIMonitoring,
   updateDeviceRules,
   getAIRules,
+  getDeviceRules,
   Video,
   AIRule,
 } from '../api/videoApi';
@@ -164,6 +165,11 @@ export default function SmartMonitoringConfig({
   const [selectedAlgos, setSelectedAlgos] = useState<Set<string>>(
     () => new Set(initialSelectedAlgoIds)
   );
+  const [currentDeviceId, setCurrentDeviceId] = useState<number | null>(
+    initialSelectedDeviceIds.length > 0 ? initialSelectedDeviceIds[0] : null
+  );
+  const [appliedAlgorithmsByDevice, setAppliedAlgorithmsByDevice] = useState<Record<number, string[]>>({});
+  const [deviceAiEnabledMap, setDeviceAiEnabledMap] = useState<Record<number, boolean>>({});
   
   const [autoStart, setAutoStart] = useState(true);
   const [configuring, setConfiguring] = useState(false);
@@ -177,6 +183,58 @@ export default function SmartMonitoringConfig({
   useEffect(() => {
     fetchAIRules();
   }, []);
+
+  const normalizeRuleCodes = (rules: unknown): string[] => {
+    if (!Array.isArray(rules)) return [];
+    return rules
+      .map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (item && typeof item === 'object') {
+          const record = item as Record<string, unknown>;
+          return String(record.code || record.key || record.id || '').trim();
+        }
+        return '';
+      })
+      .filter(Boolean);
+  };
+
+  const refreshAppliedRules = async () => {
+    if (devices.length === 0) return;
+
+    const pairs = await Promise.all(
+      devices.map(async (device) => {
+        try {
+          const rules = await getDeviceRules(device.id);
+          return [device.id, normalizeRuleCodes(rules)] as const;
+        } catch {
+          return [device.id, []] as const;
+        }
+      })
+    );
+
+    const nextApplied: Record<number, string[]> = {};
+    const nextEnabled: Record<number, boolean> = {};
+    const enabledDeviceIds: number[] = [];
+
+    pairs.forEach(([deviceId, rules]) => {
+      nextApplied[deviceId] = rules;
+      nextEnabled[deviceId] = rules.length > 0;
+      if (rules.length > 0) {
+        enabledDeviceIds.push(deviceId);
+      }
+    });
+
+    setAppliedAlgorithmsByDevice(nextApplied);
+    setDeviceAiEnabledMap(nextEnabled);
+
+    setSelectedDevices(new Set(enabledDeviceIds));
+
+    const nextDeviceId = currentDeviceId && nextApplied[currentDeviceId]
+      ? currentDeviceId
+      : enabledDeviceIds[0] || devices[0]?.id || null;
+    setCurrentDeviceId(nextDeviceId);
+    setSelectedAlgos(new Set(nextDeviceId ? (nextApplied[nextDeviceId] || []) : []));
+  };
 
   // ✅ 当 algos 首次加载完成后，同步初始选中的算法
   useEffect(() => {
@@ -198,8 +256,23 @@ export default function SmartMonitoringConfig({
   useEffect(() => {
     if (initialSelectedDeviceIds.length > 0) {
       setSelectedDevices(new Set(initialSelectedDeviceIds));
+      setCurrentDeviceId(initialSelectedDeviceIds[0]);
     }
   }, [initialSelectedDeviceIds]);
+
+  useEffect(() => {
+    if (algos.length > 0 && devices.length > 0) {
+      refreshAppliedRules().catch((error) => {
+        console.warn('加载设备 AI 规则失败:', error);
+      });
+    }
+  }, [algos, devices]);
+
+  useEffect(() => {
+    if (currentDeviceId !== null && appliedAlgorithmsByDevice[currentDeviceId]) {
+      setSelectedAlgos(new Set(appliedAlgorithmsByDevice[currentDeviceId]));
+    }
+  }, [currentDeviceId, appliedAlgorithmsByDevice]);
 
   // ✅ 删除重复的 useEffect（第 86 行附近的那个）
 
@@ -333,11 +406,17 @@ export default function SmartMonitoringConfig({
     const newSelected = new Set(selectedDevices);
     filteredDevices.forEach(device => newSelected.add(device.id));
     setSelectedDevices(newSelected);
+    if (filteredDevices.length > 0) {
+      setCurrentDeviceId(filteredDevices[0].id);
+      setSelectedAlgos(new Set(appliedAlgorithmsByDevice[filteredDevices[0].id] || []));
+    }
   };
 
   // 清空选择
   const clearSelection = () => {
     setSelectedDevices(new Set());
+    setCurrentDeviceId(null);
+    setSelectedAlgos(new Set());
   };
 
   // 切换设备选择
@@ -349,6 +428,8 @@ export default function SmartMonitoringConfig({
       newSelected.add(deviceId);
     }
     setSelectedDevices(newSelected);
+    setCurrentDeviceId(deviceId);
+    setSelectedAlgos(new Set(appliedAlgorithmsByDevice[deviceId] || []));
   };
 
   // 切换算法选择
@@ -382,9 +463,13 @@ export default function SmartMonitoringConfig({
     setConfiguring(true);
     setConfigResults(new Map());
 
-    const deviceArray = Array.from(selectedDevices);
-    const algoString = Array.from(selectedAlgos).join(',');
+    const enabledDeviceIds = Object.entries(deviceAiEnabledMap)
+      .filter(([, enabled]) => enabled)
+      .map(([deviceId]) => Number(deviceId))
+      .filter((deviceId) => !Number.isNaN(deviceId));
+    const deviceArray = Array.from(new Set([...enabledDeviceIds, ...Array.from(selectedDevices)]));
     const algoList = Array.from(selectedAlgos);
+    const algoString = algoList.join(',');
     const shouldStartMonitoring = autoStart && algoList.length > 0;
 
     for (let i = 0; i < deviceArray.length; i++) {
@@ -410,26 +495,29 @@ export default function SmartMonitoringConfig({
       }
 
       try {
-        await updateDeviceRules(deviceId, algoList);
+        const shouldEnable = selectedDevices.has(deviceId) && algoList.length > 0;
+        const wasEnabled = !!deviceAiEnabledMap[deviceId];
 
-        // 先停止现有的监控
-        await stopAIMonitoring(String(deviceId));
+        if (!shouldEnable && !wasEnabled) {
+          continue;
+        }
 
-        // 启动新的监控；如果没有选择算法，则表示关闭 AI
-        if (shouldStartMonitoring) {
-          // 优先尝试一次性传入多算法；若后端不支持，再降级为逐个算法启动
+        await updateDeviceRules(deviceId, shouldEnable ? algoList : []);
+
+        if (shouldEnable && shouldStartMonitoring) {
           try {
             await startAIMonitoring(String(deviceId), streamSource, algoString);
           } catch (batchError: any) {
-            const selectedAlgoList = Array.from(selectedAlgos);
-            if (selectedAlgoList.length <= 1) {
+            if (algoList.length <= 1) {
               throw batchError;
             }
 
-            for (const algo of selectedAlgoList) {
+            for (const algo of algoList) {
               await startAIMonitoring(String(deviceId), streamSource, algo);
             }
           }
+        } else if (wasEnabled) {
+          await stopAIMonitoring(String(deviceId));
         }
 
         const resultMessage = algoList.length > 0
@@ -451,6 +539,7 @@ export default function SmartMonitoringConfig({
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    await refreshAppliedRules();
     setConfiguring(false);
     if (onSuccess) onSuccess();
     

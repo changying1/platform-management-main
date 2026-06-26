@@ -926,7 +926,11 @@ public class LiveFragment extends Fragment {
                     CheckBox cb = aiRuleCheckBoxes.get(key);
                     if (cb != null) cb.setChecked(true);
                 }
-                Log.i(TAG, "load device ai rules success, count=" + rules.size());
+                int enabledCount = rules.size();
+                Log.i(TAG, "load device ai rules success, count=" + enabledCount);
+                setAiStatus(enabledCount > 0
+                        ? "状态：已启用 " + enabledCount + " 个AI功能"
+                        : "状态：未启用AI监测");
             }
 
             @Override
@@ -959,8 +963,11 @@ public class LiveFragment extends Fragment {
             public void onResponse(Call<Map<String, Object>> call, Response<Map<String, Object>> response) {
                 if (!isAdded()) return;
                 if (response.isSuccessful()) {
-                    setAiStatus("状态：AI配置已保存");
-                    Toast.makeText(requireContext(), "AI配置已保存", Toast.LENGTH_SHORT).show();
+                    if (rules.isEmpty()) {
+                        stopAIMonitor(true);
+                    } else {
+                        startSelectedAIMonitor(rules, true);
+                    }
                 } else {
                     Toast.makeText(requireContext(), "AI配置保存失败: " + response.code(), Toast.LENGTH_SHORT).show();
                 }
@@ -976,8 +983,11 @@ public class LiveFragment extends Fragment {
     }
 
     private void startSelectedAIMonitor() {
+        startSelectedAIMonitor(collectSelectedAiRules(), false);
+    }
+
+    private void startSelectedAIMonitor(List<String> rules, boolean reloadAfter) {
         if (!isDeviceIdValid()) return;
-        ArrayList<String> rules = collectSelectedAiRules();
         if (rules.isEmpty()) {
             Toast.makeText(requireContext(), "请至少选择一个AI监测功能", Toast.LENGTH_SHORT).show();
             return;
@@ -1001,6 +1011,9 @@ public class LiveFragment extends Fragment {
                     setAiStatus("状态：AI监测启动失败");
                     Toast.makeText(requireContext(), "AI启动失败: " + response.code(), Toast.LENGTH_SHORT).show();
                 }
+                if (reloadAfter) {
+                    loadDeviceAiRules();
+                }
             }
 
             @Override
@@ -1014,6 +1027,10 @@ public class LiveFragment extends Fragment {
     }
 
     private void stopAIMonitor() {
+        stopAIMonitor(false);
+    }
+
+    private void stopAIMonitor(boolean reloadAfter) {
         if (!isDeviceIdValid()) return;
         Log.i(TAG, "stop ai monitor");
         setAiStatus("状态：正在停止AI监测...");
@@ -1021,8 +1038,16 @@ public class LiveFragment extends Fragment {
             @Override
             public void onResponse(Call<Map<String, Object>> call, Response<Map<String, Object>> response) {
                 if (!isAdded()) return;
-                setAiStatus("状态：AI监测已停止");
-                Toast.makeText(requireContext(), "AI监测已停止", Toast.LENGTH_SHORT).show();
+                if (response.isSuccessful()) {
+                    setAiStatus("状态：AI监测已停止");
+                    Toast.makeText(requireContext(), "AI监测已停止", Toast.LENGTH_SHORT).show();
+                } else {
+                    setAiStatus("状态：AI监测停止失败");
+                    Toast.makeText(requireContext(), "停止失败: " + response.code(), Toast.LENGTH_SHORT).show();
+                }
+                if (reloadAfter) {
+                    loadDeviceAiRules();
+                }
             }
 
             @Override
