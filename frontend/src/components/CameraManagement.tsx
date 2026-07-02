@@ -156,7 +156,9 @@ const mapVideoToCamera = (video: Video, units = orgUnits): Camera => {
     teamId: video.team_id || '',
     admin: video.username || '',
     adminPhone: '',
-    status: video.status === 'online' ? 'online' : 'offline',
+    status: (['online', 'offline', 'fault', 'maintaining'].includes(String(video.status))
+      ? video.status
+      : 'offline') as Camera['status'],
     type,
     rtspUrl: video.rtsp_url || video.stream_url || '',
     remark: video.remark || '',
@@ -237,6 +239,8 @@ useEffect(() => {
 const [showRepairModal, setShowRepairModal] = useState(false);
   const [repairCamera, setRepairCamera] = useState<Camera | null>(null);
   const [repairReason, setRepairReason] = useState('');
+  const [repairNotice, setRepairNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [repairSubmitting, setRepairSubmitting] = useState(false);
   const [editingItem, setEditingItem] = useState<Camera | null>(null);
   const [formNotice, setFormNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -386,22 +390,57 @@ const confirmImport = () => {
   const handleRepair = (camera: Camera) => {
     setRepairCamera(camera);
     setRepairReason('');
+    setRepairNotice(null);
     setShowRepairModal(true);
   };
 
-  const confirmRepair = () => {
-    if (repairCamera && repairReason) {
-      setCameras(cameras.map(c => 
-        c.id === repairCamera.id 
-          ? { ...c, status: 'maintaining', faultReason: repairReason, lastMaintenance: new Date().toISOString().split('T')[0] }
+  const closeRepairModal = () => {
+    setShowRepairModal(false);
+    setRepairCamera(null);
+    setRepairReason('');
+    setRepairNotice(null);
+  };
+
+  const confirmRepair = async () => {
+    if (!repairCamera) return;
+    const reason = repairReason.trim();
+    if (!reason) {
+      setRepairNotice({ type: 'error', message: '请填写故障原因' });
+      return;
+    }
+    setRepairSubmitting(true);
+    setRepairNotice(null);
+    try {
+      await updateVideo(repairCamera.id, {
+        status: 'maintaining',
+        remark: repairCamera.remark || repairCamera.location,
+      });
+      setCameras(cameras.map(c =>
+        c.id === repairCamera.id
+          ? { ...c, status: 'maintaining', faultReason: reason, lastMaintenance: new Date().toISOString().split('T')[0] }
           : c
       ));
-      setShowRepairModal(false);
-      setRepairCamera(null);
-      setRepairReason('');
-      alert('报修成功，设备状态已更新为"维修中"');
-    } else {
-      alert('请填写故障原因');
+      await fetchCameras();
+      setRepairNotice({ type: 'success', message: '报修成功，设备状态已更新为“维修中”' });
+      window.setTimeout(() => {
+        closeRepairModal();
+      }, 700);
+    } catch (error) {
+      console.error('提交报修失败', error);
+      setRepairNotice({ type: 'error', message: '报修失败，请稍后重试' });
+    } finally {
+      setRepairSubmitting(false);
+    }
+  };
+
+  const restoreFromMaintaining = async (camera: Camera) => {
+    const nextStatus: Camera['status'] = 'offline';
+    try {
+      await updateVideo(camera.id, { status: nextStatus });
+      setCameras(cameras.map(c => c.id === camera.id ? { ...c, status: nextStatus } : c));
+      await fetchCameras();
+    } catch (error) {
+      console.error('解除维修状态失败', error);
     }
   };
 
@@ -575,6 +614,15 @@ const confirmImport = () => {
                         onClick={() => handleRepair(camera)}
                         className="p-1 hover:bg-yellow-500/20 rounded text-yellow-400"
                         title="报修"
+                      >
+                        <Wrench size={16} />
+                      </button>
+                    )}
+                    {camera.status === 'maintaining' && (
+                      <button
+                        onClick={() => restoreFromMaintaining(camera)}
+                        className="p-1 hover:bg-green-500/20 rounded text-green-400"
+                        title="解除维修"
                       >
                         <Wrench size={16} />
                       </button>
@@ -907,7 +955,7 @@ const confirmImport = () => {
           rtsp_url: editingItem.rtspUrl || `rtsp://ezopen://open.ys7.com/${editingItem.deviceCode}/${editingItem.channelNo || 1}`,
           stream_url: editingItem.rtspUrl || undefined,
           device_type: editingItem.type || 'bullet',
-          status: editingItem.status === 'online' ? 'online' : 'offline',
+          status: editingItem.status || 'offline',
           remark: editingItem.remark || editingItem.location,
           platform_type: editingItem.type === 'dome' ? 'ezviz' : 'onvif',
           access_source: editingItem.type === 'dome' ? 'cloud' : 'local',
@@ -961,7 +1009,7 @@ const confirmImport = () => {
           <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[450px] p-6 shadow-2xl">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-slate-100">设备报修</h3>
-              <button onClick={() => setShowRepairModal(false)} className="text-slate-400 hover:text-slate-200">
+              <button onClick={closeRepairModal} className="text-slate-400 hover:text-slate-200">
                 <X size={20} />
               </button>
             </div>
@@ -984,16 +1032,27 @@ const confirmImport = () => {
                 />
               </div>
             </div>
+
+            {repairNotice && (
+              <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+                repairNotice.type === 'success'
+                  ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-300'
+                  : 'bg-red-500/10 border-red-400/30 text-red-300'
+              }`}>
+                {repairNotice.message}
+              </div>
+            )}
             
             <div className="flex gap-3 mt-6">
               <button 
                 onClick={confirmRepair}
-                className="flex-1 bg-yellow-500 hover:bg-yellow-400 py-2 rounded text-sm font-bold text-slate-900"
+                disabled={repairSubmitting}
+                className="flex-1 bg-yellow-500 hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-60 py-2 rounded text-sm font-bold text-slate-900"
               >
-                提交报修
+                {repairSubmitting ? '提交中...' : '提交报修'}
               </button>
               <button 
-                onClick={() => setShowRepairModal(false)} 
+                onClick={closeRepairModal} 
                 className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-sm text-slate-100"
               >
                 取消

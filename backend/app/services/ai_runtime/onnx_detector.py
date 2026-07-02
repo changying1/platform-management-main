@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import os
 
 import cv2
 import numpy as np
@@ -28,7 +29,12 @@ class OnnxDetector:
         except Exception as exc:
             raise RuntimeError(f"onnxruntime 未安装或加载失败: {exc}") from exc
 
-        self._session = ort.InferenceSession(str(self.model_path), providers=["CPUExecutionProvider"])
+        available = set(ort.get_available_providers())
+        preferred = []
+        if os.getenv("AI_ONNX_DEVICE", "auto").lower() in {"auto", "cuda", "gpu"} and "CUDAExecutionProvider" in available:
+            preferred.append("CUDAExecutionProvider")
+        preferred.append("CPUExecutionProvider")
+        self._session = ort.InferenceSession(str(self.model_path), providers=preferred)
         self._input_name = self._session.get_inputs()[0].name
         return self._session
 

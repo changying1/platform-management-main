@@ -16,6 +16,7 @@ opencv-python-headless>=4.10.0.84
 shapely>=2.0.3
 scikit-learn>=1.4.0
 pillow>=10.0.0
+pytesseract>=0.3.13
 
 # --- Web 后端基础 (保留你原有的) ---
 flask

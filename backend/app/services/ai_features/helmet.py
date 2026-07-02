@@ -23,5 +23,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("helmet", "安全帽检测")
-def detect_safety_helmet(service, frame):
-    return legacy_alarm_detect(service, "helmet", frame)
+def detect_safety_helmet(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "helmet", frame, device_id=device_id)

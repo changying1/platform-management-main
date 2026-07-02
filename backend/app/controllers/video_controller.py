@@ -3,6 +3,8 @@ from starlette.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import base64
+import numpy as np
 from app.core.database import get_db
 from app.core.data_scope import in_scope
 from app.core.security import get_current_user
@@ -28,6 +30,7 @@ import cv2
 import time
 import threading
 import re
+import os
 from datetime import datetime
 # --- 在现有的 import 语句下面添加 ---
 from app.services.ai_manager import ai_manager
@@ -108,10 +111,35 @@ def _video_audit_name(video_obj, fallback: str = "") -> str:
     )
 
 
+def _video_status_action(before_status: str, after_status: str) -> str:
+    before_status = str(before_status or "").strip().lower()
+    after_status = str(after_status or "").strip().lower()
+    if before_status == after_status:
+        return "变更设备信息"
+    if after_status == "maintaining":
+        return "设备报修"
+    if before_status == "maintaining":
+        return "解除维修"
+    return "变更设备状态"
+
+
 class AIMonitorRequest(BaseModel):
     device_id: str
     rtsp_url: str | None = None
     algo_type: str = "helmet"
+
+
+class AIFrameDetectRequest(BaseModel):
+    image: str
+    algo_type: str = "person,face"
+    capture_time: float | None = None
+
+
+class BoxedRecordingRequest(BaseModel):
+    web_path: str
+    algorithm: str = "person"
+    frame_stride: int = 5
+    force: bool = False
 
 
 class DeviceRulesUpdateRequest(BaseModel):
@@ -141,6 +169,46 @@ def _get_persisted_device_rules(video_id: int | str) -> list[str]:
                 seen.add(rule)
                 result.append(rule)
     return result
+
+
+def _is_ai_decodable_stream_url(url: str | None) -> bool:
+    lowered = str(url or "").strip().lower()
+    if not lowered or "ezopen://" in lowered:
+        return False
+    return lowered.startswith(("rtsp://", "http://", "https://", "rtmp://"))
+
+
+def _resolve_ai_stream_url(db, device_id: str, db_video, requested_url: str) -> tuple[str, str]:
+    if _is_ai_decodable_stream_url(requested_url):
+        return requested_url.strip(), "request"
+
+    if not db_video or not getattr(db_video, "device_serial", None) or not device_id.isdigit():
+        return "", ""
+
+    attempts: list[str] = []
+    for protocol in ("flv", "hls", "rtmp", "ezopen"):
+        try:
+            stream_info = service.get_stream_info(db, int(device_id), protocol=protocol) or {}
+            stream_url = str(stream_info.get("url") or "").strip()
+            play_type = str(stream_info.get("play_type") or protocol or "").strip()
+            attempts.append(f"{protocol}:{play_type}:{stream_url[:24]}")
+            if _is_ai_decodable_stream_url(stream_url):
+                logger.info(
+                    "Resolved EZVIZ AI stream device_id=%s protocol=%s play_type=%s",
+                    device_id,
+                    protocol,
+                    play_type,
+                )
+                return stream_url, protocol
+        except Exception as exc:
+            attempts.append(f"{protocol}:error:{exc}")
+
+    logger.warning(
+        "No decodable EZVIZ AI stream for device_id=%s attempts=%s",
+        device_id,
+        " | ".join(attempts),
+    )
+    return "", ""
 
 
 class PlaybackSaveRequest(BaseModel):
@@ -180,27 +248,30 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db), current_user: dict
             if candidate.lower().startswith("rtsp://"):
                 rtsp_url = candidate
 
-    rtsp_url_lower = rtsp_url.lower()
+    ai_stream_url, ai_stream_source = _resolve_ai_stream_url(db, device_id, db_video, rtsp_url)
+    rtsp_url_lower = (ai_stream_url or rtsp_url).lower()
     stream_protocol = str(getattr(db_video, "stream_protocol", "") or "").lower() if db_video else ""
     platform_type = str(getattr(db_video, "platform_type", "") or "").lower() if db_video else ""
     access_source = str(getattr(db_video, "access_source", "") or "").lower() if db_video else ""
     has_ezviz_serial = bool(db_video and getattr(db_video, "device_serial", None))
-    is_ezviz_pseudo_rtsp = "ezopen" in rtsp_url_lower
+    is_ezviz_pseudo_rtsp = "ezopen" in str(rtsp_url or "").lower() or "ezopen" in rtsp_url_lower
     is_ezviz_cloud = has_ezviz_serial and (
         platform_type == "ezviz"
         or stream_protocol == "ezopen"
         or access_source == "cloud"
         or is_ezviz_pseudo_rtsp
     )
-    has_valid_rtsp = rtsp_url_lower.startswith("rtsp://") and not is_ezviz_pseudo_rtsp
+    has_valid_rtsp = rtsp_url_lower.startswith("rtsp://") and "ezopen://" not in rtsp_url_lower
+    has_decodable_stream = _is_ai_decodable_stream_url(ai_stream_url)
 
     print(
         f"[ALARM_API_START_REQ] device_id={device_id} has_valid_rtsp={has_valid_rtsp} "
+        f"has_decodable_stream={has_decodable_stream} ai_stream_source={ai_stream_source or '-'} "
         f"is_ezviz_cloud={is_ezviz_cloud} is_ezviz_pseudo_rtsp={is_ezviz_pseudo_rtsp} "
         f"algo_type={str(req.algo_type or '').strip() or 'helmet'}"
     )
 
-    if (not has_valid_rtsp) and (not is_ezviz_cloud):
+    if (not has_decodable_stream) and (not is_ezviz_cloud):
         print(
             f"[ALARM_API_START_REJECTED] device_id={device_id} reason=missing_rtsp_and_non_ezviz"
         )
@@ -210,7 +281,7 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db), current_user: dict
         )
 
     algo_type = str(req.algo_type or "").strip() or "helmet"
-    success = ai_manager.start_monitoring(device_id, rtsp_url if has_valid_rtsp else "", algo_type)
+    success = ai_manager.start_monitoring(device_id, ai_stream_url if has_decodable_stream else "", algo_type)
 
     if success:
         print(f"[ALARM_API_START_OK] device_id={device_id} algo_type={algo_type}")
@@ -279,6 +350,61 @@ def get_ai_rules(current_user: dict = Depends(get_current_user)):
         "code": 0,
         "data": result
     }
+
+
+@router.get("/ai/tracks/{video_id}")
+def get_ai_person_tracks(video_id: int, current_user: dict = Depends(get_current_user)):
+    """Return the latest person tracking boxes for the live video overlay."""
+    _require_video_scope(video_id, current_user)
+    return ai_manager.get_latest_person_tracks(video_id)
+
+
+@router.post("/ai/frame/{video_id}")
+def detect_ai_frame(video_id: int, body: AIFrameDetectRequest, current_user: dict = Depends(get_current_user)):
+    """Detect the exact frame captured from the currently displayed player."""
+    request_started_at = datetime.now()
+    _require_video_scope(video_id, current_user)
+    image_text = str(body.image or "")
+    if "," in image_text and image_text.lower().startswith("data:"):
+        image_text = image_text.split(",", 1)[1]
+    try:
+        raw = base64.b64decode(image_text, validate=False)
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid frame image: {exc}")
+    if frame is None:
+        raise HTTPException(status_code=400, detail="invalid frame image")
+    debug_frame_url = ""
+    if os.getenv("AI_FRAME_DEBUG_IMAGE", "0") == "1":
+        debug_dir = os.path.join(os.getcwd(), "static", "debug_ai_frames")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_filename = f"frontend_frame_{video_id}.jpg"
+        debug_path = os.path.join(debug_dir, debug_filename)
+        cv2.imwrite(debug_path, frame)
+        debug_frame_url = f"/static/debug_ai_frames/{debug_filename}"
+    detect_started_at = datetime.now()
+    payload = ai_manager.detect_frontend_frame(video_id, frame, body.algo_type)
+    finished_at = datetime.now()
+    payload["tracks"] = [track for track in (payload.get("tracks") or []) if int(track.get("misses", 0) or 0) == 0]
+    payload["source"] = "frontend_frame"
+    payload["timestamp"] = finished_at.isoformat()
+    payload["age_ms"] = 0
+    payload["stale"] = False
+    payload["capture_time"] = body.capture_time
+    payload["server_received_at"] = request_started_at.isoformat()
+    payload["server_detect_started_at"] = detect_started_at.isoformat()
+    payload["server_finished_at"] = finished_at.isoformat()
+    payload["decode_elapsed_ms"] = int((detect_started_at - request_started_at).total_seconds() * 1000)
+    payload["detect_elapsed_ms"] = int((finished_at - detect_started_at).total_seconds() * 1000)
+    payload["server_elapsed_ms"] = int((finished_at - request_started_at).total_seconds() * 1000)
+    payload["debug_frame_url"] = debug_frame_url
+    print(
+        f"[AI_FRAME_DETECT] video_id={video_id} frame={frame.shape[1]}x{frame.shape[0]} "
+        f"tracks={len(payload.get('tracks') or [])} elapsed_ms={payload['server_elapsed_ms']}"
+    )
+    return payload
+
 
 @router.post("/add_camera", response_model=VideoOut)
 def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -408,6 +534,28 @@ def update_video(video_id: int, video: VideoUpdate, db=Depends(get_db), current_
     if not updated_video:
         raise HTTPException(status_code=404, detail="Video device not found")
     snapshot = _video_audit_snapshot(updated_video)
+    before_status = str(before_snapshot.get("status") or "")
+    after_status = str(snapshot.get("status") or "")
+    action = _video_status_action(before_status, after_status)
+    if before_status != after_status:
+        details = "device status changed from %s to %s" % (before_status or "-", after_status or "-")
+    else:
+        details = ""
+    write_audit_log(
+        current_user=current_user,
+        action=action,
+        target_type="device",
+        target_name=_video_audit_name(snapshot, str(video_id)),
+        details=details,
+        before=before_snapshot,
+        after=snapshot,
+        company=snapshot.get("company"),
+        project=snapshot.get("project"),
+        grid=snapshot.get("grid") or snapshot.get("grid_name") or snapshot.get("grid_id"),
+        team=snapshot.get("team"),
+    )
+    return updated_video
+    details = f"设备状态由 {before_status or '-'} 变更为 {after_status or '-'}" if before_status != after_status else ""
     write_audit_log(
         current_user=current_user,
         action="变更设备信息",
@@ -1019,6 +1167,32 @@ def list_recording_videos(
         return {"code": 0, "data": videos, "total": len(videos)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取录制视频列表失败: {e}")
+
+
+@router.post("/{video_id}/recordings/boxed")
+def generate_boxed_recording(
+    video_id: int,
+    body: BoxedRecordingRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Generate a boxed copy of a regular recording without modifying the source file."""
+    try:
+        _require_video_scope(video_id, current_user)
+        result = service.generate_boxed_recording_video(
+            video_id=video_id,
+            web_path=body.web_path,
+            algorithm=body.algorithm or "person",
+            frame_stride=max(1, min(int(body.frame_stride or 5), 60)),
+            force=bool(body.force),
+        )
+        return {"code": 0, "data": result}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("generate boxed recording failed video_id=%s", video_id)
+        raise HTTPException(status_code=500, detail=f"生成带框录像失败: {e}")
 
 
 @router.get("/{video_id}/alarms/videos")

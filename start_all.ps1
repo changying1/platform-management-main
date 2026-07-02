@@ -93,6 +93,9 @@ function Find-Mongod {
 }
 
 function Find-Python {
+    $facenetPython = "D:\Anaconda\envs\facenet_env\python.exe"
+    if (Test-Path $facenetPython) { return $facenetPython }
+
     $condaPython = "D:\Anaconda\python.exe"
     if (Test-Path $condaPython) { return $condaPython }
 
@@ -211,15 +214,28 @@ function Start-MediaServer {
     $mediaErr = Join-Path $LogDir "media_server.err.log"
 
     Write-Host "[..] Starting media server on 8001/19350..."
-    Start-Process -FilePath $npm.Source `
+    $mediaProcess = Start-Process -FilePath $npm.Source `
         -ArgumentList "start" `
         -WorkingDirectory $MediaServerDir `
         -RedirectStandardOutput $mediaOut `
         -RedirectStandardError $mediaErr `
-        -WindowStyle Hidden
+        -WindowStyle Hidden `
+        -PassThru
 
-    $httpOk = Wait-LocalPort -Port 8001 -Seconds 15
-    $rtmpOk = Wait-LocalPort -Port 19350 -Seconds 15
+    $httpOk = $false
+    $rtmpOk = $false
+    for ($i = 0; $i -lt 15; $i++) {
+        if ($mediaProcess.HasExited) {
+            Write-Host "[WARN] Media server process exited early. Check $mediaErr"
+            break
+        }
+        $httpOk = Test-LocalPort -Port 8001
+        $rtmpOk = Test-LocalPort -Port 19350
+        if ($httpOk -and $rtmpOk) {
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
     if ($httpOk -and $rtmpOk) {
         Write-Host "[OK] Media server started on http://localhost:8001 and rtmp://localhost:19350"
     } else {
@@ -259,8 +275,8 @@ function Start-Ollama {
 }
 
 function Start-Frontend {
-    $frontendPort = 3000
     Stop-FrontendPorts
+    Stop-LocalPort -Port 8080 -Name "web gateway"
 
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if (-not $npm) {
@@ -268,27 +284,43 @@ function Start-Frontend {
         return
     }
 
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $node) {
+        Write-Host "[WARN] node.exe not found. Please install Node.js or add node to PATH."
+        return
+    }
+
     $frontendOut = Join-Path $LogDir "frontend.out.log"
     $frontendErr = Join-Path $LogDir "frontend.err.log"
+    $gatewayOut = Join-Path $LogDir "gateway.out.log"
+    $gatewayErr = Join-Path $LogDir "gateway.err.log"
 
-    Write-Host "[..] Starting frontend..."
-    Start-Process -FilePath $npm.Source `
-        -ArgumentList "run", "dev", "--", "--host", "0.0.0.0" `
-        -WorkingDirectory $FrontendDir `
-        -RedirectStandardOutput $frontendOut `
-        -RedirectStandardError $frontendErr `
+    Write-Host "[..] Building frontend for gateway..."
+    Push-Location $FrontendDir
+    $saveEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $npm.Source run build 2>&1 | Out-File -FilePath $frontendOut
+    $buildFailed = $LASTEXITCODE -ne 0
+    $ErrorActionPreference = $saveEAP
+    Pop-Location
+
+    if ($buildFailed) {
+        Write-Host "[WARN] Frontend build failed. Check $frontendOut"
+        return
+    }
+
+    Write-Host "[..] Starting web gateway on 8080..."
+    Start-Process -FilePath $node.Source `
+        -ArgumentList "gateway.js" `
+        -WorkingDirectory $Root `
+        -RedirectStandardOutput $gatewayOut `
+        -RedirectStandardError $gatewayErr `
         -WindowStyle Hidden
 
-    Start-Sleep -Seconds 4
-    $vitePort = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-        Where-Object { $_.LocalPort -ge 3000 -and $_.LocalPort -le 3010 } |
-        Sort-Object LocalPort |
-        Select-Object -First 1 -ExpandProperty LocalPort
-
-    if ($vitePort) {
-        Write-Host "[OK] Frontend started on http://localhost:$vitePort"
+    if (Wait-LocalPort -Port 8080 -Seconds 10) {
+        Write-Host "[OK] Web gateway started on http://localhost:8080"
     } else {
-        Write-Host "[WARN] Frontend did not open a 3000-3010 port. Check $frontendErr"
+        Write-Host "[WARN] Web gateway did not open 8080. Check $gatewayErr"
     }
 }
 
@@ -307,7 +339,7 @@ Start-Frontend
 
 Write-Host "============================================================"
 Write-Host "Done."
-Write-Host "Frontend: http://localhost:3000  (or the 3001+ port printed above)"
+Write-Host "Web/API gateway: http://localhost:8080  (use this for SakuraFrp web tunnel)"
 Write-Host "Backend:  http://localhost:9000"
 Write-Host "Media:    http://localhost:8001/live/{id}.flv  RTMP: rtmp://localhost:19350/live/{id}"
 Write-Host "MongoDB:  mongodb://127.0.0.1:27017"

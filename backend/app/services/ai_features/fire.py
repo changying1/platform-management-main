@@ -23,5 +23,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("fire", "火焰检测")
-def detect_fire_alarm(service, frame):
-    return legacy_alarm_detect(service, "fire", frame)
+def detect_fire_alarm(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "fire", frame, device_id=device_id)

@@ -184,6 +184,10 @@ def get_current_user(
     x_department_id: str | None = Header(default=None, alias="X-Department-Id"),
     x_username: str | None = Header(default=None, alias="X-Username"),
     x_permission_level: str | None = Header(default=None, alias="X-Permission-Level"),
+    x_project_id: str | None = Header(default=None, alias="X-Project-Id"),
+    x_project: str | None = Header(default=None, alias="X-Project"),
+    x_grid_id: str | None = Header(default=None, alias="X-Grid-Id"),
+    x_team_id: str | None = Header(default=None, alias="X-Team-Id"),
     x_auth_token: str | None = Header(default=None, alias="X-Auth-Token"),
     authorization: str | None = Header(default=None, alias="Authorization"),
     auth_token: str | None = Cookie(default=None),
@@ -195,11 +199,36 @@ def get_current_user(
 
     current_user = current_user_from_token(x_auth_token or bearer_token or auth_token or token)
     if current_user:
+        if x_department_id and not current_user.get("department_id"):
+            current_user["department_id"] = _normalize_department_id(x_department_id)
+        if x_department_id and not current_user.get("branch_id"):
+            current_user["branch_id"] = x_department_id
+        if x_project_id and not current_user.get("project_id"):
+            current_user["project_id"] = x_project_id
+        if x_project and not current_user.get("project"):
+            current_user["project"] = x_project
+        if x_grid_id and not current_user.get("grid_id"):
+            current_user["grid_id"] = x_grid_id
+        if x_team_id and not current_user.get("team_id"):
+            current_user["team_id"] = x_team_id
         return current_user
 
     header_user = _find_user(x_username)
     if header_user:
-        return _user_to_current_user(header_user)
+        current_user = _user_to_current_user(header_user)
+        if x_department_id and not current_user.get("department_id"):
+            current_user["department_id"] = _normalize_department_id(x_department_id)
+        if x_department_id and not current_user.get("branch_id"):
+            current_user["branch_id"] = x_department_id
+        if x_project_id and not current_user.get("project_id"):
+            current_user["project_id"] = x_project_id
+        if x_project and not current_user.get("project"):
+            current_user["project"] = x_project
+        if x_grid_id and not current_user.get("grid_id"):
+            current_user["grid_id"] = x_grid_id
+        if x_team_id and not current_user.get("team_id"):
+            current_user["team_id"] = x_team_id
+        return current_user
 
     raise HTTPException(status_code=401, detail="未登录或登录已过期")
 

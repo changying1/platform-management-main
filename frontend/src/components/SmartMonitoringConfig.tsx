@@ -218,6 +218,7 @@ export default function SmartMonitoringConfig({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['filter']));
   const [showPreview, setShowPreview] = useState(false);
   const [isAlgosLoaded, setIsAlgosLoaded] = useState(false); // ✅ 添加标记
+  const [hasUserEditedAlgos, setHasUserEditedAlgos] = useState(false);
 
   // ✅ 只保留一个 fetchAIRules 调用
   useEffect(() => {
@@ -279,7 +280,13 @@ export default function SmartMonitoringConfig({
   }, [initialSelectedDeviceIds]);
 
   useEffect(() => {
-    if (selectedDevices.size === 0 || algos.length === 0 || deviceRules.size === 0) {
+    if (
+      hasUserEditedAlgos ||
+      initialSelectedAlgoIds.length > 0 ||
+      selectedDevices.size === 0 ||
+      algos.length === 0 ||
+      deviceRules.size === 0
+    ) {
       return;
     }
 
@@ -287,20 +294,24 @@ export default function SmartMonitoringConfig({
     const mergedRules = new Set<string>();
     selectedDevices.forEach(deviceId => {
       (deviceRules.get(deviceId) || []).forEach(ruleId => {
-        if (behaviorIds.has(ruleId) && ruleId !== 'face') {
+        if (behaviorIds.has(ruleId) && ruleId !== 'face' && ruleId !== 'person') {
           mergedRules.add(ruleId);
         }
       });
     });
 
+    const next = Array.from(mergedRules);
+    if (next.length === 0) {
+      return;
+    }
+
     setSelectedAlgos(prev => {
-      const next = Array.from(mergedRules);
       if (prev.size === next.length && next.every(ruleId => prev.has(ruleId))) {
         return prev;
       }
       return new Set(next);
     });
-  }, [selectedDevices, deviceRules, algos]);
+  }, [selectedDevices, deviceRules, algos, hasUserEditedAlgos, initialSelectedAlgoIds]);
 
   // ✅ 删除重复的 useEffect（第 86 行附近的那个）
 
@@ -308,6 +319,9 @@ export default function SmartMonitoringConfig({
     const defaultAlgos = [
       { id: "helmet", name: "安全帽检测", desc: "检测人员是否正确佩戴安全帽" },
       { id: "smoking", name: "吸烟检测", desc: "检测人员吸烟行为" },
+      { id: "fire", name: "烟火检测", desc: "检测烟火风险" },
+      { id: "vest", name: "反光衣检测", desc: "检测人员是否穿戴反光衣" },
+      { id: "phone", name: "打电话检测", desc: "检测人员打电话行为" },
     ];
     
     setAlgos(defaultAlgos);
@@ -325,7 +339,7 @@ export default function SmartMonitoringConfig({
           modelPath: rule.model_path || '',
         }));
         const auxiliaryFace = mapped.find(rule => rule.id === 'face' || rule.role === 'auxiliary') || null;
-        const behaviorRules = mapped.filter(rule => rule.id !== 'face' && rule.role !== 'auxiliary');
+        const behaviorRules = mapped.filter(rule => rule.id !== 'face' && rule.id !== 'person' && rule.role !== 'auxiliary');
         setFaceAssist(auxiliaryFace || {
           id: 'face',
           name: '人脸识别追溯辅助',
@@ -334,7 +348,7 @@ export default function SmartMonitoringConfig({
           category: '人员追溯辅助',
         });
         setAlgos(behaviorRules);
-        setSelectedAlgos(prev => new Set(Array.from(prev).filter(id => behaviorRules.some(rule => rule.id === id))));
+        setSelectedAlgos(prev => new Set(Array.from(prev).filter(id => id !== 'person' && behaviorRules.some(rule => rule.id === id))));
       }
     } catch (e) {
       console.log("后端AI规则暂不可用，使用默认列表");
@@ -516,6 +530,7 @@ export default function SmartMonitoringConfig({
   // 切换算法选择
   const toggleAlgo = (algoId: string) => {
     if (algoId === 'face' || !algos.some(algo => algo.id === algoId)) return;
+    setHasUserEditedAlgos(true);
     const newSelected = new Set(selectedAlgos);
     if (newSelected.has(algoId)) {
       newSelected.delete(algoId);
@@ -527,11 +542,13 @@ export default function SmartMonitoringConfig({
 
   // 选择所有算法
   const selectAllAlgos = () => {
+    setHasUserEditedAlgos(true);
     setSelectedAlgos(new Set(algos.map(a => a.id)));
   };
 
   // 清空算法选择
   const clearAllAlgos = () => {
+    setHasUserEditedAlgos(true);
     setSelectedAlgos(new Set());
   };
 

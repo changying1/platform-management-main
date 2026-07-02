@@ -56,7 +56,7 @@ export interface LocationDevice {
 // 导出具体的数据库操作接口
 export const deviceApi = {
   getLocationDevices: async () => {
-    const response = await apiClient.get<LocationDevice[]>("/device/list");
+    const response = await apiClient.get<LocationDevice[]>("/device/list", { timeout: 45000 });
     return response.data;
   },
 

@@ -63,6 +63,8 @@ export interface ProjectListItem {
   manager?: string;
   status: string;
   remark?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   branch_id?: number;
   branch_name?: string;
   user_count: number;
@@ -81,6 +83,8 @@ export interface ProjectDetail {
   manager?: string;
   status: string;
   remark?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   branch_id?: number;
   grid_ids?: string[];
   team_ids?: string[];
@@ -107,6 +111,8 @@ export interface ProjectFormData {
   manager: string;
   status: string;
   remark: string;
+  latitude?: number | null;
+  longitude?: number | null;
   branch_id?: number;
   user_ids: number[];
   device_ids: string[];

@@ -11,7 +11,7 @@ def runtime_detect(algorithm_code: str, frame: Any, **kwargs) -> dict:
     return detect_frame(algorithm_code, frame, **kwargs)
 
 
-def legacy_alarm_detect(service, algorithm_code: str, frame: Any, **kwargs):
+def legacy_alarm_detect(service, algorithm_code: str, frame: Any, device_id=None, **kwargs):
     # 优先从已加载的模块中获取自定义的 detect() 逻辑，避免包未初始化完全时的导入问题
     import sys
     import importlib
@@ -50,7 +50,7 @@ def legacy_alarm_detect(service, algorithm_code: str, frame: Any, **kwargs):
 
     alarm_type = result.get("algorithm_name") or algorithm_code
     if hasattr(service, "_check_cooldown_and_multi_alarm"):
-        return service._check_cooldown_and_multi_alarm(alarm_type, boxes)
+        return service._check_cooldown_and_multi_alarm(alarm_type, boxes, device_id=device_id)
 
     return True, {"alarm": True, "type": algorithm_code, "boxes": boxes}
 

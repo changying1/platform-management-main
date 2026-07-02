@@ -33,11 +33,22 @@ const detectBackendBaseUrl = (): string => {
 export const API_BASE_URL = detectBackendBaseUrl();
 
 export const getAuthHeaders = () => {
+  let auth: Record<string, any> = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem('auth') || '{}');
+    auth = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    auth = {};
+  }
+
   const token = localStorage.getItem('auth_token') || '';
-  const username = localStorage.getItem('username') || '';
-  const role = localStorage.getItem('role') || '';
-  const departmentId = localStorage.getItem('department_id') || '';
-  const permissionLevel = localStorage.getItem('permission_level') || '';
+  const username = localStorage.getItem('username') || auth.username || '';
+  const role = localStorage.getItem('role') || auth.role || '';
+  const departmentId = localStorage.getItem('department_id') || auth.department_id || auth.branch_id || '';
+  const permissionLevel = localStorage.getItem('permission_level') || auth.permission_level || '';
+  const projectId = localStorage.getItem('project_id') || auth.project_id || '';
+  const gridId = localStorage.getItem('grid_id') || auth.grid_id || '';
+  const teamId = localStorage.getItem('team_id') || auth.team_id || '';
 
   return {
     ...(token ? { 'X-Auth-Token': token, Authorization: `Bearer ${token}` } : {}),
@@ -45,6 +56,9 @@ export const getAuthHeaders = () => {
     ...(role ? { 'X-Role': role } : {}),
     ...(departmentId ? { 'X-Department-Id': departmentId } : {}),
     ...(permissionLevel ? { 'X-Permission-Level': permissionLevel } : {}),
+    ...(projectId ? { 'X-Project-Id': String(projectId) } : {}),
+    ...(gridId ? { 'X-Grid-Id': String(gridId) } : {}),
+    ...(teamId ? { 'X-Team-Id': String(teamId) } : {}),
   };
 };
 
@@ -55,7 +69,6 @@ export const attachAuthInterceptor = (client: any) => {
       ...(config.headers || {}),
       ...getAuthHeaders(),
     },
-    withCredentials: true,
   }));
   return client;
 };

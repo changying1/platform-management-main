@@ -2,20 +2,27 @@
 // 围栏 + 设备 数据管理 —— 全部从后端获取，前端不再持有任何模拟数据
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { FenceData, FenceDevice, ProjectRegionData, FenceFilter, WorkTeamData, OrganizationTreeNode } from "../types";
-import { getAuthHeaders } from "../../../src/api/config";
+import { API_BASE_URL, getAuthHeaders } from "../../../src/api/config";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
+const API_BASE = API_BASE_URL;
 
 // 颜色配置
 const severityColors = {
-  general: "#3b82f6",   // 蓝色 - 一般
+  normal: "#3b82f6",    // 蓝色 - 一般
   risk: "#f97316",      // 橙色 - 风险
   severe: "#ef4444",    // 红色 - 严重
 };
 
+const normalizeFenceSeverity = (value: any): FenceData["severity"] => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["severe", "high", "critical", "严重"].includes(raw)) return "severe";
+  if (["risk", "medium", "warning", "风险", "中", "中等"].includes(raw)) return "risk";
+  return "normal";
+};
+
 // 获取围栏颜色
 export const getFenceColor = (severity: string): string => {
-  return severityColors[severity as keyof typeof severityColors] || "#3b82f6";
+  return severityColors[normalizeFenceSeverity(severity)] || "#3b82f6";
 };
 
 export const useFenceManager = () => {
@@ -48,6 +55,23 @@ export const useFenceManager = () => {
       item.holder,
       item.holderPhone,
     ]));
+
+  const fetchDeviceList = async (path: string, signal?: AbortSignal): Promise<FenceDevice[] | null> => {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, { headers: getAuthHeaders(), credentials: "include", signal });
+      if (!res.ok) {
+        console.error("拉取定位设备失败:", path, res.status, await res.text());
+        return null;
+      }
+      const data = await res.json();
+      return Array.isArray(data) ? data : null;
+    } catch (error: any) {
+      if (error?.name !== "AbortError") {
+        console.error("拉取定位设备失败:", path, error);
+      }
+      return null;
+    }
+  };
 
   const gridNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -90,9 +114,15 @@ export const useFenceManager = () => {
   const fetchFences = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/fence/list`, { headers: getAuthHeaders(), credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("拉取围栏数据失败:", res.status, await res.text());
+        return;
+      }
       const data = await res.json();
-      setFences(data);
+      setFences(Array.isArray(data) ? data.map((fence) => ({
+        ...fence,
+        severity: normalizeFenceSeverity(fence.severity || fence.alarm_type),
+      })) : []);
     } catch (err) {
       console.error("拉取围栏数据失败:", err);
     }
@@ -101,7 +131,10 @@ export const useFenceManager = () => {
   const fetchRegions = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/fence/regions`, { headers: getAuthHeaders(), credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("拉取区域数据失败:", res.status, await res.text());
+        return;
+      }
       const data = await res.json();
       setRegions(data);
     } catch (err) {
@@ -112,7 +145,10 @@ export const useFenceManager = () => {
   const fetchTeams = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/fence/teams`, { headers: getAuthHeaders(), credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("拉取作业队数据失败:", res.status, await res.text());
+        return;
+      }
       const data = await res.json();
       setTeams(data);
     } catch (err) {
@@ -123,7 +159,10 @@ export const useFenceManager = () => {
   const fetchOrganizationTree = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/responsibility-units/tree`, { headers: getAuthHeaders(), credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("拉取责任组织树失败:", res.status, await res.text());
+        return;
+      }
       const data = await res.json();
       setOrganizationTree(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -143,11 +182,31 @@ export const useFenceManager = () => {
   //  轮询：从后端拉取设备列表（含实时坐标）
   // ============================
   useEffect(() => {
+    let inFlight = false;
+    let lastSuccessfulPath = "/device/fence-devices";
+
     const fetchDevices = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 3500);
       try {
-        const res = await fetch(`${API_BASE}/device/devices`, { headers: getAuthHeaders(), credentials: "include" });
-        if (!res.ok) return;
-        const data: FenceDevice[] = await res.json();
+        let data = await fetchDeviceList(lastSuccessfulPath, controller.signal);
+        if (!data || data.length === 0) {
+          for (const fallbackPath of ["/device/fence-devices", "/device/devices", "/device/list"]) {
+            if (fallbackPath === lastSuccessfulPath) continue;
+            const fallback = await fetchDeviceList(fallbackPath, controller.signal);
+            if (fallback && fallback.length > 0) {
+              data = fallback;
+              lastSuccessfulPath = fallbackPath;
+              break;
+            }
+          }
+        }
+        if (!data || data.length === 0) {
+          console.warn("定位设备接口返回空列表，保留当前设备数据，避免地图设备被误清空");
+          return;
+        }
 
         // 自动清理已经发生改变的模拟位置
         setManualPositions(prev => {
@@ -169,11 +228,14 @@ export const useFenceManager = () => {
         setDevices((prev) => deviceSnapshot(prev) === deviceSnapshot(data) ? prev : data);
       } catch (err) {
         console.error("拉取设备数据失败:", err);
+      } finally {
+        window.clearTimeout(timeout);
+        inFlight = false;
       }
     };
 
     fetchDevices();
-    const timer = setInterval(fetchDevices, 3000);
+    const timer = setInterval(fetchDevices, 5000);
     return () => clearInterval(timer);
   }, []);
 
@@ -303,7 +365,7 @@ export const useFenceManager = () => {
         team_id: fenceData.team_id,
         shape: fenceData.shape || (fenceData.type === "Circle" ? "circle" : "polygon"),
         behavior: fenceData.behavior,
-        severity: fenceData.severity,
+        severity: normalizeFenceSeverity(fenceData.severity),
         schedule: fenceData.schedule || {
           start: fenceData.startTime || new Date().toISOString(),
           end: fenceData.endTime || new Date().toISOString(),

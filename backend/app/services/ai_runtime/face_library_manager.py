@@ -15,7 +15,9 @@ from app.core.database import get_personnel_collection, get_mongo_collection
 logger = logging.getLogger("FaceLibraryManager")
 
 class FaceLibraryManager:
-    def __init__(self, similarity_threshold: float = 0.60):
+    def __init__(self, similarity_threshold: float | None = None):
+        if similarity_threshold is None:
+            similarity_threshold = float(os.getenv("FACE_RECOGNITION_SIMILARITY_THRESHOLD", "0.35"))
         self.similarity_threshold = similarity_threshold
         self.face_model = None
         self.known_db = {}  # {personnel_id: {"vector": tensor, "info": str, "person": dict}}
@@ -42,9 +44,16 @@ class FaceLibraryManager:
         """加载 FaceNet 预训练特征提取模型。"""
         try:
             from facenet_pytorch import InceptionResnetV1
+            import torch
             logger.info("正在加载 FaceNet 模型 (vggface2)...")
-            self.face_model = InceptionResnetV1(pretrained='vggface2').eval()
-            logger.info("FaceNet 模型加载成功。")
+            configured_device = os.getenv("AI_FACE_DEVICE", "auto").strip().lower()
+            if configured_device == "auto":
+                device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            else:
+                device = configured_device or "cpu"
+            self.face_model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+            self.face_device = device
+            logger.info("FaceNet 模型加载成功，device=%s。", device)
         except Exception as e:
             logger.error("加载 FaceNet 模型失败: %s", e)
             raise
@@ -200,9 +209,13 @@ class FaceLibraryManager:
         """提取 512 维特征向量。"""
         import torch
         img_tensor = self._pre_process_facenet(cv2_img)
+        try:
+            img_tensor = img_tensor.to(getattr(self, "face_device", "cpu"))
+        except Exception:
+            pass
         with torch.no_grad():
             vector = self.face_model(img_tensor)
-        return vector.flatten()
+        return vector.flatten().detach().cpu()
 
     def reload_database(self):
         """重新加载底库（供后台上传照片后调用）。"""
@@ -224,6 +237,7 @@ class FaceLibraryManager:
             current_vec = self._extract_face_vector(face_crop)
             best_similarity = 0.0
             best_match = None
+            best_candidate = None
 
             for personnel_id, db_entry in self.known_db.items():
                 similarity = F.cosine_similarity(
@@ -232,6 +246,14 @@ class FaceLibraryManager:
 
                 if similarity > best_similarity:
                     best_similarity = similarity
+                    best_candidate = {
+                        "personnel_id": personnel_id,
+                        "name": db_entry["person"].get("username", "未知人员"),
+                        "info": db_entry["info"],
+                        "similarity": similarity,
+                        "person": db_entry["person"],
+                        "matched": False,
+                    }
                     if similarity >= self.similarity_threshold:
                         best_match = {
                             "personnel_id": personnel_id,
@@ -239,9 +261,20 @@ class FaceLibraryManager:
                             "info": db_entry["info"],
                             "similarity": similarity,
                             "person": db_entry["person"],
+                            "matched": True,
                         }
 
-            return best_match
+            if best_match:
+                logger.info(
+                    "[人脸识别匹配] 姓名=%s, 相似度=%.4f, 阈值=%.4f",
+                    best_match.get("name"),
+                    best_match.get("similarity", 0.0),
+                    self.similarity_threshold,
+                )
+            else:
+                logger.info("[人脸识别未匹配] 最高相似度=%.4f, 阈值=%.4f", best_similarity, self.similarity_threshold)
+
+            return best_match or best_candidate
         except Exception as e:
             logger.error("特征向量比对出错: %s", e)
             return None

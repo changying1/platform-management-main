@@ -3236,7 +3236,7 @@ export default function SettingsView() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">最大存储容量(GB)</label>
+                    <label className="block text-xs text-slate-400 mb-1">最大视频存储容量(GB)</label>
                     <input
                       type="number"
                       value={settings.storageMaxSizeGB || 500}
@@ -3246,7 +3246,7 @@ export default function SettingsView() {
                       step={50}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
-                    <p className="text-xs text-slate-500 mt-0.5">录像和截图超过此容量后触发空间清理</p>
+                    <p className="text-xs text-slate-500 mt-0.5">录像和截图文件大小超过此容量后触发空间清理</p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">警告阈值(%)</label>

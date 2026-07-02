@@ -52,4 +52,4 @@ def list_rules() -> Dict[str, RuleSpec]:
 
 def get_algo_handlers(service):
     ensure_loaded()
-    return {key: (lambda frame, _fn=spec.fn: _fn(service, frame)) for key, spec in _RULES.items()}
+    return {key: (lambda frame, device_id=None, _fn=spec.fn: _fn(service, frame, device_id=device_id)) for key, spec in _RULES.items()}

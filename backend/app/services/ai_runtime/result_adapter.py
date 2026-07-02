@@ -36,6 +36,21 @@ def _label_allowed(config: ModelConfig, raw_label: str, mapped_label: str) -> bo
     return True
 
 
+def _confidence_filtered_reason(
+    config: ModelConfig,
+    raw_label: str,
+    mapped_label: str,
+    confidence: float,
+) -> str | None:
+    thresholds = config.label_confidence or {}
+    threshold = thresholds.get(mapped_label, thresholds.get(raw_label))
+    if threshold is None:
+        return None
+    if confidence < float(threshold):
+        return "label_confidence_too_low"
+    return None
+
+
 def _bbox_filtered_reason(
     config: ModelConfig,
     raw_label: str,
@@ -118,6 +133,20 @@ def normalize_detection(item: Mapping[str, Any], config: ModelConfig | None = No
         return None
 
     if config:
+        filtered_reason = _confidence_filtered_reason(config, raw_label, mapped_label, confidence)
+        if filtered_reason:
+            logger.debug(
+                "[AI][%s] filtered detection raw_label=%s mapped_label=%s confidence=%.4f bbox=%s frame_size=%s filtered_reason=%s",
+                config.algorithm_code,
+                raw_label,
+                mapped_label,
+                confidence,
+                bbox,
+                frame_size,
+                filtered_reason,
+            )
+            return None
+
         filtered_reason = _bbox_filtered_reason(config, raw_label, mapped_label, bbox, frame_size)
         if filtered_reason:
             logger.debug(
@@ -146,6 +175,7 @@ def normalize_detection(item: Mapping[str, Any], config: ModelConfig | None = No
         "confidence": confidence,
         "bbox": bbox,
         "frame_size": frame_size,
+        "track_id": item.get("track_id"),
     }
 
 
@@ -190,14 +220,16 @@ def to_alarm_boxes(result: Mapping[str, Any], alarm_labels: set[str] | frozenset
         # 兼容实名制人脸识别等后处理情况：若 label (姓名) 或 raw_label (face) 在告警标签集中，则均视为有效告警
         if alarm_labels is not None and label not in alarm_labels and raw_label not in alarm_labels:
             continue
-        boxes.append(
-            {
-                "type": label,
-                "raw_label": str(det.get("raw_label", label)),
-                "label": label,
-                "msg": f"{result.get('algorithm_name') or result.get('algorithm_code')}: {label}",
-                "score": float(det.get("confidence", 0.0) or 0.0),
-                "coords": det.get("bbox", []),
-            }
-        )
+        box = {
+            "type": label,
+            "raw_label": str(det.get("raw_label", label)),
+            "label": label,
+            "msg": f"{result.get('algorithm_name') or result.get('algorithm_code')}: {label}",
+            "score": float(det.get("confidence", 0.0) or 0.0),
+            "coords": det.get("bbox", []),
+        }
+        for key in ("person", "personName", "personnel_id", "similarity", "face_match_low_confidence", "track_id"):
+            if key in det:
+                box[key] = det.get(key)
+        boxes.append(box)
     return boxes

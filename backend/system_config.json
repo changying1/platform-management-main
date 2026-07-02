@@ -1,5 +1,5 @@
 {
-  "systemName": "中铁一局智能安全管理系统",
+  "systemName": "涓搧涓€灞€鏅鸿兘瀹夊叏绠＄悊绯荤粺",
   "theme": "dark",
   "language": "zh",
   "timezone": "Asia/Shanghai",
@@ -14,8 +14,8 @@
   "alarmAutoResolve": false,
   "alarmRetentionDays": 30,
   "dashboardAlarmStatDays": 180,
-  "safetyProductionDays": 7,
-  "safetyProductionUpdatedDate": "2026-06-26",
+  "safetyProductionDays": 10,
+  "safetyProductionUpdatedDate": "2026-06-29",
   "alarmSevereFlash": true,
   "alarmSevereUpgrade": "sound",
   "alarmVolume": 30,
@@ -32,7 +32,7 @@
   "alarmEscalationMinutes": 5,
   "videoRetentionDays": 360,
   "videoQuality": "high",
-  "videoSegmentMinutes": 1,
+  "videoSegmentMinutes": 0.5,
   "videoStorageType": "local",
   "videoStoragePath": "./backend/static",
   "videoStorageFolders": {
@@ -66,7 +66,7 @@
   "callNotification": false,
   "smsApiUrl": "https://sms.example.com/api",
   "smsApiKey": "",
-  "smsSign": "【安全管理系统】",
+  "smsSign": "銆愬畨鍏ㄧ鐞嗙郴缁熴€?,
   "smsTemplateId": "SMS_123456",
   "callApiUrl": "https://call.example.com/api",
   "callApiKey": "",
@@ -78,19 +78,19 @@
   "notifyLowByCall": false,
   "notificationRecipients": [
     {
-      "name": "张安全",
+      "name": "寮犲畨鍏?,
       "phone": "13800138001",
       "level": "severe",
       "enabled": true
     },
     {
-      "name": "李主管",
+      "name": "鏉庝富绠?,
       "phone": "13800138002",
       "level": "all",
       "enabled": true
     },
     {
-      "name": "王经理",
+      "name": "鐜嬬粡鐞?,
       "phone": "13800138003",
       "level": "medium",
       "enabled": false
@@ -162,124 +162,124 @@
   "aiAlarmLevelConfigs": [
     {
       "id": "1",
-      "name": "未佩戴安全帽",
-      "category": "安全防护",
+      "name": "鏈僵鎴村畨鍏ㄥ附",
+      "category": "瀹夊叏闃叉姢",
       "code": "helmet_missing",
       "level": "high",
-      "description": "检测人员是否正确佩戴安全帽"
+      "description": "妫€娴嬩汉鍛樻槸鍚︽纭僵鎴村畨鍏ㄥ附"
     },
     {
       "id": "2",
-      "name": "未系安全带",
-      "category": "安全防护",
+      "name": "鏈郴瀹夊叏甯?,
+      "category": "瀹夊叏闃叉姢",
       "code": "safety_harness_missing",
       "level": "high",
-      "description": "高空作业人员安全带佩戴检测"
+      "description": "楂樼┖浣滀笟浜哄憳瀹夊叏甯︿僵鎴存娴?
     },
     {
       "id": "3",
-      "name": "吸烟检测",
-      "category": "作业行为",
+      "name": "鍚哥儫妫€娴?,
+      "category": "浣滀笟琛屼负",
       "code": "smoking",
       "level": "high",
-      "description": "禁烟区域吸烟行为检测"
+      "description": "绂佺儫鍖哄煙鍚哥儫琛屼负妫€娴?
     },
     {
       "id": "4",
-      "name": "人员倒地",
-      "category": "人员安全",
+      "name": "浜哄憳鍊掑湴",
+      "category": "浜哄憳瀹夊叏",
       "code": "person_fall",
       "level": "high",
-      "description": "人员摔倒、倒地异常检测"
+      "description": "浜哄憳鎽斿€掋€佸€掑湴寮傚父妫€娴?
     },
     {
       "id": "5",
-      "name": "陌生人员闯入",
-      "category": "人员管理",
+      "name": "闄岀敓浜哄憳闂叆",
+      "category": "浜哄憳绠＄悊",
       "code": "unauthorized_person",
       "level": "high",
-      "description": "未授权人员进入管控区域"
+      "description": "鏈巿鏉冧汉鍛樿繘鍏ョ鎺у尯鍩?
     },
     {
       "id": "6",
-      "name": "明火检测",
-      "category": "消防安全",
+      "name": "鏄庣伀妫€娴?,
+      "category": "娑堥槻瀹夊叏",
       "code": "fire_detected",
       "level": "high",
-      "description": "明火、烟雾、火焰检测"
+      "description": "鏄庣伀銆佺儫闆俱€佺伀鐒版娴?
     },
     {
       "id": "7",
-      "name": "禁入区无安全帽",
-      "category": "区域管理",
+      "name": "绂佸叆鍖烘棤瀹夊叏甯?,
+      "category": "鍖哄煙绠＄悊",
       "code": "no_helmet_area",
       "level": "medium",
-      "description": "危险区域未佩戴安全帽"
+      "description": "鍗遍櫓鍖哄煙鏈僵鎴村畨鍏ㄥ附"
     },
     {
       "id": "8",
-      "name": "人员聚集",
-      "category": "人员管理",
+      "name": "浜哄憳鑱氶泦",
+      "category": "浜哄憳绠＄悊",
       "code": "crowd_detection",
       "level": "medium",
-      "description": "人员过度聚集检测"
+      "description": "浜哄憳杩囧害鑱氶泦妫€娴?
     },
     {
       "id": "9",
-      "name": "反光衣缺失",
-      "category": "安全防护",
+      "name": "鍙嶅厜琛ｇ己澶?,
+      "category": "瀹夊叏闃叉姢",
       "code": "reflective_vest_missing",
       "level": "high",
-      "description": "施工现场反光衣佩戴检测"
+      "description": "鏂藉伐鐜板満鍙嶅厜琛ｄ僵鎴存娴?
     },
     {
       "id": "10",
-      "name": "电气焊作业",
-      "category": "动火作业",
+      "name": "鐢垫皵鐒婁綔涓?,
+      "category": "鍔ㄧ伀浣滀笟",
       "code": "welding_detection",
       "level": "high",
-      "description": "违规电气焊作业检测"
+      "description": "杩濊鐢垫皵鐒婁綔涓氭娴?
     },
     {
       "id": "11",
-      "name": "洞口防护缺失",
-      "category": "临边防护",
+      "name": "娲炲彛闃叉姢缂哄け",
+      "category": "涓磋竟闃叉姢",
       "code": "hole_protection",
       "level": "high",
-      "description": "洞口、临边防护设施缺失"
+      "description": "娲炲彛銆佷复杈归槻鎶よ鏂界己澶?
     },
     {
       "id": "12",
-      "name": "起重半径违规",
-      "category": "起重作业",
+      "name": "璧烽噸鍗婂緞杩濊",
+      "category": "璧烽噸浣滀笟",
       "code": "lifting_radius",
       "level": "high",
-      "description": "人员进入起重作业危险半径"
+      "description": "浜哄憳杩涘叆璧烽噸浣滀笟鍗遍櫓鍗婂緞"
     },
     {
       "id": "13",
-      "name": "动火监护缺失",
-      "category": "动火作业",
+      "name": "鍔ㄧ伀鐩戞姢缂哄け",
+      "category": "鍔ㄧ伀浣滀笟",
       "code": "hotwork_supervisor",
       "level": "high",
-      "description": "动火作业无现场监护"
+      "description": "鍔ㄧ伀浣滀笟鏃犵幇鍦虹洃鎶?
     },
     {
       "id": "14",
-      "name": "特种设备操作",
-      "category": "设备安全",
+      "name": "鐗圭璁惧鎿嶄綔",
+      "category": "璁惧瀹夊叏",
       "code": "special_equipment",
       "level": "high",
-      "description": "无证操作特种设备"
+      "description": "鏃犺瘉鎿嶄綔鐗圭璁惧"
     },
     {
       "id": "15",
-      "name": "安全帽颜色合规",
-      "category": "安全防护",
+      "name": "瀹夊叏甯介鑹插悎瑙?,
+      "category": "瀹夊叏闃叉姢",
       "code": "helmet_color",
       "level": "low",
-      "description": "不同岗位安全帽颜色规范检查"
+      "description": "涓嶅悓宀椾綅瀹夊叏甯介鑹茶鑼冩鏌?
     }
   ],
-  "detail": "未登录或登录已过期"
+  "detail": "鏈櫥褰曟垨鐧诲綍宸茶繃鏈?
 }

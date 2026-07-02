@@ -522,6 +522,8 @@ public class Alarm {
             case "intrusion":
                 return "区域入侵";
             case "helmet_missing":
+            case "no_helmet":
+            case "height_no_helmet":
                 return "未佩戴安全帽";
             case "person_fall":
                 return "人员倒地";
@@ -539,6 +541,21 @@ public class Alarm {
                 return "视频设备信号弱";
             case "video_traffic_low":
                 return "视频设备流量不足";
+            case "smoking":
+                return "吸烟";
+            case "phone":
+            case "phone_call":
+            case "calling":
+            case "call":
+                return "发现打电话";
+            case "flame":
+            case "open_fire":
+            case "fire":
+                return "发现明火";
+            case "smoke":
+                return "发现烟雾";
+            case "no_vest":
+                return "未穿反光衣";
             default:
                 if (alarmType.toUpperCase().startsWith("VIDEO_DEVICE_")) {
                     return "视频设备告警";

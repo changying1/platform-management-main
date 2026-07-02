@@ -97,6 +97,62 @@
     }>;
   };
 
+  const DASHBOARD_ALARM_TEXT: Record<string, string> = {
+    no_helmet: "\u672a\u4f69\u6234\u5b89\u5168\u5e3d",
+    nohelmet: "\u672a\u4f69\u6234\u5b89\u5168\u5e3d",
+    helmet_missing: "\u672a\u4f69\u6234\u5b89\u5168\u5e3d",
+    helmetmissing: "\u672a\u4f69\u6234\u5b89\u5168\u5e3d",
+    no_vest: "\u672a\u7a7f\u53cd\u5149\u8863",
+    novest: "\u672a\u7a7f\u53cd\u5149\u8863",
+    reflective_vest_missing: "\u672a\u7a7f\u53cd\u5149\u8863",
+    reflectivevestmissing: "\u672a\u7a7f\u53cd\u5149\u8863",
+    smoke: "\u53d1\u73b0\u70df\u96fe",
+    fire: "\u53d1\u73b0\u660e\u706b",
+    flame: "\u53d1\u73b0\u660e\u706b",
+    smoking: "\u53d1\u73b0\u5438\u70df",
+    phone: "\u53d1\u73b0\u6253\u7535\u8bdd",
+    person_fall: "\u4eba\u5458\u5012\u5730",
+    personfall: "\u4eba\u5458\u5012\u5730",
+    intrusion: "\u533a\u57df\u95ef\u5165",
+    fence_intrusion: "\u7535\u5b50\u56f4\u680f\u95ef\u5165",
+    fence_exit: "\u7535\u5b50\u56f4\u680f\u8d8a\u754c",
+  };
+
+  const normalizeDashboardAlarmCode = (value: unknown) =>
+    String(value || "")
+      .trim()
+      .replace(/^\[|\]$/g, "")
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+
+  const formatDashboardAlarmType = (value: unknown) => {
+    const raw = String(value || "").trim().replace(/^\[|\]$/g, "");
+    if (!raw) return "\u672a\u77e5\u544a\u8b66";
+    const normalized = normalizeDashboardAlarmCode(raw);
+    return DASHBOARD_ALARM_TEXT[normalized] || DASHBOARD_ALARM_TEXT[normalized.replace(/_/g, "")] || raw;
+  };
+
+  const formatDashboardAlarmDescription = (description: unknown, alarmType: unknown) => {
+    const fallback = formatDashboardAlarmType(alarmType);
+    let text = String(description || "").trim();
+    if (!text) return fallback;
+
+    text = text
+      .replace(/^Device\s+/i, "")
+      .replace(/entered restricted area/gi, "\u95ef\u5165\u7981\u5165\u533a\u57df")
+      .replace(/left designated area/gi, "\u79bb\u5f00\u6307\u5b9a\u533a\u57df")
+      .replace(/restricted area/gi, "\u7981\u5165\u533a\u57df")
+      .replace(/designated area/gi, "\u6307\u5b9a\u533a\u57df")
+      .replace(/: /g, "\uff1a");
+
+    Object.entries(DASHBOARD_ALARM_TEXT).forEach(([code, label]) => {
+      const token = code.replace(/_/g, "[_\\s-]?");
+      text = text.replace(new RegExp(`\\b${token}\\b`, "gi"), label);
+    });
+
+    return text.replace(/\[(.*?)\]/g, (_, inner) => formatDashboardAlarmType(inner));
+  };
+
   if (!echarts.getMap("china")) {
     echarts.registerMap("china", chinaJson as any);
   }
@@ -2171,7 +2227,10 @@ const projectPoints = projects
   }}
 >
       {currentData.alarms.list && currentData.alarms.list.length > 0 ? (
-        currentData.alarms.list.map((a, idx) => (
+        currentData.alarms.list.map((a, idx) => {
+          const alarmTypeText = formatDashboardAlarmType(a.alarm_type);
+          const alarmDescriptionText = formatDashboardAlarmDescription(a.description, a.alarm_type);
+          return (
   <div key={`${a.id}-${idx}`} 
     className="cyber-alarm-card"
     style={{
@@ -2200,7 +2259,7 @@ const projectPoints = projects
           fontSize: 14,
         }}
       >
-        [{a.alarm_type}]
+        {alarmTypeText}
       </span>
       <span style={{ color: "#d83d3d", fontSize: 14 }}>
         {(() => {
@@ -2238,13 +2297,7 @@ const projectPoints = projects
           flex: 1,
         }}
       >
-        {String(a.description || "")
-          .replace(/^Device\s+/, "")
-          .replace(/entered restricted area/g, "闯入禁入区域")
-          .replace(/left designated area/g, "离开指定区域")
-          .replace(/restricted area/g, "禁入区域")
-          .replace(/designated area/g, "指定区域")
-          .replace(/: /g, "：")}{a.branch_name && a.branch_name !== "未知" ? ` · ${a.branch_name}` : ""}
+        {alarmDescriptionText}{a.branch_name && a.branch_name !== "未知" ? ` · ${a.branch_name}` : ""}
       </div>
       <span
         style={{
@@ -2261,7 +2314,8 @@ const projectPoints = projects
       </span>
     </div>
   </div>
-                    ))
+          );
+        })
                   ) : (
                     <div style={{ ...S.emptyText, color: "#10b981", marginTop: 50 }}>
                       当前暂无行为告警

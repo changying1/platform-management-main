@@ -1,6 +1,7 @@
 package com.app.myapplication.ui.playback;
 
 import android.os.Bundle;
+import android.view.View;
 import android.widget.ImageButton;
 import android.widget.TextView;
 
@@ -19,6 +20,8 @@ public class PlaybackCenterActivity extends AppCompatActivity {
 
     private ImageButton btnBack;
     private TextView tvTitle;
+    private View layoutHeader;
+    private View viewDivider;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -27,6 +30,8 @@ public class PlaybackCenterActivity extends AppCompatActivity {
 
         btnBack = findViewById(R.id.btn_back);
         tvTitle = findViewById(R.id.tv_title);
+        layoutHeader = findViewById(R.id.layout_playback_header);
+        viewDivider = findViewById(R.id.view_playback_divider);
 
         btnBack.setOnClickListener(v -> finish());
 
@@ -72,6 +77,16 @@ public class PlaybackCenterActivity extends AppCompatActivity {
             tvTitle.setText("通信回放");
         } else {
             tvTitle.setText("视频回放");
+        }
+    }
+
+    public void setHeaderVisible(boolean visible) {
+        int visibility = visible ? View.VISIBLE : View.GONE;
+        if (layoutHeader != null) {
+            layoutHeader.setVisibility(visibility);
+        }
+        if (viewDivider != null) {
+            viewDivider.setVisibility(visibility);
         }
     }
 }

@@ -27,5 +27,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("smoking", "吸烟检测")
-def detect_smoking_alarm(service, frame):
-    return legacy_alarm_detect(service, "smoking", frame)
+def detect_smoking_alarm(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "smoking", frame, device_id=device_id)

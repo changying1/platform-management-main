@@ -21,6 +21,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
@@ -43,6 +44,7 @@ import com.app.myapplication.data.api.ApiClient;
 import com.app.myapplication.data.api.TrackApi;
 import com.app.myapplication.data.model.TrajectoryPoint;
 import com.app.myapplication.data.model.TrackDevice;
+import com.app.myapplication.ui.playback.PlaybackCenterActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -85,9 +87,13 @@ public class TrackPlaybackFragment extends Fragment {
     private TextView tvCurrentSpeed;
     private TextView tvTrackRecordStatus;
     private LinearLayout layoutTrackInfo;
+    private View layoutTrackListContent;
+    private View layoutPlaybackFullscreen;
     private View layoutPlaybackMap;
     private View layoutPlaybackControls;
+    private ImageButton btnCloseFullscreen;
     private RecyclerView rvTrackRecords;
+    private OnBackPressedCallback fullscreenBackCallback;
 
     private TrackApi trackApi;
     private List<TrackDevice> deviceList = new ArrayList<>();
@@ -129,6 +135,7 @@ public class TrackPlaybackFragment extends Fragment {
         initSpinners();
         initTrackRecordList();
         initListeners();
+        initBackHandler();
 
         return view;
     }
@@ -159,8 +166,11 @@ public class TrackPlaybackFragment extends Fragment {
         tvCurrentSpeed = view.findViewById(R.id.tvCurrentSpeed);
         tvTrackRecordStatus = view.findViewById(R.id.tvTrackRecordStatus);
         layoutTrackInfo = view.findViewById(R.id.layoutTrackInfo);
+        layoutTrackListContent = view.findViewById(R.id.layoutTrackListContent);
+        layoutPlaybackFullscreen = view.findViewById(R.id.layoutPlaybackFullscreen);
         layoutPlaybackMap = view.findViewById(R.id.layoutPlaybackMap);
         layoutPlaybackControls = view.findViewById(R.id.layoutPlaybackControls);
+        btnCloseFullscreen = view.findViewById(R.id.btnCloseFullscreen);
         rvTrackRecords = view.findViewById(R.id.rvTrackRecords);
         setPlaybackAreaVisible(false);
     }
@@ -212,6 +222,7 @@ public class TrackPlaybackFragment extends Fragment {
             updateTimeFilterButtons();
             loadTrackSummaries();
         });
+        btnCloseFullscreen.setOnClickListener(v -> exitPlaybackFullscreen());
         updateTimeFilterButtons();
         loadTrackSummaries();
 
@@ -273,6 +284,16 @@ public class TrackPlaybackFragment extends Fragment {
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {}
         });
+    }
+
+    private void initBackHandler() {
+        fullscreenBackCallback = new OnBackPressedCallback(false) {
+            @Override
+            public void handleOnBackPressed() {
+                exitPlaybackFullscreen();
+            }
+        };
+        requireActivity().getOnBackPressedDispatcher().addCallback(getViewLifecycleOwner(), fullscreenBackCallback);
     }
 
     private void loadDevices() {
@@ -496,12 +517,37 @@ public class TrackPlaybackFragment extends Fragment {
 
     private void setPlaybackAreaVisible(boolean visible) {
         int visibility = visible ? View.VISIBLE : View.GONE;
+        if (layoutTrackListContent != null) {
+            layoutTrackListContent.setVisibility(visible ? View.GONE : View.VISIBLE);
+        }
+        if (layoutPlaybackFullscreen != null) {
+            layoutPlaybackFullscreen.setVisibility(visibility);
+        }
         if (layoutPlaybackMap != null) {
             layoutPlaybackMap.setVisibility(visibility);
         }
         if (layoutPlaybackControls != null) {
             layoutPlaybackControls.setVisibility(visibility);
         }
+        if (fullscreenBackCallback != null) {
+            fullscreenBackCallback.setEnabled(visible);
+        }
+        if (getActivity() instanceof PlaybackCenterActivity) {
+            ((PlaybackCenterActivity) getActivity()).setHeaderVisible(!visible);
+        }
+        if (visible && mapView != null) {
+            mapView.post(() -> {
+                if (aMap != null) {
+                    aMap.getUiSettings().setZoomControlsEnabled(true);
+                    aMap.getUiSettings().setScaleControlsEnabled(true);
+                }
+            });
+        }
+    }
+
+    private void exitPlaybackFullscreen() {
+        stopPlay();
+        setPlaybackAreaVisible(false);
     }
 
     private BitmapDescriptor createTextMarker(String text, int bgColor) {
@@ -1025,6 +1071,9 @@ public class TrackPlaybackFragment extends Fragment {
     public void onDestroy() {
         super.onDestroy();
         stopPlay();
+        if (getActivity() instanceof PlaybackCenterActivity) {
+            ((PlaybackCenterActivity) getActivity()).setHeaderVisible(true);
+        }
         if (mapView != null) mapView.onDestroy();
     }
 

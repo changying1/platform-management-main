@@ -33,6 +33,8 @@ import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.data.model.Alarm;
 import com.app.myapplication.data.model.AlarmFields;
 import com.app.myapplication.ui.alarm.AlarmAdapter;
+import com.app.myapplication.ui.alarm.AlarmWebSocketClient;
+import com.app.myapplication.ui.alarm.ImagePreviewActivity;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
 import java.util.List;
@@ -55,6 +57,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean alarmPollRunning = false;
     private Ringtone alarmRingtone;
     private AlertDialog activeAlarmDialog;
+    private final AlarmWebSocketClient alarmWebSocketClient = new AlarmWebSocketClient();
     private final Runnable hideAlarmBannerRunnable = () -> {
         if (alarmBanner != null) alarmBanner.setVisibility(View.GONE);
     };
@@ -97,6 +100,7 @@ public class MainActivity extends AppCompatActivity {
             return false;
         });
         startAlarmPolling();
+        startAlarmRealtimeSync();
     }
 
     @Override
@@ -105,6 +109,7 @@ public class MainActivity extends AppCompatActivity {
         alarmPollRunning = false;
         alarmHandler.removeCallbacks(alarmPollRunnable);
         alarmHandler.removeCallbacks(hideAlarmBannerRunnable);
+        alarmWebSocketClient.close();
         stopAlarmSound();
         if (activeAlarmDialog != null) {
             activeAlarmDialog.dismiss();
@@ -134,6 +139,27 @@ public class MainActivity extends AppCompatActivity {
         alarmHandler.removeCallbacks(alarmPollRunnable);
     }
 
+    private void startAlarmRealtimeSync() {
+        if (!new SessionManager(this).hasToken()) {
+            Log.w("AIAlarm", "AI alarm websocket skipped: no login token");
+            return;
+        }
+        alarmWebSocketClient.connect(getApplicationContext(), payload -> {
+            Alarm alarm = alarmFromPayload(payload);
+            if (!shouldPopupAlarm(alarm)) {
+                Log.d("AIAlarm", "AI alarm websocket skipped by severity: " + alarm.getSeverity());
+                return;
+            }
+            if (alarm.getId() > 0) {
+                lastAlarmId = Math.max(lastAlarmId == null ? 0L : lastAlarmId, alarm.getId());
+            }
+            Log.d("AIAlarm", "AI alarm websocket received, id=" + alarm.getId() + ", severity=" + alarm.getSeverity());
+            showAlarmBanner(alarm);
+            showAlarmDialog(alarm);
+            showSystemAlarmNotification(alarm);
+        });
+    }
+
     private void pollLatestAlarm() {
         Log.d("AIAlarm", "AI alarm poll start");
         ApiClient.get(this).create(AlarmApi.class).getAlarms(0, 1, null)
@@ -161,6 +187,10 @@ public class MainActivity extends AppCompatActivity {
                             return;
                         }
                         lastAlarmId = currentId;
+                        if (!shouldPopupAlarm(alarm)) {
+                            Log.d("AIAlarm", "AI alarm poll skipped by severity: " + alarm.getSeverity());
+                            return;
+                        }
                         Log.d("AIAlarm", "AI alarm new detected, id=" + currentId + ", content=" + alarm.getDescription());
                         showAlarmBanner(alarm);
                         showAlarmDialog(alarm);
@@ -194,10 +224,10 @@ public class MainActivity extends AppCompatActivity {
     private void showAlarmDialog(Alarm alarm) {
         if (alarm == null) return;
         long alarmId = alarm.getId();
-        if (lastShownAlarmDialogId != null && lastShownAlarmDialogId == alarmId) {
+        if (alarmId > 0 && lastShownAlarmDialogId != null && lastShownAlarmDialogId == alarmId) {
             return;
         }
-        lastShownAlarmDialogId = alarmId;
+        if (alarmId > 0) lastShownAlarmDialogId = alarmId;
 
         if (activeAlarmDialog != null && activeAlarmDialog.isShowing()) {
             activeAlarmDialog.dismiss();
@@ -226,7 +256,7 @@ public class MainActivity extends AppCompatActivity {
         } else if (!imageUrl.isEmpty()) {
             builder.setPositiveButton("查看截图", (dialog, which) -> {
                 stopAlarmSound();
-                openUrl(imageUrl);
+                ImagePreviewActivity.start(this, imageUrl);
             });
         }
 
@@ -235,11 +265,51 @@ public class MainActivity extends AppCompatActivity {
         playAlarmSound();
     }
 
+    private Alarm alarmFromPayload(AlarmWebSocketClient.AlarmPayload payload) {
+        Alarm alarm = new Alarm();
+        if (payload == null) return alarm;
+        alarm.setId(payload.id);
+        alarm.setAlarmType(payload.alarmType);
+        alarm.setSeverity(payload.severity);
+        alarm.setDescription(payload.description);
+        alarm.setDeviceId(payload.deviceId);
+        alarm.setDeviceName(payload.deviceName);
+        alarm.setTimestamp(payload.timestamp);
+        alarm.setLocation(payload.location);
+        alarm.setImageUrl(payload.imageUrl);
+        alarm.setVideoUrl(payload.videoUrl);
+        return alarm;
+    }
+
+    private boolean shouldPopupAlarm(Alarm alarm) {
+        if (alarm == null) return false;
+        String severity = normalizeSeverity(alarm.getSeverity());
+        return "medium".equals(severity) || "high".equals(severity);
+    }
+
+    private String normalizeSeverity(String value) {
+        String level = value == null ? "" : value.trim().toLowerCase();
+        if (level.isEmpty()) return "medium";
+        if ("severe".equals(level) || "serious".equals(level) || "critical".equals(level)
+                || "严重".equals(level) || "高级".equals(level) || "高等级".equals(level)) {
+            return "high";
+        }
+        if ("warning".equals(level) || "risk".equals(level) || "medium".equals(level)
+                || "中级".equals(level) || "中等级".equals(level) || "风险".equals(level)) {
+            return "medium";
+        }
+        if ("normal".equals(level) || "low".equals(level) || "一般".equals(level)
+                || "低级".equals(level) || "低等级".equals(level)) {
+            return "low";
+        }
+        return level;
+    }
+
     private void playAlarmSound() {
         stopAlarmSound();
         try {
-            Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-            if (uri == null) uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            if (uri == null) uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
             if (uri == null) return;
             alarmRingtone = RingtoneManager.getRingtone(getApplicationContext(), uri);
             if (alarmRingtone != null) {

@@ -3,11 +3,16 @@ package com.app.myapplication.ui.video;
 import android.app.DatePickerDialog;
 import android.app.TimePickerDialog;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -60,9 +65,12 @@ public class VideoPlaybackFragment extends Fragment {
     private Button btnEndTime;
     private Button btnSortOrder;
     private Button btnClearTimeFilter;
+    private EditText etPlaybackSearch;
     private final List<PlaybackItem> items = new ArrayList<>();
     private PlaybackAdapter adapter;
+    private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private String deviceId;
+    private String keywordFilter = "";
     private boolean isAlarmMode = false;
     private int page = 1;
     private boolean loadingMore = false;
@@ -70,6 +78,11 @@ public class VideoPlaybackFragment extends Fragment {
     private Calendar startFilter;
     private Calendar endFilter;
     private boolean sortAsc = false;
+    private final Runnable searchRunnable = () -> {
+        if (!isAdded()) return;
+        keywordFilter = etPlaybackSearch == null ? "" : etPlaybackSearch.getText().toString().trim();
+        loadPlaybacks(true);
+    };
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -87,6 +100,7 @@ public class VideoPlaybackFragment extends Fragment {
         btnEndTime = v.findViewById(R.id.btn_end_time);
         btnSortOrder = v.findViewById(R.id.btn_sort_order);
         btnClearTimeFilter = v.findViewById(R.id.btn_clear_time_filter);
+        etPlaybackSearch = v.findViewById(R.id.et_playback_search);
 
         deviceId = getArguments() != null ? getArguments().getString(ARG_DEVICE_ID) : "";
 
@@ -144,11 +158,27 @@ public class VideoPlaybackFragment extends Fragment {
             updateTimeFilterButtons();
             loadPlaybacks(true);
         });
+        etPlaybackSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                searchHandler.removeCallbacks(searchRunnable);
+                searchHandler.postDelayed(searchRunnable, 400);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
         updateTimeFilterButtons();
         loadPlaybacks(true);
     }
 
     private void loadPlaybacks(boolean reset) {
+        if (!isAdded()) return;
         if (reset) {
             page = 1;
             hasMore = true;
@@ -172,7 +202,7 @@ public class VideoPlaybackFragment extends Fragment {
                 null,
                 null,
                 null,
-                null,
+                keywordFilter.isEmpty() ? null : keywordFilter,
                 toQueryTime(startFilter),
                 toQueryTime(endFilter),
                 sortAsc ? "asc" : "desc"
@@ -211,6 +241,12 @@ public class VideoPlaybackFragment extends Fragment {
                 Toast.makeText(requireContext(), "网络错误: " + safeMessage(t), Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    @Override
+    public void onDestroyView() {
+        searchHandler.removeCallbacks(searchRunnable);
+        super.onDestroyView();
     }
 
     @SuppressWarnings("unchecked")
@@ -278,13 +314,13 @@ public class VideoPlaybackFragment extends Fragment {
         item.company = firstNonEmpty(row.get("company"));
         item.project = firstNonEmpty(row.get("project"));
         item.alarmType = firstNonEmpty(row.get("alarm_type"), row.get("alarmType"));
-        item.alarmDescription = AlarmAdapter.cleanDisplayDescription(firstNonEmpty(
+        item.alarmDescription = AlarmAdapter.normalizeAlarmDisplayText(AlarmAdapter.cleanDisplayDescription(firstNonEmpty(
                 row.get("description"),
                 row.get("alarm_description"),
                 row.get("alarmDescription"),
                 row.get("message"),
                 row.get("msg")
-        ));
+        )));
         item.screenshotPath = firstNonEmpty(
                 row.get("image_url"),
                 row.get("snapshot_url"),
@@ -445,15 +481,24 @@ public class VideoPlaybackFragment extends Fragment {
     }
 
     private static String alarmDisplayText(PlaybackItem item) {
-        String description = firstNonEmpty(item.alarmDescription);
+        String description = AlarmAdapter.normalizeAlarmDisplayText(firstNonEmpty(item.alarmDescription));
         if (!description.isEmpty()) return description;
 
         String type = firstNonEmpty(item.alarmType);
         if (type.isEmpty()) return "告警事件";
         switch (type) {
+            case "fire":
+            case "FIRE":
+                return "发现明火";
+            case "smoke":
+            case "SMOKE":
+                return "发现烟雾";
             case "no_helmet":
             case "NO_HELMET":
                 return "未佩戴安全帽";
+            case "no_vest":
+            case "NO_VEST":
+                return "未穿反光衣";
             case "ladder_angle":
             case "LADDER_ANGLE":
                 return "梯子角度违规";
@@ -465,7 +510,7 @@ public class VideoPlaybackFragment extends Fragment {
             case "VIDEO_DEVICE_STATUS":
                 return "视频设备状态告警";
             default:
-                return type;
+                return AlarmAdapter.normalizeAlarmDisplayText(type);
         }
     }
 

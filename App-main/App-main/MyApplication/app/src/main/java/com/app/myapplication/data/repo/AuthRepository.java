@@ -87,9 +87,13 @@ public class AuthRepository {
                 if (result.username == null || result.username.trim().isEmpty()) {
                     result.username = account;
                 }
-                session.saveSession(result);
-                ApiClient.reset();
-                cb.onSuccess(result);
+                try {
+                    session.saveSession(result);
+                    ApiClient.reset();
+                    cb.onSuccess(result);
+                } catch (Exception e) {
+                    cb.onError("Login failed: " + (e.getMessage() == null ? "invalid login data" : e.getMessage()));
+                }
             }
 
             @Override

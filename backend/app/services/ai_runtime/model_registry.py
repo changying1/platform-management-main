@@ -16,6 +16,7 @@ class ModelConfig:
     allowed_labels: frozenset[str] | None = None
     ignored_labels: frozenset[str] | None = None
     label_alias_map: Mapping[str, str] | None = None
+    label_confidence: Mapping[str, float] | None = None
     bbox_filter: Mapping[str, object] | None = None
     enabled: bool = True
     disabled_reason: str = ""
@@ -51,10 +52,14 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     "person": ModelConfig(
         algorithm_code="person",
         algorithm_name="人员检测",
-        model_name="person",
+        model_name="yolo26s",
+        model_type="pt",
         class_map={0: "person"},
         alarm_labels=frozenset({"person"}),
         allowed_labels=frozenset({"person"}),
+        confidence=0.35,
+        iou=0.6,
+        input_size=1280,
     ),
     "smoking": ModelConfig(
         algorithm_code="smoking",
@@ -63,16 +68,27 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         class_map={0: "cigarettes", 1: "smoking"},
         alarm_labels=frozenset({"smoking"}),
         allowed_labels=frozenset({"smoking"}),
-        confidence=0.5,
+        confidence=0.6,
     ),
     "fire": ModelConfig(
         algorithm_code="fire",
         algorithm_name="烟火检测",
         model_name="fire",
         class_map={0: "火", 1: "烟"},
-        alarm_labels=frozenset({"fire", "smoke"}),
-        allowed_labels=frozenset({"火", "烟", "fire", "flame", "smoke"}),
-        label_alias_map={"火": "fire", "flame": "fire", "烟": "smoke"},
+        alarm_labels=frozenset({"fire"}),
+        bbox_filter={
+            "labels": frozenset({"smoke"}),
+            "min_width": 80,
+            "min_height": 80,
+            "min_area_ratio": 0.018,
+            "edge_margin_ratio": 0.02,
+            "edge_min_area_ratio": 0.025,
+            "min_aspect_ratio": 0.45,
+            "max_aspect_ratio": 2.8,
+        },
+        confidence=0.35,
+        allowed_labels=frozenset({"火", "fire", "flame"}),
+        label_alias_map={"火": "fire", "flame": "fire"},
     ),
     "vest": ModelConfig(
         algorithm_code="vest",

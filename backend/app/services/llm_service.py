@@ -132,6 +132,7 @@ def create_llm_chain(chat_history=None, kb_name="default", enable_rag=False, sys
 回答末尾请简短写出依据，例如：依据：alarms 模块命中 12 条记录。
 """
         system_prompt += json.dumps(query_context, ensure_ascii=False, default=str)[:12000]
+        system_prompt += "\n\n重要：不要在回答中输出依据、来源、引用说明，也不要写“依据：...”这类行。只给结论、必要数字和必要说明。"
 
     if system_context and system_context.get('system_data'):
         system_data = system_context['system_data']

@@ -154,7 +154,7 @@ public class AlarmViewModel extends ViewModel {
     private void showLoadFailed(Context context, String message) {
         alarmData.setValue(new ArrayList<>());
         filteredAlarms.setValue(new ArrayList<>());
-        alarmStats.setValue(new AlarmStats(0, 0, 0, 0, 0, 0));
+        alarmStats.setValue(new AlarmStats(0, 0, 0, 0, 0, 0, 0, 0));
         if (context != null) {
             Toast.makeText(context.getApplicationContext(), message, Toast.LENGTH_SHORT).show();
         }

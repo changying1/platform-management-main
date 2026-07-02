@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 import shutil
 
@@ -46,6 +46,10 @@ import uuid
 
 from pathlib import Path
 
+import cv2
+
+from app.services.ai_runtime import detect_frame
+
 
 
 VideoDevice = Any
@@ -53,6 +57,8 @@ VideoDevice = Any
 
 
 RECORDING_PROCESSES = {}
+RECORDING_ROLLOVER_LAST_AT: Dict[int, float] = {}
+TEMP_BUFFER_PROCESSES = {}
 
 
 
@@ -213,14 +219,17 @@ TRAFFIC_ALARM_REMAINING_GB = float(os.getenv("VIDEO_TRAFFIC_ALARM_REMAINING_GB",
 TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_SNAPSHOT_TIMEOUT_SECONDS", "8"))
 TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS = float(os.getenv("VIDEO_TRAFFIC_OCR_ENGINE_TIMEOUT_SECONDS", "5"))
 TRAFFIC_OCR_DEBUG_IMAGE_ENV = "TRAFFIC_OCR_DEBUG_IMAGE_PATH"
+TESSERACT_CMD_ENV = "TESSERACT_CMD"
 BYTES_PER_GB = 1024 * 1024 * 1024
 HIKIOT_FLOW_CARD_PATH = "/flow/card/user/page"
 HIKIOT_FLOW_CARD_TIMEOUT_SECONDS = 10
 HIKIOT_DEFAULT_BASE_URL = "https://api.hikiot.com/api-saas/v1"
 HIKIOT_DEFAULT_APP_NO = "__UNI__3109F91"
 HIKIOT_DEFAULT_TERMINAL = "2"
-HIKIOT_FALLBACK_BEARER_TOKEN = "750f2465-2078-4bb7-82bd-9d10cde399ed"
+HIKIOT_FALLBACK_BEARER_TOKEN = "1b3040c4-ce5e-4a45-93d8-255674e0fd62"
 HIKIOT_DISPLAY_RESERVED_GB = float(os.getenv("HIKIOT_DISPLAY_RESERVED_GB", "0.5"))
+HIKIOT_LOGIN_TIMEOUT_SECONDS = float(os.getenv("HIKIOT_LOGIN_TIMEOUT_SECONDS", "10"))
+HIKIOT_TOKEN_CACHE: Dict[str, Any] = {"token": "", "expires_at": 0.0}
 EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
 # 杩戝疄鏃跺洖鏀句緷璧栫煭鍒嗘锛涘父鎬佸洖鏀剧敱鐙珛褰掓。閫昏緫瀹屾垚锛屼笉涓庡垎娈垫椂闀跨粦瀹氥€?
 RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
@@ -284,6 +293,19 @@ class VideoService:
         self._ezviz_status_thread = threading.Thread(target=self._ezviz_status_polling_worker, daemon=True)
         self._ezviz_status_thread.start()
         logger.info("EZVIZ device status polling worker started")
+
+    def _configure_pytesseract(self, pytesseract_module: Any) -> None:
+        configured_cmd = str(os.getenv(TESSERACT_CMD_ENV, "") or "").strip()
+        candidates = [
+            configured_cmd,
+            shutil.which("tesseract") or "",
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                pytesseract_module.pytesseract.tesseract_cmd = candidate
+                return
 
 
 
@@ -1782,14 +1804,14 @@ class VideoService:
         parsed, _ = self._parse_traffic_ocr_text_with_candidates(ocr_text)
         return parsed
 
-    def _get_hikiot_config(self) -> tuple[str, str, str, str]:
-        base_url = (
-            os.getenv("HIKIOT_BASE_URL")
-            or os.getenv("HIKIOT_API_BASE_URL")
-            or os.getenv("HIKIOT_FLOW_CARD_BASE_URL")
-            or HIKIOT_DEFAULT_BASE_URL
-        ).rstrip("/")
-        token = (
+    def _format_hikiot_bearer(self, token: str) -> str:
+        token = str(token or "").strip()
+        if token and not token.lower().startswith("bearer "):
+            return f"Bearer {token}"
+        return token
+
+    def _get_hikiot_static_token(self) -> str:
+        return (
             os.getenv("HIKIOT_BEARER_TOKEN")
             or os.getenv("HIKIOT_AUTHORIZATION")
             or os.getenv("HIKIOT_AUTHORIZATION_BEARER")
@@ -1797,6 +1819,110 @@ class VideoService:
             or os.getenv("HIKIOT_ACCESS_TOKEN")
             or HIKIOT_FALLBACK_BEARER_TOKEN
         ).strip()
+
+    def _extract_hikiot_login_token(self, payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+
+        candidates = [
+            payload.get("token"),
+            payload.get("accessToken"),
+            payload.get("access_token"),
+            payload.get("authorization"),
+        ]
+        data = payload.get("data")
+        if isinstance(data, dict):
+            candidates.extend([
+                data.get("token"),
+                data.get("accessToken"),
+                data.get("access_token"),
+                data.get("authorization"),
+            ])
+
+        for candidate in candidates:
+            token = str(candidate or "").strip()
+            if token:
+                return token
+        return ""
+
+    def _login_hikiot_token(self) -> str:
+        login_url = str(os.getenv("HIKIOT_LOGIN_URL", "") or "").strip()
+        username = str(os.getenv("HIKIOT_USERNAME", "") or "").strip()
+        password = str(os.getenv("HIKIOT_PASSWORD", "") or "").strip()
+        if not login_url:
+            return ""
+        if not username or not password:
+            raise ValueError("Hikiot login is configured, but HIKIOT_USERNAME or HIKIOT_PASSWORD is empty")
+
+        payload_text = str(os.getenv("HIKIOT_LOGIN_PAYLOAD_JSON", "") or "").strip()
+        if payload_text:
+            payload = json.loads(payload_text)
+        else:
+            username_field = str(os.getenv("HIKIOT_LOGIN_USERNAME_FIELD", "phone") or "phone").strip()
+            password_field = str(os.getenv("HIKIOT_LOGIN_PASSWORD_FIELD", "password") or "password").strip()
+            payload = {username_field: username, password_field: password}
+            if username_field != "username":
+                payload.setdefault("username", username)
+
+        response = requests.post(
+            login_url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0",
+                "appNo": os.getenv("HIKIOT_APP_NO") or os.getenv("HIKIOT_APPNO") or HIKIOT_DEFAULT_APP_NO,
+                "terminal": os.getenv("HIKIOT_TERMINAL") or HIKIOT_DEFAULT_TERMINAL,
+                **json.loads(str(os.getenv("HIKIOT_LOGIN_HEADERS_JSON", "{}") or "{}")),
+            },
+            timeout=HIKIOT_LOGIN_TIMEOUT_SECONDS,
+        )
+        if response.status_code >= 400:
+            error_text = (response.text or "").strip()
+            raise requests.HTTPError(
+                f"Hikiot login returned {response.status_code}: {error_text[:300]}",
+                response=response,
+            )
+
+        token = self._extract_hikiot_login_token(response.json())
+        if not token:
+            raise ValueError("Hikiot login response does not contain token")
+
+        try:
+            ttl_seconds = max(60, int(float(os.getenv("HIKIOT_TOKEN_TTL_SECONDS", "1800"))))
+        except (TypeError, ValueError):
+            ttl_seconds = 1800
+
+        HIKIOT_TOKEN_CACHE["token"] = token
+        HIKIOT_TOKEN_CACHE["expires_at"] = time.time() + ttl_seconds
+        return token
+
+    def _get_hikiot_authorization(self, force_login: bool = False) -> str:
+        login_configured = bool(str(os.getenv("HIKIOT_LOGIN_URL", "") or "").strip())
+        cached_token = str(HIKIOT_TOKEN_CACHE.get("token") or "").strip()
+        cached_expires_at = float(HIKIOT_TOKEN_CACHE.get("expires_at") or 0)
+        if login_configured and not force_login and cached_token and cached_expires_at > time.time() + 30:
+            return self._format_hikiot_bearer(cached_token)
+
+        if login_configured and force_login:
+            return self._format_hikiot_bearer(self._login_hikiot_token())
+
+        static_token = self._get_hikiot_static_token()
+        if static_token and not force_login:
+            return self._format_hikiot_bearer(static_token)
+
+        if login_configured:
+            return self._format_hikiot_bearer(self._login_hikiot_token())
+
+        return self._format_hikiot_bearer(static_token)
+
+    def _get_hikiot_config(self, force_login: bool = False) -> tuple[str, str, str, str]:
+        base_url = (
+            os.getenv("HIKIOT_BASE_URL")
+            or os.getenv("HIKIOT_API_BASE_URL")
+            or os.getenv("HIKIOT_FLOW_CARD_BASE_URL")
+            or HIKIOT_DEFAULT_BASE_URL
+        ).rstrip("/")
+        token = self._get_hikiot_authorization(force_login=force_login)
         app_no = (os.getenv("HIKIOT_APP_NO") or os.getenv("HIKIOT_APPNO") or HIKIOT_DEFAULT_APP_NO).strip()
         terminal = (os.getenv("HIKIOT_TERMINAL") or HIKIOT_DEFAULT_TERMINAL).strip()
         if not token:
@@ -1805,25 +1931,38 @@ class VideoService:
             raise ValueError("Hikiot traffic API appNo is not configured")
         if not terminal:
             raise ValueError("Hikiot traffic API terminal is not configured")
-        if not token.lower().startswith("bearer "):
-            token = f"Bearer {token}"
         return base_url, token, app_no, terminal
 
     def _fetch_hikiot_flow_cards(self) -> list[dict]:
-        base_url, authorization, app_no, terminal = self._get_hikiot_config()
-        url = f"{base_url}{HIKIOT_FLOW_CARD_PATH}"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Authorization": authorization,
-            "appNo": app_no,
-            "terminal": terminal,
-        }
-        response = requests.get(
-            url,
-            params={"page": 1, "size": 50, "groupId": 0},
-            headers=headers,
-            timeout=HIKIOT_FLOW_CARD_TIMEOUT_SECONDS,
-        )
+        response = None
+        for attempt in range(2):
+            base_url, authorization, app_no, terminal = self._get_hikiot_config(force_login=attempt > 0)
+            url = f"{base_url}{HIKIOT_FLOW_CARD_PATH}"
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Authorization": authorization,
+                "appNo": app_no,
+                "terminal": terminal,
+            }
+            response = requests.get(
+                url,
+                params={"page": 1, "size": 50, "groupId": 0},
+                headers=headers,
+                timeout=HIKIOT_FLOW_CARD_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 401:
+                break
+            if not str(os.getenv("HIKIOT_LOGIN_URL", "") or "").strip():
+                break
+
+        if response is None:
+            raise ValueError("Hikiot traffic API did not return response")
+        if response.status_code >= 400:
+            error_text = (response.text or "").strip()
+            raise requests.HTTPError(
+                f"Hikiot traffic API returned {response.status_code}: {error_text[:300]}",
+                response=response,
+            )
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, list):
@@ -2867,6 +3006,10 @@ class VideoService:
         # Sync monitoring alarms from device status.
 
         changed = False
+        pending_offline_alarm = self._find_pending_alarm_doc(str(db_video.id), "VIDEO_DEVICE_OFFLINE")
+        if pending_offline_alarm:
+            self._resolve_monitoring_alarm_doc(pending_offline_alarm["id"])
+            changed = True
 
 
 
@@ -2949,6 +3092,8 @@ class VideoService:
 
 
         for alarm_type, severity, description, active in alarm_specs:
+            if alarm_type == "VIDEO_DEVICE_OFFLINE":
+                continue
 
             changed = self._sync_single_monitoring_alarm(
 
@@ -3330,6 +3475,13 @@ class VideoService:
         if bool(hikiot_result.get("success")):
             return hikiot_result
         hikiot_error = str(hikiot_result.get("message") or "")
+        if "401" in hikiot_error or "invalid access token" in hikiot_error.lower():
+            return {
+                **hikiot_result,
+                "source": "hikiot",
+                "message": "Hikiot token 已失效，请更新 HIKIOT_BEARER_TOKEN 后重试",
+                "hikiot_error": hikiot_error,
+            }
 
         print(f"[TrafficOCR] recognize start video_id={video_id}")
         db_video = self._get_video_runtime_by_id(video_id)
@@ -3607,12 +3759,22 @@ class VideoService:
 
         try:
             import pytesseract
+            self._configure_pytesseract(pytesseract)
         except Exception:
             pytesseract = None
 
-        image = cv2.imread(snapshot_path)
+        image_bytes = np.fromfile(snapshot_path, dtype=np.uint8)
+        image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR) if image_bytes.size else None
         if image is None:
             raise ValueError("Snapshot image cannot be read")
+
+        def write_image(image_path: str, image_data) -> bool:
+            ext = os.path.splitext(image_path)[1] or ".jpg"
+            ok, encoded = cv2.imencode(ext, image_data)
+            if not ok:
+                return False
+            encoded.tofile(image_path)
+            return True
 
         h, w = image.shape[:2]
         if self._get_traffic_ocr_debug_image_path():
@@ -3627,7 +3789,7 @@ class VideoService:
         roi = image[y1:y2, x1:x2]
         debug_static_dir = self._get_default_static_subdir("debug")
         roi_abs_path = os.path.join(debug_static_dir, "traffic_ocr_roi.jpg")
-        cv2.imwrite(roi_abs_path, roi)
+        write_image(roi_abs_path, roi)
         roi_path = self._to_backend_static_web_path(roi_abs_path)
         print(f"[TrafficOCR] roi saved path={roi_abs_path}")
 
@@ -3638,7 +3800,7 @@ class VideoService:
         py2 = max(py1 + 1, min(roi_h, int(roi_h * 0.85)))
         precise_roi = roi[py1:py2, px1:px2]
         precise_abs_path = os.path.join(debug_static_dir, "traffic_ocr_roi_precise.jpg")
-        cv2.imwrite(precise_abs_path, precise_roi)
+        write_image(precise_abs_path, precise_roi)
         precise_roi_path = self._to_backend_static_web_path(precise_abs_path)
         print(f"[TrafficOCR] precise roi saved path={precise_abs_path}")
 
@@ -3669,7 +3831,7 @@ class VideoService:
 
         def save_debug_image(file_name: str, image_data) -> str:
             abs_path = os.path.join(debug_static_dir, file_name)
-            cv2.imwrite(abs_path, image_data)
+            write_image(abs_path, image_data)
             return self._to_backend_static_web_path(abs_path)
 
         def normalize_segment_text(raw_text: str, allowed_pattern: str) -> str:
@@ -4399,7 +4561,7 @@ class VideoService:
             )
             if source_name == "precise_roi":
                 dual_mask_abs_path = os.path.join(debug_static_dir, "traffic_ocr_precise_roi_dual_mask.jpg")
-                cv2.imwrite(dual_mask_abs_path, dual_mask)
+                write_image(dual_mask_abs_path, dual_mask)
                 return [
                     ("original_gray", original_gray),
                     ("original_resized", original_resized),
@@ -4487,7 +4649,7 @@ class VideoService:
             for variant_name, variant in build_ocr_variants(source_image, source_name):
                 variant_key = f"{source_name}:{variant_name}"
                 variant_abs_path = os.path.join(debug_static_dir, f"traffic_ocr_{source_name}_{variant_name}.jpg")
-                cv2.imwrite(variant_abs_path, variant)
+                write_image(variant_abs_path, variant)
                 variant_path = self._to_backend_static_web_path(variant_abs_path)
 
                 try:
@@ -6062,7 +6224,8 @@ class VideoService:
 
         preferred_code = STREAM_PROTOCOL_MAP[protocol_name]
 
-        protocol_candidates = [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
+        strict_protocol = protocol is not None
+        protocol_candidates = [preferred_code] if strict_protocol else [preferred_code] + [c for c in [1, 2, 3, 4] if c != preferred_code]
 
         # protocol_candidates = [preferred_code] + [c for c in [2, 4, 3, 1] if c != preferred_code]
 
@@ -6161,6 +6324,18 @@ class VideoService:
         elif ".flv" in lower_url:
 
             resolved_play_type = "flv"
+
+        if strict_protocol and resolved_play_type != protocol_name:
+
+            raise ValueError(f"UPSTREAM_ERROR: requested {protocol_name} stream but EZVIZ returned {resolved_play_type}: {str(url)[:120]}")
+
+        logger.info(
+            "EZVIZ stream resolved video_id=%s requested_protocol=%s resolved_play_type=%s url_prefix=%s",
+            getattr(db_video, "id", ""),
+            protocol_name,
+            resolved_play_type,
+            str(url)[:96],
+        )
 
 
 
@@ -8290,6 +8465,18 @@ class VideoService:
 
         return temp_root
 
+    def _get_alarm_temp_buffer_root(self, video_id: int | str | None = None) -> str:
+
+        root = os.path.join(self._get_playback_video_root(), "alarm_temp_buffer")
+
+        if video_id is not None:
+
+            root = os.path.join(root, str(video_id))
+
+        os.makedirs(root, exist_ok=True)
+
+        return root
+
 
 
     def _get_rtsp_url_for_device(self, db_video: VideoDevice) -> Optional[str]:
@@ -8646,6 +8833,8 @@ class VideoService:
 
             }
 
+            self.start_alarm_temp_buffer_recording(video_id, source_url)
+
             logger.info(f"瑜版洖鍎氭潻娑氣柤瀹告彃鎯?video_id={video_id}, pid={process.pid}, output={segment_pattern}")
 
             return process
@@ -8656,9 +8845,201 @@ class VideoService:
 
             return None
 
+    def start_alarm_temp_buffer_recording(self, video_id: int, source_url: str):
+
+        if not source_url:
+
+            return None
+
+        existing = TEMP_BUFFER_PROCESSES.get(video_id) or TEMP_BUFFER_PROCESSES.get(str(video_id))
+
+        if isinstance(existing, dict):
+
+            existing_process = existing.get("process")
+
+            existing_source = existing.get("source_url")
+
+            if existing_process and existing_process.poll() is None and existing_source == source_url:
+
+                return existing_process
+
+        self.stop_alarm_temp_buffer_recording(video_id)
+
+        ffmpeg_path = self._get_ffmpeg_path()
+
+        if not os.path.exists(ffmpeg_path):
+
+            return None
+
+        buffer_root = self._get_alarm_temp_buffer_root(video_id)
+
+        self._prune_alarm_temp_buffer(video_id)
+
+        log_root = os.path.join(os.path.dirname(self._get_record_root()), "logs")
+
+        os.makedirs(log_root, exist_ok=True)
+
+        log_path = os.path.join(log_root, f"alarm_temp_buffer_{video_id}.log")
+
+        source_lower = str(source_url).lower()
+
+        input_options: list[str] = []
+
+        if source_lower.startswith("rtsp://"):
+
+            input_options.extend(["-rtsp_transport", "tcp"])
+
+        try:
+
+            segment_seconds = max(30, min(int(os.getenv("ALARM_VIDEO_TEMP_BUFFER_SEGMENT_SECONDS", "120")), 300))
+
+        except (TypeError, ValueError):
+
+            segment_seconds = 120
+
+        segment_pattern = os.path.join(buffer_root, "%Y%m%d_%H%M%S.mp4")
+
+        command = [
+            ffmpeg_path,
+            "-y",
+            *input_options,
+            "-use_wallclock_as_timestamps", "1",
+            "-i", source_url,
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            "-c", "copy",
+            "-f", "segment",
+            "-segment_time", str(segment_seconds),
+            "-segment_atclocktime", "1",
+            "-strftime", "1",
+            "-reset_timestamps", "1",
+            segment_pattern,
+        ]
+
+        try:
+
+            creationflags = 0x08000000 if os.name == "nt" else 0
+
+            log_file = open(log_path, "a", encoding="utf-8")
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=log_file,
+                creationflags=creationflags,
+            )
+
+            time.sleep(1.0)
+
+            if process.poll() is not None:
+
+                try:
+
+                    log_file.close()
+
+                except Exception:
+
+                    pass
+
+                return None
+
+            TEMP_BUFFER_PROCESSES[video_id] = {
+                "process": process,
+                "log_file": log_file,
+                "source_url": source_url,
+            }
+
+            logger.info("Alarm temp buffer started video_id=%s pid=%s output=%s", video_id, process.pid, segment_pattern)
+
+            return process
+
+        except Exception as exc:
+
+            logger.warning("Alarm temp buffer start failed video_id=%s error=%s", video_id, exc)
+
+            return None
+
+    def stop_alarm_temp_buffer_recording(self, video_id: int):
+
+        entry = TEMP_BUFFER_PROCESSES.get(video_id) or TEMP_BUFFER_PROCESSES.get(str(video_id))
+
+        if not entry:
+
+            return
+
+        process = entry.get("process") if isinstance(entry, dict) else entry
+
+        log_file = entry.get("log_file") if isinstance(entry, dict) else None
+
+        try:
+
+            process.terminate()
+
+            try:
+
+                process.wait(timeout=3)
+
+            except subprocess.TimeoutExpired:
+
+                process.kill()
+
+        except Exception as exc:
+
+            logger.warning("Alarm temp buffer stop failed video_id=%s error=%s", video_id, exc)
+
+        finally:
+
+            TEMP_BUFFER_PROCESSES.pop(video_id, None)
+
+            TEMP_BUFFER_PROCESSES.pop(str(video_id), None)
+
+            if log_file:
+
+                try:
+
+                    log_file.close()
+
+                except Exception:
+
+                    pass
+
+    def _prune_alarm_temp_buffer(self, video_id: int | str):
+
+        buffer_root = self._get_alarm_temp_buffer_root(video_id)
+
+        try:
+
+            keep_seconds = max(120, min(int(os.getenv("ALARM_VIDEO_TEMP_BUFFER_SECONDS", "120")), 900))
+
+        except (TypeError, ValueError):
+
+            keep_seconds = 120
+
+        for file_path in glob.glob(os.path.join(buffer_root, "*.mp4")):
+
+            try:
+
+                if time.time() - os.path.getmtime(file_path) <= keep_seconds:
+
+                    continue
+
+                os.remove(file_path)
+
+                thumbnail_path = f"{file_path}.jpg"
+
+                if os.path.exists(thumbnail_path):
+
+                    os.remove(thumbnail_path)
+
+            except Exception:
+
+                continue
+
 
 
     def stop_ffmpeg_recording(self, video_id: int):
+
+        self.stop_alarm_temp_buffer_recording(video_id)
 
         entry = RECORDING_PROCESSES.get(video_id)
 
@@ -8703,6 +9084,33 @@ class VideoService:
                 except Exception:
 
                     pass
+
+    def force_rollover_recording(self, video_id: int, cooldown_seconds: float = 10.0) -> bool:
+        entry = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
+        if not isinstance(entry, dict):
+            return False
+
+        source_url = entry.get("source_url") or entry.get("rtsp_url")
+        process = entry.get("process")
+        if not source_url or not process:
+            return False
+
+        try:
+            if process.poll() is not None:
+                return False
+        except Exception:
+            return False
+
+        now = time.time()
+        last_at = RECORDING_ROLLOVER_LAST_AT.get(int(video_id), 0.0)
+        if now - last_at < max(1.0, float(cooldown_seconds)):
+            return False
+
+        RECORDING_ROLLOVER_LAST_AT[int(video_id)] = now
+        logger.info("Force rolling recording segment for alarm video_id=%s", video_id)
+        self.stop_ffmpeg_recording(video_id)
+        restarted = self.start_ffmpeg_recording(video_id, source_url)
+        return restarted is not None
 
 
 
@@ -9052,6 +9460,10 @@ class VideoService:
 
                 return None
 
+            if not self._is_segment_usable(file_path, min_age_seconds=1, allow_probe_fallback=False):
+
+                return None
+
             thumbnail_path = f"{file_path}.jpg"
 
             if os.path.isfile(thumbnail_path) and os.path.getmtime(thumbnail_path) >= os.path.getmtime(file_path):
@@ -9066,57 +9478,61 @@ class VideoService:
 
             temp_path = f"{thumbnail_path}.tmp.jpg"
 
-            command = [
+            for seek_at in ("00:00:01", "00:00:00", "00:00:03", "00:00:05"):
 
-                ffmpeg_path,
+                command = [
 
-                "-hide_banner",
+                    ffmpeg_path,
 
-                "-loglevel",
+                    "-hide_banner",
 
-                "error",
+                    "-loglevel",
 
-                "-y",
+                    "error",
 
-                "-ss",
+                    "-y",
 
-                "00:00:01",
+                    "-ss",
 
-                "-i",
+                    seek_at,
 
-                file_path,
+                    "-i",
 
-                "-frames:v",
+                    file_path,
 
-                "1",
+                    "-frames:v",
 
-                "-vf",
+                    "1",
 
-                "scale=640:-1",
+                    "-vf",
 
-                temp_path,
+                    "scale=640:-1",
 
-            ]
+                    temp_path,
 
-            result = subprocess.run(
+                ]
 
-                command,
+                result = subprocess.run(
 
-                capture_output=True,
+                    command,
 
-                timeout=12,
+                    capture_output=True,
 
-            )
+                    timeout=12,
 
-            if result.returncode == 0 and os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
+                )
 
-                os.replace(temp_path, thumbnail_path)
+                if result.returncode == 0 and os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
 
-                return thumbnail_path
+                    os.replace(temp_path, thumbnail_path)
 
-            if os.path.exists(temp_path):
+                    return thumbnail_path
 
-                os.remove(temp_path)
+                if os.path.exists(temp_path):
+
+                    os.remove(temp_path)
+
+            logger.debug("Failed to generate recording thumbnail for %s", file_path)
 
         except Exception:
 
@@ -9225,6 +9641,28 @@ class VideoService:
 
 
             if not should_start:
+
+                if isinstance(entry, dict):
+
+                    source_url = entry.get("source_url") or entry.get("rtsp_url")
+
+                    temp_entry = TEMP_BUFFER_PROCESSES.get(video_id) or TEMP_BUFFER_PROCESSES.get(str(video_id))
+
+                    temp_process = temp_entry.get("process") if isinstance(temp_entry, dict) else temp_entry
+
+                    temp_running = False
+
+                    try:
+
+                        temp_running = temp_process is not None and temp_process.poll() is None
+
+                    except Exception:
+
+                        temp_running = False
+
+                    if source_url and not temp_running:
+
+                        self.start_alarm_temp_buffer_recording(video_id, source_url)
 
                 continue
 
@@ -9425,7 +9863,14 @@ class VideoService:
 
 
 
-    def _collect_segments_for_timerange(self, video_id: int, start_dt: datetime, end_dt: datetime) -> list[
+    def _collect_segments_for_timerange(
+            self,
+            video_id: int,
+            start_dt: datetime,
+            end_dt: datetime,
+            strict_validation: bool = False,
+            include_temp_buffer: bool = False,
+    ) -> list[
 
         tuple[str, datetime, datetime]]:
 
@@ -9435,7 +9880,16 @@ class VideoService:
 
         
 
-        for record_root in self._get_all_record_roots():
+        record_roots = self._get_all_record_roots()
+        if include_temp_buffer:
+            record_roots.append(self._get_alarm_temp_buffer_root())
+            self._prune_alarm_temp_buffer(video_id)
+
+        temp_buffer_base = os.path.normcase(os.path.abspath(self._get_alarm_temp_buffer_root()))
+
+        for record_root in record_roots:
+
+            is_temp_buffer_root = os.path.normcase(os.path.abspath(record_root)) == temp_buffer_base
 
             device_root = os.path.join(record_root, str(video_id))
 
@@ -9475,6 +9929,10 @@ class VideoService:
                         next_seg_start = candidate_next_start
                         break
 
+                if is_temp_buffer_root and next_seg_start is None:
+
+                    continue
+
                 fallback_seg_end = (
                     next_seg_start
                     if next_seg_start and next_seg_start > seg_start
@@ -9485,16 +9943,27 @@ class VideoService:
 
                     continue
 
-                seg_end = self._get_segment_end(seg_path, seg_start, next_seg_start)
+                if strict_validation:
+                    ok, duration_seconds, _reason = self._validate_recording_segment(
+                        seg_path,
+                        min_age_seconds=0 if next_seg_start is not None else 6,
+                        probe_timeout_seconds=8.0,
+                        check_decode=True,
+                    )
+                    if not ok or not duration_seconds:
+                        continue
+                    seg_end = seg_start + timedelta(seconds=duration_seconds)
+                else:
+                    seg_end = self._get_segment_end(seg_path, seg_start, next_seg_start)
 
                 if not (seg_end > start_dt and seg_start < end_dt):
 
                     continue
 
-                if not self._is_segment_usable(
-                        seg_path,
-                        has_newer_segment=next_seg_start is not None,
-                        allow_probe_fallback=True,
+                if not strict_validation and not self._is_segment_usable(
+                    seg_path,
+                    has_newer_segment=next_seg_start is not None,
+                    allow_probe_fallback=True,
                 ):
 
                     continue
@@ -9865,7 +10334,13 @@ class VideoService:
 
 
 
-        segments = self._collect_segments_for_timerange(video_id, start_dt, end_dt)
+        segments = self._collect_segments_for_timerange(
+            video_id,
+            start_dt,
+            end_dt,
+            strict_validation=output_type == "alarm",
+            include_temp_buffer=output_type == "alarm",
+        )
 
         if not segments:
             diagnostic = self._summarize_segment_collection_failure(video_id, start_dt, end_dt)
@@ -9956,23 +10431,39 @@ class VideoService:
 
 
 
-            concat_cmd = [
+            if output_type == "alarm":
+                concat_cmd = [
+                    ffmpeg_path,
+                    "-y",
+                    "-fflags", "+genpts",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", concat_list_path,
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    concat_output_path,
+                ]
+            else:
+                concat_cmd = [
 
-                ffmpeg_path,
+                    ffmpeg_path,
 
-                "-y",
+                    "-y",
 
-                "-f", "concat",
+                    "-f", "concat",
 
-                "-safe", "0",
+                    "-safe", "0",
 
-                "-i", concat_list_path,
+                    "-i", concat_list_path,
 
-                "-c", "copy",
+                    "-c", "copy",
 
-                concat_output_path,
+                    concat_output_path,
 
-            ]
+                ]
 
             concat_proc = _run_clip_ffmpeg(concat_cmd, "concat")
 
@@ -10086,11 +10577,34 @@ class VideoService:
 
 
 
-            if not os.path.exists(final_output_path) or os.path.getsize(final_output_path) == 0:
-
-                raise ValueError("Generated video file is empty")
+            if not os.path.exists(final_output_path):
+                raise ValueError("video_failed: generated video file missing")
+            final_size = os.path.getsize(final_output_path)
+            if final_size < 64 * 1024:
+                try:
+                    os.remove(final_output_path)
+                except Exception:
+                    pass
+                raise ValueError(f"video_failed: generated video file too small: {final_size}")
 
             actual_duration = self._probe_video_duration(final_output_path, timeout_seconds=8.0)
+            if output_type == "alarm":
+                valid_final, validated_duration, invalid_reason = self._validate_recording_segment(
+                    final_output_path,
+                    min_age_seconds=0,
+                    probe_timeout_seconds=8.0,
+                    check_decode=True,
+                )
+                if not valid_final:
+                    try:
+                        os.remove(final_output_path)
+                    except Exception:
+                        pass
+                    raise ValueError(f"video_failed: generated alarm video invalid: {invalid_reason}")
+                actual_duration = validated_duration or actual_duration
+            elif actual_duration is None:
+                raise ValueError("video_failed: generated video duration unreadable")
+
             expected_duration = clip_duration
             if output_type == "alarm" and actual_duration is not None and actual_duration < expected_duration:
                 logger.warning(
@@ -10333,6 +10847,11 @@ class VideoService:
 
         clips: list[dict] = []
 
+        alarm_name_pattern = re.compile(
+            r"^alarm_(?P<alarm_id>[^_]+)_(?P<device_id>[^_]+)_",
+            re.IGNORECASE,
+        )
+
         for file_path in sorted(glob.glob(os.path.join(root_dir, "**", "*.mp4"), recursive=True), reverse=True):
 
             file_name = os.path.basename(file_path)
@@ -10348,6 +10867,7 @@ class VideoService:
                 stat = os.stat(file_path)
 
                 event_at = self._parse_alarm_event_time(file_name)
+                alarm_match = alarm_name_pattern.match(file_name)
                 alarm_doc = None
                 try:
                     alarm_doc = get_mongo_collection("alarm_record").find_one(
@@ -10375,6 +10895,8 @@ class VideoService:
                     {
 
                         "name": file_name,
+                        "alarm_id": alarm_doc.get("id") if alarm_doc else (alarm_match.group("alarm_id") if alarm_match else ""),
+                        "device_id": str(alarm_doc.get("device_id") if alarm_doc else (alarm_match.group("device_id") if alarm_match else video_id)),
 
                         "size_bytes": int(stat.st_size),
 
@@ -10415,7 +10937,7 @@ class VideoService:
 
     def list_saved_alarm_videos(self, video_id: int, limit: int = 120) -> list[dict]:
 
-        return self._list_saved_videos(self._get_alarm_video_root(), video_id, limit)
+        return self.list_alarm_videos_direct(video_id, limit=limit, sort_order="desc")
 
 
 
@@ -10548,6 +11070,206 @@ class VideoService:
 
         return clips
 
+    def _resolve_recording_web_path(self, video_id: int, web_path: str) -> str:
+        raw = str(web_path or "").strip()
+        if not raw:
+            raise ValueError("web_path is empty")
+
+        parsed = urlparse(raw)
+        path = parsed.path or raw
+        path = path.replace("\\", "/")
+        filename = os.path.basename(path)
+        if not filename.lower().endswith(".mp4"):
+            raise ValueError("recording file must be an mp4")
+        if ".boxed." in filename:
+            raise ValueError("source recording is already boxed")
+
+        candidates = []
+        if os.path.isabs(raw) and os.path.isfile(raw):
+            candidates.append(raw)
+
+        static_prefix = "/static/"
+        if path.startswith(static_prefix):
+            rel = path[len(static_prefix):].lstrip("/")
+            candidates.append(os.path.join(self._get_default_static_root(), rel.replace("/", os.sep)))
+
+        api_prefix_map = {
+            "/api/videos/": self._folder("recordings"),
+            "/api/playback_videos/": self._folder("playback_videos"),
+        }
+        for prefix, folder in api_prefix_map.items():
+            if path.startswith(prefix):
+                rel = path[len(prefix):].lstrip("/")
+                for root in self._get_enabled_local_storage_roots():
+                    candidates.append(os.path.join(root, folder, rel.replace("/", os.sep)))
+
+        for record_root in self._get_all_record_roots():
+            candidates.append(os.path.join(record_root, str(video_id), filename))
+
+        allowed_roots = [os.path.abspath(os.path.join(root, self._folder("recordings"))) for root in self._get_enabled_local_storage_roots()]
+        allowed_roots.append(os.path.abspath(self._get_default_static_subdir(self._folder("recordings"))))
+
+        for candidate in candidates:
+            abs_candidate = os.path.abspath(candidate)
+            if not os.path.isfile(abs_candidate):
+                continue
+            if not any(abs_candidate == root or abs_candidate.startswith(root + os.sep) for root in allowed_roots):
+                continue
+            if os.path.basename(os.path.dirname(abs_candidate)) != str(video_id):
+                continue
+            return abs_candidate
+
+        raise FileNotFoundError(f"recording not found for video_id={video_id}: {web_path}")
+
+    def _draw_person_detections_on_frame(self, frame, detections):
+        boxes = []
+        frame_h, frame_w = frame.shape[:2]
+        for det in detections or []:
+            bbox = det.get("bbox") or det.get("coords") or []
+            if len(bbox) < 4:
+                continue
+            try:
+                x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+                confidence = float(det.get("confidence", 0.0) or 0.0)
+            except Exception:
+                continue
+            boxes.append({
+                "coords": [
+                    int(max(0, min(frame_w - 1, x1))),
+                    int(max(0, min(frame_h - 1, y1))),
+                    int(max(0, min(frame_w - 1, x2))),
+                    int(max(0, min(frame_h - 1, y2))),
+                ],
+                "frame_width": frame_w,
+                "frame_height": frame_h,
+                "label": f"person {confidence:.2f}",
+                "alarm_type": "person",
+            })
+
+        if not boxes:
+            return frame
+
+        from app.services.ai_manager import ai_manager
+        return ai_manager._draw_boxes_on_frame(frame, boxes)
+
+    def generate_boxed_recording_video(
+        self,
+        video_id: int,
+        web_path: str,
+        algorithm: str = "person",
+        frame_stride: int = 5,
+        force: bool = False,
+    ) -> dict:
+        source_path = self._resolve_recording_web_path(video_id, web_path)
+        if not self._is_segment_usable(source_path, min_age_seconds=1, allow_probe_fallback=True):
+            raise ValueError("recording segment is not ready")
+
+        base, ext = os.path.splitext(source_path)
+        output_path = f"{base}.boxed{ext or '.mp4'}"
+        if os.path.isfile(output_path) and not force and os.path.getmtime(output_path) >= os.path.getmtime(source_path):
+            return {
+                "source_path": self._to_backend_static_web_path(source_path),
+                "boxed_path": self._to_backend_static_web_path(output_path),
+                "cached": True,
+            }
+
+        stride = max(1, int(frame_stride or 1))
+        cap = cv2.VideoCapture(source_path)
+        if not cap.isOpened():
+            raise ValueError("cannot open source recording")
+
+        raw_tmp_path = f"{output_path}.raw.tmp.mp4"
+        h264_tmp_path = f"{output_path}.h264.tmp.mp4"
+        writer = None
+        frames = 0
+        detected_frames = 0
+        started_at = time.time()
+        last_detections = []
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            if width <= 0 or height <= 0:
+                raise ValueError("invalid recording dimensions")
+
+            writer = cv2.VideoWriter(raw_tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+            if not writer.isOpened():
+                raise ValueError("cannot open boxed temp writer")
+
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if frames % stride == 0:
+                    result = detect_frame(algorithm, frame, conf=float(os.getenv("BOXED_RECORDING_PERSON_CONF", "0.35")))
+                    last_detections = result.get("detections") if isinstance(result, dict) else []
+                    detected_frames += 1
+                frame = self._draw_person_detections_on_frame(frame, last_detections)
+                writer.write(frame)
+                frames += 1
+
+            if frames <= 0:
+                raise ValueError("no frames written")
+
+            writer.release()
+            writer = None
+            cap.release()
+
+            ffmpeg_path = self._get_ffmpeg_path()
+            transcode_cmd = [
+                ffmpeg_path,
+                "-y",
+                "-i", raw_tmp_path,
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-an",
+                h264_tmp_path,
+            ]
+            transcode = subprocess.run(
+                transcode_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=float(os.getenv("BOXED_RECORDING_TRANSCODE_TIMEOUT_SECONDS", "300")),
+            )
+            if transcode.returncode != 0:
+                raise ValueError(f"boxed recording transcode failed: {(transcode.stderr or '').strip()[-1000:]}")
+            os.replace(h264_tmp_path, output_path)
+            try:
+                os.remove(raw_tmp_path)
+            except Exception:
+                pass
+            try:
+                self._mirror_write_file(
+                    output_path,
+                    os.path.relpath(output_path, self._get_storage_root()),
+                )
+            except Exception:
+                pass
+
+            return {
+                "source_path": self._to_backend_static_web_path(source_path),
+                "boxed_path": self._to_backend_static_web_path(output_path),
+                "cached": False,
+                "frames": frames,
+                "detected_frames": detected_frames,
+                "elapsed_ms": int((time.time() - started_at) * 1000),
+            }
+        finally:
+            try:
+                if writer is not None:
+                    writer.release()
+                if cap is not None:
+                    cap.release()
+                for temp_path in (raw_tmp_path, h264_tmp_path):
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+            except Exception:
+                pass
+
     @staticmethod
     def _playback_text(value: Any) -> str:
         return str(value or "").strip()
@@ -10589,14 +11311,28 @@ class VideoService:
                     except OSError:
                         continue
                     with entries:
-                        for entry in entries:
-                            if not entry.is_file() or not entry.name.lower().endswith(".mp4"):
-                                continue
+                        video_entries = sorted(
+                            [
+                                entry
+                                for entry in entries
+                                if entry.is_file() and entry.name.lower().endswith(".mp4")
+                            ],
+                            key=lambda entry: entry.name,
+                        )
+                        for index, entry in enumerate(video_entries):
+                            has_newer_segment = index < len(video_entries) - 1
                             try:
                                 stat = entry.stat()
                             except OSError:
                                 continue
                             if stat.st_size < 64 * 1024:
+                                continue
+                            if not self._is_segment_usable(
+                                entry.path,
+                                min_age_seconds=2,
+                                has_newer_segment=has_newer_segment,
+                                allow_probe_fallback=False,
+                            ):
                                 continue
                             started_at = self._parse_segment_start(entry.path)
                             if not started_at:
@@ -10605,6 +11341,7 @@ class VideoService:
                             recordings.append({
                                 "device_id": str(device_id),
                                 "name": entry.name,
+                                "file_path": entry.path,
                                 "size_bytes": int(stat.st_size),
                                 "start_at": started_at,
                                 "end_at": started_at + timedelta(seconds=segment_seconds),
@@ -10703,10 +11440,25 @@ class VideoService:
             if any(value and values[key] != value for key, value in filters.items()):
                 return False
             if keyword_text:
+                personnel_values = [
+                    self._playback_text(doc.get("personnel_id")),
+                    self._playback_text(doc.get("personnel_name")),
+                    self._playback_text(doc.get("personName")),
+                    self._playback_text(doc.get("worker_name")),
+                    self._playback_text(doc.get("workerName")),
+                    self._playback_text(doc.get("holder")),
+                    self._playback_text(doc.get("holder_name")),
+                    self._playback_text(doc.get("holderName")),
+                    self._playback_text(doc.get("responsible_person")),
+                    self._playback_text(doc.get("responsiblePerson")),
+                    self._playback_text(doc.get("manager")),
+                    self._playback_text(doc.get("contact")),
+                ]
                 haystack = " ".join([
                     self._playback_text(doc.get("name")),
                     self._playback_text(doc.get("id")),
                     *values.values(),
+                    *personnel_values,
                 ]).lower()
                 if keyword_text not in haystack:
                     return False
@@ -10770,11 +11522,16 @@ class VideoService:
             doc = item["device"]
             duration_seconds = max(1, int((item["end_at"] - item["start_at"]).total_seconds()))
             alarm_doc = alarm_docs_by_id.get(self._playback_text(item.get("alarm_id")), {})
+            thumbnail_path = item.get("thumbnail_path") or ""
+            if media_type != "alarm" and not thumbnail_path and item.get("file_path"):
+                generated_thumbnail = self._get_recording_thumbnail_path(str(item.get("file_path")))
+                if generated_thumbnail:
+                    thumbnail_path = self._to_backend_static_web_path(generated_thumbnail)
             alarm_image_path = (
                 alarm_doc.get("alarm_image_path")
                 or alarm_doc.get("screenshot_path")
                 or alarm_doc.get("thumbnail_path")
-                or item.get("thumbnail_path")
+                or thumbnail_path
                 or ""
             )
             result_item = {
@@ -10796,7 +11553,7 @@ class VideoService:
                 "created_at": item["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "updated_at": item["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "web_path": item["web_path"],
-                "thumbnail_path": item.get("thumbnail_path") or "",
+                "thumbnail_path": thumbnail_path,
             }
             if media_type == "alarm":
                 result_item.update({

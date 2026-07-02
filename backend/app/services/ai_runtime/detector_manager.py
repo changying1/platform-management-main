@@ -28,14 +28,15 @@ class DetectorManager:
             return failure_result(config, error)
 
         try:
-            detector = self._get_detector(config, model_path, model_type)
+            tracker_scope = kwargs.get("tracker_scope") if kwargs.get("track") else None
+            detector = self._get_detector(config, model_path, model_type, tracker_scope=tracker_scope)
             detections = detector.detect(frame, **kwargs)
             return success_result(config, detections)
         except Exception as exc:
             return failure_result(config, str(exc))
 
-    def _get_detector(self, config, model_path, model_type):
-        cache_key = (config.algorithm_code, str(model_path), model_type)
+    def _get_detector(self, config, model_path, model_type, tracker_scope=None):
+        cache_key = (config.algorithm_code, str(model_path), model_type, tracker_scope)
         with self._lock:
             detector = self._cache.get(cache_key)
             if detector is None:

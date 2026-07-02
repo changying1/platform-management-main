@@ -116,6 +116,20 @@ body {
   scrollbar-color: rgba(100, 100, 100, 0.5) rgba(0, 0, 0, 0.1);
 }
 
+@keyframes alarmSweep {
+  0% {
+    transform: translateX(-30vw) skewX(-12deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(130vw) skewX(-12deg);
+    opacity: 0;
+  }
+}
+
 @media (max-width: 768px) {
   html {
     font-size: 14px;

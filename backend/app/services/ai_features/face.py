@@ -49,6 +49,7 @@ def detect(frame: Any, **kwargs) -> dict:
                 det["personName"] = match_result["name"]
                 det["personnel_id"] = match_result["personnel_id"]
                 det["similarity"] = match_result["similarity"]
+                det["face_match_low_confidence"] = not bool(match_result.get("matched", True))
                 logger.info("[人脸识别成功] 姓名=%s, 相似度=%.4f", match_result["name"], match_result["similarity"])
             else:
                 # 识别失败，保持原样或标记为未知
@@ -71,5 +72,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("face", "人脸检测")
-def detect_face_alarm(service, frame):
-    return legacy_alarm_detect(service, "face", frame)
+def detect_face_alarm(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "face", frame, device_id=device_id)

@@ -174,7 +174,7 @@ export default function LocationDeviceManagement() {
   const loadDevices = async () => {
     setLoading(true);
     try {
-      await loadUnitMaps();
+      loadUnitMaps();
       const data = await deviceApi.getLocationDevices();
       setDevices(data);
     } catch (error) {
@@ -272,28 +272,6 @@ export default function LocationDeviceManagement() {
       : all;
   }, [devices, formData.grid_id, formData.project, formData.project_id, orgOptions.teams, unitMaps]);
 
-  const filteredData = devices.filter(d => {
-    const companyName = getDisplayCompany(d);
-    const projectName = getDisplayProject(d);
-    const gridName = getDisplayGrid(d);
-    const teamName = getDisplayTeam(d);
-    const machineCode = getMachineCode(d);
-    const matchesSearch = searchTerm === '' ||
-      d.name.includes(searchTerm) ||
-      d.device_id.includes(searchTerm) ||
-      machineCode.includes(searchTerm) ||
-      companyName.includes(searchTerm) ||
-      projectName.includes(searchTerm) ||
-      gridName.includes(searchTerm) ||
-      teamName.includes(searchTerm) ||
-      d.holder?.includes(searchTerm);
-    return matchesSearch &&
-      (filterType === 'all' || d.type === filterType) &&
-      (filterStatus === 'all' || d.status === filterStatus) &&
-      (filterCompany === 'all' || companyName === filterCompany) &&
-      (filterTeam === 'all' || teamName === filterTeam);
-  });
-
   const getTypeText = (type: string) => {
     const map: Record<string, string> = {
       uwb_band: 'UWB手环',
@@ -318,6 +296,33 @@ export default function LocationDeviceManagement() {
     const deviceUse = getDeviceUse(device);
     return deviceUse ? `${base} / ${deviceUse}` : base;
   };
+
+  const displayRows = useMemo(() => devices.map((device) => ({
+    device,
+    companyName: getDisplayCompany(device),
+    projectName: getDisplayProject(device),
+    gridName: getDisplayGrid(device),
+    teamName: getDisplayTeam(device),
+    machineCode: getMachineCode(device),
+    typeLabel: getDeviceTypeLabel(device),
+  })), [devices, unitMaps]);
+
+  const filteredData = useMemo(() => displayRows.filter(({ device: d, companyName, projectName, gridName, teamName, machineCode }) => {
+    const matchesSearch = searchTerm === '' ||
+      d.name.includes(searchTerm) ||
+      d.device_id.includes(searchTerm) ||
+      machineCode.includes(searchTerm) ||
+      companyName.includes(searchTerm) ||
+      projectName.includes(searchTerm) ||
+      gridName.includes(searchTerm) ||
+      teamName.includes(searchTerm) ||
+      d.holder?.includes(searchTerm);
+    return matchesSearch &&
+      (filterType === 'all' || d.type === filterType) &&
+      (filterStatus === 'all' || d.status === filterStatus) &&
+      (filterCompany === 'all' || companyName === filterCompany) &&
+      (filterTeam === 'all' || teamName === filterTeam);
+  }), [displayRows, filterCompany, filterStatus, filterTeam, filterType, searchTerm]);
 
   const getStatusStyle = (status: string) => {
     const styles: Record<string, string> = {
@@ -545,18 +550,18 @@ export default function LocationDeviceManagement() {
           <tbody className="divide-y divide-slate-700">
             {loading && <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">加载中...</td></tr>}
             {!loading && filteredData.length === 0 && <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">暂无数据</td></tr>}
-            {filteredData.map(device => (
+            {filteredData.map(({ device, companyName, projectName, gridName, teamName, machineCode, typeLabel }) => (
               <tr key={device.device_id} className="hover:bg-slate-800/30 transition-colors">
                 <td className="px-4 py-3 text-slate-300">{device.name}</td>
                 <td className="px-4 py-3 text-slate-300 font-mono text-xs">{device.device_id}</td>
-                <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{getDeviceTypeLabel(device)}</span></td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayCompany(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayProject(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayGrid(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayTeam(device) || '-'}</td>
+                <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{typeLabel}</span></td>
+                <td className="px-4 py-3 text-slate-300">{companyName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{projectName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{gridName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{teamName || '-'}</td>
                 <td className="px-4 py-3 text-slate-300">{device.holder || '-'}</td>
                 <td className="px-4 py-3 text-slate-300">{device.holderPhone || '-'}</td>
-                <td className="px-4 py-3 text-slate-300 font-mono text-xs">{getMachineCode(device) || '-'}</td>
+                <td className="px-4 py-3 text-slate-300 font-mono text-xs">{machineCode || '-'}</td>
                 <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusStyle(device.status)}`}>{getStatusText(device.status)}</span></td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2">

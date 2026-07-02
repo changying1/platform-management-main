@@ -147,6 +147,15 @@ def _shape_label(fence: dict) -> str:
     return shape.capitalize()
 
 
+def _ui_severity(value) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"severe", "high", "critical", "严重"}:
+        return "severe"
+    if raw in {"risk", "medium", "warning", "风险", "中", "中等"}:
+        return "risk"
+    return "normal"
+
+
 def _fence_to_item(fence: dict) -> dict:
     return {
         "id": str(fence.get("fence_id") or fence.get("id") or ""),
@@ -159,7 +168,7 @@ def _fence_to_item(fence: dict) -> dict:
         "team_id": fence.get("team_id"),
         "type": _shape_label(fence),
         "behavior": fence.get("behavior"),
-        "severity": fence.get("severity"),
+        "severity": _ui_severity(fence.get("severity") or fence.get("alarm_type")),
         "schedule": fence.get("schedule"),
         "effective_time": fence.get("effective_time") or "00:00-23:59",
         "center": fence.get("geometry", {}).get("center"),
@@ -196,7 +205,7 @@ def get_fences(current_user: dict = Depends(get_current_user)):
             "team_id": fence.get("team_id"),
             "type": _shape_label(fence),
             "behavior": fence.get("behavior"),
-            "severity": fence.get("severity"),
+            "severity": _ui_severity(fence.get("severity") or fence.get("alarm_type")),
             "schedule": fence.get("schedule"),
             "effective_time": fence.get("effective_time") or "00:00-23:59",
             "center": fence.get("geometry", {}).get("center"),
@@ -241,9 +250,13 @@ def add_fence(payload: FenceCreate, current_user: dict = Depends(get_current_use
     severity_map = {
         "normal": AlarmLevel.LOW,
         "risk": AlarmLevel.MEDIUM,
-        "severe": AlarmLevel.HIGH
+        "severe": AlarmLevel.HIGH,
+        "general": AlarmLevel.LOW,
+        "low": AlarmLevel.LOW,
+        "medium": AlarmLevel.MEDIUM,
+        "high": AlarmLevel.HIGH
     }
-    alarm_type = severity_map.get(payload.severity, AlarmLevel.MEDIUM)
+    alarm_type = severity_map.get(_ui_severity(payload.severity), AlarmLevel.MEDIUM)
 
     service_shape = payload.shape
     if service_shape != "circle":
@@ -304,7 +317,7 @@ def add_fence(payload: FenceCreate, current_user: dict = Depends(get_current_use
         "team_id": new_fence.get("team_id"),
         "type": _shape_label(new_fence),
         "behavior": new_fence.get("behavior"),
-        "severity": new_fence.get("severity"),
+        "severity": _ui_severity(new_fence.get("severity") or new_fence.get("alarm_type")),
         "schedule": new_fence.get("schedule"),
         "effective_time": new_fence.get("effective_time") or "00:00-23:59",
         "center": new_fence.get("geometry", {}).get("center"),

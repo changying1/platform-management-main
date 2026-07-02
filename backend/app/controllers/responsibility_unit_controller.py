@@ -98,7 +98,7 @@ def _write_project_unit_log(
     write_audit_log(
         current_user=current_user,
         action=action,
-        target_type="project",
+        target_type=unit_type,
         target_name=_unit_name(unit or after or before),
         before=before,
         after=after,
@@ -231,8 +231,36 @@ def change_parent(
     unit = responsibility_unit_service.get_unit_by_id(unit_id)
     _require_unit_scope(unit, current_user)
     require_permission(current_user, f"{_permission_subject(_unit_type(unit))}.edit")
-    _require_unit_scope(responsibility_unit_service.get_unit_by_id(new_parent_id), current_user)
+    old_parent = responsibility_unit_service.get_unit_by_id(str((unit or {}).get("parent_id") or ""))
+    new_parent = responsibility_unit_service.get_unit_by_id(new_parent_id)
+    _require_unit_scope(new_parent, current_user)
     result = responsibility_unit_service.change_parent(unit_id, new_parent_id)
     if not result:
         raise HTTPException(status_code=404, detail="责任单元不存在")
+    unit_type = _unit_type(result or unit)
+    if unit_type in {"grid", "team"}:
+        old_parent_name = _unit_name(old_parent, "无上级")
+        new_parent_name = _unit_name(new_parent, new_parent_id)
+        before_log = {
+            **(unit or {}),
+            "parent_name": old_parent_name,
+        }
+        after_log = {
+            **(result or {}),
+            "parent_name": new_parent_name,
+        }
+        write_audit_log(
+            current_user=current_user,
+            action="变更网格上级" if unit_type == "grid" else "变更工队上级",
+            target_type=unit_type,
+            target_name=_unit_name(result or unit),
+            before=before_log,
+            after=after_log,
+            details=f"上级单位: {old_parent_name} -> {new_parent_name}",
+            project=_unit_project(result or unit),
+            grid=_unit_grid(result or unit),
+            team=_unit_team(result or unit) if unit_type == "team" else None,
+            allowed_fields={"parent_id"},
+            extra={"sub_type": unit_type},
+        )
     return result

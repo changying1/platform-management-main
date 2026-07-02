@@ -23,5 +23,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("person", "人员检测")
-def detect_person_alarm(service, frame):
-    return legacy_alarm_detect(service, "person", frame)
+def detect_person_alarm(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "person", frame, device_id=device_id)

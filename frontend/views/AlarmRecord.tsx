@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
-import { getAlarmPlaybackVideos, type SavedPlaybackVideo } from '../src/api/videoApi';
+import { getAlarmVideosList, type SavedPlaybackVideo } from '../src/api/videoApi';
 import { withAuthTokenParam } from '../src/api/config';
 import { formatAlarmDisplayTime, getAlarmDisplayTime, parseAlarmTimeValue } from '../src/utils/alarmTime';
 import { hasStoredPermission } from '../src/utils/permissions';
@@ -22,7 +22,9 @@ import {
   ImageIcon,
   ArrowDown,
   ArrowUp,
-  ArrowUpDown
+  ArrowUpDown,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 // 告警记录类型
@@ -245,6 +247,9 @@ const [processingAlarm, setProcessingAlarm] = useState<AlarmRecord | null>(null)
 const [processRemark, setProcessRemark] = useState('');
 const [processError, setProcessError] = useState('');
 const [isProcessingAlarm, setIsProcessingAlarm] = useState(false);
+const [isBatchMode, setIsBatchMode] = useState(false);
+const [selectedAlarmIds, setSelectedAlarmIds] = useState<Set<string>>(() => new Set());
+const [batchProcessingAlarms, setBatchProcessingAlarms] = useState<AlarmRecord[]>([]);
 const [previewImage, setPreviewImage] = useState<string | null>(null);
 const [previewVideo, setPreviewVideo] = useState<string | null>(null);
 const [selectedVideoAlarm, setSelectedVideoAlarm] = useState<AlarmRecord | null>(null);
@@ -311,7 +316,7 @@ const resolveAlarmVideoUrl = (path?: string) => {
 
 const isPlaybackReadyStatus = (status?: string) => {
   const normalized = String(status || '').toLowerCase();
-  return !normalized || ['success', 'completed', 'complete', 'done', 'ready'].includes(normalized);
+  return !normalized || ['success', 'saved', 'completed', 'complete', 'done', 'ready'].includes(normalized);
 };
 
 const isPlaybackGeneratingStatus = (status?: string) =>
@@ -320,8 +325,26 @@ const isPlaybackGeneratingStatus = (status?: string) =>
 const isPlaybackFailedStatus = (status?: string) =>
   ['failed', 'error'].includes(String(status || '').toLowerCase());
 
-const findAlarmPlaybackVideo = (list: SavedPlaybackVideo[], alarmId: string) =>
-  list.find((item) => String(item.alarm_id ?? '') === String(alarmId));
+const getAlarmVideoNameValue = (source: Record<string, any> | SavedPlaybackVideo | undefined | null) => {
+  if (!source) return '';
+  const raw =
+    (source as any).name ||
+    (source as any).file_name ||
+    getAlarmVideoPathValue(source);
+  return String(raw || '').split(/[\\/]/).pop() || '';
+};
+
+const findAlarmPlaybackVideo = (list: SavedPlaybackVideo[], alarmId: string) => {
+  const target = String(alarmId || '').trim();
+  if (!target) return undefined;
+  const alarmFilePrefix = `alarm_${target}_`;
+  return list.find((item) => {
+    if (String(item.alarm_id ?? '').trim() === target) return true;
+    const name = getAlarmVideoNameValue(item);
+    const path = getAlarmVideoPathValue(item);
+    return name.includes(alarmFilePrefix) || path.includes(alarmFilePrefix);
+  });
+};
 
 const [sortConfig, setSortConfig] = useState<{ key: AlarmSortKey; direction: AlarmSortDirection }>({
   key: 'time',
@@ -356,14 +379,19 @@ const isOfflineAlarm = (item: AlarmResponse) => {
 };
 
 const translateAlarmDisplayText = (value: unknown) => String(value || '')
+  .replace(/\bnohelmet\b/gi, '未佩戴安全帽')
   .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
   .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
+  .replace(/\bhelmetmissing\b/gi, '未佩戴安全帽')
   .replace(/\bsmoking\b/gi, '吸烟')
   .replace(/\bphone\b/gi, '打电话')
   .replace(/\bfire\b/gi, '烟火')
   .replace(/\bflame\b/gi, '明火')
-  .replace(/\bsmoke\b/gi, '烟雾')
+  .replace(/\bsmoke\b/gi, '发现烟雾')
+  .replace(/\bnovest\b/gi, '未穿反光衣')
   .replace(/\bno_vest\b/gi, '未穿反光衣')
+  .replace(/\breflective_vest_missing\b/gi, '未穿反光衣')
+  .replace(/\breflectivevestmissing\b/gi, '未穿反光衣')
   .replace(/\bunknown\b/gi, '未知异常')
   .replace(/\bpending\b/gi, '生成中')
   .replace(/\bgenerating\b/gi, '生成中')
@@ -393,15 +421,61 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
       ? String(item.location)
       : '未提供位置';
 
-  const branchName = rawItem.branch_name || rawItem.company || rawItem.department || '';
-  const projectName = rawItem.project_name || rawItem.project || '';
-  const gridName = rawItem.grid_name || rawItem.grid || '';
-  const team = rawItem.team_name || rawItem.team || rawItem.work_team || rawItem.workTeam || '';
-  const personName = rawItem.trigger_person_name || rawItem.person_name || rawItem.personnel_name || rawItem.captured_person_name || rawItem.bound_person_name || rawItem.person_label || '未知';
+  const boxPerson = Array.isArray(rawItem.alarm_boxes)
+    ? rawItem.alarm_boxes.find((box: any) =>
+        box && (
+          box.personName ||
+          box.person_name ||
+          box.trigger_person_name ||
+          box.person?.username ||
+          box.person?.name
+        )
+      )
+    : null;
+  const personName =
+    rawItem.trigger_person_name ||
+    rawItem.person_name ||
+    rawItem.personnel_name ||
+    rawItem.captured_person_name ||
+    rawItem.bound_person_name ||
+    rawItem.person_label ||
+    boxPerson?.personName ||
+    boxPerson?.person_name ||
+    boxPerson?.trigger_person_name ||
+    boxPerson?.person?.username ||
+    boxPerson?.person?.name ||
+    '未知';
   const personnelId =
     rawItem.personnel_id !== undefined && rawItem.personnel_id !== null
       ? String(rawItem.personnel_id)
+      : rawItem.trigger_person_id !== undefined && rawItem.trigger_person_id !== null
+        ? String(rawItem.trigger_person_id)
+        : boxPerson?.personnel_id !== undefined && boxPerson?.personnel_id !== null
+          ? String(boxPerson.personnel_id)
+          : boxPerson?.trigger_person_id !== undefined && boxPerson?.trigger_person_id !== null
+            ? String(boxPerson.trigger_person_id)
+            : boxPerson?.person?.id !== undefined && boxPerson?.person?.id !== null
+              ? String(boxPerson.person.id)
       : undefined;
+  const hasRecognizedPerson = Boolean(
+    personnelId ||
+    (
+      personName &&
+      !['未知', '未知人员', '未识别', '-', ''].includes(String(personName).trim())
+    )
+  );
+  const branchName = hasRecognizedPerson
+    ? (rawItem.person_branch_name || rawItem.person_company || rawItem.branch_name || rawItem.company || rawItem.department || '')
+    : (rawItem.branch_name || rawItem.company || rawItem.department || '');
+  const projectName = hasRecognizedPerson
+    ? (rawItem.person_project_name || rawItem.person_project || rawItem.project_name || rawItem.project || '')
+    : (rawItem.project_name || rawItem.project || '');
+  const gridName = hasRecognizedPerson
+    ? (rawItem.person_grid_name || rawItem.person_grid || rawItem.grid_name || rawItem.grid || '')
+    : (rawItem.grid_name || rawItem.grid || '');
+  const team = hasRecognizedPerson
+    ? (rawItem.person_team_name || rawItem.person_team || rawItem.team_name || rawItem.team || rawItem.work_team || rawItem.workTeam || '')
+    : (rawItem.team_name || rawItem.team || rawItem.work_team || rawItem.workTeam || '');
   const personText = [personName !== '未知' ? personName : '', personnelId].filter(Boolean).join(' / ');
   const deviceId =
     item.device_id !== undefined && item.device_id !== null
@@ -588,6 +662,21 @@ useEffect(() => {
   };
 const handleOpenProcessModal = (alarm: AlarmRecord, action: 'resolved' | 'ignored') => {
   setProcessingAlarm(alarm);
+  setBatchProcessingAlarms([]);
+  setProcessAction(action);
+  setProcessRemark('');
+  setProcessError('');
+  setShowProcessModal(true);
+};
+
+const handleOpenBatchProcessModal = (action: 'resolved' | 'ignored' = 'resolved') => {
+  const targets = sortedAlarms.filter((alarm) => selectedAlarmIds.has(alarm.id) && alarm.status === 'pending');
+  if (targets.length === 0) {
+    alert('请先选择需要处理的待处理告警');
+    return;
+  }
+  setProcessingAlarm(null);
+  setBatchProcessingAlarms(targets);
   setProcessAction(action);
   setProcessRemark('');
   setProcessError('');
@@ -615,7 +704,7 @@ const openAlarmVideo = async (alarm: AlarmRecord) => {
     }
 
     try {
-      const videos = await getAlarmPlaybackVideos(deviceId, 120);
+      const videos = await getAlarmVideosList(deviceId, 500);
       const matchedVideo = findAlarmPlaybackVideo(videos, alarm.id);
       videoPath = resolveAlarmVideoUrl(getAlarmVideoPathValue(matchedVideo));
     } catch (error) {
@@ -648,38 +737,48 @@ const openAlarmVideo = async (alarm: AlarmRecord) => {
 };
 
 const handleConfirmProcess = async () => {
-  if (!processingAlarm || isProcessingAlarm) return;
+  const targets = batchProcessingAlarms.length > 0
+    ? batchProcessingAlarms
+    : processingAlarm
+      ? [processingAlarm]
+      : [];
+  if (targets.length === 0 || isProcessingAlarm) return;
 
   const currentUser = localStorage.getItem('username') || '未知用户';
 
   try {
     setIsProcessingAlarm(true);
     setProcessError('');
-    if (processAction === 'resolved') {
-      await alarmApi.resolveAlarm(Number(processingAlarm.id), {
-        handler: currentUser,
-        remark: processRemark,
-      });
-    } else {
-      await alarmApi.updateAlarm(Number(processingAlarm.id), {
-        status: 'ignored',
-        handler: currentUser,
-        remark: processRemark,
-      });
-    }
+    await Promise.all(targets.map((alarm) => (
+      processAction === 'resolved'
+        ? alarmApi.resolveAlarm(Number(alarm.id), {
+            handler: currentUser,
+            remark: processRemark,
+          })
+        : alarmApi.updateAlarm(Number(alarm.id), {
+            status: 'ignored',
+            handler: currentUser,
+            remark: processRemark,
+          })
+    )));
 
     await loadAlarms();
-    window.dispatchEvent(new CustomEvent('alarmStatusChanged', {
-      detail: {
-        alarmId: processingAlarm.id,
-        deviceId: processingAlarm.deviceId,
-        sourceType: processingAlarm.sourceType,
-        status: processAction,
-      },
-    }));
+    targets.forEach((alarm) => {
+      window.dispatchEvent(new CustomEvent('alarmStatusChanged', {
+        detail: {
+          alarmId: alarm.id,
+          deviceId: alarm.deviceId,
+          sourceType: alarm.sourceType,
+          status: processAction,
+        },
+      }));
+    });
 
     setShowProcessModal(false);
     setProcessingAlarm(null);
+    setBatchProcessingAlarms([]);
+    setSelectedAlarmIds(new Set());
+    setIsBatchMode(false);
     setSelectedAlarm(null);
   } catch (error) {
     console.error('处理告警失败:', error);
@@ -818,6 +917,55 @@ const handleConfirmProcess = async () => {
     }
     return sortConfig.direction === 'asc' ? result : -result;
   });
+
+  useEffect(() => {
+    setSelectedAlarmIds((current) => {
+      const validIds = new Set(alarms.filter((alarm) => alarm.status === 'pending').map((alarm) => alarm.id));
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      if (next.size === current.size) return current;
+      return next;
+    });
+  }, [alarms]);
+
+  const pendingSortedAlarms = sortedAlarms.filter((alarm) => alarm.status === 'pending');
+  const selectedBatchAlarms = sortedAlarms.filter((alarm) => selectedAlarmIds.has(alarm.id) && alarm.status === 'pending');
+  const isAllBatchSelected = pendingSortedAlarms.length > 0 &&
+    pendingSortedAlarms.every((alarm) => selectedAlarmIds.has(alarm.id));
+
+  const toggleBatchMode = () => {
+    setIsBatchMode((current) => {
+      const next = !current;
+      if (!next) {
+        setSelectedAlarmIds(new Set());
+      }
+      return next;
+    });
+  };
+
+  const toggleAlarmSelection = (alarm: AlarmRecord) => {
+    if (alarm.status !== 'pending') return;
+    setSelectedAlarmIds((current) => {
+      const next = new Set(current);
+      if (next.has(alarm.id)) {
+        next.delete(alarm.id);
+      } else {
+        next.add(alarm.id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllBatchAlarms = () => {
+    setSelectedAlarmIds((current) => {
+      const next = new Set(current);
+      if (isAllBatchSelected) {
+        pendingSortedAlarms.forEach((alarm) => next.delete(alarm.id));
+      } else {
+        pendingSortedAlarms.forEach((alarm) => next.add(alarm.id));
+      }
+      return next;
+    });
+  };
 
   const sortOptions: { key: AlarmSortKey; label: string }[] = [
     { key: 'time', label: '告警时间' },
@@ -1003,6 +1151,43 @@ const handleConfirmProcess = async () => {
               className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200"
             />
           </div>
+          {canHandleAlarm && (
+            <div className="flex items-center gap-2">
+              {isBatchMode && (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAllBatchAlarms}
+                    disabled={pendingSortedAlarms.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-all hover:border-cyan-400/40 hover:text-cyan-200 disabled:cursor-not-allowed disabled:text-slate-500"
+                  >
+                    {isAllBatchSelected ? <CheckSquare size={15} /> : <Square size={15} />}
+                    全选
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenBatchProcessModal('resolved')}
+                    disabled={selectedBatchAlarms.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-green-500/20 px-3 py-2 text-sm font-medium text-green-300 transition-all hover:bg-green-500/30 disabled:cursor-not-allowed disabled:bg-slate-700/40 disabled:text-slate-500"
+                  >
+                    <CheckCircle size={15} />
+                    确定处理{selectedBatchAlarms.length > 0 ? `(${selectedBatchAlarms.length})` : ''}
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={toggleBatchMode}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                  isBatchMode
+                    ? 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                    : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
+                }`}
+              >
+                {isBatchMode ? '取消批量' : '批量处理'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1049,30 +1234,60 @@ const handleConfirmProcess = async () => {
             const projectText = displayValue(alarm.projectName || (alarm.projectId ? `项目 ${alarm.projectId}` : ''));
             const gridText = displayValue(alarm.gridName);
             const teamText = displayValue(alarm.team);
+            const isSelectedForBatch = selectedAlarmIds.has(alarm.id);
+            const isSelectableForBatch = alarm.status === 'pending';
 
             return (
               <article
                 key={alarm.recordKey}
-                onClick={() => setSelectedAlarm(alarm)}
+                onClick={() => {
+                  if (isBatchMode) {
+                    toggleAlarmSelection(alarm);
+                    return;
+                  }
+                  setSelectedAlarm(alarm);
+                }}
                 className={`group cursor-pointer rounded-lg border px-4 py-3 transition-all hover:border-cyan-400/35 hover:bg-slate-800/45 ${
-                  alarm.status === 'pending'
+                  isSelectedForBatch
+                    ? 'border-cyan-400/60 bg-cyan-500/10'
+                    : alarm.status === 'pending'
                     ? 'border-red-400/20 bg-red-500/5'
                     : 'border-slate-700/70 bg-slate-950/25'
                 }`}
               >
-                <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_auto] lg:items-start">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                  {isBatchMode && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleAlarmSelection(alarm);
+                      }}
+                      disabled={!isSelectableForBatch}
+                      title={isSelectableForBatch ? '选择此告警' : '仅待处理告警可批量处理'}
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-all ${
+                        isSelectedForBatch
+                          ? 'border-cyan-400 bg-cyan-500/25 text-cyan-200'
+                          : isSelectableForBatch
+                            ? 'border-slate-600 bg-slate-900/60 text-slate-300 hover:border-cyan-400/60 hover:text-cyan-200'
+                            : 'cursor-not-allowed border-slate-700 bg-slate-800/50 text-slate-600'
+                      }`}
+                    >
+                      {isSelectedForBatch ? <CheckSquare size={18} /> : <Square size={18} />}
+                    </button>
+                  )}
+                  <div className="flex min-w-0 items-center gap-3 xl:w-[230px] xl:shrink-0">
+                    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg ${
                       alarm.type === 'fence' ? 'bg-blue-500/20' : 'bg-purple-500/20'
                     }`}>
                       {alarm.type === 'fence' ? (
-                        <ShieldAlert size={20} className="text-blue-400" />
+                        <ShieldAlert size={24} className="text-blue-400" />
                       ) : (
-                        <Video size={20} className="text-purple-400" />
+                        <Video size={24} className="text-purple-400" />
                       )}
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-white" title={typeText}>
+                      <div className="truncate text-[17px] font-bold leading-tight text-white" title={typeText}>
                         {typeText}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-1.5">
@@ -1086,51 +1301,64 @@ const handleConfirmProcess = async () => {
                     </div>
                   </div>
 
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                      <div className="min-w-0 flex-1 text-slate-200" title={situationText}>
-                        <span className="text-slate-500">情况：</span>
-                        <span className="break-words">{situationText}</span>
-                      </div>
-                      <div className="inline-flex items-center gap-1 text-slate-300">
-                        <User size={14} className="text-slate-500" />
-                        <span className="text-slate-500">对象</span>
-                        <span>{personText}</span>
-                      </div>
-                      <div className="inline-flex items-center gap-1 text-slate-300">
-                        <Video size={14} className="text-slate-500" />
-                        <span className="text-slate-500">设备</span>
-                        <span>{deviceName}</span>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2 text-[15px] text-slate-300 2xl:flex-nowrap">
+                    <div className="contents">
+                      <div className="flex min-w-[220px] flex-[1.25_1_260px] items-center gap-1.5 text-slate-200" title={situationText}>
+                        <span className="text-sm font-semibold text-slate-400">情况：</span>
+                        <span className="truncate font-medium">{situationText}</span>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
-                      <span className="inline-flex items-center gap-1">
-                        <MapPin size={13} className="text-slate-500" />
-                        地点：<b className="font-normal text-slate-300">{locationText}</b>
+                    <div className="flex min-w-0 flex-[3_1_760px] items-center gap-x-5 overflow-hidden whitespace-nowrap">
+                      <span className="inline-flex min-w-[112px] flex-1 items-center gap-1.5">
+                        <User size={15} className="shrink-0 text-cyan-400" />
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">违规人员</span>
+                        <b className="truncate font-medium text-white" title={personText}>{personText}</b>
                       </span>
-                      <span>分公司：<b className="font-normal text-slate-300">{companyText}</b></span>
-                      <span>项目：<b className="font-normal text-slate-300">{projectText}</b></span>
-                      <span>网格：<b className="font-normal text-slate-300">{gridText}</b></span>
-                      <span>工队：<b className="font-normal text-slate-300">{teamText}</b></span>
+                      <span className="inline-flex min-w-[128px] flex-1 items-center gap-1.5">
+                        <Video size={15} className="shrink-0 text-purple-400" />
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">设备</span>
+                        <b className="truncate font-medium text-white" title={deviceName}>{deviceName}</b>
+                      </span>
+                      <span className="inline-flex min-w-[96px] flex-1 items-center gap-1.5">
+                        <MapPin size={15} className="text-slate-500" />
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">地点</span>
+                        <b className="truncate font-medium text-slate-100" title={locationText}>{locationText}</b>
+                      </span>
+                      <span className="inline-flex min-w-[112px] flex-1 items-center gap-1.5">
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">分公司</span>
+                        <b className="truncate font-medium text-slate-100" title={companyText}>{companyText}</b>
+                      </span>
+                      <span className="inline-flex min-w-[96px] flex-1 items-center gap-1.5">
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">项目</span>
+                        <b className="truncate font-medium text-slate-100" title={projectText}>{projectText}</b>
+                      </span>
+                      <span className="inline-flex min-w-[88px] flex-1 items-center gap-1.5">
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">网格</span>
+                        <b className="truncate font-medium text-slate-100" title={gridText}>{gridText}</b>
+                      </span>
+                      <span className="inline-flex min-w-[80px] flex-1 items-center gap-1.5">
+                        <span className="shrink-0 text-sm font-semibold text-slate-300">工队</span>
+                        <b className="truncate font-medium text-slate-100" title={teamText}>{teamText}</b>
+                      </span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-2 lg:min-w-[360px] lg:items-end">
-                    <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <Clock size={14} className="text-slate-500" />
+                  <div className="flex flex-wrap items-center gap-2 xl:max-w-[390px] xl:shrink-0 xl:justify-end">
+                    <div className="flex items-center gap-1 text-sm text-slate-400 xl:w-full xl:justify-end">
+                      <Clock size={15} className="text-slate-500" />
                       <span>{formatAlarmTimestamp(alarm.time)}</span>
                     </div>
-                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                    <div className="flex flex-wrap gap-2 xl:justify-end">
                       {alarm.snapshot && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setPreviewImage(alarm.snapshot!);
                           }}
-                          className="inline-flex items-center gap-1 rounded-lg bg-blue-500/20 px-3 py-1.5 text-xs font-medium text-blue-400 transition-all hover:bg-blue-500/30"
+                          className="inline-flex items-center gap-1 rounded-lg bg-blue-500/20 px-3 py-1.5 text-[13px] font-medium text-blue-400 transition-all hover:bg-blue-500/30"
                         >
-                          <ImageIcon size={14} />
+                          <ImageIcon size={15} />
                           截图
                         </button>
                       )}
@@ -1143,9 +1371,9 @@ const handleConfirmProcess = async () => {
                           }}
                           disabled={isPlaybackGeneratingStatus(alarm.recordingStatus)}
                           title={isPlaybackGeneratingStatus(alarm.recordingStatus) ? '告警回放生成中' : '查看告警回放'}
-                          className="inline-flex items-center gap-1 rounded-lg bg-purple-500/20 px-3 py-1.5 text-xs font-medium text-purple-300 transition-all hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:bg-slate-700/40 disabled:text-slate-500"
+                          className="inline-flex items-center gap-1 rounded-lg bg-purple-500/20 px-3 py-1.5 text-[13px] font-medium text-purple-300 transition-all hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:bg-slate-700/40 disabled:text-slate-500"
                         >
-                          <Video size={14} />
+                          <Video size={15} />
                           {isPlaybackGeneratingStatus(alarm.recordingStatus) ? '生成中' : '告警回放'}
                         </button>
                       )}
@@ -1156,9 +1384,9 @@ const handleConfirmProcess = async () => {
                             e.stopPropagation();
                             handleOpenProcessModal(alarm, 'resolved');
                           }}
-                          className="inline-flex items-center gap-1 rounded-lg bg-green-500/20 px-3 py-1.5 text-xs font-medium text-green-400 transition-all hover:bg-green-500/30"
+                          className="inline-flex items-center gap-1 rounded-lg bg-green-500/20 px-3 py-1.5 text-[13px] font-medium text-green-400 transition-all hover:bg-green-500/30"
                         >
-                          <CheckCircle size={14} />
+                          <CheckCircle size={15} />
                           处理
                         </button>
                       )}
@@ -1171,7 +1399,7 @@ const handleConfirmProcess = async () => {
                             await loadAlarms();
                           }
                         }}
-                        className="inline-flex items-center rounded-lg bg-slate-500/20 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-slate-500/30"
+                        className="inline-flex items-center rounded-lg bg-slate-500/20 px-3 py-1.5 text-[13px] font-medium text-slate-300 transition-all hover:bg-slate-500/30"
                       >
                         隐藏
                       </button>
@@ -1350,7 +1578,7 @@ const handleConfirmProcess = async () => {
       )}
 
     {/* 处理弹窗 */}
-{canHandleAlarm && showProcessModal && processingAlarm && (
+{canHandleAlarm && showProcessModal && (processingAlarm || batchProcessingAlarms.length > 0) && (
   <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowProcessModal(false)}>
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl p-6 w-[450px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
       <div className="flex justify-between items-center mb-4">
@@ -1365,9 +1593,27 @@ const handleConfirmProcess = async () => {
 
       <div className="space-y-4">
         <div className="bg-slate-800/50 rounded-lg p-3">
-          <div className="text-sm text-slate-400 mb-1">告警信息</div>
-          <div className="text-white font-medium">{processingAlarm.title}</div>
-          <div className="text-xs text-slate-400 mt-1">{processingAlarm.description}</div>
+          <div className="text-sm text-slate-400 mb-1">
+            {batchProcessingAlarms.length > 0 ? '批量处理信息' : '告警信息'}
+          </div>
+          {batchProcessingAlarms.length > 0 ? (
+            <>
+              <div className="text-white font-medium">已选择 {batchProcessingAlarms.length} 条待处理告警</div>
+              <div className="mt-2 max-h-20 overflow-auto text-xs text-slate-400">
+                {batchProcessingAlarms.slice(0, 5).map((alarm) => (
+                  <div key={alarm.id} className="truncate">{alarm.alarmCode} · {alarm.title}</div>
+                ))}
+                {batchProcessingAlarms.length > 5 && (
+                  <div>还有 {batchProcessingAlarms.length - 5} 条...</div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-white font-medium">{processingAlarm?.title}</div>
+              <div className="text-xs text-slate-400 mt-1">{processingAlarm?.description}</div>
+            </>
+          )}
         </div>
 
         <div>
@@ -1419,7 +1665,11 @@ const handleConfirmProcess = async () => {
           disabled={isProcessingAlarm}
           className="flex-1 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 disabled:from-slate-600 disabled:to-slate-600 disabled:text-slate-300 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-all"
         >
-          {isProcessingAlarm ? '处理中...' : '确认处理'}
+          {isProcessingAlarm
+            ? '处理中...'
+            : batchProcessingAlarms.length > 0
+              ? `确认处理(${batchProcessingAlarms.length})`
+              : '确认处理'}
         </button>
         <button
           onClick={() => setShowProcessModal(false)}

@@ -1,4 +1,4 @@
-﻿import threading
+import threading
 import time
 import cv2
 import os
@@ -20,7 +20,9 @@ from app.services.video_service import (
     RECORD_SEGMENT_SAFE_MARGIN_SECONDS,
     ALARM_VIDEO_FFMPEG_TIMEOUT_SECONDS,
 )
+from app.services.ai_runtime import detect_frame
 from app.services.ai_runtime.model_registry import list_model_configs
+from app.services.ai_runtime.result_adapter import to_alarm_boxes
 from app.services.alarm_service import AlarmService
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from PIL import Image, ImageDraw, ImageFont
@@ -39,6 +41,40 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 class AIManager:
+    PERSON_DETECTOR_ALGO = "person"
+    PERSON_SCOPED_ALGOS = {
+        "helmet",
+        "vest",
+        "reflective_vest",
+        "smoking",
+        "phone",
+        "phone_call",
+        "calling",
+        "mask",
+        "face",
+    }
+    FULL_FRAME_ALGOS = {
+        "fire",
+        "flame",
+        "smoke",
+        "manhole",
+        "intrusion",
+        "crowd",
+        "fall",
+    }
+    PERSON_TRACK_MAX_MISSES = 8
+    PERSON_TRACK_IOU_THRESHOLD = 0.25
+    PERSON_TRACK_NMS_IOU_THRESHOLD = 0.55
+    PERSON_TRACK_MIN_SCORE = float(os.getenv("AI_PERSON_TRACK_MIN_SCORE", "0.55"))
+    PERSON_TRACK_MAX_AREA_RATIO = float(os.getenv("AI_PERSON_TRACK_MAX_AREA_RATIO", "0.65"))
+    PERSON_TRACK_MIN_ASPECT_RATIO = float(os.getenv("AI_PERSON_TRACK_MIN_ASPECT_RATIO", "0.25"))
+    PERSON_TRACK_MAX_ASPECT_RATIO = float(os.getenv("AI_PERSON_TRACK_MAX_ASPECT_RATIO", "1.4"))
+    PERSON_ROI_PADDING_RATIO = 0.12
+    FACE_VOTE_WINDOW_SECONDS = float(os.getenv("AI_FACE_VOTE_WINDOW_SECONDS", "12"))
+    FACE_VOTE_MIN_SAMPLES = int(os.getenv("AI_FACE_VOTE_MIN_SAMPLES", "3"))
+    FACE_VOTE_MIN_RATIO = float(os.getenv("AI_FACE_VOTE_MIN_RATIO", "0.6"))
+    FACE_VOTE_MIN_SIMILARITY = float(os.getenv("AI_FACE_VOTE_MIN_SIMILARITY", "0.38"))
+
     CURRENT_AI_ALARM_LEVELS = {
         "head": "HIGH",
         "no_helmet": "HIGH",
@@ -48,13 +84,12 @@ class AIManager:
         "smoking": "HIGH",
         "fire": "SEVERE",
         "flame": "SEVERE",
-        "火": "SEVERE",
         "smoke": "SEVERE",
-        "烟": "SEVERE",
+        "火": "SEVERE",
         "reflection": "LOW",
         "reflective_vest": "LOW",
-        "clothes": "HIGH",
-        "no_vest": "HIGH",
+        "clothes": "MEDIUM",
+        "no_vest": "MEDIUM",
         "phone": "HIGH",
         "call": "HIGH",
         "calling": "HIGH",
@@ -64,7 +99,8 @@ class AIManager:
         "helmet": ("head", "no_helmet", "safehat", "helmet"),
         "person": ("person",),
         "smoking": ("smoking",),
-        "fire": ("fire", "flame", "火", "smoke", "烟"),
+        "smoke": ("smoke",),
+        "fire": ("fire", "flame", "火"),
         "vest": ("reflection", "reflective_vest", "clothes", "no_vest"),
         "phone": ("phone", "call", "calling"),
     }
@@ -72,6 +108,12 @@ class AIManager:
     def __init__(self):
         self.active_monitors = {}
         self.device_rules = {}
+        self.latest_person_tracks = {}
+        self.latest_person_tracks_lock = threading.Lock()
+        self.frontend_frame_trackers = {}
+        self.frontend_frame_trackers_lock = threading.Lock()
+        self.frontend_person_debug = {}
+        self.frontend_person_debug_lock = threading.Lock()
         self.alarm_cooldown_seconds = max(10, int(os.getenv("AI_ALARM_TRIGGER_COOLDOWN_SECONDS", "10")))
         self.alarm_last_trigger_time = {}
         self.alarm_state_lock = threading.Lock()
@@ -111,6 +153,85 @@ class AIManager:
         })
         self._load_ai_alarm_level_map()
         self._log_current_ai_alarm_level_map()
+
+    def get_latest_person_tracks(self, device_id):
+        key = str(device_id)
+        with self.latest_person_tracks_lock:
+            payload = copy.deepcopy(self.latest_person_tracks.get(key) or {})
+        if not payload:
+            return {
+                "device_id": key,
+                "timestamp": None,
+                "frame_width": None,
+                "frame_height": None,
+                "tracks": [],
+            }
+        try:
+            timestamp = payload.get("timestamp")
+            if timestamp:
+                updated_at = datetime.fromisoformat(str(timestamp))
+                payload["age_ms"] = int(max(0.0, (datetime.now() - updated_at).total_seconds()) * 1000)
+                try:
+                    stale_seconds = max(1.0, float(os.getenv("AI_PERSON_TRACK_STALE_SECONDS", "3.0")))
+                except ValueError:
+                    stale_seconds = 3.0
+                if datetime.now() - updated_at > timedelta(seconds=stale_seconds):
+                    return {
+                        "device_id": key,
+                        "timestamp": datetime.now().isoformat(),
+                        "frame_width": payload.get("frame_width"),
+                        "frame_height": payload.get("frame_height"),
+                        "tracks": [],
+                        "stale": True,
+                        "age_ms": payload.get("age_ms"),
+                    }
+        except Exception:
+            pass
+        return payload
+
+    def _publish_latest_person_tracks(self, device_id, frame, person_tracks):
+        frame_h, frame_w = frame.shape[:2] if frame is not None and getattr(frame, "shape", None) is not None else (0, 0)
+        tracks = []
+        for track in person_tracks or []:
+            misses = int(track.get("misses", 0) or 0)
+            if misses > self.PERSON_TRACK_MAX_MISSES:
+                continue
+            coords = track.get("coords") or []
+            if len(coords) < 4 or not frame_w or not frame_h:
+                continue
+            try:
+                x1, y1, x2, y2 = [float(v) for v in coords[:4]]
+            except Exception:
+                continue
+            tracks.append({
+                "track_id": track.get("track_id"),
+                "coords": [int(x1), int(y1), int(x2), int(y2)],
+                "coords_norm": [
+                    max(0.0, min(1.0, x1 / frame_w)),
+                    max(0.0, min(1.0, y1 / frame_h)),
+                    max(0.0, min(1.0, x2 / frame_w)),
+                    max(0.0, min(1.0, y2 / frame_h)),
+                ],
+                "personnel_id": track.get("personnel_id") or track.get("candidate_personnel_id"),
+                "personName": track.get("personName") or track.get("candidate_personName"),
+                "face_similarity": track.get("face_similarity") or track.get("candidate_face_similarity"),
+                "face_confirmed": bool(track.get("face_confirmed")),
+                "candidate_personnel_id": track.get("candidate_personnel_id"),
+                "candidate_personName": track.get("candidate_personName"),
+                "candidate_face_similarity": track.get("candidate_face_similarity"),
+                "face_vote_count": track.get("face_vote_count"),
+                "face_vote_total": track.get("face_vote_total"),
+                "score": (track.get("box") or {}).get("score"),
+                "misses": misses,
+            })
+        with self.latest_person_tracks_lock:
+            self.latest_person_tracks[str(device_id)] = {
+                "device_id": str(device_id),
+                "timestamp": datetime.now().isoformat(),
+                "frame_width": frame_w or None,
+                "frame_height": frame_h or None,
+                "tracks": tracks,
+            }
 
     def _normalize_behavior_key(self, behavior_code):
         return str(behavior_code or "").strip().lower()
@@ -195,6 +316,533 @@ class AIManager:
         if alarm_type:
             status = f"{status}({alarm_type})"
         return f"{algo_key}:{status}"
+
+    def _split_detection_algos(self, active_algos):
+        person_scoped = []
+        full_frame = []
+        track_people = False
+        for algo_key in active_algos:
+            normalized = str(algo_key or "").strip()
+            if not normalized:
+                continue
+            if normalized in {self.PERSON_DETECTOR_ALGO, "face"}:
+                track_people = True
+                continue
+            if normalized in self.PERSON_SCOPED_ALGOS:
+                track_people = True
+                person_scoped.append(normalized)
+            else:
+                full_frame.append(normalized)
+        return person_scoped, full_frame, track_people
+
+    def _iou(self, a, b):
+        try:
+            ax1, ay1, ax2, ay2 = [float(v) for v in a[:4]]
+            bx1, by1, bx2, by2 = [float(v) for v in b[:4]]
+        except Exception:
+            return 0.0
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+        area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+        denom = area_a + area_b - inter
+        return inter / denom if denom > 0 else 0.0
+
+    def _box_center_inside(self, inner_box, outer_box):
+        try:
+            x1, y1, x2, y2 = [float(v) for v in inner_box[:4]]
+            ox1, oy1, ox2, oy2 = [float(v) for v in outer_box[:4]]
+        except Exception:
+            return False
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        return ox1 <= cx <= ox2 and oy1 <= cy <= oy2
+
+    def _detect_person_boxes(self, frame, device_id=None, use_model_tracker=True, strict_filter=True):
+        min_score = self.PERSON_TRACK_MIN_SCORE if strict_filter else float(os.getenv("AI_FRONTEND_PERSON_MIN_SCORE", "0.35"))
+        model_conf = min_score if strict_filter else float(os.getenv("AI_FRONTEND_PERSON_MODEL_CONF", "0.18"))
+        imgsz = int(os.getenv(
+            "AI_PERSON_TRACK_IMGSZ" if strict_filter else "AI_FRONTEND_PERSON_IMGSZ",
+            "480" if strict_filter else "640",
+        ))
+        debug_info = {
+            "raw": 0,
+            "kept": 0,
+            "min_score": min_score,
+            "model_conf": model_conf,
+            "imgsz": imgsz,
+            "filtered": {},
+            "labels": [],
+            "error": "",
+        }
+        try:
+            result = detect_frame(
+                self.PERSON_DETECTOR_ALGO,
+                frame,
+                track=bool(use_model_tracker),
+                persist=bool(use_model_tracker),
+                tracker=os.getenv("AI_PERSON_TRACKER", "botsort.yaml"),
+                classes=[0],
+                imgsz=imgsz,
+                conf=model_conf,
+                tracker_scope=str(device_id or "default"),
+            )
+        except Exception as exc:
+            self._emit_alarm_log("warning", "[PERSON_DETECT_FAILED] error={}", exc)
+            debug_info["error"] = str(exc)
+            if not strict_filter:
+                with self.frontend_person_debug_lock:
+                    self.frontend_person_debug[str(device_id)] = debug_info
+            return []
+        if not result.get("success"):
+            self._emit_alarm_log("warning", "[PERSON_DETECT_FAILED] error={}", result.get("error"))
+            debug_info["error"] = str(result.get("error") or "")
+            if not strict_filter:
+                with self.frontend_person_debug_lock:
+                    self.frontend_person_debug[str(device_id)] = debug_info
+            return []
+
+        raw_boxes = to_alarm_boxes(result, None)
+        debug_info["raw"] = len(raw_boxes or [])
+        boxes = []
+        for box in raw_boxes:
+            normalized_box = self._normalize_box_coords_for_frame(box, getattr(frame, "shape", None))
+            if normalized_box is None:
+                debug_info["filtered"]["bad_coords"] = debug_info["filtered"].get("bad_coords", 0) + 1
+                continue
+            label = str(normalized_box.get("label") or normalized_box.get("type") or "").lower()
+            raw_label = str(normalized_box.get("raw_label") or "").lower()
+            debug_info["labels"].append({
+                "label": label,
+                "raw_label": raw_label,
+                "score": float(normalized_box.get("score") or normalized_box.get("confidence") or 0.0),
+            })
+            if label and "person" not in label and "people" not in label and "worker" not in label and "person" not in raw_label:
+                debug_info["filtered"]["label"] = debug_info["filtered"].get("label", 0) + 1
+                continue
+            score = float(normalized_box.get("score") or normalized_box.get("confidence") or 0.0)
+            if score and score < min_score:
+                debug_info["filtered"]["score"] = debug_info["filtered"].get("score", 0) + 1
+                continue
+            if strict_filter:
+                frame_h, frame_w = frame.shape[:2]
+                x1, y1, x2, y2 = [float(v) for v in normalized_box.get("coords")[:4]]
+                box_w = max(1.0, x2 - x1)
+                box_h = max(1.0, y2 - y1)
+                area_ratio = (box_w * box_h) / max(1.0, float(frame_w * frame_h))
+                aspect_ratio = box_w / box_h
+                if area_ratio > self.PERSON_TRACK_MAX_AREA_RATIO:
+                    debug_info["filtered"]["area"] = debug_info["filtered"].get("area", 0) + 1
+                    continue
+                if aspect_ratio < self.PERSON_TRACK_MIN_ASPECT_RATIO or aspect_ratio > self.PERSON_TRACK_MAX_ASPECT_RATIO:
+                    debug_info["filtered"]["aspect"] = debug_info["filtered"].get("aspect", 0) + 1
+                    continue
+            normalized_box["type"] = "person"
+            normalized_box["label"] = "person"
+            boxes.append(normalized_box)
+        kept = self._dedupe_person_boxes(boxes)
+        debug_info["kept"] = len(kept)
+        if not strict_filter:
+            with self.frontend_person_debug_lock:
+                self.frontend_person_debug[str(device_id)] = debug_info
+            print(
+                f"[AI_FRONTEND_PERSON_DETECT] device_id={device_id} raw={debug_info['raw']} kept={debug_info['kept']} "
+                f"model_conf={model_conf} min_score={min_score} imgsz={imgsz} filtered={debug_info['filtered']} labels={debug_info['labels'][:3]}"
+            )
+        return kept
+
+    def _dedupe_person_boxes(self, boxes):
+        sorted_boxes = sorted(
+            boxes or [],
+            key=lambda box: float(box.get("score") or box.get("confidence") or 0.0),
+            reverse=True,
+        )
+        kept = []
+        for box in sorted_boxes:
+            coords = box.get("coords") or []
+            if len(coords) < 4:
+                continue
+            if any(self._iou(coords, existing.get("coords") or []) >= self.PERSON_TRACK_NMS_IOU_THRESHOLD for existing in kept):
+                continue
+            kept.append(box)
+        return kept
+
+    def _face_identity_from_match(self, match):
+        if not isinstance(match, dict):
+            return None
+        person = match.get("person") if isinstance(match.get("person"), dict) else {}
+        personnel_id = match.get("personnel_id") or person.get("id") or person.get("_id")
+        person_name = match.get("personName") or match.get("label") or person.get("username") or person.get("name")
+        if not personnel_id or not person_name:
+            return None
+        try:
+            similarity = float(match.get("similarity") or match.get("face_similarity") or 0.0)
+        except Exception:
+            similarity = 0.0
+        if similarity and similarity < self.FACE_VOTE_MIN_SIMILARITY:
+            return None
+        return {
+            "personnel_id": str(personnel_id),
+            "personName": str(person_name),
+            "person": person,
+            "similarity": similarity,
+        }
+
+    def _apply_face_vote_to_track(self, track, match):
+        identity = self._face_identity_from_match(match)
+        if not identity:
+            return
+        now = time.time()
+        votes = [
+            vote for vote in track.get("face_votes", [])
+            if now - float(vote.get("time", 0.0) or 0.0) <= self.FACE_VOTE_WINDOW_SECONDS
+        ]
+        votes.append({**identity, "time": now})
+        track["face_votes"] = votes
+        track["candidate_personnel_id"] = identity.get("personnel_id")
+        track["candidate_personName"] = identity.get("personName")
+        track["candidate_person"] = identity.get("person") or {}
+        track["candidate_face_similarity"] = identity.get("similarity")
+
+        grouped = {}
+        for vote in votes:
+            key = vote.get("personnel_id")
+            if not key:
+                continue
+            item = grouped.setdefault(key, {"count": 0, "similarity_sum": 0.0, "latest": vote})
+            item["count"] += 1
+            item["similarity_sum"] += float(vote.get("similarity") or 0.0)
+            item["latest"] = vote
+        if not grouped:
+            return
+
+        best_key, best = max(grouped.items(), key=lambda item: (item[1]["count"], item[1]["similarity_sum"]))
+        total = len(votes)
+        count = int(best["count"])
+        latest = best["latest"]
+        track["candidate_personnel_id"] = best_key
+        track["candidate_personName"] = latest.get("personName")
+        track["candidate_person"] = latest.get("person") or {}
+        track["candidate_face_similarity"] = best["similarity_sum"] / max(1, count)
+        track["face_vote_count"] = count
+        track["face_vote_total"] = total
+        if count < self.FACE_VOTE_MIN_SAMPLES or (count / max(1, total)) < self.FACE_VOTE_MIN_RATIO:
+            return
+
+        track["personnel_id"] = best_key
+        track["personName"] = latest.get("personName")
+        track["person"] = latest.get("person") or {}
+        track["face_similarity"] = best["similarity_sum"] / max(1, count)
+        track["face_vote_count"] = count
+        track["face_vote_total"] = total
+        track["face_confirmed"] = True
+
+    def _update_person_tracks(self, tracker_state, person_boxes, face_matches=None):
+        tracker_state = tracker_state or {"next_id": 1, "tracks": []}
+        if any(box.get("track_id") is not None for box in person_boxes or []):
+            tracks = []
+            for box in person_boxes or []:
+                raw_track_id = box.get("track_id")
+                if raw_track_id is None:
+                    continue
+                track = {
+                    "track_id": f"person_{raw_track_id}",
+                    "coords": box.get("coords"),
+                    "box": box,
+                    "misses": 0,
+                    "last_seen": time.time(),
+                }
+                tracks.append(track)
+            tracker_state["tracks"] = tracks
+            if face_matches:
+                for track in tracker_state["tracks"]:
+                    match = self._select_face_match_for_box(track.get("box") or {"coords": track.get("coords")}, face_matches)
+                    if not match:
+                        continue
+                    face_coords = self._box_coords(match)
+                    if face_coords is not None and not (
+                        self._iou(face_coords, track.get("coords", [])) > 0
+                        or self._box_center_inside(face_coords, track.get("coords", []))
+                    ):
+                        continue
+                    self._apply_face_vote_to_track(track, match)
+            return tracker_state["tracks"]
+
+        tracks = tracker_state.setdefault("tracks", [])
+        next_id = int(tracker_state.get("next_id", 1) or 1)
+
+        unmatched_tracks = set(range(len(tracks)))
+        matched_box_indices = set()
+        for box_index, box in enumerate(person_boxes):
+            coords = box.get("coords")
+            best_track_index = None
+            best_score = 0.0
+            for track_index in list(unmatched_tracks):
+                score = self._iou(coords, tracks[track_index].get("coords", []))
+                if score > best_score:
+                    best_score = score
+                    best_track_index = track_index
+            if best_track_index is not None and best_score >= self.PERSON_TRACK_IOU_THRESHOLD:
+                track = tracks[best_track_index]
+                track["coords"] = coords
+                track["box"] = box
+                track["misses"] = 0
+                track["last_seen"] = time.time()
+                unmatched_tracks.discard(best_track_index)
+                matched_box_indices.add(box_index)
+
+        for box_index, box in enumerate(person_boxes):
+            if box_index in matched_box_indices:
+                continue
+            tracks.append({
+                "track_id": f"person_{next_id}",
+                "coords": box.get("coords"),
+                "box": box,
+                "misses": 0,
+                "last_seen": time.time(),
+            })
+            next_id += 1
+
+        for track_index in list(unmatched_tracks):
+            if track_index < len(tracks):
+                tracks[track_index]["misses"] = int(tracks[track_index].get("misses", 0)) + 1
+
+        tracker_state["tracks"] = [
+            track
+            for track in tracks
+            if int(track.get("misses", 0)) <= self.PERSON_TRACK_MAX_MISSES
+        ]
+        tracker_state["next_id"] = next_id
+
+        if face_matches:
+            for track in tracker_state["tracks"]:
+                match = self._select_face_match_for_box(track.get("box") or {"coords": track.get("coords")}, face_matches)
+                if not match:
+                    continue
+                face_coords = self._box_coords(match)
+                if face_coords is not None and not (
+                    self._iou(face_coords, track.get("coords", [])) > 0
+                    or self._box_center_inside(face_coords, track.get("coords", []))
+                ):
+                    continue
+                self._apply_face_vote_to_track(track, match)
+
+        return tracker_state["tracks"]
+
+    def _expand_person_roi(self, frame, coords):
+        if frame is None or not coords:
+            return None, None
+        frame_h, frame_w = frame.shape[:2]
+        try:
+            x1, y1, x2, y2 = [float(v) for v in coords[:4]]
+        except Exception:
+            return None, None
+        pad = self.PERSON_ROI_PADDING_RATIO * max(x2 - x1, y2 - y1)
+        x1 = int(max(0, round(x1 - pad)))
+        y1 = int(max(0, round(y1 - pad)))
+        x2 = int(min(frame_w, round(x2 + pad)))
+        y2 = int(min(frame_h, round(y2 + pad)))
+        if x2 <= x1 or y2 <= y1:
+            return None, None
+        return frame[y1:y2, x1:x2].copy(), (x1, y1, x2, y2)
+
+    def _translate_details_from_roi(self, details, roi_rect, full_frame_shape, track):
+        if not isinstance(details, dict) or not roi_rect or not full_frame_shape:
+            return details
+        translated = copy.deepcopy(details)
+        roi_x1, roi_y1, roi_x2, roi_y2 = roi_rect
+        roi_shape = (max(1, roi_y2 - roi_y1), max(1, roi_x2 - roi_x1), 3)
+        frame_h, frame_w = full_frame_shape[:2]
+        track_coords = list(track.get("coords") or [])
+        boxes = []
+
+        for box in self._extract_alarm_boxes(translated):
+            normalized = self._normalize_box_coords_for_frame(box, roi_shape)
+            if normalized is None:
+                continue
+            x1, y1, x2, y2 = normalized["coords"]
+            full_coords = [
+                int(max(0, min(frame_w - 1, x1 + roi_x1))),
+                int(max(0, min(frame_h - 1, y1 + roi_y1))),
+                int(max(0, min(frame_w - 1, x2 + roi_x1))),
+                int(max(0, min(frame_h - 1, y2 + roi_y1))),
+            ]
+            if full_coords[2] <= full_coords[0] or full_coords[3] <= full_coords[1]:
+                continue
+            normalized["coords"] = full_coords
+            normalized["coords_norm"] = [
+                full_coords[0] / frame_w,
+                full_coords[1] / frame_h,
+                full_coords[2] / frame_w,
+                full_coords[3] / frame_h,
+            ]
+            normalized["frame_width"] = frame_w
+            normalized["frame_height"] = frame_h
+            normalized["source"] = "person_roi"
+            normalized["person_track_id"] = track.get("track_id")
+            normalized["target_id"] = track.get("track_id")
+            normalized["person_box"] = track_coords
+            if len(track_coords) >= 4:
+                normalized["person_box_norm"] = [
+                    float(track_coords[0]) / frame_w,
+                    float(track_coords[1]) / frame_h,
+                    float(track_coords[2]) / frame_w,
+                    float(track_coords[3]) / frame_h,
+                ]
+            if track.get("personnel_id"):
+                normalized["personnel_id"] = track.get("personnel_id")
+            if track.get("personName"):
+                normalized["personName"] = track.get("personName")
+            if track.get("person"):
+                normalized["person"] = track.get("person")
+            if track.get("face_similarity") is not None:
+                normalized["face_similarity"] = track.get("face_similarity")
+            if track.get("face_confirmed"):
+                normalized["face_confirmed"] = True
+                normalized["face_vote_count"] = track.get("face_vote_count")
+                normalized["face_vote_total"] = track.get("face_vote_total")
+            boxes.append(normalized)
+
+        if boxes:
+            translated["alarm_boxes"] = boxes
+            translated["boxes"] = boxes
+        translated["person_track_id"] = track.get("track_id")
+        translated["target_id"] = track.get("track_id")
+        translated["person_box"] = track_coords
+        translated["personnel_id"] = track.get("personnel_id") or translated.get("personnel_id")
+        translated["personName"] = track.get("personName") or translated.get("personName")
+        if track.get("face_confirmed"):
+            translated["face_confirmed"] = True
+            translated["face_vote_count"] = track.get("face_vote_count")
+            translated["face_vote_total"] = track.get("face_vote_total")
+        if track.get("person"):
+            translated["person"] = track.get("person")
+        return translated
+
+    def _handle_alarm_result(self, frame, device_id, algo_key, details, alarm_trace_id, mode):
+        alarm_type = self._extract_alarm_type(details)
+        self._emit_alarm_log(
+            "info",
+            "[ALARM_TRIGGERED] trace_id={} mode={} device_id={} algo={} alarm_type={}",
+            alarm_trace_id,
+            mode,
+            device_id,
+            algo_key,
+            alarm_type or algo_key,
+        )
+        if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
+                alarm_trace_id,
+                device_id,
+                alarm_type or algo_key,
+                self.alarm_cooldown_seconds,
+            )
+            return False
+
+        details = self._normalize_alarm_details_for_frame(details, frame)
+        img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
+        self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
+        return True
+
+    def _process_detection_frame(self, frame, device_id, active_algos, tracker_state, mode, monitor_id="", use_model_tracker=True, strict_person_filter=True):
+        detection_results = []
+        person_scoped_algos, full_frame_algos, track_people = self._split_detection_algos(active_algos)
+        active_algo_set = {str(algo or "").strip() for algo in active_algos}
+        needs_face_trace = "face" in active_algo_set or bool(full_frame_algos)
+        face_matches = tracker_state.get("face_matches") or []
+        if needs_face_trace:
+            try:
+                face_interval = max(0.5, float(os.getenv("AI_FACE_TRACE_INTERVAL_SECONDS", "3.0")))
+            except ValueError:
+                face_interval = 3.0
+            now = time.time()
+            last_face_trace_at = float(tracker_state.get("face_trace_at", 0.0) or 0.0)
+            if now - last_face_trace_at >= face_interval:
+                face_started_at = time.time()
+                face_matches = self._run_face_trace_for_frame(frame)
+                tracker_state["face_matches"] = face_matches
+                tracker_state["face_trace_at"] = now
+                face_elapsed = time.time() - face_started_at
+                if face_elapsed > 0.8:
+                    print(f"[FACE_TRACE_SLOW] device_id={device_id} elapsed={face_elapsed:.2f}s")
+        person_tracks = []
+
+        if track_people:
+            person_boxes = self._detect_person_boxes(
+                frame,
+                device_id=device_id,
+                use_model_tracker=use_model_tracker,
+                strict_filter=strict_person_filter,
+            )
+            person_tracks = self._update_person_tracks(tracker_state, person_boxes, face_matches)
+            self._publish_latest_person_tracks(device_id, frame, person_tracks)
+            detection_results.append(f"person:tracks={len(person_tracks)}")
+            self._emit_alarm_log(
+                "info",
+                "[PERSON_TRACKS] mode={} device_id={} monitor_id={} detected={} active_tracks={}",
+                mode,
+                device_id,
+                monitor_id or "-",
+                len(person_boxes),
+                len(person_tracks),
+            )
+
+        for algo_key in full_frame_algos:
+            if algo_key not in self.algo_handlers:
+                print(f"Unknown AI algorithm type: {algo_key}")
+                detection_results.append(f"{algo_key}:unknown")
+                continue
+            is_alarm, details = self.algo_handlers[algo_key](frame, device_id=device_id)
+            detection_results.append(self._format_detection_result(algo_key, is_alarm, details))
+            if not is_alarm:
+                continue
+            details = self._attach_face_trace_to_details(details, face_matches)
+            alarm_trace_id = self._new_alarm_trace_id()
+            self._handle_alarm_result(frame, device_id, algo_key, details, alarm_trace_id, mode)
+
+        for track in person_tracks:
+            roi_frame, roi_rect = self._expand_person_roi(frame, track.get("coords"))
+            if roi_frame is None:
+                continue
+            for algo_key in person_scoped_algos:
+                if algo_key not in self.algo_handlers:
+                    print(f"Unknown AI algorithm type: {algo_key}")
+                    detection_results.append(f"{algo_key}:unknown")
+                    continue
+                is_alarm, details = self.algo_handlers[algo_key](roi_frame, device_id=device_id)
+                scoped_result = self._format_detection_result(algo_key, is_alarm, details)
+                detection_results.append(f"{track.get('track_id')}:{scoped_result}")
+                if not is_alarm:
+                    continue
+                details = self._translate_details_from_roi(details, roi_rect, frame.shape, track)
+                alarm_trace_id = self._new_alarm_trace_id()
+                self._handle_alarm_result(frame, device_id, algo_key, details, alarm_trace_id, mode)
+
+        return detection_results
+
+    def detect_frontend_frame(self, device_id, frame, algo_type_str="person,face"):
+        active_algos = [x.strip() for x in str(algo_type_str or "person,face").split(",") if x.strip()]
+        key = str(device_id)
+        with self.frontend_frame_trackers_lock:
+            tracker_state = self.frontend_frame_trackers.setdefault(key, {"next_id": 1, "tracks": []})
+        self._process_detection_frame(
+            frame,
+            key,
+            active_algos,
+            tracker_state,
+            "frontend_frame",
+            use_model_tracker=False,
+            strict_person_filter=False,
+        )
+        payload = self.get_latest_person_tracks(key)
+        with self.frontend_person_debug_lock:
+            payload["person_debug"] = copy.deepcopy(self.frontend_person_debug.get(key) or {})
+        return payload
 
     def _emit_second_detection_log(self, mode, device_id, second_index, results, monitor_id=""):
         if not results:
@@ -315,7 +963,7 @@ class AIManager:
         if not normalized:
             return "", ""
 
-        if "/Streaming/Channels/" in normalized:
+        if normalized.startswith("rtsp://") and "/Streaming/Channels/" in normalized:
             ai_url = self._replace_hik_channel(normalized, "101")
             rec_url = self._replace_hik_channel(normalized, "102")
             return ai_url, rec_url
@@ -401,6 +1049,83 @@ class AIManager:
         )
         return True
 
+    def _split_rule_value(self, value):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            result = []
+            for item in value:
+                result.extend(self._split_rule_value(item))
+            return result
+        return [item.strip() for item in re.split(r"[,，、\s]+", str(value)) if item.strip()]
+
+    def _rules_from_video_doc(self, doc):
+        seen = set()
+        result = []
+        for key in ("ai_rules", "algo_rules", "rules", "algo_type", "algos"):
+            for rule in self._split_rule_value((doc or {}).get(key)):
+                if rule not in seen:
+                    seen.add(rule)
+                    result.append(rule)
+        return result
+
+    def restore_configured_monitors(self):
+        try:
+            docs = list(self.video_service._video_collection().find({}, {"_id": 0}))
+        except Exception as exc:
+            self._emit_alarm_log("error", "[AI_MONITOR_RESTORE_FAILED] stage=load_devices error={}", exc)
+            return {"restored": 0, "skipped": 0, "failed": 1}
+
+        restored = 0
+        skipped = 0
+        failed = 0
+
+        for doc in docs:
+            device_id = str((doc or {}).get("id") or "").strip()
+            if not device_id:
+                skipped += 1
+                continue
+
+            rules = self._rules_from_video_doc(doc)
+            if not rules:
+                skipped += 1
+                continue
+
+            algo_type = ",".join(rules)
+            self.set_device_rules(device_id, rules)
+
+            if device_id in self.active_monitors:
+                skipped += 1
+                continue
+
+            rtsp_url = str((doc or {}).get("rtsp_url") or (doc or {}).get("stream_url") or "").strip()
+            if "ezopen" in rtsp_url.lower():
+                rtsp_url = ""
+
+            try:
+                if self.start_monitoring(device_id, rtsp_url, algo_type):
+                    restored += 1
+                else:
+                    failed += 1
+            except Exception as exc:
+                failed += 1
+                self._emit_alarm_log(
+                    "error",
+                    "[AI_MONITOR_RESTORE_DEVICE_FAILED] device_id={} rules={} error={}",
+                    device_id,
+                    algo_type,
+                    exc,
+                )
+
+        self._emit_alarm_log(
+            "info",
+            "[AI_MONITOR_RESTORE_DONE] restored={} skipped={} failed={}",
+            restored,
+            skipped,
+            failed,
+        )
+        return {"restored": restored, "skipped": skipped, "failed": failed}
+
     def _fetch_ezviz_snapshot_frame(self, device_serial: str, channel_no: int):
         payload = {
             "deviceSerial": device_serial,
@@ -469,11 +1194,12 @@ class AIManager:
 
         started_at_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
-        interval_seconds = max(0.8, float(os.getenv("AI_EVZIZ_SNAPSHOT_INTERVAL_SECONDS", "1.0")))
+        interval_seconds = max(0.12, float(os.getenv("AI_EVZIZ_SNAPSHOT_INTERVAL_SECONDS", "1.0")))
 
         print(f"[AI] ezviz snapshot monitor started: serial={device_serial}, channel={channel_no}, interval={interval_seconds}s, started_at={started_at_str}")
 
         started_at = time.time()
+        tracker_state = {"next_id": 1, "tracks": []}
         try:
             while not stop_event.is_set():
                 loop_started_at = time.time()
@@ -491,44 +1217,18 @@ class AIManager:
                         break
                     continue
 
-                detection_results = []
                 try:
-                    for algo_key in active_algos:
-                        if algo_key not in self.algo_handlers:
-                            print(f"Unknown AI algorithm type: {algo_key}")
-                            detection_results.append(f"{algo_key}:unknown")
-                            continue
-
-                        is_alarm, details = self.algo_handlers[algo_key](frame)
-                        detection_results.append(self._format_detection_result(algo_key, is_alarm, details))
-
-                        if is_alarm:
-                            alarm_type = self._extract_alarm_type(details)
-                            alarm_trace_id = self._new_alarm_trace_id()
-                            self._emit_alarm_log(
-                                "info",
-                                "[ALARM_TRIGGERED] trace_id={} mode=ezviz_snapshot device_id={} algo={} alarm_type={}",
-                                alarm_trace_id,
-                                device_id,
-                                algo_key,
-                                alarm_type or algo_key,
-                            )
-                            if not self._should_trigger_alarm(device_id, algo_key, alarm_type or algo_key, details):
-                                self._emit_alarm_log(
-                                    "info",
-                                    "[ALARM_SKIPPED_COOLDOWN] trace_id={} device_id={} alarm_type={} cooldown_seconds={}",
-                                    alarm_trace_id,
-                                    device_id,
-                                    alarm_type or algo_key,
-                                    self.alarm_cooldown_seconds,
-                                )
-                                continue
-
-                            details = self._normalize_alarm_details_for_frame(details, frame)
-                            img_path = self._save_alarm_image(frame, device_id, details, alarm_trace_id=alarm_trace_id)
-                            self._save_alarm_to_db(device_id, details, img_path, algo_key=algo_key, alarm_trace_id=alarm_trace_id)
+                    detection_results = self._process_detection_frame(
+                        frame,
+                        device_id,
+                        active_algos,
+                        tracker_state,
+                        "ezviz_snapshot",
+                        monitor_id=monitor_id,
+                    )
                 except Exception as logic_error:
                     print(f"Snapshot detection logic error: {logic_error}")
+                    detection_results = []
 
                 elapsed_second = max(1, int(time.time() - started_at) + 1)
                 self._emit_second_detection_log("ezviz_snapshot", device_id, elapsed_second, detection_results, monitor_id)
@@ -577,6 +1277,101 @@ class AIManager:
 
         return self.get_device_rules(device_id)
 
+    def _run_face_trace_for_frame(self, frame):
+        try:
+            from app.services.ai_features.face import detect as detect_face
+
+            result = detect_face(frame)
+            detections = result.get("detections") if isinstance(result, dict) else []
+            matches = []
+            for det in detections or []:
+                person_name = str(det.get("personName") or det.get("label") or "").strip()
+                personnel_id = str(det.get("personnel_id") or "").strip()
+                if not personnel_id or not person_name or person_name in {"未知", "未知人员", "未识别"}:
+                    continue
+                matches.append(det)
+            self._emit_alarm_log("info", "[FACE_TRACE] detected={} matched={}", len(detections or []), len(matches))
+            return matches
+        except Exception as exc:
+            self._emit_alarm_log("warning", "[FACE_TRACE_FAILED] error={}", exc)
+            return []
+
+    def _box_coords(self, box):
+        if not isinstance(box, dict):
+            return None
+        value = box.get("coords") or box.get("bbox") or box.get("bounding_box")
+        if not isinstance(value, (list, tuple)) or len(value) < 4:
+            return None
+        try:
+            x1, y1, x2, y2 = [float(v) for v in list(value)[:4]]
+        except (TypeError, ValueError):
+            return None
+        if x2 < x1:
+            x1, x2 = x2, x1
+        if y2 < y1:
+            y1, y2 = y2, y1
+        return x1, y1, x2, y2
+
+    def _select_face_match_for_box(self, box, face_matches):
+        if not face_matches:
+            return None
+        if len(face_matches) == 1:
+            return face_matches[0]
+
+        box_coords = self._box_coords(box)
+        if box_coords is None:
+            return face_matches[0]
+        bx1, by1, bx2, by2 = box_coords
+
+        best = None
+        best_score = -1.0
+        for face in face_matches:
+            face_coords = self._box_coords(face)
+            if face_coords is None:
+                continue
+            fx1, fy1, fx2, fy2 = face_coords
+            cx = (fx1 + fx2) / 2.0
+            cy = (fy1 + fy2) / 2.0
+            contains_center = bx1 <= cx <= bx2 and by1 <= cy <= by2
+            ix1, iy1 = max(bx1, fx1), max(by1, fy1)
+            ix2, iy2 = min(bx2, fx2), min(by2, fy2)
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            face_area = max(1.0, (fx2 - fx1) * (fy2 - fy1))
+            score = inter / face_area + (1.0 if contains_center else 0.0)
+            if score > best_score:
+                best = face
+                best_score = score
+
+        return best or face_matches[0]
+
+    def _attach_face_trace_to_details(self, details, face_matches):
+        if not face_matches or not isinstance(details, dict):
+            return details
+
+        boxes = details.get("alarm_boxes") or details.get("boxes") or []
+        if not isinstance(boxes, list) or not boxes:
+            return details
+
+        for box in boxes:
+            if not isinstance(box, dict):
+                continue
+            match = self._select_face_match_for_box(box, face_matches)
+            if not match:
+                continue
+            person = match.get("person") or {}
+            person_name = match.get("personName") or match.get("label") or person.get("username") or person.get("name")
+            personnel_id = match.get("personnel_id") or person.get("id") or person.get("_id")
+            if person_name:
+                box["personName"] = person_name
+            if personnel_id:
+                box["personnel_id"] = str(personnel_id)
+            if person:
+                box["person"] = person
+            if match.get("similarity") is not None:
+                box["face_similarity"] = match.get("similarity")
+
+        return details
+
     # =========================
     # 停止监控
     # =========================
@@ -620,6 +1415,10 @@ class AIManager:
         def _push(url):
             if url and url not in candidates:
                 candidates.append(url)
+
+        if not raw.startswith("rtsp://"):
+            _push(raw)
+            return candidates
 
         # 候选优先级：101 -> 102 -> 1 -> 当前地址，兼容不同海康通道写法。
         if "/Streaming/Channels/" in raw:
@@ -673,7 +1472,10 @@ class AIManager:
         return candidates
 
     def _open_video_capture(self, rtsp_url):
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000")
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|stimeout;5000000|fflags;nobuffer|flags;low_delay|probesize;32768|analyzeduration;0",
+        )
         candidates = self._build_rtsp_candidates(rtsp_url)
         if not candidates:
             return None, None
@@ -690,6 +1492,10 @@ class AIManager:
                     cap = cv2.VideoCapture(candidate, cv2.CAP_FFMPEG)
 
                 if cap.isOpened():
+                    try:
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    except Exception:
+                        pass
                     print(f"✅ 拉流候选可用: {candidate}")
                     return cap, candidate
 
@@ -699,6 +1505,48 @@ class AIManager:
                 continue
 
         return None, None
+
+    def _start_latest_frame_reader(self, cap, stop_event, device_id):
+        state = {
+            "frame": None,
+            "seq": 0,
+            "last_read_at": 0.0,
+            "error_count": 0,
+        }
+        lock = threading.Lock()
+
+        def _reader():
+            while not stop_event.is_set():
+                try:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        with lock:
+                            state["error_count"] += 1
+                        time.sleep(0.02)
+                        continue
+                    with lock:
+                        state["frame"] = frame
+                        state["seq"] += 1
+                        state["last_read_at"] = time.time()
+                        state["error_count"] = 0
+                except Exception as exc:
+                    with lock:
+                        state["error_count"] += 1
+                    print(f"[AI_FRAME_READER_ERROR] device_id={device_id} error={exc}")
+                    time.sleep(0.05)
+
+        thread = threading.Thread(target=_reader, name=f"ai-latest-frame-{device_id}", daemon=True)
+        thread.start()
+        return state, lock, thread
+
+    def _get_latest_reader_frame(self, reader_state, reader_lock, last_seq):
+        with reader_lock:
+            seq = int(reader_state.get("seq") or 0)
+            frame = reader_state.get("frame")
+            last_read_at = float(reader_state.get("last_read_at") or 0.0)
+        if frame is None or seq == last_seq:
+            return None, last_seq, last_read_at
+        return frame.copy(), seq, last_read_at
 
     def _monitor_loop(self, device_id, rtsp_url, record_rtsp_url, algo_type_str, stop_event):
         import traceback
@@ -750,14 +1598,30 @@ class AIManager:
                 return
 
             active_algos = [x.strip() for x in algo_type_str.split(",") if x.strip()]
-            frame_interval = 5
+            try:
+                frame_interval = max(1, int(os.getenv("AI_RTSP_FRAME_INTERVAL", "1")))
+            except ValueError:
+                frame_interval = 1
+            try:
+                drain_frames = max(0, int(os.getenv("AI_STREAM_DRAIN_FRAMES", "2")))
+            except ValueError:
+                drain_frames = 2
             frame_count = 0
+            tracker_state = {"next_id": 1, "tracks": []}
+            print(f"[AI_STREAM_TUNING] device_id={device_id} frame_interval={frame_interval} drain_frames={drain_frames}")
+            latest_reader_state, latest_reader_lock, latest_reader_thread = self._start_latest_frame_reader(cap, stop_event, device_id)
+            latest_seq = 0
 
             while not stop_event.is_set():
-                ret, frame = cap.read()
-
-                if not ret:
-                    time.sleep(2)
+                frame, latest_seq, latest_read_at = self._get_latest_reader_frame(
+                    latest_reader_state,
+                    latest_reader_lock,
+                    latest_seq,
+                )
+                if frame is None:
+                    if latest_read_at and time.time() - latest_read_at > 5:
+                        print(f"[AI_FRAME_READER_STALE] device_id={device_id} age={time.time() - latest_read_at:.1f}s")
+                    time.sleep(0.02)
                     continue
 
                 frame_count += 1
@@ -765,15 +1629,32 @@ class AIManager:
                     continue
 
                 try:
+                    detection_started_at = time.time()
+                    self._process_detection_frame(
+                        frame,
+                        device_id,
+                        active_algos,
+                        tracker_state,
+                        "rtsp",
+                    )
+                    detection_elapsed = time.time() - detection_started_at
+                    if detection_elapsed > 0.8:
+                        print(f"[AI_FRAME_SLOW] device_id={device_id} elapsed={detection_elapsed:.2f}s")
+                    continue
+
+                    face_matches = self._run_face_trace_for_frame(frame)
                     for algo_key in active_algos:
+                        if algo_key == "face":
+                            continue
 
                         if algo_key not in self.algo_handlers:
                             print(f"⚠️ 未识别算法类型: {algo_key}")
                             continue
 
-                        is_alarm, details = self.algo_handlers[algo_key](frame)
+                        is_alarm, details = self.algo_handlers[algo_key](frame, device_id=device_id)
 
                         if is_alarm:
+                            details = self._attach_face_trace_to_details(details, face_matches)
                             alarm_type = self._extract_alarm_type(details)
                             alarm_trace_id = self._new_alarm_trace_id()
                             self._emit_alarm_log(
@@ -1019,7 +1900,41 @@ class AIManager:
                     boxes.append({"bbox": values})
                 else:
                     boxes.append({"coords": values})
-        return boxes
+        return self._dedupe_alarm_boxes(boxes)
+
+    def _dedupe_alarm_boxes(self, boxes):
+        if not isinstance(boxes, list):
+            return []
+
+        def _box_key(box):
+            if not isinstance(box, dict):
+                return None
+
+            coords = None
+            for key in ("coords", "bbox", "bounding_box", "coords_norm"):
+                value = box.get(key)
+                if isinstance(value, (list, tuple)) and len(value) >= 4:
+                    try:
+                        coords = tuple(round(float(v), 4) for v in list(value)[:4])
+                    except (TypeError, ValueError):
+                        coords = tuple(str(v) for v in list(value)[:4])
+                    break
+            if coords is None:
+                return None
+
+            label = str(box.get("type") or box.get("label") or box.get("raw_label") or "")
+            return (label, coords)
+
+        seen = set()
+        result = []
+        for box in boxes:
+            key = _box_key(box)
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            result.append(box)
+        return result
 
     def _normalize_box_coords_for_frame(self, box, frame_shape):
         if not isinstance(box, dict) or not frame_shape:
@@ -1044,11 +1959,9 @@ class AIManager:
             source_field = "coords"
         elif isinstance(box.get("bbox"), (list, tuple)) and len(box.get("bbox")) >= 4:
             raw_values = list(box.get("bbox")[:4])
-            source_kind = "xywh"
             source_field = "bbox"
         elif isinstance(box.get("bounding_box"), (list, tuple)) and len(box.get("bounding_box")) >= 4:
             raw_values = list(box.get("bounding_box")[:4])
-            source_kind = "xywh"
             source_field = "bounding_box"
         elif all(k in box for k in ("x1", "y1", "x2", "y2")):
             raw_values = [box.get("x1"), box.get("y1"), box.get("x2"), box.get("y2")]
@@ -1112,6 +2025,93 @@ class AIManager:
         normalized_box["frame_height"] = frame_h
         return normalized_box
 
+    def _rescale_box_coords_for_frame(self, box, target_frame_shape):
+        if not isinstance(box, dict) or not target_frame_shape:
+            return None
+
+        try:
+            target_h = int(target_frame_shape[0])
+            target_w = int(target_frame_shape[1])
+        except Exception:
+            return None
+        if target_w <= 0 or target_h <= 0:
+            return None
+
+        coords_norm = box.get("coords_norm")
+        if isinstance(coords_norm, (list, tuple)) and len(coords_norm) >= 4:
+            try:
+                nx1, ny1, nx2, ny2 = [float(v) for v in list(coords_norm)[:4]]
+            except (TypeError, ValueError):
+                return None
+            if all(np.isfinite(v) for v in (nx1, ny1, nx2, ny2)):
+                x1 = nx1 * target_w
+                y1 = ny1 * target_h
+                x2 = nx2 * target_w
+                y2 = ny2 * target_h
+                rescaled = copy.deepcopy(box)
+                rescaled["coords"] = [
+                    int(round(max(0.0, min(float(target_w - 1), x1)))),
+                    int(round(max(0.0, min(float(target_h - 1), y1)))),
+                    int(round(max(0.0, min(float(target_w - 1), x2)))),
+                    int(round(max(0.0, min(float(target_h - 1), y2)))),
+                ]
+                rescaled["frame_width"] = target_w
+                rescaled["frame_height"] = target_h
+                rescaled["source"] = rescaled.get("source") or "coords_norm_rescaled"
+                return rescaled if rescaled["coords"][2] > rescaled["coords"][0] and rescaled["coords"][3] > rescaled["coords"][1] else None
+
+        coords = None
+        for key in ("coords", "bbox", "bounding_box"):
+            value = box.get(key)
+            if isinstance(value, (list, tuple)) and len(value) >= 4:
+                coords = list(value[:4])
+                break
+        if coords is None:
+            return self._normalize_box_coords_for_frame(box, target_frame_shape)
+
+        try:
+            x1, y1, x2, y2 = [float(v) for v in coords]
+        except (TypeError, ValueError):
+            return None
+        if any(not np.isfinite(v) for v in (x1, y1, x2, y2)):
+            return None
+        if x2 <= x1 or y2 <= y1:
+            return self._normalize_box_coords_for_frame(box, target_frame_shape)
+
+        source_w = box.get("frame_width") or box.get("source_frame_width")
+        source_h = box.get("frame_height") or box.get("source_frame_height")
+        try:
+            source_w = float(source_w)
+            source_h = float(source_h)
+        except (TypeError, ValueError):
+            source_w = source_h = 0.0
+
+        if source_w > 0 and source_h > 0 and (abs(source_w - target_w) > 1 or abs(source_h - target_h) > 1):
+            scale_x = target_w / source_w
+            scale_y = target_h / source_h
+            x1 *= scale_x
+            x2 *= scale_x
+            y1 *= scale_y
+            y2 *= scale_y
+
+        rescaled = copy.deepcopy(box)
+        rescaled["coords"] = [
+            int(round(max(0.0, min(float(target_w - 1), x1)))),
+            int(round(max(0.0, min(float(target_h - 1), y1)))),
+            int(round(max(0.0, min(float(target_w - 1), x2)))),
+            int(round(max(0.0, min(float(target_h - 1), y2)))),
+        ]
+        rescaled["coords_norm"] = [
+            rescaled["coords"][0] / target_w,
+            rescaled["coords"][1] / target_h,
+            rescaled["coords"][2] / target_w,
+            rescaled["coords"][3] / target_h,
+        ]
+        rescaled["frame_width"] = target_w
+        rescaled["frame_height"] = target_h
+        rescaled["source"] = rescaled.get("source") or "frame_rescaled"
+        return rescaled if rescaled["coords"][2] > rescaled["coords"][0] and rescaled["coords"][3] > rescaled["coords"][1] else None
+
     def _normalize_alarm_details_for_frame(self, details, frame):
         if not isinstance(details, dict) or frame is None:
             return details
@@ -1124,6 +2124,7 @@ class AIManager:
             normalized_box = self._normalize_box_coords_for_frame(box, frame_shape)
             if normalized_box is not None:
                 normalized_boxes.append(normalized_box)
+        normalized_boxes = self._dedupe_alarm_boxes(normalized_boxes)
 
         if normalized_boxes:
             normalized_details["alarm_boxes"] = normalized_boxes
@@ -1173,6 +2174,44 @@ class AIManager:
                 label_type = box.get("type", "异常")
                 msg = box.get("msg", "")
 
+                # 英文标签 → 中文显示映射
+                LABEL_DISPLAY_MAP = {
+                    "no_helmet": "未带安全帽",
+                    "helmet_missing": "未带安全帽",
+                    "helmet": "安全帽",
+                    "safehat": "安全帽",
+                    "smoking": "吸烟",
+                    "phone": "打电话",
+                    "calling": "打电话",
+                    "call": "打电话",
+                    "fire": "烟火",
+                    "flame": "明火",
+                    "smoke": "烟雾",
+                    "no_vest": "未穿反光衣",
+                    "reflective_vest": "反光衣",
+                    "vest": "反光衣",
+                    "clothes": "反光衣",
+                    "person": "人员",
+                    "person_fall": "人员倒地",
+                    "fall": "人员倒地",
+                    "safety_harness": "安全带",
+                    "safety_harness_missing": "未系安全带",
+                    "unauthorized_person": "陌生人员闯入",
+                    "crowd": "人群聚集",
+                    "crowd_detection": "人群聚集",
+                    "no_helmet_area": "未戴安全帽区域",
+                    "ladder": "梯子",
+                    "ladder_detection": "梯子检测",
+                    "work": "作业",
+                    "work_detection": "作业检测",
+                }
+                label_type = LABEL_DISPLAY_MAP.get(label_type, label_type)
+
+                # 同样清理 msg 中的英文标签
+                for eng, chn in LABEL_DISPLAY_MAP.items():
+                    if eng in msg:
+                        msg = msg.replace(eng, chn)
+
                 if not coords or len(coords) < 4:
                     continue
 
@@ -1197,7 +2236,68 @@ class AIManager:
                 else:
                     person_info = "人员: 未知"
 
-                display_text = f"{label_type}\n{person_info}\n{msg}"
+                text_lines = [str(label_type), str(person_info)]
+                if msg:
+                    text_lines.append(str(msg))
+                display_text = "\n".join(text_lines)
+
+                try:
+                    max_text_width = max(80, int(frame.shape[1] * 0.42))
+                    wrapped_lines = []
+                    for line in text_lines:
+                        current = ""
+                        for char in line:
+                            candidate = current + char
+                            bbox = draw.textbbox((0, 0), candidate, font=font)
+                            if current and bbox[2] - bbox[0] > max_text_width:
+                                wrapped_lines.append(current)
+                                current = char
+                            else:
+                                current = candidate
+                        if current:
+                            wrapped_lines.append(current)
+                    display_text = "\n".join(wrapped_lines)
+
+                    padding = max(4, int(font_size * 0.25))
+                    gap = max(line_width + 3, int(font_size * 0.25))
+                    text_bbox = draw.multiline_textbbox((0, 0), display_text, font=font, spacing=2)
+                    text_w = text_bbox[2] - text_bbox[0]
+                    text_h = text_bbox[3] - text_bbox[1]
+                    bg_w = text_w + padding * 2
+                    bg_h = text_h + padding * 2
+                    frame_h, frame_w = frame.shape[:2]
+
+                    text_x = max(0, min(x1, frame_w - bg_w))
+                    if y1 - gap - bg_h >= 0:
+                        text_y = y1 - gap - bg_h
+                    elif y2 + gap + bg_h <= frame_h:
+                        text_y = y2 + gap
+                    else:
+                        right_space = frame_w - x2 - gap
+                        left_space = x1 - gap
+                        if right_space >= bg_w:
+                            text_x = x2 + gap
+                        elif left_space >= bg_w:
+                            text_x = x1 - gap - bg_w
+                        text_y = max(0, min(y1, frame_h - bg_h))
+
+                    bg_rect = [
+                        int(text_x),
+                        int(text_y),
+                        int(text_x + bg_w),
+                        int(text_y + bg_h),
+                    ]
+                    draw.rectangle(bg_rect, fill=(255, 0, 0, 220))
+                    draw.multiline_text(
+                        (int(text_x + padding), int(text_y + padding)),
+                        display_text,
+                        font=font,
+                        fill=(255, 255, 255),
+                        spacing=2,
+                    )
+                    continue
+                except Exception:
+                    pass
 
                 # 绘制文字背景条
                 try:
@@ -1224,8 +2324,8 @@ class AIManager:
         video_path,
         boxes,
         trigger_offset_seconds,
-        draw_window_before=1.0,
-        draw_window_after=2.0,
+        draw_window_before=0.25,
+        draw_window_after=0.25,
         alarm_trace_id=None,
     ):
         if not boxes:
@@ -1254,15 +2354,26 @@ class AIManager:
             for box in boxes:
                 if not isinstance(box, dict):
                     continue
-                coords_norm = box.get("coords_norm")
-                if isinstance(coords_norm, (list, tuple)) and len(coords_norm) >= 4:
-                    valid_boxes.append(box)
-                    continue
-                normalized = self._normalize_box_coords_for_frame(box, (height, width, 3))
+                normalized = self._rescale_box_coords_for_frame(box, (height, width, 3))
                 if normalized is not None:
                     valid_boxes.append(normalized)
             if not valid_boxes:
                 raise ValueError("no drawable bbox in alarm video")
+            self._emit_alarm_log(
+                "info",
+                "[ALARM_VIDEO_BOX_RESCALED] trace_id={} video_width={} video_height={} boxes={}",
+                alarm_trace_id or "-",
+                width,
+                height,
+                [
+                    {
+                        "source_size": [box.get("frame_width"), box.get("frame_height")],
+                        "original": box.get("original_coords") or box.get("coords") or box.get("bbox"),
+                        "coords": box.get("coords"),
+                    }
+                    for box in valid_boxes[:5]
+                ],
+            )
 
             writer = cv2.VideoWriter(
                 raw_tmp_path,
@@ -1585,8 +2696,8 @@ class AIManager:
             return "missing_pre_and_post_segment"
         has_before = any(seg_start <= alarm_time for _, seg_start, _ in segments)
         has_after = any(seg_end > alarm_time for _, _, seg_end in segments)
-        has_pre_window = any(seg_start <= clip_start or (seg_start <= alarm_time and seg_end > clip_start) for _, seg_start, seg_end in segments)
-        has_post_window = any(seg_start < clip_end and seg_end > alarm_time for _, seg_start, seg_end in segments)
+        has_pre_window = any(seg_start <= clip_start and seg_end > clip_start for _, seg_start, seg_end in segments)
+        has_post_window = any(seg_start < clip_end and seg_end >= clip_end for _, seg_start, seg_end in segments)
         if not has_before and not has_after:
             return "missing_pre_and_post_segment"
         if not has_before or not has_pre_window:
@@ -1595,16 +2706,36 @@ class AIManager:
             return "missing_post_segment"
         return "alarm_time_not_covered"
 
+    def _segments_cover_timerange(self, segments, clip_start: datetime, clip_end: datetime, tolerance_seconds: float = 1.0) -> bool:
+        if not segments:
+            return False
+        tolerance = timedelta(seconds=max(0.0, float(tolerance_seconds)))
+        merged: list[tuple[datetime, datetime]] = []
+        for _, seg_start, seg_end in sorted(segments, key=lambda item: item[1]):
+            if seg_end <= seg_start:
+                continue
+            if not merged or seg_start > merged[-1][1] + tolerance:
+                merged.append((seg_start, seg_end))
+            elif seg_end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], seg_end)
+        return any(start <= clip_start + tolerance and end >= clip_end - tolerance for start, end in merged)
+
     def _collect_alarm_video_segments(self, video_id: int, alarm_time: datetime, clip_start: datetime, clip_end: datetime):
-        segments = self.video_service._collect_segments_for_timerange(video_id, clip_start, clip_end)
+        segments = self.video_service._collect_segments_for_timerange(
+            video_id,
+            clip_start,
+            clip_end,
+            include_temp_buffer=True,
+        )
         covers_alarm_time = any(seg_start <= alarm_time < seg_end for _, seg_start, seg_end in segments)
-        missing_reason = "" if covers_alarm_time else self._segments_missing_reason(
+        covers_clip_window = covers_alarm_time and self._segments_cover_timerange(segments, clip_start, clip_end)
+        missing_reason = "" if covers_clip_window else self._segments_missing_reason(
             segments,
             alarm_time,
             clip_start,
             clip_end,
         )
-        return segments, covers_alarm_time, missing_reason
+        return segments, covers_clip_window, missing_reason
 
     def _log_alarm_video_state(
         self,
@@ -1735,6 +2866,12 @@ class AIManager:
         covers_anchor_time = actual_start <= record_anchor_time <= actual_end
         alarm_offset = (record_anchor_time - actual_start).total_seconds()
         has_video_after_anchor = (duration_seconds - alarm_offset) >= float(min_after_anchor_seconds)
+        expected_duration = max(1.0, (clip_end - clip_start).total_seconds())
+        covers_requested_window = (
+            actual_start <= clip_start + timedelta(seconds=1.5)
+            and actual_end >= clip_end - timedelta(seconds=1.5)
+            and duration_seconds >= expected_duration - 2.0
+        )
         timing = {
             "duration_seconds": duration_seconds,
             "actual_clip_start": actual_start,
@@ -1742,6 +2879,7 @@ class AIManager:
             "alarm_second": alarm_offset,
             "covers_anchor_time": bool(covers_anchor_time),
             "has_video_after_anchor": bool(has_video_after_anchor),
+            "covers_requested_window": bool(covers_requested_window),
             "min_after_anchor_seconds": float(min_after_anchor_seconds),
         }
         if not covers_anchor_time:
@@ -1758,6 +2896,15 @@ class AIManager:
             raise ValueError(
                 f"record_anchor_tail_not_ready: duration_seconds={duration_seconds:.3f} "
                 f"alarm_second={alarm_offset:.3f} min_after={min_after_anchor_seconds:.3f}"
+            )
+        if not covers_requested_window:
+            raise ValueError(
+                f"requested_clip_window_not_covered: duration_seconds={duration_seconds:.3f} "
+                f"expected_duration={expected_duration:.3f} "
+                f"actual_start={self._format_alarm_video_time(actual_start)} "
+                f"actual_end={self._format_alarm_video_time(actual_end)} "
+                f"requested_start={self._format_alarm_video_time(clip_start)} "
+                f"requested_end={self._format_alarm_video_time(clip_end)}"
             )
         return timing
 
@@ -1871,36 +3018,39 @@ class AIManager:
                             second = min(second, max(0, int(duration_seconds) - 1))
                         return max(0, second)
 
-                    final_alarm_second = int(round(expected_alarm_second))
+                    anchor_alarm_second = _clamp_alarm_second(expected_alarm_second)
+                    box_alarm_second = anchor_alarm_second
                     match_score = None
                     alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
                     alarm_image_path = alarm_record.get("alarm_image_path") or ""
                     try:
-                        final_alarm_second, match_score = self._locate_alarm_frame_in_video(
+                        matched_alarm_second, match_score = self._locate_alarm_frame_in_video(
                             recording_full_path,
                             alarm_image_path,
                             expected_alarm_second,
                         )
+                        box_alarm_second = _clamp_alarm_second(matched_alarm_second)
                         self._emit_alarm_log(
                             "info",
                             "[ALARM_VIDEO_FRAME_MATCHED] alarm_id={} expected={} actual={} score={:.4f}",
                             alarm_id,
                             int(round(expected_alarm_second)),
-                            final_alarm_second,
+                            box_alarm_second,
                             match_score,
                         )
                     except Exception as match_error:
-                        final_alarm_second, fallback_offset = self._get_alarm_frame_fallback_second(
+                        fallback_alarm_second, fallback_offset = self._get_alarm_frame_fallback_second(
                             expected_alarm_second,
                             result.get("duration_seconds"),
                         )
+                        box_alarm_second = _clamp_alarm_second(fallback_alarm_second)
                         self._emit_alarm_log(
                             "warning",
-                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected={} offset={} final={} reason={}",
+                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected={} offset={} box_second={} reason={}",
                             alarm_id,
                             int(round(expected_alarm_second)),
                             fallback_offset,
-                            final_alarm_second,
+                            box_alarm_second,
                             match_error,
                         )
 
@@ -1909,7 +3059,7 @@ class AIManager:
                             self._draw_alarm_boxes_on_video(
                                 recording_full_path,
                                 boxes,
-                                final_alarm_second,
+                                box_alarm_second,
                                 alarm_trace_id=alarm_trace_id,
                             )
                             try:
@@ -1952,7 +3102,19 @@ class AIManager:
                         duration_seconds=result.get("duration_seconds"),
                         start_time=result.get("start_time"),
                         end_time=result.get("end_time"),
-                        alarm_second=final_alarm_second,
+                        alarm_second=anchor_alarm_second,
+                    )
+                    self._update_alarm_fields(
+                        alarm_id,
+                        {
+                            "alarm_second": anchor_alarm_second,
+                            "box_anchor_second": box_alarm_second,
+                            "box_start_second": max(0, box_alarm_second - 1),
+                            "box_end_second": min(
+                                int(duration_seconds) if duration_seconds else box_alarm_second + 2,
+                                box_alarm_second + 2,
+                            ),
+                        },
                     )
                     print(f"✅ 报警视频已保存 (alarm_id={alarm_id}): {result.get('recording_path')}")
                     self._emit_alarm_log(
@@ -2207,7 +3369,11 @@ class AIManager:
 
                     actual_start = timing["actual_clip_start"]
                     actual_end = timing["actual_clip_end"]
-                    final_alarm_second = int(round(timing["alarm_second"]))
+                    anchor_alarm_second = max(
+                        0,
+                        min(int(round(timing["alarm_second"])), max(0, int(duration_seconds) - 1)),
+                    )
+                    box_alarm_second = anchor_alarm_second
                     alarm_record = self._find_alarm_doc_by_id(alarm_id) or {}
                     alarm_image_path = alarm_record.get("alarm_image_path") or ""
                     try:
@@ -2224,17 +3390,18 @@ class AIManager:
                             matched_alarm_second,
                             match_score,
                         )
+                        box_alarm_second = matched_alarm_second
                     except Exception as match_error:
                         self._emit_alarm_log(
                             "warning",
-                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected_by_anchor={} final={} reason={}",
+                            "[ALARM_VIDEO_FRAME_MATCH_FALLBACK] alarm_id={} expected_by_anchor={} box_second={} reason={}",
                             alarm_id,
                             int(round(timing["alarm_second"])),
-                            final_alarm_second,
+                            box_alarm_second,
                             match_error,
                         )
 
-                    final_alarm_second = max(0, min(final_alarm_second, max(0, int(duration_seconds) - 1)))
+                    box_alarm_second = max(0, min(box_alarm_second, max(0, int(duration_seconds) - 1)))
 
                     box_render_error_text = ""
                     if video_boxes:
@@ -2242,9 +3409,9 @@ class AIManager:
                             self._draw_alarm_boxes_on_video(
                                 recording_full_path,
                                 video_boxes,
-                                final_alarm_second,
-                                draw_window_before=1.0,
-                                draw_window_after=2.0,
+                                box_alarm_second,
+                                draw_window_before=0.25,
+                                draw_window_after=0.25,
                                 alarm_trace_id=alarm_trace_id,
                             )
                             try:
@@ -2284,7 +3451,7 @@ class AIManager:
                         duration_seconds=round(float(duration_seconds), 2),
                         start_time=self._format_alarm_video_time(actual_start),
                         end_time=self._format_alarm_video_time(actual_end),
-                        alarm_second=final_alarm_second,
+                        alarm_second=anchor_alarm_second,
                     )
                     self._update_alarm_fields(
                         alarm_id,
@@ -2293,14 +3460,15 @@ class AIManager:
                             "recording_path": result.get("recording_path") or "",
                             "recording_error": box_render_error_text[:255] if box_render_error_text else "",
                             "duration_seconds": round(float(duration_seconds), 2),
-                            "alarm_second": final_alarm_second,
+                            "alarm_second": anchor_alarm_second,
                             "recording_start_time": self._format_alarm_video_time(actual_start),
                             "recording_end_time": self._format_alarm_video_time(actual_end),
                             "recording_time_offset_seconds": recording_time_offset_seconds,
                             "record_anchor_time": self._format_alarm_video_time(record_anchor_time),
                             "box_rendered": box_rendered,
-                            "box_start_second": max(0, final_alarm_second - 1),
-                            "box_end_second": min(int(duration_seconds), final_alarm_second + 2),
+                            "box_anchor_second": box_alarm_second,
+                            "box_start_second": max(0, box_alarm_second - 1),
+                            "box_end_second": min(int(duration_seconds), box_alarm_second + 2),
                         },
                     )
                     self._log_alarm_video_state(
@@ -2318,12 +3486,13 @@ class AIManager:
                     )
                     self._emit_alarm_log(
                         "info",
-                        "[ALARM_VIDEO_SAVED] trace_id={} alarm_id={} device_id={} path={} alarm_second={} duration_seconds={:.2f}",
+                        "[ALARM_VIDEO_SAVED] trace_id={} alarm_id={} device_id={} path={} alarm_second={} box_second={} duration_seconds={:.2f}",
                         alarm_trace_id or "-",
                         alarm_id,
                         device_id,
                         result.get("recording_path"),
-                        final_alarm_second,
+                        anchor_alarm_second,
+                        box_alarm_second,
                         float(duration_seconds),
                     )
                     self._emit_alarm_log(
@@ -2470,23 +3639,51 @@ class AIManager:
         person_name = ""
         personnel_id = ""
 
-        if isinstance(normalized_details, dict) and isinstance(normalized_details.get("boxes"), list) and normalized_details["boxes"]:
-            first_box = normalized_details["boxes"][0] or {}
+        candidate_boxes = boxes
+        if not candidate_boxes and isinstance(normalized_details, dict) and isinstance(normalized_details.get("boxes"), list):
+            candidate_boxes = normalized_details["boxes"]
+
+        # 收集所有 box 中的人员信息（支持多人告警）
+        person_names = []
+        personnel_ids = []
+        person_infos = []
+        first_box = {}
+
+        if isinstance(candidate_boxes, list) and candidate_boxes:
+            for candidate_box in candidate_boxes:
+                if not isinstance(candidate_box, dict):
+                    continue
+                candidate_person = candidate_box.get("person") or {}
+                candidate_name = (
+                    candidate_box.get("personName")
+                    or candidate_box.get("person_name")
+                    or candidate_box.get("trigger_person_name")
+                    or (candidate_person.get("username") if isinstance(candidate_person, dict) else "")
+                    or (candidate_person.get("name") if isinstance(candidate_person, dict) else "")
+                    or ""
+                )
+                candidate_id = (
+                    candidate_box.get("personnel_id")
+                    or candidate_box.get("trigger_person_id")
+                    or (candidate_person.get("id") if isinstance(candidate_person, dict) else "")
+                    or (candidate_person.get("_id") if isinstance(candidate_person, dict) else "")
+                    or ""
+                )
+                if candidate_name and candidate_name not in person_names:
+                    person_names.append(candidate_name)
+                if candidate_id and str(candidate_id) not in personnel_ids:
+                    personnel_ids.append(str(candidate_id))
+                if candidate_name or candidate_id:
+                    person_infos.append(candidate_person if isinstance(candidate_person, dict) and candidate_person else candidate_box)
+                if not first_box and candidate_box.get("msg"):
+                    first_box = candidate_box
+            if not first_box:
+                first_box = candidate_boxes[0] or {}
             alarm_msg = alarm_msg or first_box.get("msg")
 
-            person_info = first_box.get("person") or {}
-            person_name = (
-                first_box.get("personName")
-                or person_info.get("username")
-                or person_info.get("name")
-                or ""
-            )
-            personnel_id = str(
-                person_info.get("id")
-                or person_info.get("_id")
-                or first_box.get("personnel_id")
-                or ""
-            )
+        person_name = ", ".join(person_names) if person_names else ""
+        personnel_id = ", ".join(personnel_ids) if personnel_ids else ""
+        person_info = person_infos[0] if person_infos else {}
 
         if not alarm_type:
             alarm_type = "unknown"
@@ -2593,6 +3790,31 @@ class AIManager:
             websocket_payload = {
                 "id": saved_payload.get("id", next_id),
                 "device_id": str(saved_payload.get("device_id", device_id)),
+                "device_name": saved_payload.get("device_name") or saved_payload.get("trigger_device_name") or "",
+                "branch_id": saved_payload.get("branch_id"),
+                "branch_name": saved_payload.get("branch_name") or saved_payload.get("company") or "",
+                "company": saved_payload.get("company") or saved_payload.get("branch_name") or "",
+                "project_id": saved_payload.get("project_id"),
+                "project_name": saved_payload.get("project_name") or saved_payload.get("project") or "",
+                "project": saved_payload.get("project") or saved_payload.get("project_name") or "",
+                "grid_id": saved_payload.get("grid_id"),
+                "grid_name": saved_payload.get("grid_name") or saved_payload.get("grid") or "",
+                "grid": saved_payload.get("grid") or saved_payload.get("grid_name") or "",
+                "team_id": saved_payload.get("team_id"),
+                "team_name": saved_payload.get("team_name") or saved_payload.get("team") or "",
+                "team": saved_payload.get("team") or saved_payload.get("team_name") or "",
+                "person_branch_id": saved_payload.get("person_branch_id"),
+                "person_branch_name": saved_payload.get("person_branch_name") or saved_payload.get("person_company") or "",
+                "person_company": saved_payload.get("person_company") or saved_payload.get("person_branch_name") or "",
+                "person_project_id": saved_payload.get("person_project_id"),
+                "person_project_name": saved_payload.get("person_project_name") or saved_payload.get("person_project") or "",
+                "person_project": saved_payload.get("person_project") or saved_payload.get("person_project_name") or "",
+                "person_grid_id": saved_payload.get("person_grid_id"),
+                "person_grid_name": saved_payload.get("person_grid_name") or saved_payload.get("person_grid") or "",
+                "person_grid": saved_payload.get("person_grid") or saved_payload.get("person_grid_name") or "",
+                "person_team_id": saved_payload.get("person_team_id"),
+                "person_team_name": saved_payload.get("person_team_name") or saved_payload.get("person_team") or "",
+                "person_team": saved_payload.get("person_team") or saved_payload.get("person_team_name") or "",
                 "alarm_type": saved_payload.get("alarm_type", alarm_type),
                 "description": saved_payload.get("description", alarm_msg),
                 "timestamp": (
@@ -2603,6 +3825,11 @@ class AIManager:
                 "alarm_image_path": saved_payload.get("alarm_image_path", bound_image_path or ""),
                 "recording_status": saved_payload.get("recording_status", "pending"),
                 "alarm_boxes": boxes,
+                "personnel_id": saved_payload.get("personnel_id", personnel_id),
+                "person_name": saved_payload.get("person_name", person_name or "未知"),
+                "trigger_person_id": saved_payload.get("trigger_person_id") or saved_payload.get("personnel_id", personnel_id),
+                "trigger_person_name": saved_payload.get("trigger_person_name") or saved_payload.get("person_name", person_name or "未知"),
+                "person": saved_payload.get("person") or person_info or {},
                 "alarm_second": saved_payload.get("alarm_second"),
                 "recording_start_time": saved_payload.get("recording_start_time"),
                 "recording_end_time": saved_payload.get("recording_end_time"),
