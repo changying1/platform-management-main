@@ -17,12 +17,13 @@ public class LoginResult {
     @SerializedName(value = "userId", alternate = {"user_id", "id"})
     public String userId;
 
+    @SerializedName(value = "username", alternate = {"account", "login_name"})
     public String username;
 
     @SerializedName("full_name")
     public String fullName;
 
-    @SerializedName(value = "nickname", alternate = {"nick_name", "name", "username"})
+    @SerializedName(value = "nickname", alternate = {"nick_name", "name"})
     public String nickname;
 
     @SerializedName(value = "avatarUrl", alternate = {"avatar_url", "avatar"})

@@ -248,9 +248,53 @@ def _virtual_project_doc(project_id: int):
     return None
 
 
-def _project_devices(project_name: str):
+def _project_match_values(project: dict) -> list:
+    project_id = project.get("id")
+    values = [value for value in [project_id, str(project_id) if project_id is not None else None] if value not in (None, "")]
+    if project_id:
+        try:
+            values.append(int(project_id))
+        except (TypeError, ValueError):
+            pass
+    return list(dict.fromkeys(values))
+
+
+def _project_resource_query(project: dict) -> dict:
+    project_name = _clean_text(project.get("name")) or ""
+    candidates = _project_match_values(project)
+    query = {"$or": [
+        {"project_id": {"$in": candidates}},
+        {"projectId": {"$in": candidates}},
+        {"project": project_name},
+        {"project_name": project_name},
+    ]}
+    return query
+
+
+def _project_grid_ids(project: dict) -> list[str]:
+    ids = [str(x) for x in project.get("grid_ids", []) if str(x)]
+    for grid in grids_collection.find(_project_resource_query(project), {"_id": 0, "grid_id": 1, "id": 1}):
+        for value in (grid.get("grid_id"), grid.get("id")):
+            if value not in (None, ""):
+                ids.append(str(value))
+    return list(dict.fromkeys(ids))
+
+
+def _project_team_ids(project: dict, grid_ids: list[str] | None = None) -> list[str]:
+    ids = [str(x) for x in project.get("team_ids", []) if str(x)]
+    query = _project_resource_query(project)
+    if grid_ids:
+        query["$or"].append({"grid_id": {"$in": grid_ids}})
+    for team in teams_collection.find(query, {"_id": 0, "team_id": 1, "id": 1}):
+        for value in (team.get("team_id"), team.get("id")):
+            if value not in (None, ""):
+                ids.append(str(value))
+    return list(dict.fromkeys(ids))
+
+
+def _project_devices(project: dict):
     devices = []
-    for dev in devices_collection.find({"project": project_name}, {"_id": 0}):
+    for dev in devices_collection.find(_project_resource_query(project), {"_id": 0}):
         devices.append(DeviceBasic(
             id=str(dev.get("device_id") or dev.get("id") or ""),
             device_name=dev.get("name") or dev.get("device_name") or "",
@@ -322,6 +366,8 @@ def _to_response(project: dict) -> ProjectResponse:
     region_ids = [int(x) for x in project.get("region_ids", []) if str(x).isdigit()]
     project_name = _clean_text(project.get("name")) or ""
     latitude, longitude = _project_coordinates(project)
+    grid_ids = _project_grid_ids(project)
+    team_ids = _project_team_ids(project, grid_ids)
     return ProjectResponse(
         id=_safe_int(project.get("id")),
         name=project_name,
@@ -332,10 +378,10 @@ def _to_response(project: dict) -> ProjectResponse:
         latitude=latitude,
         longitude=longitude,
         branch_id=_safe_int(_project_branch_id(project)) or None,
-        grid_ids=[str(x) for x in project.get("grid_ids", []) if str(x)],
-        team_ids=[str(x) for x in project.get("team_ids", []) if str(x)],
+        grid_ids=grid_ids,
+        team_ids=team_ids,
         users=_project_users(user_ids, project_name),
-        devices=_project_devices(project_name),
+        devices=_project_devices(project),
         regions=_project_regions(region_ids),
     )
 

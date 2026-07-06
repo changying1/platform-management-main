@@ -6,6 +6,7 @@
     android:orientation="vertical">
 
     <LinearLayout
+        android:id="@+id/layout_playback_header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -32,6 +33,7 @@
     </LinearLayout>
 
     <View
+        android:id="@+id/view_playback_divider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="#E5E7EB" />

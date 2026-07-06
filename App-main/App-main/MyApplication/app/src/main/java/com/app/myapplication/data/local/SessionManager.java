@@ -103,7 +103,7 @@ public class SessionManager {
                 .putString(K_COMPANY, r.company == null ? "" : r.company)
                 .putString(K_PROJECT, r.project == null ? "" : r.project)
                 .putString(K_TEAM, r.team == null ? "" : r.team)
-                .putString(K_PERMISSIONS, r.permissions == null ? "" : String.join(",", r.permissions))
+                .putString(K_PERMISSIONS, joinPermissions(r.permissions))
                 .apply();
     }
 
@@ -124,6 +124,17 @@ public class SessionManager {
             value = value.substring("Bearer ".length()).trim();
         }
         return value;
+    }
+
+    private static String joinPermissions(java.util.List<String> permissions) {
+        if (permissions == null || permissions.isEmpty()) return "";
+        java.util.List<String> safePermissions = new java.util.ArrayList<>();
+        for (String permission : permissions) {
+            if (permission != null && !permission.trim().isEmpty()) {
+                safePermissions.add(permission.trim());
+            }
+        }
+        return safePermissions.isEmpty() ? "" : String.join(",", safePermissions);
     }
 
     public void clear() {

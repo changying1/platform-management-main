@@ -75,10 +75,12 @@ class AIService:
 
         return False, None
 
-    def _check_cooldown_and_multi_alarm(self, alarm_type, boxes, cooldown_seconds=None):
-        """多目标版本：一次推送多个标框，共享冷却控制"""
+    def _check_cooldown_and_multi_alarm(self, alarm_type, boxes, cooldown_seconds=None, device_id=None):
+        """多目标版本：一次推送多个标框，按设备独立冷却控制"""
         now = time.time()
         cooldown_key = alarm_type
+        if device_id:
+            cooldown_key = f"{device_id}:{alarm_type}"
         last = self.last_alarm_time_map.get(cooldown_key, 0.0)
 
         current_cooldown = self.cooldown_seconds if cooldown_seconds is None else cooldown_seconds

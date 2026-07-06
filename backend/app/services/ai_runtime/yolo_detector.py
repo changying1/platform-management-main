@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import os
 
 from .model_registry import ModelConfig, label_for_class
 
@@ -27,11 +28,49 @@ class YoloDetector:
         self._model = YOLO(str(self.model_path))
         return self._model
 
+    def _device(self):
+        configured = str(os.getenv("AI_YOLO_DEVICE", "auto") or "auto").strip()
+        if configured and configured.lower() != "auto":
+            return configured
+        try:
+            import torch
+            return "cuda:0" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            return "cpu"
+
     def detect(self, frame: Any, **kwargs) -> list[dict]:
         model = self._load()
+        device = kwargs.get("device") or self._device()
         conf = float(kwargs.get("conf", kwargs.get("confidence", self.config.confidence)))
         iou = float(kwargs.get("iou", self.config.iou))
-        results = model(frame, conf=conf, iou=iou, verbose=False)
+        imgsz = int(kwargs.get("imgsz", kwargs.get("input_size", self.config.input_size)) or self.config.input_size)
+        classes = kwargs.get("classes")
+        if classes is not None and not isinstance(classes, (list, tuple, set)):
+            classes = [classes]
+        classes = [int(item) for item in classes] if classes is not None else None
+
+        if kwargs.get("track"):
+            results = model.track(
+                frame,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                tracker=str(kwargs.get("tracker") or "botsort.yaml"),
+                persist=bool(kwargs.get("persist", True)),
+                device=device,
+                verbose=False,
+            )
+        else:
+            results = model(
+                frame,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                device=device,
+                verbose=False,
+            )
         if not results:
             return []
 
@@ -47,14 +86,19 @@ class YoloDetector:
             class_id = int(box.cls[0])
             raw_label = names.get(class_id, class_id) if isinstance(names, dict) else class_id
             raw_label = str(raw_label)
-            detections.append(
-                {
-                    "raw_label": raw_label,
-                    "label": label_for_class(self.config, class_id, raw_label),
-                    "confidence": float(box.conf[0]),
-                    "bbox": [float(v) for v in box.xyxy[0].tolist()],
-                    "frame_size": frame_size,
-                }
-            )
+            detection = {
+                "raw_label": raw_label,
+                "label": label_for_class(self.config, class_id, raw_label),
+                "confidence": float(box.conf[0]),
+                "bbox": [float(v) for v in box.xyxy[0].tolist()],
+                "frame_size": frame_size,
+            }
+            track_ids = getattr(box, "id", None)
+            if track_ids is not None:
+                try:
+                    detection["track_id"] = int(track_ids[0])
+                except Exception:
+                    pass
+            detections.append(detection)
 
         return detections

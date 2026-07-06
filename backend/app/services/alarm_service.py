@@ -53,6 +53,10 @@ class AlarmService:
         description = str(alarm_doc.get("description") or alarm_doc.get("alarm_content") or "")
         return (
             "offline" in alarm_type
+            or "VIDEO_DEVICE_OFFLINE".lower() in alarm_type
+            or "离线" in description
+            or "摄像头离线" in description
+            or "设备离线" in description
             or "离线" in description
         )
 
@@ -429,6 +433,19 @@ class AlarmService:
         person_name = self._first_value(person_name, person.get("username"), person.get("name"), person.get("full_name"))
 
         return {
+            "person_org_context_used": use_person_org,
+            "person_branch_id": branch_id if use_person_org else "",
+            "person_branch_name": branch_name if use_person_org else "",
+            "person_company": branch_name if use_person_org else "",
+            "person_project_id": project_id if use_person_org else "",
+            "person_project_name": project_name if use_person_org else "",
+            "person_project": project_name if use_person_org else "",
+            "person_grid_id": grid_id if use_person_org else "",
+            "person_grid_name": grid_name if use_person_org else "",
+            "person_grid": grid_name if use_person_org else "",
+            "person_team_id": team_id if use_person_org else "",
+            "person_team_name": team_name if use_person_org else "",
+            "person_team": team_name if use_person_org else "",
             "branch_id": branch_id,
             "branch_name": branch_name,
             "company": branch_name,
@@ -460,10 +477,26 @@ class AlarmService:
             return payload
 
         org_context = self._org_context_for_alarm(payload)
+        prefer_person_org = bool(org_context.get("person_org_context_used"))
+        org_fields = {
+            "branch_id",
+            "branch_name",
+            "company",
+            "project_id",
+            "project_name",
+            "project",
+            "grid_id",
+            "grid_name",
+            "grid",
+            "team_id",
+            "team_name",
+            "team",
+        }
         for field in (
             "branch_id",
             "branch_name",
             "company",
+            "project_id",
             "project_name",
             "project",
             "grid_id",
@@ -479,8 +512,31 @@ class AlarmService:
             "location",
             "location_desc",
         ):
-            if payload.get(field) in [None, "", 0, "0"] and org_context.get(field) not in [None, "", 0, "0"]:
+            should_replace = (
+                prefer_person_org
+                and field in org_fields
+                and org_context.get(field) not in [None, "", 0, "0"]
+            )
+            if should_replace or (payload.get(field) in [None, "", 0, "0"] and org_context.get(field) not in [None, "", 0, "0"]):
                 payload[field] = org_context[field]
+
+        if prefer_person_org:
+            for field in (
+                "person_branch_id",
+                "person_branch_name",
+                "person_company",
+                "person_project_id",
+                "person_project_name",
+                "person_project",
+                "person_grid_id",
+                "person_grid_name",
+                "person_grid",
+                "person_team_id",
+                "person_team_name",
+                "person_team",
+            ):
+                if org_context.get(field) not in [None, "", 0, "0"]:
+                    payload[field] = org_context[field]
 
         resolved_project_id = self._safe_int(org_context.get("project_id") or payload.get("project_id"))
         if resolved_project_id is not None:
@@ -949,6 +1005,51 @@ class AlarmService:
         docs = docs[max(0, int(skip)): max(0, int(skip)) + max(1, int(limit))]
         return [self._mongo_alarm_to_out(doc) for doc in docs]
 
+    def get_pending_fence_device_status(self, current_user: dict | None = None) -> dict:
+        query = merge_filters(
+            self._fence_alarm_query(),
+            {"status": {"$nin": ["resolved", "ignored"]}},
+        )
+        projection = {
+            "_id": 0,
+            "device_id": 1,
+            "device_code": 1,
+            "device_serial": 1,
+            "phone_num": 1,
+            "fence_id": 1,
+            "alarm_type": 1,
+            "status": 1,
+            "project_id": 1,
+            "grid_id": 1,
+            "team_id": 1,
+            "branch_id": 1,
+            "company": 1,
+            "project": 1,
+            "team": 1,
+            "workTeam": 1,
+            "work_team": 1,
+        }
+        docs = list(self._alarm_collection().find(query, projection).limit(1000))
+        if current_user is not None and not is_hq(current_user):
+            user_scope_query = scope_filter(current_user, **self._scope_kwargs())
+            docs = [doc for doc in docs if self._in_user_scope(doc, current_user, user_scope_query)]
+
+        result: dict[str, str] = {}
+        for doc in docs:
+            keys = [
+                doc.get("device_id"),
+                doc.get("device_code"),
+                doc.get("device_serial"),
+                doc.get("phone_num"),
+            ]
+            alarm_type = str(doc.get("alarm_type") or "")
+            violation_type = "No Exit" if "exit" in alarm_type.lower() or "离开" in alarm_type else "No Entry"
+            for key in keys:
+                value = str(key or "").strip()
+                if value:
+                    result[value] = violation_type
+        return result
+
     def get_alarm_stats(self, current_user: dict | None = None) -> dict:
         docs = list(self._alarm_collection().find({}))
         if current_user is not None and not is_hq(current_user):
@@ -998,15 +1099,32 @@ class AlarmService:
         # 写日志
         try:
             log_service = LogService()
+            company = self._first_value(updated.get("company"), updated.get("branch_name"), updated.get("department"))
+            project = self._first_value(updated.get("project"), updated.get("project_name"))
+            grid = self._first_value(updated.get("grid"), updated.get("grid_name"))
+            team = self._first_value(updated.get("team"), updated.get("team_name"), updated.get("workTeam"), updated.get("work_team"))
             log_create = LogCreate(
                 operator=update_data.handler or "unknown",
                 action="处理告警",
                 target_type="alarm",
                 target_name=updated.get("description", "未知告警"),
                 details=update_data.remark,
+                company=company,
+                project=project,
+                grid=grid,
+                team=team,
                 extra={
                     "alarm_id": alarm_id,
-                    "status": update_data.status
+                    "status": update_data.status,
+                    "alarm_type": updated.get("alarm_type"),
+                    "description": updated.get("description"),
+                    "device_id": updated.get("device_id"),
+                    "device_name": updated.get("device_name") or updated.get("video_name"),
+                    "company": company,
+                    "branch_name": company,
+                    "project": project,
+                    "grid": grid,
+                    "team": team,
                 }
             )
             log_service.create_log(db, log_create)

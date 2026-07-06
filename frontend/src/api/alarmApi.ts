@@ -32,6 +32,18 @@ export interface AlarmResponse {
   company?: string;
   project_name?: string;
   project?: string;
+  person_branch_id?: number | string;
+  person_branch_name?: string;
+  person_company?: string;
+  person_project_id?: number | string;
+  person_project_name?: string;
+  person_project?: string;
+  person_grid_id?: string;
+  person_grid_name?: string;
+  person_grid?: string;
+  person_team_id?: string;
+  person_team_name?: string;
+  person_team?: string;
   grid_id?: string;
   grid_name?: string;
   grid?: string;

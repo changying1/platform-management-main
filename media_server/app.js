@@ -2,30 +2,30 @@ const NodeMediaServer = require('node-media-server');
 
 const config = {
   rtmp: {
-    port: 19350,
+    port: Number(process.env.MEDIA_RTMP_PORT || 19350),
     chunk_size: 60000,
     gop_cache: true,
     ping: 30,
-    ping_timeout: 60
+    ping_timeout: 60,
   },
   http: {
-    port: 8001,
+    port: Number(process.env.MEDIA_HTTP_PORT || 8001),
+    allow_origin: '*',
     mediaroot: './media',
-    allow_origin: '*'
   },
   auth: {
     api: true,
-    api_user: 'admin',
-    api_pass: '123456'
+    api_user: process.env.MEDIA_API_USER || 'admin',
+    api_pass: process.env.MEDIA_API_PASS || '123456',
   },
   relay: {
-    ffmpeg: '../ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe',
-    tasks: []
-  }
+    ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
+  },
 };
 
-var nms = new NodeMediaServer(config);
+const nms = new NodeMediaServer(config);
 nms.run();
 
-console.log('Node Media Server is running with API enabled.');
-console.log('Ready to receive commands from the main backend.');
+console.log(
+  `[media_server] listening http=${config.http.port} rtmp=${config.rtmp.port}`
+);

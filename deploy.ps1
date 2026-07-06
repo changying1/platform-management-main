@@ -12,6 +12,15 @@ Write-Host "============================================================" -Foreg
 $PROJECT_ROOT = $PSScriptRoot
 $BACKEND_DIR = Join-Path $PROJECT_ROOT "backend"
 $FRONTEND_DIR = Join-Path $PROJECT_ROOT "frontend"
+$FACENET_PYTHON = "D:\Anaconda\envs\facenet_env\python.exe"
+
+function Invoke-ProjectPython {
+    if (Test-Path $FACENET_PYTHON) {
+        & $FACENET_PYTHON @args
+        return
+    }
+    & python @args
+}
 
 # ============================================================
 # 1. 环境检查
@@ -47,7 +56,7 @@ Write-Host "`n[2/6] 📦 MongoDB 数据导入" -ForegroundColor Yellow
 
 try {
     Push-Location $BACKEND_DIR
-    python -m scripts.import_mongo
+    Invoke-ProjectPython -m scripts.import_mongo
     Pop-Location
     Write-Host "   ✅ MongoDB 数据导入完成" -ForegroundColor Green
 }
@@ -64,7 +73,7 @@ try {
     Push-Location $BACKEND_DIR
     
     Write-Host "   执行 SQLAlchemy 表结构自动创建..."
-    python -c @"
+    Invoke-ProjectPython -c @"
 from app.core.database import engine, Base, ensure_schema_compatibility
 import app.models.admin_user
 import app.models.device
@@ -94,7 +103,7 @@ try {
     Push-Location $BACKEND_DIR
     if (!(Test-Path "venv")) {
         Write-Host "   创建虚拟环境..."
-        python -m venv venv
+        Invoke-ProjectPython -m venv venv
     }
     
     $pipPath = Join-Path $BACKEND_DIR "venv\Scripts\pip.exe"

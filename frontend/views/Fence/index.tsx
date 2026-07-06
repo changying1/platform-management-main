@@ -10,7 +10,7 @@ import { FenceAddModal } from "./components/FenceAddModal";
 import { FenceFilterBar } from "./components/FenceFilterBar";
 import { DeleteConfirmModal } from "./components/DeleteConfirmModal";
 import { SuccessNotification } from "./components/SuccessNotification";
-import { getAuthHeaders, withAuthTokenParam } from "../../src/api/config";
+import { API_BASE_URL, getAuthHeaders, withAuthTokenParam } from "../../src/api/config";
 import { toGridAreas, type GridArea } from "../../src/utils/gridAreas";
 import { isHeadquartersScope, isProjectScope as isStoredProjectScope, readStoredAuth } from "../../src/utils/authScope";
 
@@ -23,7 +23,6 @@ declare global {
 }
 
 type DrawTool = 'brush' | 'rectangle' | 'circle' | 'polygon';
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:9000";
 const HISTORICAL_FENCE_STORAGE_KEY = 'fence:historical-map-view';
 const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) =>
   fetch(input, {
@@ -42,14 +41,7 @@ const hasFenceViolation = (
   violationTypes: Record<string, any>
 ) => getFenceDeviceAlarmKeys(device as any).some((key) => Boolean(violationTypes[key]));
 
-interface AlarmResponse {
-  device_id?: string | number;
-  fence_id?: string | number | null;
-  alarm_type?: string;
-  status?: string;
-}
-
-interface FenceAlarm {
+  interface FenceAlarm {
   id: number;
   device_id: string;
   fence_id: string;
@@ -207,8 +199,17 @@ const toLatLngPair = (value: any): [number, number] | null => {
 };
 
 const normalizeFenceSeverity = (value: any): FenceData["severity"] => {
-  if (value === "severe" || value === "risk") return value;
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["severe", "high", "critical", "严重"].includes(raw)) return "severe";
+  if (["risk", "medium", "warning", "风险", "中", "中等"].includes(raw)) return "risk";
   return "normal";
+};
+
+const fenceSeverityToAlarmLevel = (value: any): "low" | "medium" | "high" => {
+  const severity = normalizeFenceSeverity(value);
+  if (severity === "severe") return "high";
+  if (severity === "risk") return "medium";
+  return "low";
 };
 
 const normalizeHistoricalFence = (snapshot: any): FenceData | null => {
@@ -331,7 +332,7 @@ export default function FenceManagement() {
       return withAuthTokenParam(`${wsProtocol}//${apiUrl.host}/ws/alarm`);
     } catch {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return withAuthTokenParam(`${wsProtocol}//${window.location.hostname}:9000/ws/alarm`);
+      return withAuthTokenParam(`${wsProtocol}//${window.location.host}/ws/alarm`);
     }
   };
 
@@ -410,8 +411,8 @@ export default function FenceManagement() {
   };
 
   const triggerFenceAlarm = useCallback((alarm: FenceAlarm) => {
-    const severity = String(alarm.severity || "").toLowerCase();
-    const isSevere = ["high", "severe", "critical"].includes(severity);
+    const alarmLevel = fenceSeverityToAlarmLevel(alarm.severity);
+    const isSevere = alarmLevel === "high";
     const now = Date.now();
     const repeatMs = Math.max(0, Number(systemSettings.alarmRepeatInterval || 0)) * 60 * 1000;
     const soundKey = `${alarm.device_id}:${alarm.fence_id}:${alarm.alarm_type}`;
@@ -443,7 +444,7 @@ export default function FenceManagement() {
     device_id: deviceId,
     fence_id: String(data.fence_id),
     alarm_type: data.alarm_type,
-    severity: data.severity,
+    severity: normalizeFenceSeverity(data.severity || data.alarm_type),
     timestamp: data.timestamp,
     description: data.description,
     location: data.location,
@@ -816,7 +817,7 @@ export default function FenceManagement() {
       return;
     }
 
-    const watchId = navigator.geolocation.watchPosition(
+    navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         const AMap = window.AMap;
         if (AMap?.convertFrom) {
@@ -842,10 +843,6 @@ export default function FenceManagement() {
         maximumAge: 60000,
       }
     );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
   }, [currentProjectScope.isProjectScope, mapReady, mapRef, setCenter]);
 
   useEffect(() => {
@@ -916,24 +913,15 @@ export default function FenceManagement() {
 
 const fetchPendingFenceAlarms = useCallback(async () => {
   try {
-    const res = await authFetch(`${API_BASE_URL}/alarms/?skip=0&limit=500&source_type=fence`);
+    const res = await authFetch(`${API_BASE_URL}/alarms/fence/pending-devices`);
+    if (res.status === 404) {
+      setViolationTypes({});
+      return;
+    }
     if (!res.ok) return;
 
-    const alarms: AlarmResponse[] = await res.json();
-    const next: Record<string, "No Entry" | "No Exit" | null> = {};
-
-    alarms.forEach((alarm) => {
-      const status = String(alarm.status || "").toLowerCase();
-      const alarmType = String(alarm.alarm_type || "");
-      const isPending = status !== "resolved" && status !== "ignored";
-      const isFenceAlarm = alarm.fence_id !== undefined && alarm.fence_id !== null;
-      const deviceId = alarm.device_id !== undefined && alarm.device_id !== null ? String(alarm.device_id) : "";
-
-      if (!isPending || !isFenceAlarm || !deviceId) return;
-      next[deviceId] = "No Entry";
-    });
-
-    setViolationTypes(next);
+    const data = await res.json();
+    setViolationTypes(data && typeof data === "object" ? data : {});
   } catch (e) {
     console.error("同步围栏告警状态失败:", e);
   }

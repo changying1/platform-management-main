@@ -24,6 +24,18 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 os.makedirs(VECTOR_DB_DIR, exist_ok=True)
 
 
+def clean_ai_response(text):
+    if text is None:
+        return text
+    lines = []
+    for line in str(text).splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("依据：", "依据:", "渚濇嵁锛?", "渚濇嵁:")):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def get_vector_db_dir():
     path = get_vector_db_base()
     os.makedirs(path, exist_ok=True)
@@ -106,7 +118,7 @@ def chat_handler(
         if query_context.get("direct_answer"):
             return {
                 "status": "success",
-                "response": query_context["direct_answer"],
+                "response": clean_ai_response(query_context["direct_answer"]),
                 "history": request.chat_data.history,
                 "query_context": query_context,
             }
@@ -171,7 +183,7 @@ def chat_handler(
 
         return {
             "status": "success",
-            "response": response,
+            "response": clean_ai_response(response),
             "history": request.chat_data.history
         }
     except Exception as e:

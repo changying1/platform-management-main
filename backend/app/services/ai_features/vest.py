@@ -23,5 +23,5 @@ def analyze(frame: Any, **kwargs) -> dict:
 
 
 @ai_rule("vest", "反光背心检测")
-def detect_vest_alarm(service, frame):
-    return legacy_alarm_detect(service, "vest", frame)
+def detect_vest_alarm(service, frame, device_id=None):
+    return legacy_alarm_detect(service, "vest", frame, device_id=device_id)

@@ -149,11 +149,19 @@ class DeviceService:
             result["device_id"] = result.pop("id", None)
         return result
 
-    def get_devices(self, include_trajectory: bool = True) -> List[dict]:
+    def get_devices(self, include_trajectory: bool = True, device_types: set[str] | None = None) -> List[dict]:
         """获取所有设备"""
         devices = []
         projection = None if include_trajectory else {"trajectory": 0}
-        for doc in devices_collection.find({}, projection):
+        query = {}
+        if device_types:
+            query = {
+                "$or": [
+                    {"type": {"$in": list(device_types)}},
+                    {"device_type": {"$in": list(device_types)}},
+                ]
+            }
+        for doc in devices_collection.find(query, projection):
             devices.append(self._serialize_device(doc))
         return devices
 

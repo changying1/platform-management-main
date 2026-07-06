@@ -72,6 +72,12 @@ interface SystemSettings {
   safetyProductionUpdatedDate?: string;
   alarmSevereFlash: boolean;
   alarmSevereUpgrade: 'sound' | 'voice' | 'call' | 'sms';
+  alarmVolume: number;
+  videoDeviceOfflineAlarmEnabled: boolean;
+  videoTrafficAlarmEnabled: boolean;
+  videoTrafficMonthlyLimitGb: number;
+  videoTrafficReservedGb: number;
+  videoTrafficLowRatioPercent: number;
   
   // 告警分级开关
   alarmSosEnabled: boolean;
@@ -310,6 +316,32 @@ const getBackupRestoreScope = (backup: any) => {
   return '覆盖系统设置';
 };
 
+const SMART_MONITORING_SELECTION_KEY = 'smartMonitoringSelection';
+
+const loadSmartMonitoringSelection = () => {
+  try {
+    const raw = localStorage.getItem(SMART_MONITORING_SELECTION_KEY);
+    if (!raw) return { deviceIds: [], algoIds: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      deviceIds: Array.isArray(parsed?.deviceIds)
+        ? parsed.deviceIds.map((id: any) => Number(id)).filter(Number.isFinite)
+        : [],
+      algoIds: Array.isArray(parsed?.algoIds)
+        ? parsed.algoIds.map((id: any) => String(id)).filter(Boolean)
+        : [],
+    };
+  } catch {
+    return { deviceIds: [], algoIds: [] };
+  }
+};
+
+const saveSmartMonitoringSelection = (selection: { deviceIds: number[]; algoIds: string[] }) => {
+  try {
+    localStorage.setItem(SMART_MONITORING_SELECTION_KEY, JSON.stringify(selection));
+  } catch {}
+};
+
 export default function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const [showCloudModal, setShowCloudModal] = useState(false);
@@ -494,19 +526,6 @@ export default function SettingsView() {
       });
   };
   
-  useEffect(() => {
-    setTimeout(() => {
-      const slider = document.getElementById('alarmVolumeSlider') as HTMLInputElement;
-      const valueText = document.getElementById('alarmVolumeValue');
-      if (slider && valueText) {
-        slider.addEventListener('input', () => {
-          (window as any).alarmVolume = Number(slider.value) / 100;
-          valueText.textContent = slider.value + '%';
-        });
-      }
-    }, 100);
-  }, [activeTab]);
-
   const [settings, setSettings] = useState<SystemSettings>({
     systemName: '中铁一局智能安全管理系统',
     theme: 'dark',
@@ -527,6 +546,12 @@ export default function SettingsView() {
     safetyProductionUpdatedDate: '',
     alarmSevereFlash: true,
     alarmSevereUpgrade: 'sound',
+    alarmVolume: 30,
+    videoDeviceOfflineAlarmEnabled: true,
+    videoTrafficAlarmEnabled: true,
+    videoTrafficMonthlyLimitGb: 30,
+    videoTrafficReservedGb: 2,
+    videoTrafficLowRatioPercent: 20,
     alarmSosEnabled: true,
     alarmFenceEnabled: true,
     alarmLowBatteryEnabled: true,
@@ -647,6 +672,10 @@ export default function SettingsView() {
   const [monitoringDevices, setMonitoringDevices] = useState<MonitoringVideo[]>([]);
   const [monitoringDevicesLoading, setMonitoringDevicesLoading] = useState(false);
   const [monitoringDevicesError, setMonitoringDevicesError] = useState('');
+  const [smartMonitoringSelection, setSmartMonitoringSelection] = useState<{
+    deviceIds: number[];
+    algoIds: string[];
+  }>(() => loadSmartMonitoringSelection());
 
   const loadMonitoringDevices = async () => {
     setMonitoringDevicesLoading(true);
@@ -654,6 +683,21 @@ export default function SettingsView() {
     try {
       const data = await getAllVideos();
       setMonitoringDevices(data || []);
+
+      if ((data || []).length > 0 && smartMonitoringSelection.deviceIds.length === 0 && smartMonitoringSelection.algoIds.length === 0) {
+        const firstDeviceId = (data || [])[0]?.id;
+        if (firstDeviceId) {
+          try {
+            const persistedRules = await getDeviceRules(firstDeviceId);
+            if (Array.isArray(persistedRules) && persistedRules.length > 0) {
+              setSmartMonitoringSelection({
+                deviceIds: [],
+                algoIds: persistedRules,
+              });
+            }
+          } catch {}
+        }
+      }
     } catch (error: any) {
       setMonitoringDevicesError(error?.message || '加载监控设备失败');
     } finally {
@@ -823,6 +867,12 @@ export default function SettingsView() {
         safetyProductionUpdatedDate: new Date().toISOString().slice(0, 10),
         alarmSevereFlash: false,
         alarmSevereUpgrade: 'sound',
+        alarmVolume: 30,
+        videoDeviceOfflineAlarmEnabled: true,
+        videoTrafficAlarmEnabled: true,
+        videoTrafficMonthlyLimitGb: 30,
+        videoTrafficReservedGb: 2,
+        videoTrafficLowRatioPercent: 20,
         aiAlarmLevelConfigs: [
           { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
           { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
@@ -1033,7 +1083,15 @@ export default function SettingsView() {
                 <SmartMonitoringConfig
                   embedded
                   devices={monitoringDevices}
-                  onSuccess={loadMonitoringDevices}
+                  initialSelectedDeviceIds={smartMonitoringSelection.deviceIds}
+                  initialSelectedAlgoIds={smartMonitoringSelection.algoIds}
+                  onSuccess={(selection) => {
+                    if (selection) {
+                      setSmartMonitoringSelection(selection);
+                      saveSmartMonitoringSelection(selection);
+                    }
+                    loadMonitoringDevices();
+                  }}
                 />
               )}
             </div>
@@ -1800,6 +1858,82 @@ export default function SettingsView() {
                 </div>
 
                 <div className="mt-3 pt-3 border-t border-slate-700/50">
+                  <h3 className="text-sm font-semibold text-white mb-3">摄像头状态告警</h3>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                    <div className="flex items-center justify-between py-1">
+                      <div>
+                        <div className="text-sm text-white">摄像头离线告警</div>
+                        <div className="text-xs text-slate-400">摄像头状态为离线时生成告警</div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.videoDeviceOfflineAlarmEnabled ?? true}
+                          onChange={(e) => setSettings({ ...settings, videoDeviceOfflineAlarmEnabled: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between py-1">
+                      <div>
+                        <div className="text-sm text-white">摄像头流量不足告警</div>
+                        <div className="text-xs text-slate-400">达到流量阈值时生成告警</div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.videoTrafficAlarmEnabled ?? true}
+                          onChange={(e) => setSettings({ ...settings, videoTrafficAlarmEnabled: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-cyan-500 after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mt-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">月流量阈值(GB)</label>
+                      <input
+                        type="number"
+                        value={settings.videoTrafficMonthlyLimitGb ?? 30}
+                        min={1}
+                        max={1024}
+                        disabled={!settings.videoTrafficAlarmEnabled}
+                        onChange={(e) => setSettings({ ...settings, videoTrafficMonthlyLimitGb: Math.max(1, Number(e.target.value) || 30) })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">预留流量(GB)</label>
+                      <input
+                        type="number"
+                        value={settings.videoTrafficReservedGb ?? 2}
+                        min={0}
+                        max={100}
+                        disabled={!settings.videoTrafficAlarmEnabled}
+                        onChange={(e) => setSettings({ ...settings, videoTrafficReservedGb: Math.max(0, Number(e.target.value) || 0) })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">剩余比例阈值(%)</label>
+                      <input
+                        type="number"
+                        value={settings.videoTrafficLowRatioPercent ?? 20}
+                        min={1}
+                        max={100}
+                        disabled={!settings.videoTrafficAlarmEnabled}
+                        onChange={(e) => setSettings({ ...settings, videoTrafficLowRatioPercent: Math.min(100, Math.max(1, Number(e.target.value) || 20)) })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-700/50">
                   <div className="grid grid-cols-4 gap-3">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">告警保留天数</label>
@@ -1875,11 +2009,12 @@ export default function SettingsView() {
                         type="range" 
                         min="0" 
                         max="100" 
-                        defaultValue={Math.round((window as any).alarmVolume * 100)}
+                        value={settings.alarmVolume ?? 30}
+                        onChange={(e) => setSettings({ ...settings, alarmVolume: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
                         className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                       />
                       <span className="text-slate-500 text-sm">🔊</span>
-                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{Math.round((window as any).alarmVolume * 100)}%</span>
+                      <span id="alarmVolumeValue" className="text-cyan-400 text-sm font-medium w-12 text-right">{settings.alarmVolume ?? 30}%</span>
                     </div>
                   </div>
 
@@ -1889,19 +2024,19 @@ export default function SettingsView() {
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <button
-                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('low'); }}
+                      onClick={() => { localStorage.setItem('systemSettings', JSON.stringify(settings)); window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('low'); }}
                       className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 px-4 rounded-lg transition-all text-sm"
                     >
                       🔵 低等级
                     </button>
                     <button
-                      onClick={() => { window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('medium', true); }}
+                      onClick={() => { localStorage.setItem('systemSettings', JSON.stringify(settings)); window.stopAlarmSound && window.stopAlarmSound(); window.playAlarmSound && window.playAlarmSound('medium', true); }}
                       className="bg-amber-600 hover:bg-amber-500 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-amber-500/20"
                     >
                       🟡 中等级
                     </button>
                     <button
-                      onClick={() => window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high')}
+                      onClick={() => { localStorage.setItem('systemSettings', JSON.stringify(settings)); window.showFenceAlarm('测试设备', '非法闯入', '测试区域', 'high'); }}
                       className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-medium py-2.5 px-4 rounded-lg transition-all text-sm shadow-lg shadow-red-500/30"
                     >
                       🔴 高等级
@@ -3101,7 +3236,7 @@ export default function SettingsView() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">最大存储容量(GB)</label>
+                    <label className="block text-xs text-slate-400 mb-1">最大视频存储容量(GB)</label>
                     <input
                       type="number"
                       value={settings.storageMaxSizeGB || 500}
@@ -3111,7 +3246,7 @@ export default function SettingsView() {
                       step={50}
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
                     />
-                    <p className="text-xs text-slate-500 mt-0.5">录像和截图超过此容量后触发空间清理</p>
+                    <p className="text-xs text-slate-500 mt-0.5">录像和截图文件大小超过此容量后触发空间清理</p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">警告阈值(%)</label>

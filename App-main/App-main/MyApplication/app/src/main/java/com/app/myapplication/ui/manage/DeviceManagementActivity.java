@@ -196,8 +196,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
             LinearLayout root = formRoot(requireContext());
             OrgPicker org = addOrgPicker(root, "所属单位 *", null, this::showOrgTreePicker);
             EditText port = addInput(root, "端口", "80");
-            EditText username = addInput(root, "账号", "admin");
-            EditText password = addInput(root, "密码", "");
             Spinner platform = addSpinner(root, "平台类型", CAMERA_PLATFORM_LABELS);
             Spinner type = addSpinner(root, "设备类型", CAMERA_TYPE_LABELS);
 
@@ -209,8 +207,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
                         DeviceDefaults defaults = new DeviceDefaults();
                         defaults.orgNode = org.selected;
                         defaults.port = value(port);
-                        defaults.username = value(username);
-                        defaults.password = value(password);
                         defaults.platformType = spinnerValue(platform, CAMERA_PLATFORM_VALUES);
                         defaults.deviceType = spinnerValue(type, CAMERA_TYPE_VALUES);
                         showCameraForm(true, defaults);
@@ -233,8 +229,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
             });
             form.channel = addInput(root, "通道号", "1");
             form.port = addInput(root, "端口", emptyDefault(defaults.port, "80"));
-            form.username = addInput(root, "账号", emptyDefault(defaults.username, "admin"));
-            form.password = addInput(root, "密码", defaults.password);
             form.installLocation = addInput(root, "安装位置", "");
             form.manager = addInput(root, "负责人", "");
             form.managerPhone = addInput(root, "负责人电话", "");
@@ -270,8 +264,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
             req.setDeviceSerial(value(form.serial));
             req.setChannelNo(intValue(form.channel, 1));
             req.setPort(intValue(form.port, 80));
-            req.setUsername(value(form.username));
-            req.setPassword(value(form.password));
             req.setPlatformType(spinnerValue(form.platform, CAMERA_PLATFORM_VALUES));
             req.setDeviceType(spinnerValue(form.type, CAMERA_TYPE_VALUES));
             req.setCompany(form.org.selected.company);
@@ -1035,8 +1027,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
     private static class DeviceDefaults {
         OrgNode orgNode;
         String port = "80";
-        String username = "admin";
-        String password = "";
         String platformType = "custom";
         String deviceType = "camera";
         String holder = "";
@@ -1048,8 +1038,6 @@ public class DeviceManagementActivity extends AppCompatActivity {
         EditText serial;
         EditText channel;
         EditText port;
-        EditText username;
-        EditText password;
         EditText installLocation;
         EditText manager;
         EditText managerPhone;

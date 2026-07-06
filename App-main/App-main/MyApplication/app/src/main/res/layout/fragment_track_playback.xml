@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="#0f172a">
+
+    <LinearLayout
+        android:id="@+id/layoutTrackListContent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
     <!-- 轨迹记录加载栏 -->
     <LinearLayout
@@ -136,6 +141,16 @@
             android:clipToPadding="false" />
     </LinearLayout>
 
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutPlaybackFullscreen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="#0f172a"
+        android:visibility="gone">
+
     <!-- 地图容器 -->
     <FrameLayout
         android:id="@+id/layoutPlaybackMap"
@@ -177,6 +192,17 @@
                 android:textColor="#94a3b8"
                 android:textSize="12sp" />
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnCloseFullscreen"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_circle_gray"
+            android:contentDescription="退出全屏"
+            android:padding="10dp"
+            android:src="@drawable/ic_fullscreen_exit" />
     </FrameLayout>
 
     <!-- 播放控制栏 -->
@@ -348,4 +374,5 @@
                 android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -40,6 +40,10 @@ def get_alarms(
 def get_alarm_stats(current_user: dict = Depends(get_current_user)):
     return service.get_alarm_stats(current_user=current_user)
 
+@router.get("/fence/pending-devices")
+def get_pending_fence_devices(current_user: dict = Depends(get_current_user)):
+    return service.get_pending_fence_device_status(current_user=current_user)
+
 # @router.post("/", response_model=AlarmOut)
 @router.post("/", response_model=AlarmOut)
 def create_alarm(

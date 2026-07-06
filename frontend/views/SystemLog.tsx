@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MenuKey } from '../types';
-import { alarmApi, LogResponse } from '../src/api/alarmApi';
+import { alarmApi, toStaticUrl, LogResponse } from '../src/api/alarmApi';
 import { API_BASE_URL, getAuthHeaders } from '../src/api/config';
 import { getStoredScopeState } from '../src/utils/authScope';
-import { 
-  FileText, 
-  Search, 
-  User, 
-  Shield, 
-  MapPin, 
-  Video, 
+import {
+  FileText,
+  Search,
+  User,
+  Shield,
+  MapPin,
+  Video,
   AlertTriangle,
   Settings,
   LogIn,
@@ -23,7 +23,8 @@ import {
   Calendar,
   Download,
   ExternalLink,
-  DatabaseBackup
+  DatabaseBackup,
+  Image
 } from 'lucide-react';
 
 interface SystemLog {
@@ -636,6 +637,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<SystemLog | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const selectedFenceBackup = selectedLog ? getDeletedFenceBackup(selectedLog) : null;
   
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
@@ -812,7 +814,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
     return sortState.direction === 'asc' ? result : -result;
   });
 
-  const renderSortHeader = (field: SystemLogSortField, label: string, className = 'px-4 py-3 text-left text-sm font-medium text-slate-400') => {
+  const renderSortHeader = (field: SystemLogSortField, label: string, className = 'px-4 py-2.5 text-left text-xs font-medium text-slate-400') => {
     const active = sortState.field === field;
     const nextDirection: SortDirection = active && sortState.direction === 'asc' ? 'desc' : 'asc';
     return (
@@ -864,8 +866,8 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         {/* 左侧：标题 + 类型筛选标签 + 日期筛选 */}
         <div className="flex items-center gap-8">
-          <h1 className="text-4xl font-bold text-white flex items-center gap-2">
-            <FileText size={32} className="text-cyan-400" />
+          <h1 className="text-3xl font-bold text-white flex items-center gap-2">
+            <FileText size={28} className="text-cyan-400" />
             系统日志
           </h1>
           
@@ -879,12 +881,12 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 <button
                   key={type}
                   onClick={() => setFilterType(type)}
-                  className={`px-4 py-2 rounded-full text-base transition-all flex items-center gap-2 ${
+                  className={`px-3 py-1.5 rounded-full text-sm transition-all flex items-center gap-1.5 ${
                     isActive ? typeStyles[type] : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'
                   }`}
                 >
                   <span>{label}</span>
-                  <span className={`text-base ${isActive ? 'opacity-80' : ''}`}>{count}</span>
+                  <span className={`text-sm ${isActive ? 'opacity-80' : ''}`}>{count}</span>
                 </button>
               );
             })}
@@ -892,26 +894,26 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
 
           {/* 日期时间筛选 */}
           <div className="flex items-center gap-2 ml-4">
-            <Calendar size={20} className="text-cyan-400" />
+            <Calendar size={18} className="text-cyan-400" />
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+              className="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
             />
             <span className="text-slate-400">至</span>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-base text-slate-200"
+              className="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200"
             />
             {(startDate || endDate) && (
               <button
                 onClick={() => { setStartDate(''); setEndDate(''); }}
-                className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-all"
+                className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-all"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             )}
           </div>
@@ -921,9 +923,9 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
         <div className="flex items-center gap-4">
           <a
             href={alarmApi.exportLogsUrl()}
-            className="flex items-center gap-2 px-5 py-3 bg-slate-800/80 border border-slate-700 rounded-lg text-base text-slate-200 hover:bg-slate-700/80 transition-all"
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-lg text-sm text-slate-200 hover:bg-slate-700/80 transition-all"
           >
-            <Download size={18} className="text-cyan-400" />
+            <Download size={16} className="text-cyan-400" />
             <span>导出日志</span>
           </a>
           <div className="flex items-center gap-2">
@@ -936,7 +938,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   setSelectedGrid('all');
                   setSelectedTeam('all');
                 }}
-                className="h-11 min-w-[120px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-base text-slate-200 outline-none hover:border-cyan-400/40"
+                className="h-10 min-w-[112px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-sm text-slate-200 outline-none hover:border-cyan-400/40"
               >
                 {companies.map(c => <option key={c} value={c}>{c === 'all' ? '所有公司' : c}</option>)}
               </select>
@@ -949,7 +951,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   setSelectedGrid('all');
                   setSelectedTeam('all');
                 }}
-                className="h-11 min-w-[120px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-base text-slate-200 outline-none hover:border-cyan-400/40"
+                className="h-10 min-w-[112px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-sm text-slate-200 outline-none hover:border-cyan-400/40"
               >
                 {projects.map(p => <option key={p} value={p}>{p === 'all' ? '所有项目' : p}</option>)}
               </select>
@@ -960,14 +962,14 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 setSelectedGrid(event.target.value);
                 setSelectedTeam('all');
               }}
-              className="h-11 min-w-[120px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-base text-slate-200 outline-none hover:border-cyan-400/40"
+              className="h-10 min-w-[112px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-sm text-slate-200 outline-none hover:border-cyan-400/40"
             >
               {grids.map(g => <option key={g} value={g}>{g === 'all' ? '所有网格' : g}</option>)}
             </select>
             <select
               value={selectedTeam}
               onChange={(event) => setSelectedTeam(event.target.value)}
-              className="h-11 min-w-[120px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-base text-slate-200 outline-none hover:border-cyan-400/40"
+              className="h-10 min-w-[112px] rounded-lg border border-slate-700 bg-slate-800/80 px-3 text-sm text-slate-200 outline-none hover:border-cyan-400/40"
             >
               {teams.map(t => <option key={t} value={t}>{t === 'all' ? '所有工队' : t}</option>)}
             </select>
@@ -979,7 +981,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   setSelectedGrid('all');
                   setSelectedTeam('all');
                 }}
-                className="h-11 px-3 rounded-lg text-base text-cyan-300 hover:bg-cyan-500/10"
+                className="h-10 px-3 rounded-lg text-sm text-cyan-300 hover:bg-cyan-500/10"
               >
                 重置
               </button>
@@ -988,7 +990,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
 
           {/* 搜索框 */}
           <div className="relative w-80">
-            <Search size={20} className="absolute left-4 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+            <Search size={18} className="absolute left-4 top-1/2 transform -translate-y-1/2 text-cyan-400" />
             <input
               type="text"
               placeholder="搜索..."
@@ -996,7 +998,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
               onChange={(e) => setSearchKeyword(e.target.value)}
               onFocus={() => setShowSearchHint(true)}
               onBlur={() => setTimeout(() => setShowSearchHint(false), 200)}
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-12 pr-5 py-3 text-base text-slate-200"
+              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-11 pr-4 py-2.5 text-sm text-slate-200"
             />
             
             {showSearchHint && (
@@ -1004,7 +1006,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 {searchHints.map((hint, i) => (
                   <div key={i} className="flex items-center gap-2 py-2">
                     <span className="text-cyan-400">{hint.icon}</span>
-                    <span className="text-base text-slate-300">{hint.text}</span>
+                    <span className="text-sm text-slate-300">{hint.text}</span>
                   </div>
                 ))}
               </div>
@@ -1016,13 +1018,13 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
       {/* 筛选状态提示 */}
       {filterType !== 'all' && (
         <div className="mb-4 flex items-center gap-2">
-          <span className="text-slate-400 text-lg">当前筛选：</span>
-          <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-full text-lg">
+          <span className="text-slate-400 text-sm">当前筛选：</span>
+          <span className="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-full text-sm">
             {typeLabels[filterType]} ({filteredLogs.length} 条)
           </span>
           <button 
             onClick={() => setFilterType('all')}
-            className="text-base text-slate-500 hover:text-cyan-400 underline"
+            className="text-sm text-slate-500 hover:text-cyan-400 underline"
           >
             点击显示全部
           </button>
@@ -1052,29 +1054,29 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   index % 2 === 0 ? 'bg-slate-800/20' : ''
                 }`}
               >
-                <td className="px-4 py-3">
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-sm ${actionColors[log.targetType]}`}>
+                <td className="px-4 py-2.5">
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs ${actionColors[log.targetType]}`}>
                     {actionIcons[log.targetType]}
                     {typeLabels[log.targetType]}
                   </span>
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-base font-medium text-white">{log.operator}</span>
+                <td className="px-4 py-2.5">
+                  <span className="text-sm font-medium text-white">{log.operator}</span>
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-base text-slate-300">{log.action}</span>
+                <td className="px-4 py-2.5">
+                  <span className="text-sm text-slate-300">{log.action}</span>
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-base text-slate-400">{log.targetName}</span>
+                <td className="px-4 py-2.5">
+                  <span className="text-sm text-slate-400">{log.targetName}</span>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-2.5">
                   <div className="flex flex-col gap-0.5">
                     {(() => {
                       const scope = logScope(log);
                       const projectTeam = [scope.project, scope.team].filter(Boolean).join(' · ');
                       return (
                         <>
-                          <span className="text-sm text-slate-300">{scope.company || '-'}</span>
+                          <span className="text-xs text-slate-300">{scope.company || '-'}</span>
                           {scope.grid && <span className="text-xs text-slate-500">网格：{scope.grid}</span>}
                           {projectTeam && <span className="text-xs text-slate-500">{projectTeam}</span>}
                         </>
@@ -1082,9 +1084,9 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                     })()}
                   </div>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-2.5">
                   <div className="flex items-start gap-2">
-                    <span className="text-sm text-slate-500 max-w-md whitespace-normal break-words leading-5 flex-1" title={generateLogDetails(log, orgNameLookup)}>
+                    <span className="text-xs text-slate-500 max-w-md whitespace-normal break-words leading-5 flex-1" title={generateLogDetails(log, orgNameLookup)}>
                       {generateLogDetails(log, orgNameLookup)}
                     </span>
                     {onNavigate && getFenceSnapshotForMap(log) && (
@@ -1115,8 +1117,8 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-sm text-slate-500">
+                <td className="px-4 py-2.5">
+                  <span className="text-xs text-slate-500">
                     {new Date(log.time).toLocaleString()}
                   </span>
                 </td>
@@ -1128,7 +1130,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
         {filteredLogs.length === 0 && (
           <div className="text-center py-16 text-slate-400">
             <FileText size={56} className="mx-auto mb-4 opacity-30" />
-            <p className="text-lg">暂无日志记录</p>
+            <p className="text-sm">暂无日志记录</p>
           </div>
         )}
       </div>
@@ -1149,7 +1151,7 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
               </button>
             </div>
             
-            <div className="space-y-3 text-base">
+            <div className="space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <span className="text-slate-400">操作人员：</span>
@@ -1195,6 +1197,17 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                   <span className="text-slate-400">详细信息：</span>
                   <p className="text-slate-200 mt-1">{generateLogDetails(selectedLog)}</p>
                 </div>
+                {selectedLog.extra?.alarm_image_path && (
+                  <div className="col-span-2">
+                    <button
+                      onClick={() => setPreviewImage(toStaticUrl(selectedLog.extra!.alarm_image_path))}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm font-medium transition-all"
+                    >
+                      <Image size={16} />
+                      查看告警截图
+                    </button>
+                  </div>
+                )}
                 {selectedFenceBackup && (
                   <div className="col-span-2 mt-2 rounded-lg border border-cyan-400/20 bg-slate-950/40 p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
@@ -1276,6 +1289,31 @@ export default function SystemLog({ onNavigate }: SystemLogProps) {
                 关闭
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 截图预览弹窗 */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="relative bg-slate-900 rounded-2xl border border-cyan-400/30 shadow-2xl p-4 max-w-[90vw] max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute right-3 top-3 z-10 p-1.5 bg-black/50 hover:bg-black/70 rounded-lg"
+            >
+              <X size={18} className="text-white" />
+            </button>
+            <img
+              src={previewImage}
+              alt="告警截图"
+              className="max-w-[85vw] max-h-[82vh] rounded-lg object-contain"
+            />
           </div>
         </div>
       )}

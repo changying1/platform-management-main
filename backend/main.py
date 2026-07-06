@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import logging
 import threading
@@ -99,6 +99,20 @@ async def lifespan(app: FastAPI):
     # 4. 鍚姩杞ㄨ抗鏁版嵁娓呯悊鏈嶅姟
     logger.info("Starting track cleanup service...")
     track_cleanup_service.start()
+
+    def restore_ai_monitors_after_startup():
+        try:
+            # Let the API finish booting before model loading and cloud snapshot calls begin.
+            import time
+            from app.services.ai_manager import ai_manager
+
+            time.sleep(2)
+            ai_manager.restore_configured_monitors()
+        except Exception as e:
+            logger.error(f"AI monitor restore failed: {e}", exc_info=True)
+
+    logger.info("Scheduling AI monitor restore...")
+    threading.Thread(target=restore_ai_monitors_after_startup, daemon=True).start()
     
     """
     # 2. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)

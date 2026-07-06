@@ -1,4 +1,4 @@
-﻿
+
 const cleanAlarmDisplayText = (value?: string | null) => String(value || '')
   .replace(/[\uFF08(]\s*\d{1,3}(?:\.\d+)?\s*%\s*[\uFF09)]/g, '')
   .replace(/\bconfidence\s*[:\uFF1A]?\s*\d{1,3}(?:\.\d+)?\s*%?/gi, '')
@@ -38,7 +38,9 @@ import {
   Calendar,
   Volume2,
   Pause,
-  Loader2
+  Loader2,
+  ArrowDown,
+  ArrowUp
 } from "lucide-react";
 import { usePlaybackStore } from "../src/playbackStore";
 import { SavedPlayback, Device } from "../src/playback";
@@ -84,6 +86,10 @@ interface TrajectoryPoint {
   timestamp: string;
   speed?: number;
   direction?: number;
+  status?: string;
+  state?: string;
+  online?: boolean;
+  is_online?: boolean;
 }
 
  // 鏂板锛氫富Tab绫诲瀷
@@ -97,6 +103,10 @@ interface TrackPoint {
   lng: number;
   time: string;
   speed?: number;
+  status?: string;
+  state?: string;
+  online?: boolean;
+  is_online?: boolean;
 }
 
 // 鏂板锛氳建杩硅褰曠被鍨?
@@ -390,7 +400,7 @@ const playbackMatchesSearch = (playback: ExtendedSavedPlayback, keyword: string)
   ].some(field => normalizeSearch(field).includes(normalizedKeyword));
 };
 
-type VoiceSortField = 'from' | 'receiver' | 'category' | 'time' | 'kind';
+type VoiceSortField = 'from' | 'receiver' | 'content' | 'category' | 'time' | 'kind';
 type TrackSortField = 'type' | 'holder' | 'device' | 'coord' | 'description' | 'company' | 'project' | 'org' | 'time';
 type SortDirection = 'asc' | 'desc';
 interface VoiceSortState {
@@ -462,6 +472,7 @@ const getVoiceSortValue = (voice: VoiceRecord, field: VoiceSortField) => {
   switch (field) {
     case 'from': return normalizeSearch(voice.from);
     case 'receiver': return normalizeSearch(getVoiceReceiverText(voice));
+    case 'content': return normalizeSearch(voice.transcript);
     case 'category': return voice.type || '';
     case 'kind': return voice.audioUrl ? `1-${voice.duration}` : '0-0';
     default: return parseVoiceDateTime(voice.startTime).getTime();
@@ -2435,9 +2446,10 @@ const VoicePlaybackContent = ({
       <div className="flex-1 overflow-auto">
         {voiceRecordsError ? <div className="mb-2 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{voiceRecordsError}</div> : null}
         <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950/35 shadow-[0_18px_46px_rgba(2,8,23,0.36)] backdrop-blur-sm">
-          <div className="grid grid-cols-[190px_minmax(360px,1fr)_170px_240px_230px] items-center gap-5 border-b border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/70">
+          <div className="grid grid-cols-[170px_minmax(220px,0.9fr)_minmax(360px,1.8fr)_150px_210px_210px] items-center gap-4 border-b border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/70">
             <div>{renderSortHeader('from', '发起人')}</div>
             <div>{renderSortHeader('receiver', '接收对象')}</div>
+            <div>{renderSortHeader('content', '播报内容')}</div>
             <div>{renderSortHeader('category', '通话类别')}</div>
             <div>{renderSortHeader('time', '播报时间')}</div>
             <div className="text-right">{renderSortHeader('kind', '播报类型 / 操作', 'right')}</div>
@@ -2447,28 +2459,28 @@ const VoicePlaybackContent = ({
               const typeInfo = getVoiceTypeInfo(voice.type);
               const hasAudio = Boolean(voice.audioUrl);
               const toNames = toTextArray(voice.toNames);
-              const receiverText = toNames.join(', ');
-              const receiverSummary = toNames.length > 2
-                ? `${toNames.slice(0, 2).join(', ')} 等 ${toNames.length} 人`
-                : (receiverText || '-');
+              const receiverText = toNames.join('、') || '-';
+              const contentText = asText(voice.transcript) || '-';
               return (
-                <div key={voice.id} onClick={() => setSelectedVoice(voice)} className="group grid grid-cols-[190px_minmax(360px,1fr)_170px_240px_230px] items-center gap-5 bg-slate-950/20 px-5 py-4 cursor-pointer transition-all hover:bg-slate-800/55">
+                <div key={voice.id} onClick={() => setSelectedVoice(voice)} className="group grid grid-cols-[170px_minmax(220px,0.9fr)_minmax(360px,1.8fr)_150px_210px_210px] items-center gap-4 bg-slate-950/20 px-5 py-4 cursor-pointer transition-all hover:bg-slate-800/55">
                   <div className="min-w-0"><div className="truncate text-base font-semibold text-slate-50">{asText(voice.from) || '-'}</div></div>
                   <div className="min-w-0">
-                    <div className="truncate text-base text-slate-100" title={receiverText}>{receiverSummary}</div>
-                    {toNames.length > 2 ? <div className="mt-1.5 text-sm text-cyan-300/75">点击查看全部接收对象</div> : null}
+                    <div className="truncate text-base text-slate-100" title={receiverText}>{receiverText}</div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-base text-slate-300" title={contentText}>{contentText}</div>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
                     <div className="flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-cyan-300">{typeInfo.icon}</div>
                     <span className="rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 text-sm text-slate-300">{typeInfo.text}</span>
                   </div>
-                  <div className="text-sm text-slate-300">{formatVoiceDateTime(voice.startTime)}</div>
-                  <div className="flex items-center justify-end gap-3">
-                    <div className="text-right">
+                  <div className="truncate whitespace-nowrap text-sm text-slate-300">{formatVoiceDateTime(voice.startTime)}</div>
+                  <div className="flex min-w-0 items-center justify-end gap-3 whitespace-nowrap">
+                    <div className="shrink-0 text-right">
                       <span className={`inline-flex min-w-[60px] justify-center rounded-md px-3 py-1 text-sm font-semibold ring-1 ${hasAudio ? 'bg-emerald-400/10 text-emerald-300 ring-emerald-300/20' : 'bg-sky-400/10 text-sky-300 ring-sky-300/20'}`}>{hasAudio ? '语音' : '文字'}</span>
                       {hasAudio ? <div className="mt-1.5 text-sm text-slate-500">{formatDuration(voice.duration)}</div> : null}
                     </div>
-                    <button className="inline-flex items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-medium text-slate-200 transition-all hover:border-cyan-300/30 hover:bg-cyan-400/10 hover:text-cyan-100">{hasAudio ? <Volume2 size={14} /> : <Info size={14} />}{hasAudio ? '听录音' : '查看文字'}</button>
+                    <button className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-3.5 py-2 text-sm font-medium text-slate-200 transition-all hover:border-cyan-300/30 hover:bg-cyan-400/10 hover:text-cyan-100">{hasAudio ? <Volume2 size={14} /> : <Info size={14} />}{hasAudio ? '听录音' : '查看文字'}</button>
                   </div>
                 </div>
               );
@@ -2554,6 +2566,7 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [playbackSortOrder, setPlaybackSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [playbackTotal, setPlaybackTotal] = useState(0);
   const [playbackTotalPages, setPlaybackTotalPages] = useState(0);
   // 鉁?40:9 鏇寸獎鍗＄墖锛?0鍒椕?琛?= 40涓紝鍒氬ソ濉弧椤甸潰
@@ -2634,6 +2647,10 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
         lng: Number(p.lng),
         time: p.timestamp,
         speed: Number(p.speed) || 0,
+        status: p.status,
+        state: p.state,
+        online: p.online,
+        is_online: p.is_online,
       })),
     };
   };
@@ -3147,6 +3164,10 @@ useEffect(() => {
           lng: Number(point.lng),
           time: point.timestamp || point.time,
           speed: Number(point.speed) || 0,
+          status: point.status,
+          state: point.state,
+          online: point.online,
+          is_online: point.is_online,
         }));
       setSelectedTrack({ ...track, points, pointCount: points.length });
     } catch (error) {
@@ -3222,11 +3243,18 @@ useEffect(() => {
           return null;
         }
 
+        const videoDeviceId = String((video as any).device_id || (video as any).video_id || '').trim();
         const videoTime = new Date(getPlaybackEventTime(video)).getTime();
         let best: any = null;
         let bestDiff = Number.POSITIVE_INFINITY;
 
         for (const shot of screenshots) {
+          const shotDeviceId = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
+          // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+          if (videoDeviceId && shotDeviceId && shotDeviceId !== videoDeviceId) {
+            continue;
+          }
+
           const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
 
           if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
@@ -3245,7 +3273,7 @@ useEffect(() => {
           return best;
         }
 
-        return screenshots[0] || null;
+        return null;
       };
 
       // 馃摴 浼樺厛鐢ㄧ湡瀹炲父瑙勮棰戯紙鍙挱鏀撅級
@@ -3287,12 +3315,19 @@ useEffect(() => {
             return null;
           }
 
+          const videoDeviceId = String((video as any).device_id || (video as any).video_id || '').trim();
           const videoTime = new Date(getPlaybackEventTime(video)).getTime();
 
           let best: any = null;
           let bestDiff = Number.POSITIVE_INFINITY;
 
           for (const shot of screenshots) {
+            const shotDeviceId = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
+            // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+            if (videoDeviceId && shotDeviceId && shotDeviceId !== videoDeviceId) {
+              continue;
+            }
+
             const shotTime = new Date(getPlaybackEventTime(shot)).getTime();
 
             if (Number.isNaN(videoTime) || Number.isNaN(shotTime)) {
@@ -3331,6 +3366,27 @@ useEffect(() => {
           ? withMediaCacheKey(toVideoUrl(screenshotRawPath), matchedScreenshot?.updated_at || matchedScreenshot?.name)
           : '';
 
+        const translateAlarmText = (value: unknown) => String(value || '')
+          .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
+          .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
+          .replace(/\bsmoking\b/gi, '吸烟')
+          .replace(/\bphone\b/gi, '打电话')
+          .replace(/\bfire\b/gi, '烟火')
+          .replace(/\bflame\b/gi, '明火')
+          .replace(/\bsmoke\b/gi, '烟雾')
+          .replace(/\bno_vest\b/gi, '未穿反光衣')
+          .replace(/\bunknown\b/gi, '未知异常')
+          .trim();
+        const alarmTypeText = translateAlarmText((video as any).alarm_type || (video as any).type || '视频告警');
+        const alarmMessageText = translateAlarmText((video as any).description || alarmTypeText || '检测到异常行为');
+        const alarmPersonText = translateAlarmText(
+          (video as any).person_name ||
+          (video as any).trigger_person_name ||
+          (video as any).personnel_name ||
+          (video as any).personnel ||
+          '未知'
+        );
+        const alarmTimestamp = (video as any).alarm_time || startTime;
 
         const alarmSecond = (() => {
           const explicitAlarmSecond = Number(video.alarm_second);
@@ -3368,11 +3424,11 @@ useEffect(() => {
           createdAt,
           alarmSecond,  // 鉁?浼犵粰鎾斁鍣紒杩涘害鏉＄孩鐐瑰湪杩欓噷锛?
           alarmInfo: {
-              type: 'AI检测',
-              msg: '检测到异常行为',
+              type: alarmTypeText,
+              msg: alarmMessageText,
             score: 0.95,
-            timestamp: startTime,
-              personnel: '未知',
+            timestamp: alarmTimestamp,
+              personnel: alarmPersonText,
             screenshotUrl,
             screenshot: screenshotUrl
               ? {
@@ -3405,10 +3461,12 @@ useEffect(() => {
     }
 
     // 鉁?鏈€缁堟寜鏃堕棿鍊掑簭鎺掑垪锛堟柊鐨勫湪鍓嶏級
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const playbackSortTime = (item: ExtendedSavedPlayback) =>
+      new Date(item.type === 'alarm' ? (item.alarmInfo?.timestamp || item.startTime || item.createdAt) : (item.startTime || item.createdAt)).getTime();
+    list.sort((a, b) => playbackSortOrder === 'newest' ? playbackSortTime(b) - playbackSortTime(a) : playbackSortTime(a) - playbackSortTime(b));
 
     setFilteredPlaybacks(list);
-  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, devices]);
+  }, [selectedDevice, recordingVideos, alarmVideos, alarmScreenshots, activeTab, devices, playbackSortOrder]);
 
 
 // 鉁?鍒嗛〉璁＄畻 - 鏀惧湪 useEffect 澶栭潰
@@ -3483,10 +3541,14 @@ const enrichAlarmWithScreenshot = (playback: ExtendedSavedPlayback | null): Exte
   const currentUrl = getScreenshotUrl(playback);
   if (currentUrl) return playback;
 
+  const playbackDevice = String(playback.deviceId || playback.deviceKey || '').trim();
   const sameDeviceShots = (alarmScreenshots as any[]).filter((shot) => {
     const shotDevice = String(shot.__device?.id || shot.video_id || shot.device_id || '').trim();
-    const playbackDevice = String(playback.deviceId || playback.deviceKey || '').trim();
-    return !playbackDevice || !shotDevice || shotDevice === playbackDevice;
+    // 严格按设备过滤：如果双方都有设备ID且不一致，则跳过
+    if (playbackDevice && shotDevice && shotDevice !== playbackDevice) {
+      return false;
+    }
+    return true;
   });
 
   if (sameDeviceShots.length === 0) return playback;
@@ -3678,7 +3740,7 @@ return (
           /* 鍗＄墖缃戞牸瑙嗗浘 */
           <div className="flex-1 overflow-hidden flex flex-col h-full">
             <div className="flex justify-between items-center mb-3 flex-shrink-0">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <h3 className="text-lg font-bold text-cyan-300">
                   监控视频
                   <span className="text-sm text-slate-400 ml-2">（共 {playbackTotal} 条记录）</span>
@@ -3691,43 +3753,71 @@ return (
                 </h3>
 
                 {/* 鏌ョ湅妯″紡鍒囨崲鎸夐挳 */}
-                <div className="flex gap-1 bg-slate-800/50 rounded-lg p-1">
+                <div className="flex gap-1 bg-slate-800/50 rounded-lg p-0.5 text-xs">
                   <button
                     onClick={() => setActiveTab('manual')}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                    className={`px-2.5 py-1 rounded-md font-medium leading-tight transition-all duration-200 flex items-center gap-1.5 ${
                       activeTab === 'manual' || activeTab === 'all'
                         ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
                         : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40'
                     }`}
                   >
-                    <Eye size={14} />
+                    <Eye size={12} />
                     常规监控回放
                   </button>
                   <button
                     onClick={() => setActiveTab('alarm')}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                    className={`px-2.5 py-1 rounded-md font-medium leading-tight transition-all duration-200 flex items-center gap-1.5 ${
                       activeTab === 'alarm'
                         ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
                         : 'bg-red-500/20 text-red-300 hover:bg-red-500/40'
                     }`}
                   >
-                    <Bell size={14} />
+                    <Bell size={12} />
                     报警监控回放
+                  </button>
+                </div>
+
+                {/* 鎺掑簭鍒囨崲 */}
+                <div className="flex gap-1 bg-slate-800/50 rounded-lg p-0.5 ml-1 text-xs">
+                  <button
+                    onClick={() => setPlaybackSortOrder('newest')}
+                    className={`px-2.5 py-1 rounded-md font-medium leading-tight transition-all duration-200 flex items-center gap-1 ${
+                      playbackSortOrder === 'newest'
+                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                        : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/40'
+                    }`}
+                    title="时间最新的在前"
+                  >
+                    <ArrowDown size={12} />
+                    时间最新
+                  </button>
+                  <button
+                    onClick={() => setPlaybackSortOrder('oldest')}
+                    className={`px-2.5 py-1 rounded-md font-medium leading-tight transition-all duration-200 flex items-center gap-1 ${
+                      playbackSortOrder === 'oldest'
+                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30'
+                        : 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/40'
+                    }`}
+                    title="时间最早的在前"
+                  >
+                    <ArrowUp size={12} />
+                    时间最早
                   </button>
                 </div>
               </div>
 
                 {/* 鍥哄畾绛涢€夋爮锛氭爲鐘剁粨鏋勶紙鍏徃 -> 椤圭洰/缃戞牸 -> 浣滀笟闃?璁惧锛?*/}
-                <div ref={videoFiltersRef} className="flex items-center gap-2 flex-1 ml-4">
+                <div ref={videoFiltersRef} className="flex items-center gap-1.5 flex-1 ml-2 text-xs">
                   {/* 鎼滅储妗?*/}
-                  <div className="relative w-[320px]">
-                    <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-cyan-400" />
+                  <div className="relative w-[200px]">
+                    <Search size={13} className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-cyan-400" />
                     <input
                       type="text"
-                      placeholder="搜索设备/人员/事件/公司/项目/网格/工队"
+                      placeholder="搜索设备/人员/事件"
                       value={searchKeyword}
                       onChange={(e) => setSearchKeyword(e.target.value)}
-                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
                     />
                     {searchKeyword && (
                       <button onClick={() => setSearchKeyword('')} className="absolute right-2 top-1/2 transform -translate-y-1/2">
@@ -3742,11 +3832,11 @@ return (
                         <div className="relative">
                           <button
                             onClick={() => { setShowCompanyDropdown(!showCompanyDropdown); setShowProjectDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-tight transition-all ${
                               selectedCompany !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                             }`}
                           >
-                            <Building2 size={14} />
+                            <Building2 size={12} />
                             <span>{selectedCompany === 'all' ? '所有公司' : selectedCompany}</span>
                             <ChevronDown size={12} />
                           </button>
@@ -3780,11 +3870,11 @@ return (
                         <div className="relative">
                           <button
                             onClick={() => { setShowProjectDropdown(!showProjectDropdown); setShowCompanyDropdown(false); setShowGridDropdown(false); setShowTeamDropdown(false); }}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-tight transition-all ${
                               selectedProject !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                             }`}
                           >
-                            <FolderTree size={14} />
+                            <FolderTree size={12} />
                             <span>{selectedProject === 'all' ? '所有项目' : selectedProject}</span>
                             <ChevronDown size={12} />
                           </button>
@@ -3818,11 +3908,11 @@ return (
                   <div className="relative">
                     <button
                       onClick={() => { setShowGridDropdown(!showGridDropdown); setShowCompanyDropdown(false); setShowProjectDropdown(false); setShowTeamDropdown(false); }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-tight transition-all ${
                         selectedGrid !== 'all' ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                       }`}
                     >
-                      <MapPin size={14} />
+                      <MapPin size={12} />
                       <span>{selectedGrid === 'all' ? '全部网格' : selectedGrid}</span>
                       <ChevronDown size={12} />
                     </button>
@@ -3844,11 +3934,11 @@ return (
                   <div className="relative">
                     <button
                       onClick={() => { setShowTeamDropdown(!showTeamDropdown); setShowCompanyDropdown(false); setShowProjectDropdown(false); setShowGridDropdown(false); }}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-tight transition-all ${
                         selectedTeam !== 'all' ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50' : 'bg-slate-800/80 border border-slate-700 text-slate-300 hover:border-slate-600'
                       }`}
                     >
-                      <Users size={14} />
+                      <Users size={12} />
                       <span>{selectedTeam === 'all' ? '全部工队' : selectedTeam}</span>
                       <ChevronDown size={12} />
                     </button>
@@ -3936,36 +4026,46 @@ return (
     setShowPlayer(true);
   }}
 onShowScreenshot={async (playback) => {
-  console.log("1. 鐐瑰嚮鎴浘");
+  console.log("1. 点击截图");
 
-  // 鍏堟墦寮€鎾斁鍣?
+  // 先打开播放器
   setCurrentPlayback(playback);
   setShowPlayer(true);
 
-  // 绛夊緟鎾斁鍣ㄦ覆鏌撳畬鎴?
+  // 等待播放器渲染完成
   await new Promise(r => setTimeout(r, 100));
 
-  setSelectedAlarm(enrichAlarmWithScreenshot(playback));
+  const enrichedAlarm = enrichAlarmWithScreenshot(playback);
+  setSelectedAlarm(enrichedAlarm);
   setShowScreenshotModal(true);
 
   if (videoPlayerRef.current) {
     const alarmTime = videoPlayerRef.current.getAlarmTimestamp();
-    console.log("2. 绾㈢偣鏃堕棿(绉?:", alarmTime);
+    console.log("2. 红点时间(秒):", alarmTime);
 
     if (alarmTime > 0) {
       await videoPlayerRef.current.seekTo(alarmTime);
       await new Promise(r => setTimeout(r, 200));
       const screenshotBase64 = await videoPlayerRef.current.captureFrame();
-      console.log("3. 鎴浘瀹屾垚, 闀垮害:", screenshotBase64?.length);
+      console.log("3. 截图完成, 长度:", screenshotBase64?.length);
 
-      if (screenshotBase64 && screenshotBase64.length > 100 && playback.alarmInfo) {
-        (playback.alarmInfo as any).screenshot = {
-          id: `screenshot_${Date.now()}`,
-          url: screenshotBase64,
-          thumbnail: screenshotBase64,
-          timestamp: new Date().toISOString()
-        };
-        setSelectedAlarm({ ...playback });
+      if (screenshotBase64 && screenshotBase64.length > 100 && enrichedAlarm?.alarmInfo) {
+        // 不修改原始 playback，而是直接更新 selectedAlarm
+        // 优先保留后端保存的截图，避免视频帧覆盖正确的告警截图
+        if (!enrichedAlarm.alarmInfo.screenshot) {
+          setSelectedAlarm({
+            ...enrichedAlarm,
+            alarmInfo: {
+              ...enrichedAlarm.alarmInfo,
+              screenshot: {
+                id: `screenshot_${Date.now()}`,
+                url: screenshotBase64,
+                thumbnail: screenshotBase64,
+                timestamp: new Date().toISOString()
+              }
+            }
+          });
+        }
       }
     }
   }
@@ -4220,14 +4320,14 @@ onShowScreenshot={async (playback) => {
 
           {/* 鍛婅鎴浘寮圭獥 */}
       {showScreenshotModal && selectedAlarm && selectedAlarm.alarmInfo && (
-        <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowScreenshotModal(false)}>
+        <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }}>
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-cyan-400/30 shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center p-4 border-b border-cyan-400/30 bg-slate-900/50">
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
                 <AlertCircle size={20} className="text-red-400" />
                 报警详情
               </h3>
-              <button onClick={() => setShowScreenshotModal(false)} className="p-1 hover:bg-slate-700 rounded-lg">
+              <button onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }} className="p-1 hover:bg-slate-700 rounded-lg">
                 <X size={20} className="text-slate-400" />
               </button>
             </div>
@@ -4295,7 +4395,7 @@ onShowScreenshot={async (playback) => {
                     播放视频
                   </button>
                   <button
-                    onClick={() => setShowScreenshotModal(false)}
+                    onClick={() => { setShowScreenshotModal(false); setShowPlayer(false); }}
                     className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
                   >
                     关闭

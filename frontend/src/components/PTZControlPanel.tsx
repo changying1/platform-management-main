@@ -17,6 +17,7 @@ import {
   PanelRightOpen,
 } from 'lucide-react';
 import {
+  PTZ_ACTIVITY_EVENT,
   ptzControl,
   ptzStartControl,
   ptzStopControl,
@@ -54,6 +55,7 @@ const PTZControlPanel: React.FC<PTZControlPanelProps> = ({
   onToggleMonitorOnlyMode,
 }) => {
   const [isControlling, setIsControlling] = useState(false);
+  const [isRealtimeControlMode, setIsRealtimeControlMode] = useState(false);
   // 临时停用“变速控制”功能：保留原代码，后续需要时可恢复。
   // const [speed, setSpeed] = useState(0.3);
   const fixedControlSpeed = 0.5;
@@ -71,6 +73,7 @@ const PTZControlPanel: React.FC<PTZControlPanelProps> = ({
   const pressStartAtRef = useRef(0);
   const activeDirectionRef = useRef<PTZDirection | null>(null);
   const longPressStartedRef = useRef(false);
+  const realtimeModeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canPTZ = (video.supports_ptz ?? 1) === 1;
   const canPreset = (video.supports_preset ?? 1) === 1;
@@ -128,6 +131,29 @@ useEffect(() => {
   setSelectedPresetTokens([]);
   setDwellSeconds(8);
   setIsCruising(false);
+}, [video.id]);
+
+useEffect(() => {
+  const handlePtzActivity = (event: Event) => {
+    const detail = (event as CustomEvent<{ videoId?: number }>).detail || {};
+    if (detail.videoId && Number(detail.videoId) !== Number(video.id)) return;
+    setIsRealtimeControlMode(true);
+    if (realtimeModeTimerRef.current) {
+      clearTimeout(realtimeModeTimerRef.current);
+    }
+    realtimeModeTimerRef.current = setTimeout(() => {
+      setIsRealtimeControlMode(false);
+    }, 10000);
+  };
+
+  window.addEventListener(PTZ_ACTIVITY_EVENT, handlePtzActivity as EventListener);
+  return () => {
+    window.removeEventListener(PTZ_ACTIVITY_EVENT, handlePtzActivity as EventListener);
+    if (realtimeModeTimerRef.current) {
+      clearTimeout(realtimeModeTimerRef.current);
+      realtimeModeTimerRef.current = null;
+    }
+  };
 }, [video.id]);
 
 useEffect(() => {
@@ -439,6 +465,16 @@ const handleCreatePreset = async () => {
     <div className="bg-slate-950/70 rounded-lg shadow-md p-4 select-none text-slate-100 border border-blue-300/25 [&>h3]:hidden">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-cyan-200">PTZ</h3>
+        <div
+          className={`min-w-0 flex-1 rounded border px-3 py-1.5 text-center text-xs font-semibold ${
+            isRealtimeControlMode
+              ? 'border-amber-300/45 bg-amber-400/12 text-amber-100'
+              : 'border-cyan-300/25 bg-cyan-400/10 text-cyan-100'
+          }`}
+          title={isRealtimeControlMode ? '实时控制中，10秒无 PTZ 操作后恢复跟踪监控' : '跟踪监控模式：画面等待检测框同步显示'}
+        >
+          {isRealtimeControlMode ? '实时控制中，10秒无操作后恢复跟踪' : '跟踪监控模式：画面与检测框同步'}
+        </div>
         {onToggleMonitorOnlyMode && (
           <button
             type="button"

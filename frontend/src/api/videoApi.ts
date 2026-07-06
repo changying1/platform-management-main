@@ -14,6 +14,13 @@ const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
   });
 };
 
+export const PTZ_ACTIVITY_EVENT = 'ptz-activity';
+
+const notifyPtzActivity = (videoId: number, action: string) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(PTZ_ACTIVITY_EVENT, { detail: { videoId, action, at: Date.now() } }));
+};
+
 export async function recognizeVideoTraffic(videoId: string | number): Promise<any> {
   const response = await authFetch(`${API_BASE_URL}/video/${videoId}/traffic/recognize`, {
     method: 'POST',
@@ -137,7 +144,17 @@ export interface Video {
   storage_abnormal?: boolean;
   low_battery?: boolean;
   weak_signal?: boolean;
-  status: 'online' | 'offline';
+  ai_rules?: string | string[];
+  aiRules?: string | string[];
+  algo_rules?: string | string[];
+  algoRules?: string | string[];
+  rules?: string | string[];
+  algo_type?: string | string[];
+  algoType?: string | string[];
+  algos?: string | string[];
+  face_assist_enabled?: boolean;
+  faceAssistEnabled?: boolean;
+  status: 'online' | 'offline' | 'fault' | 'maintaining' | string;
   is_active: number;
   remark?: string;
   latitude?: number;
@@ -204,7 +221,7 @@ export interface VideoCreate {
   storage_abnormal?: boolean;
   low_battery?: boolean;
   weak_signal?: boolean;
-  status?: 'online' | 'offline';
+  status?: 'online' | 'offline' | 'fault' | 'maintaining';
   remark?: string;
   company?: string;
   branch_id?: string;
@@ -243,7 +260,7 @@ export interface VideoUpdate {
   storage_abnormal?: boolean;
   low_battery?: boolean;
   weak_signal?: boolean;
-  status?: 'online' | 'offline';
+  status?: 'online' | 'offline' | 'fault' | 'maintaining';
   remark?: string;
   is_active?: number;
   company?: string;
@@ -270,6 +287,11 @@ export interface AIRule {
   desc: string;
   enabled?: boolean;
   reason?: string;
+  role?: 'behavior' | 'auxiliary' | string;
+  category?: string;
+  selectable?: boolean;
+  model_type?: string;
+  model_path?: string;
 }
 
 export interface PlaybackSavePayload {
@@ -520,6 +542,7 @@ export async function ptzControl(
   speed: number = 0.5,
   duration: number = 0.5
 ): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'ptz_once');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -588,6 +611,7 @@ interface CacheEntry<T> {
 
 interface GetVideoStreamOptions {
   forceRefresh?: boolean;
+  protocol?: 'ezopen' | 'hls' | 'rtmp' | 'flv' | string;
 }
 
 const STREAM_URL_FRONTEND_CACHE: Map<number, CacheEntry<StreamUrl>> = new Map();
@@ -637,7 +661,10 @@ export async function getVideoStreamUrl(videoId: number, options: GetVideoStream
   // 3. 发起新请求并使用锁防止并发
   const requestPromise = (async () => {
     try {
-      const response = await authFetch(`${API_BASE_URL}/video/stream/${videoId}`, { cache: 'no-store' });
+        const params = new URLSearchParams();
+        if (options.protocol) params.set('protocol', options.protocol);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const response = await authFetch(`${API_BASE_URL}/video/stream/${videoId}${query}`, { cache: 'no-store' });
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.detail || 'Failed to get stream URL');
@@ -732,6 +759,7 @@ export async function ptzStartControl(
   direction: PTZDirection,
   speed: number = 0.5,
 ): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'ptz_start');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -750,6 +778,7 @@ export async function ptzStartControl(
 
 /** 持续云台移动-停止（松开时调用） */
 export async function ptzStopControl(videoId: number): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'ptz_stop');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/stop`, {
     method: 'POST',
   });
@@ -771,6 +800,7 @@ export async function zoomControl(
   speed: number = 0.5,
   duration: number = 0.5
 ): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'zoom_once');
   const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -793,6 +823,7 @@ export async function zoomStartControl(
   direction: ZoomDirection,
   speed: number = 0.5,
 ): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'zoom_start');
   const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -811,6 +842,7 @@ export async function zoomStartControl(
 
 /** 变焦停止（松开时调用） */
 export async function zoomStopControl(videoId: number): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'zoom_stop');
   const response = await authFetch(`${API_BASE_URL}/video/zoom/${videoId}/stop`, {
     method: 'POST',
   });
@@ -856,6 +888,7 @@ export async function createPreset(videoId: number, payload: { name?: string; to
 }
 
 export async function gotoPreset(videoId: number, presetToken: string, speed: number = 0.5): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'goto_preset');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/presets/${encodeURIComponent(presetToken)}/goto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -909,6 +942,7 @@ export async function startCruise(videoId: number, payload: {
   dwell_seconds?: number;
   rounds?: number | null;
 }): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'cruise_start');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -926,6 +960,7 @@ export async function startCruise(videoId: number, payload: {
 }
 
 export async function stopCruise(videoId: number): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'cruise_stop');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/stop`, {
     method: 'POST',
   });
@@ -998,6 +1033,7 @@ export async function saveCurrentCruiseConfig(
 }
 
 export async function startCurrentCruise(videoId: number): Promise<{ status: string }> {
+  notifyPtzActivity(videoId, 'cruise_start_current');
   const response = await authFetch(`${API_BASE_URL}/video/ptz/${videoId}/cruise/start-current`, {
     method: 'POST',
   });
@@ -1191,13 +1227,20 @@ export const getDeviceRules = async (deviceId: number): Promise<string[]> => {
   return Array.isArray(data?.rules) ? data.rules : [];
 };
 
-export const updateDeviceRules = async (deviceId: number, rules: string[]): Promise<string[]> => {
+export const updateDeviceRules = async (
+  deviceId: number,
+  rules: string[],
+  options: { faceAssistEnabled?: boolean } = {}
+): Promise<string[]> => {
   const response = await authFetch(`${API_BASE_URL}/video/${deviceId}/rules`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ rules }),
+    body: JSON.stringify({
+      rules,
+      face_assist_enabled: options.faceAssistEnabled,
+    }),
   });
 
   if (!response.ok) {
@@ -1249,6 +1292,11 @@ export const getAIRules = async (): Promise<AIRule[]> => {
       desc: String(item.desc || item.key),
       enabled: Boolean(item.enabled),
       reason: String(item.reason || ''),
+      role: String(item.role || ''),
+      category: String(item.category || ''),
+      selectable: item.selectable !== false,
+      model_type: String(item.model_type || ''),
+      model_path: String(item.model_path || ''),
     }));
 };
 /**

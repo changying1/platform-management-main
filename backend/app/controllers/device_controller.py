@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
+import time
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -70,14 +71,43 @@ def _collection_name_index(collection_name: str, id_fields: tuple[str, ...]) -> 
         return {}
 
 
-def _unit_name_indexes() -> dict:
-    return {
+def _collection_first_by_project_index(collection_name: str) -> dict:
+    try:
+        collection = get_mongo_collection(collection_name)
+        index = {}
+        for item in collection.find({}, {"_id": 0}):
+            project_id = _text(item.get("project_id") or item.get("projectId"))
+            if project_id and project_id not in index:
+                index[project_id] = item
+        return index
+    except Exception:
+        return {}
+
+
+_unit_name_cache: dict[str, dict] = {}
+_unit_name_cache_time: dict[str, float] = {}
+UNIT_NAME_CACHE_TTL: float = 10.0
+
+def _unit_name_indexes(force_refresh: bool = False, include_personnel: bool = True, include_fallback_units: bool = True) -> dict:
+    global _unit_name_cache, _unit_name_cache_time
+    cache_key = f"personnel:{int(include_personnel)}|fallback:{int(include_fallback_units)}"
+    now = time.time()
+    if not force_refresh and cache_key in _unit_name_cache and (now - _unit_name_cache_time.get(cache_key, 0)) < UNIT_NAME_CACHE_TTL:
+        return _unit_name_cache[cache_key]
+    result = {
         "branches": _collection_name_index("branch", ("id", "branch_id")),
         "projects": _collection_name_index("project", ("id", "project_id")),
         "grids": _collection_name_index("grid", ("id", "grid_id", "unit_id")),
         "teams": _collection_name_index("team", ("id", "team_id", "unit_id")),
-        "personnel": _personnel_name_indexes(),
     }
+    if include_fallback_units:
+        result["first_grid_by_project"] = _collection_first_by_project_index("grid")
+        result["first_team_by_project"] = _collection_first_by_project_index("team")
+    if include_personnel:
+        result["personnel"] = _personnel_name_indexes()
+    _unit_name_cache[cache_key] = result
+    _unit_name_cache_time[cache_key] = now
+    return result
 
 
 def _first_unit_for_project(collection_name: str, project_id: str) -> dict:
@@ -181,11 +211,11 @@ def _device_to_response(device: dict, unit_names: Optional[dict] = None, include
     grid_name = _text(device.get("grid") or device.get("grid_name")) or _name_from_index(grid_id, unit_names.get("grids", {}))
     team_name = _text(device.get("team") or device.get("team_name") or device.get("workTeam") or device.get("work_team")) or _name_from_index(team_id, unit_names.get("teams", {}))
     if project_id and not grid_name:
-        fallback_grid = _first_unit_for_project("grid", project_id)
+        fallback_grid = (unit_names.get("first_grid_by_project", {}) or {}).get(project_id) or {}
         grid_id = grid_id or _text(fallback_grid.get("grid_id") or fallback_grid.get("id"))
         grid_name = _text(fallback_grid.get("name"))
     if project_id and not team_name:
-        fallback_team = _first_unit_for_project("team", project_id)
+        fallback_team = (unit_names.get("first_team_by_project", {}) or {}).get(project_id) or {}
         team_id = team_id or _text(fallback_team.get("team_id") or fallback_team.get("id"))
         team_name = _text(fallback_team.get("name"))
         if not grid_id:
@@ -341,11 +371,20 @@ def get_devices(current_user: dict = Depends(get_current_user)):
     try:
         devices = [
             device
-            for device in device_service.get_devices(include_trajectory=False)
+            for device in device_service.get_devices(include_trajectory=False, device_types=LOCATION_TYPES)
             if _is_location_device(device) and _device_in_scope(device, current_user)
         ]
-        unit_names = _unit_name_indexes()
-        return [_device_to_response(device, unit_names, include_trajectory=False) for device in devices]
+        unit_names = _unit_name_indexes(include_personnel=False, include_fallback_units=False)
+        seen = set()
+        unique_devices = []
+        for device in devices:
+            device_id = str(device.get("device_id") or device.get("device_code") or device.get("id") or "")
+            if device_id and device_id in seen:
+                continue
+            if device_id:
+                seen.add(device_id)
+            unique_devices.append(device)
+        return [_device_to_response(d, unit_names, include_trajectory=False) for d in unique_devices]
     except Exception as e:
         logger.error(f"获取设备列表失败: {e}")
         return []
@@ -356,7 +395,7 @@ def get_all_devices(current_user: dict = Depends(get_current_user)):
     """获取所有设备列表（与 fence/devices 兼容）"""
     devices = [
         device
-        for device in device_service.get_devices(include_trajectory=False)
+        for device in device_service.get_devices(include_trajectory=False, device_types=LOCATION_TYPES)
         if _is_location_device(device) and _device_in_scope(device, current_user)
     ]
     unit_names = _unit_name_indexes()
@@ -401,6 +440,62 @@ def get_all_devices(current_user: dict = Depends(get_current_user)):
                 })
 
     return result
+
+
+@router.get("/fence-devices")
+def get_fence_devices(current_user: dict = Depends(get_current_user)):
+    """Fast location-device list for the fence map."""
+    devices = [
+        _device_to_response(device, {}, include_trajectory=False)
+        for device in device_service.get_devices(include_trajectory=False, device_types=LOCATION_TYPES)
+        if _is_location_device(device) and _device_in_scope(device, current_user)
+    ]
+
+    for phone, dev_data in jt808_manager.device_store.items():
+        lat = dev_data.get("last_latitude")
+        lng = dev_data.get("last_longitude")
+        if lat is None or lng is None:
+            continue
+
+        phone_text = str(phone)
+        matched = False
+        for item in devices:
+            holder_phone = str(item.get("holderPhone") or "").replace("*", "")
+            if holder_phone and phone_text.lstrip("0") in holder_phone:
+                item["lat"] = lat
+                item["lng"] = lng
+                item["status"] = "online" if dev_data.get("is_online", False) else "offline"
+                item["lastUpdate"] = datetime.now().isoformat()
+                matched = True
+                break
+
+        if not matched and is_hq(current_user):
+            devices.append({
+                "device_id": phone_text,
+                "name": f"设备{phone_text}",
+                "lat": lat,
+                "lng": lng,
+                "company": "未知",
+                "branch_id": None,
+                "project": "未知",
+                "project_id": None,
+                "grid": "",
+                "grid_id": None,
+                "type": "JT808",
+                "install_location": "",
+                "team": "",
+                "team_id": None,
+                "personnel_id": None,
+                "status": "online" if dev_data.get("is_online", False) else "offline",
+                "holder": "未知",
+                "holderPhone": phone_text,
+                "phone_num": phone_text,
+                "remark": "",
+                "lastUpdate": datetime.now().isoformat(),
+                "trajectory": [],
+            })
+
+    return devices
 
 
 @router.get("/trajectories")
@@ -693,18 +788,23 @@ def get_db_devices(current_user: dict = Depends(get_current_user)):
         for item in result
         if item.get("stream_url")
     }
+    result_by_id = {str(item.get("id")): item for item in result if item.get("id")}
+    result_by_stream_url = {
+        str(item.get("stream_url")): item
+        for item in result
+        if item.get("stream_url")
+    }
 
     # 合并 JT808 内存里的实时设备状�?
     for phone, m_dev in jt808_manager.device_store.items():
         phone_str = str(phone)
 
         if phone_str in existing_ids or phone_str in existing_stream_urls:
-            for item in result:
-                if item.get("id") == phone_str or item.get("stream_url") == phone_str:
-                    item["last_latitude"] = m_dev.get("last_latitude") or item.get("last_latitude")
-                    item["last_longitude"] = m_dev.get("last_longitude") or item.get("last_longitude")
-                    item["is_online"] = bool(m_dev.get("is_online", False))
-                    break
+            item = result_by_id.get(phone_str) or result_by_stream_url.get(phone_str)
+            if item:
+                item["last_latitude"] = m_dev.get("last_latitude") or item.get("last_latitude")
+                item["last_longitude"] = m_dev.get("last_longitude") or item.get("last_longitude")
+                item["is_online"] = bool(m_dev.get("is_online", False))
             continue
 
         if not is_hq(current_user):

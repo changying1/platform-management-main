@@ -21,6 +21,10 @@ class VideoStatus(str, Enum):
 
     OFFLINE = "offline"
 
+    FAULT = "fault"
+
+    MAINTAINING = "maintaining"
+
 
 
 

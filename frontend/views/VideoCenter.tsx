@@ -619,9 +619,12 @@
     const [previewStreams, setPreviewStreams] = useState<Record<number, StreamUrl>>({});
     const [previewLoading, setPreviewLoading] = useState<Record<number, boolean>>({});
     const [previewErrors, setPreviewErrors] = useState<Record<number, string>>({});
+    const [previewStartedAt, setPreviewStartedAt] = useState<Record<number, number>>({});
+    const [previewDurationNow, setPreviewDurationNow] = useState(Date.now());
     const [currentWorkDurationSeconds, setCurrentWorkDurationSeconds] = useState(0);
     const cameraStartTimeRef = useRef<number | null>(null);
     const cameraWorkTimerRef = useRef<number | null>(null);
+    const aiMonitorStartKeyRef = useRef("");
     const [gridCols, setGridCols] = useState(3);
     const [showPlayer, setShowPlayer] = useState(false);
     const [currentDevice, setCurrentDevice] = useState<Video | null>(null);
@@ -888,11 +891,47 @@
       return () => resetCameraWorkDuration();
     }, [resetCameraWorkDuration]);
 
+    useEffect(() => {
+      if (Object.keys(previewStartedAt).length === 0) return;
+      const timer = window.setInterval(() => setPreviewDurationNow(Date.now()), 1000);
+      return () => window.clearInterval(timer);
+    }, [previewStartedAt]);
+
     // --- ✅ 新增：切换摄像头时重置 AI 状态 ---
 useEffect(() => {
   // 根据当前设备的 activeAlgos 来决定
   setIsAIEnabled(activeAlgos.length > 0);
 }, [maximizedVideo, activeAlgos]);
+
+  useEffect(() => {
+    if (!maximizedVideo || !streamUrl || activeAlgos.length === 0) {
+      aiMonitorStartKeyRef.current = "";
+      return;
+    }
+
+    const algoString = activeAlgos.join(",");
+    const startKey = `${maximizedVideo.id}|${streamUrl}|${algoString}`;
+    if (aiMonitorStartKeyRef.current === startKey) return;
+    aiMonitorStartKeyRef.current = startKey;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await stopAIMonitoring(String(maximizedVideo.id));
+        if (cancelled) return;
+        await startAIMonitoring(String(maximizedVideo.id), streamUrl, algoString);
+        if (!cancelled) setIsAIEnabled(true);
+      } catch (err) {
+        console.warn("确保AI检测启动失败:", err);
+        aiMonitorStartKeyRef.current = "";
+        if (!cancelled) setIsAIEnabled(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [maximizedVideo?.id, streamUrl, activeAlgos]);
 
     useEffect(() => {
       if (!maximizedVideo) {
@@ -920,6 +959,26 @@ useEffect(() => {
     // --- ✅ 改进：AI 开关处理逻辑 ---
 
     // 1. 处理单个功能的开启/关闭
+  const applyAiMonitoringRules = async (rules: string[]) => {
+      if (!maximizedVideo) return;
+
+      const normalizedRules = Array.from(new Set((rules || []).filter(Boolean)));
+      await updateDeviceRules(maximizedVideo.id, normalizedRules);
+
+      await stopAIMonitoring(String(maximizedVideo.id));
+
+      if (normalizedRules.length > 0) {
+        await startAIMonitoring(
+          String(maximizedVideo.id),
+          streamUrl || streamInfo?.url || "",
+          normalizedRules.join(",")
+        );
+      }
+
+      setActiveAlgos(normalizedRules);
+      setIsAIEnabled(normalizedRules.length > 0);
+  };
+
   const handleSingleAI = async (type: string) => {
       if (!maximizedVideo || !type) return;
 
@@ -929,9 +988,7 @@ useEffect(() => {
 
       try {
         setAiLoading(true);
-        await updateDeviceRules(maximizedVideo.id, newAlgos);
-        setActiveAlgos(newAlgos);
-              setIsAIEnabled(newAlgos.length > 0);
+        await applyAiMonitoringRules(newAlgos);
       } catch (err: any) {
         alert(err?.message || '算法配置失败');
       } finally {
@@ -948,8 +1005,7 @@ useEffect(() => {
 
       try {
         setAiLoading(true);
-        await updateDeviceRules(maximizedVideo.id, newAlgos);
-        setActiveAlgos(newAlgos);
+        await applyAiMonitoringRules(newAlgos);
       } catch (err: any) {
         alert(err?.message || '算法配置失败');
       } finally {
@@ -1079,10 +1135,157 @@ useEffect(() => {
       return [];
     };
 
+    const normalizePersonTrackBoxes = useCallback((data: any): AlarmBox[] => {
+      const tracks = Array.isArray(data?.tracks)
+        ? data.tracks
+        : Array.isArray(data?.data?.tracks)
+          ? data.data.tracks
+          : [];
+
+      return tracks
+        .map((track: any) => {
+          const coordsSource = Array.isArray(track?.coords_norm) && track.coords_norm.length >= 4
+            ? track.coords_norm
+            : track?.coords;
+          if (!Array.isArray(coordsSource) || coordsSource.length < 4) return null;
+
+          const coords = coordsSource.slice(0, 4).map((value: any) => Number(value));
+          if (!coords.every(Number.isFinite)) return null;
+
+          const rawTrackId = String(track?.track_id ?? "");
+          const trackIdMatch = rawTrackId.match(/\d+/);
+          const trackId = trackIdMatch ? Number(trackIdMatch[0]) : 0;
+          const name = String(track?.personName || track?.personnel_id || "").trim();
+
+          return {
+            type: "person",
+            msg: name ? `人员 ${name}` : "人员",
+            score: Number.isFinite(Number(track?.score)) ? Number(track.score) : 0,
+            coords: coords as [number, number, number, number],
+            track_id: trackId,
+          };
+        })
+        .filter((box: AlarmBox | null): box is AlarmBox => Boolean(box));
+    }, []);
+
     const parseAlarmPayload = (raw: any): { boxes: AlarmBox[]; alarmLike: any } => {
       const alarmLike = (raw?.data && typeof raw.data === "object" ? raw.data : raw) || {};
       const boxes = normalizeAlarmBoxes(raw);
       return { boxes, alarmLike };
+    };
+
+    type RealtimeAlarmLevel = "low" | "medium" | "high";
+
+    const normalizeRealtimeAlarmLevel = (value: any): RealtimeAlarmLevel | "" => {
+      const text = String(value ?? "").trim().toLowerCase();
+      if (!text) return "";
+      if (["high", "severe", "critical", "danger", "urgent", "紧急", "严重", "高危", "高级"].includes(text)) return "high";
+      if (["medium", "risk", "warning", "warn", "风险", "中级", "中等", "一般"].includes(text)) return "medium";
+      if (["low", "normal", "info", "一般隐患", "低", "低级"].includes(text)) return "low";
+      return "";
+    };
+
+    const normalizeAlarmMatchKey = (value: any): string =>
+      String(value ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_\-]+/g, "");
+
+    const readAiAlarmLevelConfigs = (): any[] => {
+      try {
+        const settings = JSON.parse(localStorage.getItem("systemSettings") || "{}") || {};
+        return Array.isArray(settings.aiAlarmLevelConfigs) ? settings.aiAlarmLevelConfigs : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const defaultRealtimeAlarmLevels: Record<string, RealtimeAlarmLevel> = {
+      head: "high",
+      nohelmet: "high",
+      helmetmissing: "high",
+      safetyharnessmissing: "high",
+      smoking: "high",
+      personfall: "high",
+      unauthorizedperson: "high",
+      firedetected: "high",
+      fire: "high",
+      smoke: "high",
+      flame: "high",
+      reflectivevestmissing: "high",
+      helmet: "low",
+      safehat: "low",
+    };
+
+    const alarmLevelAliasMap: Record<string, string[]> = {
+      helmetmissing: ["nohelmet", "head"],
+      nohelmet: ["helmetmissing", "head"],
+      head: ["helmetmissing", "nohelmet"],
+      safetyharnessmissing: ["safetyharness", "novest", "clothes"],
+      reflectivevestmissing: ["reflection", "reflectivevest"],
+      firedetected: ["fire", "flame", "smoke"],
+      personfall: ["fall"],
+      unauthorizedperson: ["unauthorized"],
+    };
+
+    const expandAlarmLevelAliases = (keys: string[]): string[] => {
+      const expanded = new Set(keys);
+      keys.forEach((key) => {
+        (alarmLevelAliasMap[key] || []).forEach((alias) => expanded.add(alias));
+      });
+      return Array.from(expanded);
+    };
+
+    const resolveRealtimeAlarmLevel = (alarmLike: any, firstBox: any, alarmType: string, alarmMsg: string): RealtimeAlarmLevel => {
+      const explicitLevel = [
+        alarmLike?.severity,
+        alarmLike?.level,
+        alarmLike?.alarm_level,
+        alarmLike?.alarmLevel,
+        firstBox?.severity,
+        firstBox?.level,
+      ].map(normalizeRealtimeAlarmLevel).find(Boolean);
+      if (explicitLevel) return explicitLevel;
+
+      const candidates = [
+        alarmLike?.behavior_code,
+        alarmLike?.behaviorCode,
+        alarmLike?.algo_key,
+        alarmLike?.algoKey,
+        alarmLike?.algo,
+        alarmLike?.code,
+        alarmLike?.name,
+        alarmLike?.alarm_type,
+        alarmLike?.type,
+        firstBox?.behavior_code,
+        firstBox?.algo_key,
+        firstBox?.code,
+        firstBox?.name,
+        firstBox?.type,
+        alarmType,
+        alarmMsg,
+      ].filter((value) => value !== undefined && value !== null && String(value).trim());
+
+      const candidateKeys = candidates.map(normalizeAlarmMatchKey).filter(Boolean);
+      const expandedCandidateKeys = expandAlarmLevelAliases(candidateKeys);
+      const candidateText = normalizeAlarmMatchKey(candidates.join(" "));
+
+      for (const config of readAiAlarmLevelConfigs()) {
+        const level = normalizeRealtimeAlarmLevel(config?.level);
+        if (!level) continue;
+        const aliases = expandAlarmLevelAliases([config?.code, config?.name, config?.id, config?.description]
+          .map(normalizeAlarmMatchKey)
+          .filter(Boolean));
+        if (aliases.some((alias) => expandedCandidateKeys.includes(alias) || candidateText.includes(alias))) {
+          return level;
+        }
+      }
+
+      for (const key of expandedCandidateKeys) {
+        if (defaultRealtimeAlarmLevels[key]) return defaultRealtimeAlarmLevels[key];
+      }
+
+      return "medium";
     };
 
     const getAlarmDeviceId = (alarmLike: any): string => {
@@ -1210,12 +1413,7 @@ useEffect(() => {
           }, 3000);
 
           if (window.showFenceAlarm) {
-            let level: 'low' | 'medium' | 'high' = 'medium';
-            if (alarmType.includes('严重') || alarmType.includes('高') || alarmMsg.includes('严重')) {
-              level = 'high';
-            } else if (alarmType.includes('一般') || alarmType.includes('低')) {
-              level = 'low';
-            }
+            const level = resolveRealtimeAlarmLevel(alarmLike, firstBox, alarmType, alarmMsg);
             window.showFenceAlarm(deviceName, alarmMsg, fenceName, level, '视频AI检测报警');
           }
         };
@@ -1643,14 +1841,27 @@ useEffect(() => {
 
       const [rules, streamData] = await Promise.all([rulesPromise, streamPromise]);
 
-      setActiveAlgos(Array.isArray(rules) ? rules : []);
+      const configuredRules = Array.isArray(rules) ? rules.filter(Boolean) : [];
+      const monitoringRules = configuredRules.length > 0 ? configuredRules : ["person"];
+      setActiveAlgos(monitoringRules);
       if (!streamData?.url) {
         throw new Error('后端未返回可用视频流地址');
       }
 
       setPreviewStreams((prev) => ({ ...prev, [device.id]: streamData }));
+      setPreviewStartedAt((prev) => ({ ...prev, [device.id]: prev[device.id] || Date.now() }));
       setStreamInfo(streamData);
       setStreamUrl(streamData.url);
+      if (monitoringRules.length > 0) {
+        try {
+          await stopAIMonitoring(String(device.id));
+          await startAIMonitoring(String(device.id), streamData.url || "", monitoringRules.join(","));
+          setIsAIEnabled(true);
+        } catch (aiErr) {
+          console.warn("启动AI检测失败:", aiErr);
+          setIsAIEnabled(false);
+        }
+      }
       startCameraWorkDuration();
       return true;
     } catch (err: any) {
@@ -1744,6 +1955,12 @@ useEffect(() => {
         delete next[device.id];
         return next;
       });
+      setPreviewStartedAt((prev) => {
+        if (!prev[device.id]) return prev;
+        const next = { ...prev };
+        delete next[device.id];
+        return next;
+      });
       setPreviewErrors((prev) => ({ ...prev, [device.id]: "" }));
       setPreviewLoading((prev) => ({ ...prev, [device.id]: false }));
       return;
@@ -1759,8 +1976,15 @@ useEffect(() => {
     try {
       const data = await getVideoStreamUrl(device.id);
       setPreviewStreams((prev) => ({ ...prev, [device.id]: data }));
+      setPreviewStartedAt((prev) => ({ ...prev, [device.id]: force || !prev[device.id] ? Date.now() : prev[device.id] }));
       setPreviewErrors((prev) => ({ ...prev, [device.id]: "" }));
     } catch (err: any) {
+      setPreviewStartedAt((prev) => {
+        if (!prev[device.id]) return prev;
+        const next = { ...prev };
+        delete next[device.id];
+        return next;
+      });
       setPreviewErrors((prev) => ({
         ...prev,
         [device.id]: err?.message || "加载失败",
@@ -2048,7 +2272,8 @@ useEffect(() => {
       }, []);
 
   useEffect(() => {
-    if (!maximizedVideo || !streamUrl || !alarmBoxes.length) {
+    const overlayBoxes = alarmBoxes;
+    if (!maximizedVideo || !streamUrl || !overlayBoxes.length) {
       const canvas = aiCanvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (canvas && ctx) {
@@ -2059,7 +2284,7 @@ useEffect(() => {
       return;
     }
 
-    const redraw = () => drawBoxes(alarmBoxes);
+    const redraw = () => drawBoxes(overlayBoxes);
     redraw();
 
     // 初始几秒重复重绘，覆盖视频元数据异步加载导致的坐标偏移
@@ -2301,6 +2526,13 @@ useEffect(() => {
   >
     {paginatedCells.map((cell) => {
       const device = cell.device;
+      const deviceDisplayName = String(device.name || "");
+      const deviceRemark = device.remark?.trim() || "";
+      const previewDurationSeconds = previewStartedAt[device.id]
+        ? Math.max(0, Math.floor((previewDurationNow - previewStartedAt[device.id]) / 1000))
+        : 0;
+      const hasPreviewStream = Boolean(previewStreams[device.id]);
+      const isDenseGrid = itemsPerPage >= 16;
 
       return (
       <div
@@ -2314,7 +2546,7 @@ useEffect(() => {
           <div className="absolute inset-0">
   {isDeviceOffline(device) ? (
     <OfflineVideoFallback />
-  ) : previewStreams[device.id] ? (
+  ) : hasPreviewStream ? (
     <VideoPlayer
       key={previewStreams[device.id].url}
       src={previewStreams[device.id].url}
@@ -2322,7 +2554,8 @@ useEffect(() => {
       accessToken={previewStreams[device.id].access_token}
       videoId={device.id}
       deviceStatus={device.status}
-      showTrafficPanel={false}
+      showTrafficPanel
+      trafficPanelVariant="compact"
     />
             ) : previewLoading[device.id] ? (
               <div className="h-full w-full flex items-center justify-center text-slate-300 text-sm">
@@ -2360,10 +2593,25 @@ useEffect(() => {
             )}
           </div>
         </div>
-  <div className="absolute bottom-2 right-2 flex items-center gap-2 z-10">
+  <div
+    title={[deviceDisplayName, deviceRemark].filter(Boolean).join("\n")}
+    className={`absolute left-2 top-9 z-20 max-w-[calc(100%-1rem)] pointer-events-none rounded bg-white/82 px-2 py-1 font-bold leading-tight text-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] ring-1 ring-black/10 ${
+      isDenseGrid ? "text-[10px]" : "text-xs md:text-sm"
+    }`}
+  >
+    <div className="max-w-full truncate whitespace-nowrap">{deviceDisplayName}</div>
+    {deviceRemark && <div className="max-w-full truncate whitespace-nowrap">{deviceRemark}</div>}
+    <div className="truncate">本次工作时长：{hasPreviewStream ? formatWorkDuration(previewDurationSeconds) : "--"}</div>
+  </div>
+  <div className="absolute bottom-2 left-2 flex items-center gap-2 z-10">
     <span className={`w-2 h-2 rounded-full ${device.status === "online" ? "bg-green-500 animate-pulse" : "bg-slate-500"}`} />
-    <span className="text-base bg-slate-900/75 backdrop-blur px-5 py-2 rounded text-slate-100 border border-cyan-300/20 shadow-sm">
-      {device.name}
+    <span
+      className={`max-w-[min(88%,42rem)] truncate whitespace-nowrap bg-slate-900/78 backdrop-blur px-4 py-2 rounded text-slate-100 border border-cyan-300/20 shadow-sm ${
+        isDenseGrid ? "text-xs leading-4" : "text-sm md:text-base leading-5"
+      }`}
+      title={deviceDisplayName}
+    >
+      {deviceDisplayName}
     </span>
   </div>
         <div className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">

@@ -626,7 +626,7 @@ class ResponsibilityUnitService:
         parent = unit_collection.find_one(_unit_lookup_query(parent_id))
         if parent:
             return parent
-        return None
+        return _legacy_unit_by_id(parent_id)
 
     def _validate_unit(self, doc: dict, parent: dict | None = None):
         unit_type = _normalize_type(doc.get("type"))

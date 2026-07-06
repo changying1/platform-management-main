@@ -203,7 +203,8 @@ export const ResponsibilityUnitView: React.FC = () => {
       await loadAllUnits();
     } catch (error) {
       console.error('变更上级失败:', error);
-      alert('变更上级失败');
+      const message = (error as any)?.response?.data?.detail || (error as Error)?.message || '变更上级失败';
+      alert(`变更上级失败：${message}`);
     }
   };
 

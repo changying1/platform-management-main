@@ -47,12 +47,52 @@ FIELD_LABELS = {
     "rtsp_url": "RTSP地址",
 }
 
+PERMISSION_LABELS = {
+    "dashboard.view": "查看仪表板",
+    "monitor.playback": "监控回放",
+    "monitor.track": "轨迹回放",
+    "monitor.voice": "语音回放",
+    "monitor.camera": "摄像头管理",
+    "fence.view": "查看围栏",
+    "fence.create": "创建围栏",
+    "fence.edit": "编辑围栏",
+    "fence.delete": "删除围栏",
+    "grid.view": "查看网格",
+    "grid.create": "创建网格",
+    "grid.edit": "编辑网格",
+    "grid.delete": "删除网格",
+    "team.view": "查看工队",
+    "team.create": "创建工队",
+    "team.edit": "编辑工队",
+    "team.delete": "删除工队",
+    "device.view": "查看设备",
+    "device.create": "添加设备",
+    "device.edit": "编辑设备",
+    "device.delete": "删除设备",
+    "personnel.view": "查看人员",
+    "personnel.create": "添加人员",
+    "personnel.edit": "编辑人员",
+    "personnel.delete": "删除人员",
+    "alarm.view": "查看告警",
+    "alarm.handle": "处理告警",
+    "system.role": "权限管理",
+    "system.log": "操作日志",
+}
+
 RELATION_NAME_FIELDS = {
     "branch_id": ("company", "branch_name", "branch", "department"),
     "project_id": ("project", "project_name", "projectName"),
     "parent_id": ("parent_name", "parent", "parent_unit_name", "parentUnitName", "parent_grid_name", "parentGridName"),
     "grid_id": ("grid", "grid_name", "gridName", "name"),
     "team_id": ("team", "team_name", "teamName", "workTeam", "work_team"),
+}
+
+FIELD_DISPLAY_PRIORITY = {
+    "branch_id": 1,
+    "project_id": 1,
+    "parent_id": 1,
+    "grid_id": 1,
+    "team_id": 1,
 }
 
 PROJECT_COLLECTIONS = ("project", "projects", "sql_projects")
@@ -230,6 +270,26 @@ def _change_value_display(field: str, value: Any, snapshot: dict | None) -> str:
     return str(value)
 
 
+def _permission_label(value: Any) -> str:
+    code = str(value)
+    return PERMISSION_LABELS.get(code, code)
+
+
+def _permission_diff_display(old_value: Any, new_value: Any) -> str:
+    old_items = [str(item) for item in old_value] if isinstance(old_value, list) else []
+    new_items = [str(item) for item in new_value] if isinstance(new_value, list) else []
+    old_set = set(old_items)
+    new_set = set(new_items)
+    added = [_permission_label(item) for item in new_items if item not in old_set]
+    removed = [_permission_label(item) for item in old_items if item not in new_set]
+    parts = []
+    if added:
+        parts.append(f"新增{'、'.join(added)}")
+    if removed:
+        parts.append(f"移除{'、'.join(removed)}")
+    return "；".join(parts) or "无变化"
+
+
 def changes_summary(
     changes: dict[str, dict[str, Any]],
     before: dict | None = None,
@@ -238,12 +298,28 @@ def changes_summary(
     if not changes:
         return "无字段变化"
     parts = []
-    for field, item in changes.items():
+    seen_labels = set()
+    sorted_items = sorted(
+        changes.items(),
+        key=lambda entry: FIELD_DISPLAY_PRIORITY.get(entry[0], 0),
+        reverse=True,
+    )
+    for field, item in sorted_items:
+        if field == "permissions" and (
+            isinstance(item.get("old"), list) or isinstance(item.get("new"), list)
+        ):
+            parts.append(f"权限变更: {_permission_diff_display(item.get('old'), item.get('new'))}")
+            continue
         label = FIELD_LABELS.get(field, field)
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
         old_value = _change_value_display(field, item.get("old"), before)
         new_value = _change_value_display(field, item.get("new"), after)
+        if old_value == new_value:
+            continue
         parts.append(f"{label}: {old_value} -> {new_value}")
-    return "；".join(parts)
+    return "；".join(parts) or "无字段变化"
 
 
 def write_audit_log(
@@ -267,6 +343,8 @@ def write_audit_log(
         if not get_log_audit_enabled():
             return
         changes = audit_changes(before, after, allowed_fields)
+        if before and after and not changes and not details:
+            return
         payload = {
             "changes": changes,
             "before": serialize_audit_value(before) if before else None,

@@ -64,7 +64,7 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
         h.alarmId.setText(buildDisplayId(alarm));
         h.source.setText("fence".equals(source) ? "围栏" : "视频");
         h.type.setText(displayType(alarm));
-        h.content.setText(safe(alarm.getDescription(), "暂无情况描述"));
+        h.content.setText(safe(cleanDisplayDescription(alarm.getDescription()), "暂无情况描述"));
         h.device.setText("设备：" + safe(first(alarm.getDeviceName(), alarm.getDeviceId()), "未知设备")
                 + (isBlank(alarm.getDeviceId()) ? "" : "  ·  ID " + alarm.getDeviceId()));
         h.orgPath.setText(buildOrgPath(alarm));
@@ -147,12 +147,53 @@ public class AlarmAdapter extends RecyclerView.Adapter<AlarmAdapter.AlarmViewHol
 
     public static String cleanDisplayDescription(String value) {
         if (value == null) return "";
-        return value
+        return normalizeAlarmDisplayText(value
                 .replaceAll("[\\uFF08(]\\s*\\d{1,3}(?:\\.\\d+)?\\s*%\\s*[\\uFF09)]", "")
                 .replaceAll("(?i)\\bconfidence\\s*[:\\uFF1A]?\\s*\\d{1,3}(?:\\.\\d+)?\\s*%?", "")
                 .replaceAll("\\u7F6E\\u4FE1\\u5EA6\\s*[:\\uFF1A]?\\s*\\d{1,3}(?:\\.\\d+)?\\s*%?", "")
                 .replaceAll("\\s{2,}", " ")
+                .trim());
+    }
+
+    public static String normalizeAlarmDisplayText(String raw) {
+        String text = safe(raw, "");
+        if (text.isEmpty()) return "";
+        text = replaceAlarmCode(text, "HEIGHT_NO_HELMET", "未佩戴安全帽");
+        text = replaceAlarmCode(text, "helmet_missing", "未佩戴安全帽");
+        text = replaceAlarmCode(text, "no_helmet", "未佩戴安全帽");
+        text = replaceAlarmCode(text, "NO_HELMET", "未佩戴安全帽");
+        text = replaceAlarmCode(text, "no_vest", "未穿反光衣");
+        text = replaceAlarmCode(text, "NO_VEST", "未穿反光衣");
+        text = replaceAlarmCode(text, "person_fall", "人员倒地");
+        text = replaceAlarmCode(text, "PERSON_FALL", "人员倒地");
+        text = replaceAlarmCode(text, "ladder_angle", "梯子角度违规");
+        text = replaceAlarmCode(text, "LADDER_ANGLE", "梯子角度违规");
+        text = replaceAlarmCode(text, "intrusion", "区域入侵");
+        text = replaceAlarmCode(text, "INTRUSION", "区域入侵");
+        text = replaceAlarmCode(text, "phone_call", "发现打电话");
+        text = replaceAlarmCode(text, "calling", "发现打电话");
+        text = replaceAlarmCode(text, "phone", "发现打电话");
+        text = replaceAlarmCode(text, "smoking", "吸烟");
+        text = replaceAlarmCode(text, "open_fire", "发现明火");
+        text = replaceAlarmCode(text, "flame", "发现明火");
+        text = replaceAlarmCode(text, "smoke", "发现烟雾");
+        text = replaceAlarmCode(text, "SMOKE", "发现烟雾");
+        text = replaceAlarmCode(text, "fire", "发现明火");
+        text = replaceAlarmCode(text, "FIRE", "发现明火");
+        return text
+                .replace("烟火检测:", "烟火检测：")
+                .replace("安全帽检测:", "安全帽检测：")
+                .replace("反光衣检测:", "反光衣检测：")
+                .replace("区域检测:", "区域检测：")
+                .replace("吸烟检测:", "吸烟检测：")
+                .replace("打电话检测:", "打电话检测：")
+                .replace("  ", " ")
                 .trim();
+    }
+
+    private static String replaceAlarmCode(String text, String code, String label) {
+        if (text == null || text.isEmpty()) return "";
+        return text.replace(code, label);
     }
 
     public static String buildDisplayId(Alarm alarm) {

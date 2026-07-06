@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { Search, Plus, Edit2, Trash2, X, Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { deviceApi, type LocationDevice } from '../api/deviceApi';
-import { getAuthHeaders } from '../api/config';
+import { API_BASE_URL, getAuthHeaders } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
 
 type DeviceStatus = 'online' | 'offline' | 'fault';
@@ -16,7 +16,25 @@ type UnitMaps = {
   teams: Record<string, string>;
 };
 
+type OrgOption = {
+  id: string;
+  name: string;
+  branch_id?: string;
+  project_id?: string;
+  grid_id?: string;
+  company?: string;
+  project?: string;
+};
+
+type OrgOptions = {
+  branches: OrgOption[];
+  projects: OrgOption[];
+  grids: OrgOption[];
+  teams: OrgOption[];
+};
+
 const emptyUnitMaps: UnitMaps = { branches: {}, projects: {}, grids: {}, teams: {} };
+const emptyOrgOptions: OrgOptions = { branches: [], projects: [], grids: [], teams: [] };
 const DEVICE_USE_NAMES = new Set(['定位基站', '基准站', '流动站', '基站', '移动站', '固定站']);
 
 const emptyDevice: LocationDevice = {
@@ -56,9 +74,59 @@ export default function LocationDeviceManagement() {
   const [filterTeam, setFilterTeam] = useState('all');
   const [loading, setLoading] = useState(false);
   const [unitMaps, setUnitMaps] = useState<UnitMaps>(emptyUnitMaps);
+  const [orgOptions, setOrgOptions] = useState<OrgOptions>(emptyOrgOptions);
   const canCreateDevice = hasStoredPermission('device.create');
   const canEditDevice = hasStoredPermission('device.edit');
   const canDeleteDevice = hasStoredPermission('device.delete');
+
+  const text = (value: unknown) => String(value ?? '').trim();
+  const firstText = (item: any, keys: string[]) => {
+    for (const key of keys) {
+      const value = text(item?.[key]);
+      if (value) return value;
+    }
+    return '';
+  };
+  const normalizeOptions = (items: any[], idKeys: string[], nameKeys: string[]): OrgOption[] => {
+    const seen = new Set<string>();
+    return (Array.isArray(items) ? items : []).map(item => {
+      const id = firstText(item, idKeys);
+      const name = firstText(item, nameKeys);
+      if (!id && !name) return null;
+      return {
+        id: id || name,
+        name: name || id,
+        branch_id: firstText(item, ['branch_id', 'branchId', 'company_id', 'companyId']),
+        project_id: firstText(item, ['project_id', 'projectId']),
+        grid_id: firstText(item, ['grid_id', 'gridId']),
+        company: firstText(item, ['company', 'branch_name', 'branchName']),
+        project: firstText(item, ['project', 'project_name', 'projectName']),
+      };
+    }).filter((option): option is OrgOption => {
+      if (!option) return false;
+      const key = `${option.id}|${option.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const mergeOptions = (...groups: OrgOption[][]) => {
+    const seen = new Set<string>();
+    return groups.flat().filter(option => {
+      const key = `${option.id}|${option.name}`;
+      if (!option.name || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const selectValue = (options: OrgOption[], id?: string, name?: string) => {
+    const rawId = text(id);
+    if (rawId && options.some(option => option.id === rawId)) return rawId;
+    const rawName = text(name);
+    return options.find(option => option.name === rawName)?.id || '';
+  };
+  const inputClass = 'w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-400 disabled:opacity-60';
+  const labelClass = 'block text-sm font-medium text-slate-200 mb-1.5';
 
   const loadUnitMaps = async () => {
     try {
@@ -79,10 +147,34 @@ export default function LocationDeviceManagement() {
     }
   };
 
+  const loadOrgOptions = async () => {
+    try {
+      const headers = getAuthHeaders();
+      const [branchRes, projectRes, gridRes, teamRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/dashboard/branches`, { headers }),
+        fetch(`${API_BASE_URL}/projects/`, { headers }),
+        fetch(`${API_BASE_URL}/api/grids/`, { headers }),
+        fetch(`${API_BASE_URL}/team/list`, { headers }),
+      ]);
+      const branches = branchRes.ok ? await branchRes.json() : [];
+      const projects = projectRes.ok ? await projectRes.json() : [];
+      const grids = gridRes.ok ? await gridRes.json() : [];
+      const teams = teamRes.ok ? await teamRes.json() : [];
+      setOrgOptions({
+        branches: normalizeOptions(branches, ['id', 'branch_id', 'branchId'], ['name', 'branch_name', 'branchName']),
+        projects: normalizeOptions(projects, ['id', 'project_id', 'projectId'], ['name', 'project_name', 'projectName']),
+        grids: normalizeOptions(grids, ['grid_id', 'gridId', 'id', 'unit_id'], ['name', 'grid_name', 'gridName']),
+        teams: normalizeOptions(teams, ['team_id', 'teamId', 'id', 'unit_id'], ['name', 'team_name', 'teamName']),
+      });
+    } catch (error) {
+      console.error('加载组织筛选选项失败', error);
+    }
+  };
+
   const loadDevices = async () => {
     setLoading(true);
     try {
-      await loadUnitMaps();
+      loadUnitMaps();
       const data = await deviceApi.getLocationDevices();
       setDevices(data);
     } catch (error) {
@@ -95,6 +187,7 @@ export default function LocationDeviceManagement() {
 
   useEffect(() => {
     loadDevices();
+    loadOrgOptions();
   }, []);
 
   const isRawId = (value?: string) => !!value && /^\d+$/.test(String(value).trim());
@@ -126,27 +219,58 @@ export default function LocationDeviceManagement() {
   const teams = useMemo(() => ['all', ...new Set(devices.map(d => getDisplayTeam(d)).filter(Boolean))], [devices, unitMaps]);
   const statuses = ['all', 'online', 'offline', 'fault'];
 
-  const filteredData = devices.filter(d => {
-    const companyName = getDisplayCompany(d);
-    const projectName = getDisplayProject(d);
-    const gridName = getDisplayGrid(d);
-    const teamName = getDisplayTeam(d);
-    const machineCode = getMachineCode(d);
-    const matchesSearch = searchTerm === '' ||
-      d.name.includes(searchTerm) ||
-      d.device_id.includes(searchTerm) ||
-      machineCode.includes(searchTerm) ||
-      companyName.includes(searchTerm) ||
-      projectName.includes(searchTerm) ||
-      gridName.includes(searchTerm) ||
-      teamName.includes(searchTerm) ||
-      d.holder?.includes(searchTerm);
-    return matchesSearch &&
-      (filterType === 'all' || d.type === filterType) &&
-      (filterStatus === 'all' || d.status === filterStatus) &&
-      (filterCompany === 'all' || companyName === filterCompany) &&
-      (filterTeam === 'all' || teamName === filterTeam);
-  });
+  const branchSelectOptions = useMemo(() => mergeOptions(
+    orgOptions.branches,
+    devices.map(d => ({ id: text(d.branch_id) || getDisplayCompany(d), name: getDisplayCompany(d) })).filter(option => option.name)
+  ), [devices, orgOptions.branches, unitMaps]);
+  const projectSelectOptions = useMemo(() => {
+    const all = mergeOptions(
+      orgOptions.projects,
+      devices.map(d => ({
+        id: text(d.project_id) || getDisplayProject(d),
+        name: getDisplayProject(d),
+        branch_id: text(d.branch_id),
+        company: getDisplayCompany(d),
+      })).filter(option => option.name)
+    );
+    return formData.branch_id
+      ? all.filter(option => !option.branch_id || option.branch_id === formData.branch_id || option.company === formData.company)
+      : all;
+  }, [devices, formData.branch_id, formData.company, orgOptions.projects, unitMaps]);
+  const gridSelectOptions = useMemo(() => {
+    const all = mergeOptions(
+      orgOptions.grids,
+      devices.map(d => ({
+        id: text(d.grid_id) || getDisplayGrid(d),
+        name: getDisplayGrid(d),
+        project_id: text(d.project_id),
+        project: getDisplayProject(d),
+      })).filter(option => option.name)
+    );
+    return formData.project_id
+      ? all.filter(option => !option.project_id || option.project_id === formData.project_id || option.project === formData.project)
+      : all;
+  }, [devices, formData.project, formData.project_id, orgOptions.grids, unitMaps]);
+  const teamSelectOptions = useMemo(() => {
+    const all = mergeOptions(
+      orgOptions.teams,
+      devices.map(d => ({
+        id: text(d.team_id) || getDisplayTeam(d),
+        name: getDisplayTeam(d),
+        project_id: text(d.project_id),
+        grid_id: text(d.grid_id),
+        project: getDisplayProject(d),
+      })).filter(option => option.name)
+    );
+    return formData.grid_id || formData.project_id
+      ? all.filter(option =>
+        (!option.grid_id && !option.project_id) ||
+        (!!formData.grid_id && option.grid_id === formData.grid_id) ||
+        (!!formData.project_id && option.project_id === formData.project_id) ||
+        option.project === formData.project
+      )
+      : all;
+  }, [devices, formData.grid_id, formData.project, formData.project_id, orgOptions.teams, unitMaps]);
 
   const getTypeText = (type: string) => {
     const map: Record<string, string> = {
@@ -173,6 +297,33 @@ export default function LocationDeviceManagement() {
     return deviceUse ? `${base} / ${deviceUse}` : base;
   };
 
+  const displayRows = useMemo(() => devices.map((device) => ({
+    device,
+    companyName: getDisplayCompany(device),
+    projectName: getDisplayProject(device),
+    gridName: getDisplayGrid(device),
+    teamName: getDisplayTeam(device),
+    machineCode: getMachineCode(device),
+    typeLabel: getDeviceTypeLabel(device),
+  })), [devices, unitMaps]);
+
+  const filteredData = useMemo(() => displayRows.filter(({ device: d, companyName, projectName, gridName, teamName, machineCode }) => {
+    const matchesSearch = searchTerm === '' ||
+      d.name.includes(searchTerm) ||
+      d.device_id.includes(searchTerm) ||
+      machineCode.includes(searchTerm) ||
+      companyName.includes(searchTerm) ||
+      projectName.includes(searchTerm) ||
+      gridName.includes(searchTerm) ||
+      teamName.includes(searchTerm) ||
+      d.holder?.includes(searchTerm);
+    return matchesSearch &&
+      (filterType === 'all' || d.type === filterType) &&
+      (filterStatus === 'all' || d.status === filterStatus) &&
+      (filterCompany === 'all' || companyName === filterCompany) &&
+      (filterTeam === 'all' || teamName === filterTeam);
+  }), [displayRows, filterCompany, filterStatus, filterTeam, filterType, searchTerm]);
+
   const getStatusStyle = (status: string) => {
     const styles: Record<string, string> = {
       online: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -184,6 +335,46 @@ export default function LocationDeviceManagement() {
   const getStatusText = (status: string) => ({ online: '在线', offline: '离线', fault: '故障' }[status] || status);
 
   const updateForm = (patch: Partial<LocationDevice>) => setFormData(prev => ({ ...prev, ...patch }));
+  const chooseBranch = (id: string) => {
+    const option = branchSelectOptions.find(item => item.id === id);
+    updateForm({
+      company: option?.name || '',
+      branch_id: option?.id || '',
+      project: '',
+      project_id: '',
+      grid: '',
+      grid_id: '',
+      team: '',
+      team_id: '',
+    });
+  };
+  const chooseProject = (id: string) => {
+    const option = projectSelectOptions.find(item => item.id === id);
+    updateForm({
+      project: option?.name || '',
+      project_id: option?.id || '',
+      grid: '',
+      grid_id: '',
+      team: '',
+      team_id: '',
+    });
+  };
+  const chooseGrid = (id: string) => {
+    const option = gridSelectOptions.find(item => item.id === id);
+    updateForm({
+      grid: option?.name || '',
+      grid_id: option?.id || '',
+      team: '',
+      team_id: '',
+    });
+  };
+  const chooseTeam = (id: string) => {
+    const option = teamSelectOptions.find(item => item.id === id);
+    updateForm({
+      team: option?.name || '',
+      team_id: option?.id || '',
+    });
+  };
   const openCreateModal = () => {
     setEditingDeviceId(null);
     setFormData(emptyDevice);
@@ -197,8 +388,8 @@ export default function LocationDeviceManagement() {
 
   const saveDevice = async () => {
     const machineCode = (formData.phone_num || '').trim();
-    if (!formData.name.trim() || !formData.device_id.trim() || !machineCode || !formData.company.trim() || !formData.branch_id?.trim() || !formData.project.trim() || !formData.project_id?.trim()) {
-      alert('请填写设备名称、设备ID、唯一机器码(phone_num)、分公司、分公司ID、项目和项目ID');
+    if (!formData.name.trim() || !formData.device_id.trim() || !machineCode || !formData.company.trim() || !formData.project.trim()) {
+      alert('请填写设备名称、设备ID、唯一机器码(phone_num)、分公司和项目');
       return;
     }
 
@@ -359,18 +550,18 @@ export default function LocationDeviceManagement() {
           <tbody className="divide-y divide-slate-700">
             {loading && <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">加载中...</td></tr>}
             {!loading && filteredData.length === 0 && <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">暂无数据</td></tr>}
-            {filteredData.map(device => (
+            {filteredData.map(({ device, companyName, projectName, gridName, teamName, machineCode, typeLabel }) => (
               <tr key={device.device_id} className="hover:bg-slate-800/30 transition-colors">
                 <td className="px-4 py-3 text-slate-300">{device.name}</td>
                 <td className="px-4 py-3 text-slate-300 font-mono text-xs">{device.device_id}</td>
-                <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{getDeviceTypeLabel(device)}</span></td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayCompany(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayProject(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayGrid(device) || '-'}</td>
-                <td className="px-4 py-3 text-slate-300">{getDisplayTeam(device) || '-'}</td>
+                <td className="px-4 py-3"><span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{typeLabel}</span></td>
+                <td className="px-4 py-3 text-slate-300">{companyName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{projectName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{gridName || '-'}</td>
+                <td className="px-4 py-3 text-slate-300">{teamName || '-'}</td>
                 <td className="px-4 py-3 text-slate-300">{device.holder || '-'}</td>
                 <td className="px-4 py-3 text-slate-300">{device.holderPhone || '-'}</td>
-                <td className="px-4 py-3 text-slate-300 font-mono text-xs">{getMachineCode(device) || '-'}</td>
+                <td className="px-4 py-3 text-slate-300 font-mono text-xs">{machineCode || '-'}</td>
                 <td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusStyle(device.status)}`}>{getStatusText(device.status)}</span></td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2">
@@ -393,36 +584,52 @@ export default function LocationDeviceManagement() {
             </div>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">设备名称 *</label><input type="text" value={formData.name} onChange={(e) => updateForm({ name: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">设备ID *</label><input type="text" disabled={!!editingDeviceId} value={formData.device_id} onChange={(e) => updateForm({ device_id: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono disabled:opacity-60" /></div>
+                <div><label className={labelClass}>设备名称 *</label><input type="text" value={formData.name} onChange={(e) => updateForm({ name: e.target.value })} className={inputClass} /></div>
+                <div><label className={labelClass}>设备ID *</label><input type="text" disabled={!!editingDeviceId} value={formData.device_id} onChange={(e) => updateForm({ device_id: e.target.value })} className={`${inputClass} font-mono`} /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">设备类型</label><select value={formData.type || 'uwb_band'} onChange={(e) => updateForm({ type: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value="rtk">RTK</option><option value="uwb">UWB</option><option value="gps_tag">GPS工牌</option><option value="gps_band">GPS手环</option><option value="smart_helmet">智能安全帽</option><option value="uwb_band">UWB手环</option><option value="uwb_badge">UWB工牌</option><option value="rtk_band">RTK手环</option><option value="rtk_badge">RTK工牌</option><option value="wifi">Wi-Fi定位</option></select></div>
-                <div><label className="block text-sm text-slate-400 mb-1">设备用途</label><input type="text" value={formData.install_location || ''} onChange={(e) => updateForm({ install_location: e.target.value })} placeholder="如：定位基站、流动站" className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                <div><label className={labelClass}>设备类型</label><select value={formData.type || 'uwb_band'} onChange={(e) => updateForm({ type: e.target.value })} className={inputClass}><option value="rtk">RTK</option><option value="uwb">UWB</option><option value="gps_tag">GPS工牌</option><option value="gps_band">GPS手环</option><option value="smart_helmet">智能安全帽</option><option value="uwb_band">UWB手环</option><option value="uwb_badge">UWB工牌</option><option value="rtk_band">RTK手环</option><option value="rtk_badge">RTK工牌</option><option value="wifi">Wi-Fi定位</option></select></div>
+                <div><label className={labelClass}>设备用途</label><input type="text" value={formData.install_location || ''} onChange={(e) => updateForm({ install_location: e.target.value })} placeholder="如：定位基站、流动站" className={inputClass} /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">所属分公司 *</label><input type="text" value={formData.company} onChange={(e) => updateForm({ company: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">分公司ID *</label><input type="text" value={formData.branch_id || ''} onChange={(e) => updateForm({ branch_id: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                <div>
+                  <label className={labelClass}>所属分公司 *</label>
+                  <select value={selectValue(branchSelectOptions, formData.branch_id, formData.company)} onChange={(e) => chooseBranch(e.target.value)} className={inputClass}>
+                    <option value="">请选择分公司</option>
+                    {branchSelectOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>所属项目 *</label>
+                  <select value={selectValue(projectSelectOptions, formData.project_id, formData.project)} onChange={(e) => chooseProject(e.target.value)} className={inputClass}>
+                    <option value="">请选择项目</option>
+                    {projectSelectOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">所属项目 *</label><input type="text" value={formData.project} onChange={(e) => updateForm({ project: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">项目ID *</label><input type="text" value={formData.project_id || ''} onChange={(e) => updateForm({ project_id: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">网格</label><input type="text" value={formData.grid || ''} onChange={(e) => updateForm({ grid: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">网格ID</label><input type="text" value={formData.grid_id || ''} onChange={(e) => updateForm({ grid_id: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">所属工队</label><input type="text" value={formData.team || ''} onChange={(e) => updateForm({ team: e.target.value })} placeholder="如：土建工队/机电工队" className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">工队ID</label><input type="text" value={formData.team_id || ''} onChange={(e) => updateForm({ team_id: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+                <div>
+                  <label className={labelClass}>网格</label>
+                  <select value={selectValue(gridSelectOptions, formData.grid_id, formData.grid)} onChange={(e) => chooseGrid(e.target.value)} className={inputClass}>
+                    <option value="">请选择网格</option>
+                    {gridSelectOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>所属工队</label>
+                  <select value={selectValue(teamSelectOptions, formData.team_id, formData.team)} onChange={(e) => chooseTeam(e.target.value)} className={inputClass}>
+                    <option value="">请选择工队</option>
+                    {teamSelectOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-4">
-                <div><label className="block text-sm text-slate-400 mb-1">持有人</label><input type="text" value={formData.holder} onChange={(e) => updateForm({ holder: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">持有人电话</label><input type="tel" value={formData.holderPhone || ''} onChange={(e) => updateForm({ holderPhone: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="block text-sm text-slate-400 mb-1">状态</label><select value={formData.status} onChange={(e) => updateForm({ status: e.target.value as DeviceStatus })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm"><option value="online">在线</option><option value="offline">离线</option><option value="fault">故障</option></select></div>
+                <div><label className={labelClass}>持有人</label><input type="text" value={formData.holder} onChange={(e) => updateForm({ holder: e.target.value })} className={inputClass} /></div>
+                <div><label className={labelClass}>持有人电话</label><input type="tel" value={formData.holderPhone || ''} onChange={(e) => updateForm({ holderPhone: e.target.value })} className={inputClass} /></div>
+                <div><label className={labelClass}>状态</label><select value={formData.status} onChange={(e) => updateForm({ status: e.target.value as DeviceStatus })} className={inputClass}><option value="online">在线</option><option value="offline">离线</option><option value="fault">故障</option></select></div>
               </div>
-              <div><label className="block text-sm text-slate-400 mb-1">唯一机器码(phone_num) *</label><input type="text" value={formData.phone_num || ''} onChange={(e) => updateForm({ phone_num: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono" /></div>
-              <div><label className="block text-sm text-slate-400 mb-1">备注</label><textarea rows={2} value={formData.remark || ''} onChange={(e) => updateForm({ remark: e.target.value })} className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-sm" /></div>
+              <div><label className={labelClass}>唯一机器码(phone_num) *</label><input type="text" value={formData.phone_num || ''} onChange={(e) => updateForm({ phone_num: e.target.value })} className={`${inputClass} font-mono`} /></div>
+              <div><label className={labelClass}>备注</label><textarea rows={2} value={formData.remark || ''} onChange={(e) => updateForm({ remark: e.target.value })} className={inputClass} /></div>
             </div>
             <div className="flex gap-3 mt-8">
               <button onClick={saveDevice} className="flex-1 bg-cyan-500 hover:bg-cyan-400 py-2 rounded text-sm font-bold text-slate-900">保存</button>

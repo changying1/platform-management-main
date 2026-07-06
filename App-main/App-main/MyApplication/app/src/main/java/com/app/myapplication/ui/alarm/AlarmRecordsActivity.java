@@ -89,6 +89,7 @@ public class AlarmRecordsActivity extends AppCompatActivity {
         recyclerView = findViewById(R.id.recyclerView);
         etSearch = findViewById(R.id.etSearch);
         tvActiveFilters = findViewById(R.id.tvActiveFilters);
+        findViewById(R.id.btnBack).setOnClickListener(v -> getOnBackPressedDispatcher().onBackPressed());
         findViewById(R.id.btnFilter).setOnClickListener(v -> showFilterSheet());
     }
 
@@ -122,7 +123,7 @@ public class AlarmRecordsActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         alarmViewModel.startPolling(getApplicationContext());
-        alarmWebSocketClient.connect(getApplicationContext(), (type, description) ->
+        alarmWebSocketClient.connect(getApplicationContext(), payload ->
                 alarmViewModel.fetchAlarms(getApplicationContext()));
     }
 

@@ -29,6 +29,13 @@ interface FenceAddModalProps {
   onEnterDrawMode?: () => void;
 }
 
+const normalizeFenceSeverity = (value: any): "normal" | "risk" | "severe" => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["severe", "high", "critical", "严重"].includes(raw)) return "severe";
+  if (["risk", "medium", "warning", "风险", "中", "中等"].includes(raw)) return "risk";
+  return "normal";
+};
+
 export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   isOpen,
   onClose,
@@ -171,7 +178,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
     startTime: "",
     endTime: "",
     description: "",
-    severity: "medium" as "low" | "medium" | "high" | "severe",
+    severity: "normal" as "normal" | "risk" | "severe",
     selectedDeviceIds: [] as string[],
   });
 
@@ -218,7 +225,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
         radius: initialData.radius || 50,
         startTime: initialData.startTime || getLocalDateTime(now),
         endTime: initialData.endTime || getLocalDateTime(endDate),
-        severity: initialData.severity || "general",
+        severity: normalizeFenceSeverity(initialData.severity),
         description: initialData.description || "",
         selectedDeviceIds: initialData.selectedDeviceIds || [],
       } : {
@@ -230,7 +237,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
         radius: 50,
         startTime: getLocalDateTime(now),
         endTime: getLocalDateTime(endDate),
-        severity: "general",
+        severity: "normal",
         description: "",
         selectedDeviceIds: [],
       });
@@ -589,11 +596,10 @@ const showTopTip = (message: string) => {
                   <AlertTriangle size={14} className="text-cyan-400" />
                   严重程度
                 </label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {[
-                    { value: 'low', label: '低', color: 'green' },
-                    { value: 'medium', label: '中', color: 'yellow' },
-                    { value: 'high', label: '高', color: 'orange' },
+                    { value: 'normal', label: '一般', color: 'blue' },
+                    { value: 'risk', label: '风险', color: 'orange' },
                     { value: 'severe', label: '严重', color: 'red' },
                   ].map((level) => (
                     <button
@@ -605,14 +611,11 @@ const showTopTip = (message: string) => {
                           : 'bg-slate-800/30 border-slate-600 text-slate-400'
                       }`}
                       style={formData.severity === level.value ? {
-                        backgroundColor: level.color === 'green' ? 'rgba(34,197,94,0.2)' :
-                          level.color === 'yellow' ? 'rgba(234,179,8,0.2)' :
+                        backgroundColor: level.color === 'blue' ? 'rgba(59,130,246,0.2)' :
                           level.color === 'orange' ? 'rgba(249,115,22,0.2)' : 'rgba(239,68,68,0.2)',
-                        borderColor: level.color === 'green' ? 'rgb(74,222,128)' :
-                          level.color === 'yellow' ? 'rgb(250,204,21)' :
+                        borderColor: level.color === 'blue' ? 'rgb(96,165,250)' :
                           level.color === 'orange' ? 'rgb(251,146,60)' : 'rgb(248,113,113)',
-                        color: level.color === 'green' ? 'rgb(74,222,128)' :
-                          level.color === 'yellow' ? 'rgb(250,204,21)' :
+                        color: level.color === 'blue' ? 'rgb(96,165,250)' :
                           level.color === 'orange' ? 'rgb(251,146,60)' : 'rgb(248,113,113)',
                       } : {}}
                     >

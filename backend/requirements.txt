@@ -8,6 +8,7 @@ ultralytics>=8.3.0
 # 基础 AI 依赖 (新版支持 Python 3.12)
 torch>=2.2.0
 torchvision>=0.17.0
+facenet-pytorch>=2.6.0
 
 # --- 图像处理与工具 ---
 # 指定高版本以支持 Python 3.12，但它会依赖上面的 numpy<2
@@ -15,6 +16,7 @@ opencv-python-headless>=4.10.0.84
 shapely>=2.0.3
 scikit-learn>=1.4.0
 pillow>=10.0.0
+pytesseract>=0.3.13
 
 # --- Web 后端基础 (保留你原有的) ---
 flask

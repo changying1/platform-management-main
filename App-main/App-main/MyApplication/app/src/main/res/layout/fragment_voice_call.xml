@@ -133,7 +133,7 @@
         android:paddingBottom="8dp">
 
         <EditText
-            android:id="@+id/et_contact_search"
+            android:id="@+id/et_contact_filter_search"
             android:layout_width="match_parent"
             android:layout_height="42dp"
             android:background="@drawable/bg_spinner"

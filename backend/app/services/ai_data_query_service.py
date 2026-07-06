@@ -545,6 +545,63 @@ def _counter(items, *fields):
     return dict(Counter(values))
 
 
+def _is_personnel_count_question(question: str) -> bool:
+    q = question or ""
+    has_personnel = any(word in q for word in ("人员", "员工", "工人", "作业人员", "管理人员", "worker", "person"))
+    asks_count = any(word in q for word in ("多少", "几个", "几名", "数量", "共有", "总共", "总数", "一共"))
+    asks_breakdown = any(word in q for word in ("管理人员", "作业人员", "管理", "作业", "工人"))
+    return has_personnel and (asks_count or asks_breakdown)
+
+
+def _personnel_role_text(person: dict) -> str:
+    return " ".join(
+        _text(person.get(field)).lower()
+        for field in (
+            "identity_level",
+            "identityLevel",
+            "role",
+            "position",
+            "job",
+            "job_type",
+            "jobType",
+            "type",
+            "user_type",
+            "userType",
+        )
+        if _text(person.get(field))
+    )
+
+
+def _is_management_person(person: dict) -> bool:
+    role_text = _personnel_role_text(person)
+    return any(
+        token in role_text
+        for token in (
+            "admin",
+            "manager",
+            "management",
+            "supervisor",
+            "leader",
+            "管理",
+            "管理员",
+            "管理人员",
+            "负责人",
+            "经理",
+            "主管",
+            "组长",
+        )
+    )
+
+
+def _personnel_count_direct_answer(question: str, personnel: list[dict]) -> str | None:
+    if not _is_personnel_count_question(question):
+        return None
+    total = len(personnel)
+    management_count = sum(1 for person in personnel if _is_management_person(person))
+    worker_count = max(0, total - management_count)
+    return f"当前权限范围内共有 {total} 名人员，其中管理人员 {management_count} 名，作业人员 {worker_count} 名。"
+
+
 def _mentions_video_device(question: str) -> bool:
     return bool(_module_target_hits(question, "video_devices"))
 
@@ -1151,6 +1208,7 @@ def build_ai_query_context(question: str, user: dict, mongo_db) -> dict:
         or _video_device_count_direct_answer(question, user, projects, datasets["video_devices"])
         or _alarm_count_direct_answer(question, alarms)
         or _project_team_violation_direct_answer(question, user, projects, teams, alarms)
+        or _personnel_count_direct_answer(question, personnel)
         or generic_query.get("direct_answer")
         or _project_count_direct_answer(question, projects)
         or _project_direct_answer(question, projects)

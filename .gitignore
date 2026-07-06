@@ -14,7 +14,12 @@ pip-log.txt
 .coverage
 .coverage.*
 htmlcov/
-.mp4
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.webm
 
 # Node
 node_modules/
@@ -28,6 +33,7 @@ lerna-debug.log*
 
 # Logs
 *.log
+logs/
 
 # Local environment files
 .env
@@ -37,6 +43,11 @@ frontend/.env
 
 # Build artifacts
 build/
+*.apk
+APK发布/
+APK鍙戝竷/
+smoking_yolo_dataset_v2/
+backend/storage/location_backup/
 
 # Editor/OS
 .DS_Store
