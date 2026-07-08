@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from threading import Lock
 from typing import Any
 
 from .model_registry import get_model_config, resolve_model_path
 from .onnx_detector import OnnxDetector, load_image
 from .result_adapter import failure_result, success_result
+from .yolo_process_detector import YoloProcessDetector
 from .yolo_detector import YoloDetector
 
 
@@ -31,7 +33,11 @@ class DetectorManager:
             tracker_scope = kwargs.get("tracker_scope") if kwargs.get("track") else None
             detector = self._get_detector(config, model_path, model_type, tracker_scope=tracker_scope)
             detections = detector.detect(frame, **kwargs)
-            return success_result(config, detections)
+            result = success_result(config, detections)
+            timing = getattr(detector, "last_timing", None)
+            if timing:
+                result["timing"] = dict(timing)
+            return result
         except Exception as exc:
             return failure_result(config, str(exc))
 
@@ -41,7 +47,10 @@ class DetectorManager:
             detector = self._cache.get(cache_key)
             if detector is None:
                 if model_type == "pt":
-                    detector = YoloDetector(model_path, config)
+                    if os.getenv("AI_YOLO_PROCESS", "1").lower() in {"0", "false", "no", "off"}:
+                        detector = YoloDetector(model_path, config)
+                    else:
+                        detector = YoloProcessDetector(model_path, config)
                 elif model_type == "onnx":
                     detector = OnnxDetector(model_path, config)
                 else:

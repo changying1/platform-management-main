@@ -48,8 +48,12 @@ import { TrackMap } from '../src/components/TrackMap';
 // 鉁?鏂板锛氬鍏ョ湡瀹?API
 import {
   getAllVideos,
+  getRecordingAiMetadata,
   getPlaybackPage,
+  getVideoMonitoringSummary,
+  type RecordingAiSample,
   type SavedPlaybackVideo,
+  type VideoMonitoringSummary,
 } from "../src/api/videoApi";
 import { API_BASE_URL, getApiUrl, getAuthHeaders, withAuthTokenParam } from "../src/api/config";
 import { getStoredScopeState, isHeadquartersScope, readStoredAuth } from "../src/utils/authScope";
@@ -288,6 +292,8 @@ interface ExtendedSavedPlayback extends SavedPlayback {
   branch_id?: string;
   project_id?: string;
   alarmSecond?: number;
+  metadataAvailable?: boolean;
+  rawWebPath?: string;
 }
 
 const asText = (value: unknown) => String(value ?? '').trim();
@@ -970,8 +976,76 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
     const [alarmTimestamp, setAlarmTimestamp] = useState<number | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [loadError, setLoadError] = useState('');
+    const [monitoringSummary, setMonitoringSummary] = useState<VideoMonitoringSummary | null>(null);
+    const [aiSamples, setAiSamples] = useState<RecordingAiSample[]>([]);
+    const [aiHoldMs, setAiHoldMs] = useState(500);
 
     const getAlarmTimestamp = () => alarmTimestamp || 0;
+
+    const formatPlaybackDateTime = (value?: string) => {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    };
+
+    const displayTrafficValue = (...values: unknown[]) => {
+      for (const value of values) {
+        if (value === null || value === undefined || value === '') continue;
+        if (typeof value === 'number') return `${Math.max(0, value).toFixed(2)}GB`;
+        return String(value);
+      }
+      return '--';
+    };
+
+    const usedTrafficText = displayTrafficValue(
+      monitoringSummary?.used_flow_display,
+      monitoringSummary?.weekly_used_text,
+      monitoringSummary?.used_gb,
+      monitoringSummary?.used_flow_value,
+    );
+    const totalTrafficText = displayTrafficValue(
+      monitoringSummary?.total_flow_display,
+      monitoringSummary?.weekly_quota_text,
+      monitoringSummary?.traffic_total_gb,
+      monitoringSummary?.total_flow_value,
+    );
+    const remainingTrafficText = displayTrafficValue(
+      monitoringSummary?.remaining_flow_display,
+      monitoringSummary?.weekly_remaining_text,
+      monitoringSummary?.traffic_remaining_gb,
+      monitoringSummary?.remaining_gb,
+      monitoringSummary?.estimated_remaining_text,
+    );
+    const playbackTimeText = formatPlaybackDateTime(currentPlayback?.startTime || currentPlayback?.createdAt);
+    const orgLine = [
+      currentPlayback?.companyName || currentPlayback?.company,
+      currentPlayback?.projectName || currentPlayback?.project,
+      currentPlayback?.gridName || currentPlayback?.grid,
+      currentPlayback?.teamName || currentPlayback?.team,
+    ].filter(Boolean).join(' / ');
+
+    const activeAiSample = React.useMemo(() => {
+      if (!aiSamples.length) return null;
+      const targetMs = Math.round(currentTime * 1000);
+      let best: RecordingAiSample | null = null;
+      let bestDelta = Number.POSITIVE_INFINITY;
+      for (const sample of aiSamples) {
+        const sampleTime = Number(sample.frame_time_ms);
+        if (!Number.isFinite(sampleTime)) continue;
+        const delta = Math.abs(sampleTime - targetMs);
+        if (delta < bestDelta) {
+          best = sample;
+          bestDelta = delta;
+        }
+      }
+      return best && bestDelta <= aiHoldMs ? best : null;
+    }, [aiSamples, aiHoldMs, currentTime]);
+
+    const activeAiBoxes = activeAiSample?.boxes || [];
+    const overlayWidth = Number(activeAiSample?.source_width) || 1280;
+    const overlayHeight = Number(activeAiSample?.source_height) || 720;
 
     // 鉁?鍏ㄥ睆鍜孍SC閫€鍑虹洃鍚?
     React.useEffect(() => {
@@ -993,6 +1067,50 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
         document.removeEventListener('keydown', handleKeyDown);
       };
     }, [isFullscreen]);
+
+    useEffect(() => {
+      let cancelled = false;
+      const deviceId = currentPlayback?.deviceId;
+      setMonitoringSummary(null);
+      if (!deviceId) return;
+      getVideoMonitoringSummary(deviceId)
+        .then((summary) => {
+          if (!cancelled) setMonitoringSummary(summary);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.warn('加载回放监控信息失败:', error);
+            setMonitoringSummary(null);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [currentPlayback?.deviceId]);
+
+    useEffect(() => {
+      let cancelled = false;
+      setAiSamples([]);
+      setAiHoldMs(500);
+      if (!currentPlayback || currentPlayback.type !== 'manual' || !currentPlayback.deviceId || !currentPlayback.filePath) {
+        return;
+      }
+      getRecordingAiMetadata(Number(currentPlayback.deviceId), currentPlayback.rawWebPath || currentPlayback.filePath, 500)
+        .then((result) => {
+          if (cancelled) return;
+          setAiSamples(Array.isArray(result.samples) ? result.samples : []);
+          setAiHoldMs(Number(result.max_hold_ms) || 500);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.warn('加载录像AI元数据失败:', error);
+            setAiSamples([]);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [currentPlayback?.id, currentPlayback?.deviceId, currentPlayback?.filePath, currentPlayback?.rawWebPath, currentPlayback?.type]);
 
     const toggleFullscreen = () => {
       if (!document.fullscreenElement) {
@@ -1213,10 +1331,83 @@ const SimpleVideoPlayer = forwardRef<VideoPlayerRef, {
           src={videoUrl}
           crossOrigin="anonymous"
           className="w-full h-full"
-          style={{ objectFit: 'cover' }}
+          style={{ objectFit: 'contain', backgroundColor: '#000' }}
           controls={false}
           preload="metadata"
         />
+
+        {activeAiBoxes.length > 0 && (
+          <svg
+            className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+            viewBox={`0 0 ${overlayWidth} ${overlayHeight}`}
+            preserveAspectRatio="xMidYMid meet"
+            aria-hidden="true"
+          >
+            {activeAiBoxes.map((box, index) => {
+              const x = Number(box.x1) || 0;
+              const y = Number(box.y1) || 0;
+              const width = Math.max(1, (Number(box.x2) || 0) - x);
+              const height = Math.max(1, (Number(box.y2) || 0) - y);
+              const behavior = Array.isArray(box.behavior) ? box.behavior.filter(Boolean).join(' / ') : '';
+              const label = [box.personName || box.label || `ID ${box.track_id || index + 1}`, behavior].filter(Boolean).join(' | ');
+              const isAlarm = Boolean(behavior || box.alarm_level);
+              return (
+                <g key={`${box.track_id || index}-${x}-${y}`}>
+                  <rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    fill="none"
+                    stroke={isAlarm ? '#fb7185' : '#22d3ee'}
+                    strokeWidth={Math.max(2, overlayWidth / 640)}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {label && (
+                    <>
+                      <rect
+                        x={x}
+                        y={Math.max(0, y - 24)}
+                        width={Math.min(overlayWidth - x, Math.max(90, label.length * 13))}
+                        height={22}
+                        fill={isAlarm ? 'rgba(127,29,29,0.86)' : 'rgba(8,47,73,0.86)'}
+                      />
+                      <text
+                        x={x + 6}
+                        y={Math.max(16, y - 8)}
+                        fill="#ffffff"
+                        fontSize={14}
+                        fontWeight={600}
+                      >
+                        {label.slice(0, 28)}
+                      </text>
+                    </>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        )}
+
+        <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-start justify-between gap-4 text-white">
+          <div className="max-w-[58%] rounded bg-black/55 px-3 py-2 text-sm leading-relaxed shadow-lg ring-1 ring-white/10">
+            <div className="flex items-center gap-2 text-base font-semibold">
+              <Camera className="h-4 w-4 text-cyan-300" />
+              <span className="truncate">{deviceName || currentPlayback?.deviceName || '未知摄像头'}</span>
+            </div>
+            {orgLine && <div className="mt-1 truncate text-xs text-slate-200">{orgLine}</div>}
+            {playbackTimeText && <div className="mt-1 text-xs text-slate-300">录像时间：{playbackTimeText}</div>}
+          </div>
+          <div className="min-w-[230px] rounded bg-black/55 px-3 py-2 text-xs leading-relaxed shadow-lg ring-1 ring-white/10">
+            <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-cyan-100">
+              <Activity className="h-4 w-4 text-cyan-300" />
+              <span>流量监测</span>
+            </div>
+            <div className="flex justify-between gap-4"><span className="text-slate-300">已用</span><span className="font-semibold">{usedTrafficText}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-300">阈值</span><span className="font-semibold">{totalTrafficText}</span></div>
+            <div className="flex justify-between gap-4"><span className="text-slate-300">剩余</span><span className="font-semibold">{remainingTrafficText}</span></div>
+          </div>
+        </div>
 
         {loadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 px-6 text-center text-sm text-red-200">
@@ -1866,6 +2057,7 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     const [isLoading, setIsLoading] = useState(false);
     const [previewReady, setPreviewReady] = useState(false);
     const [loadError, setLoadError] = useState(false);
+    const [thumbnailRetry, setThumbnailRetry] = useState(0);
 
     React.useEffect(() => {
       setPreviewReady(false);
@@ -1877,15 +2069,17 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
 
       if (existingScreenshot) {
         setThumbnail(existingScreenshot);
-        setIsLoading(false);
+        setIsLoading(true);
         setLoadError(false);
+        setThumbnailRetry(0);
         return;
       }
 
       setThumbnail('');
       setIsLoading(false);
       setLoadError(!playback.filePath);
-    }, [playback.filePath, playback.type, playback.alarmInfo]);
+      setThumbnailRetry(0);
+    }, [playback.filePath, playback.type, playback.alarmInfo, playback.thumbnail]);
 
     const getThumbColor = (name: string) => {
       const colors = ['bg-red-500/20', 'bg-blue-500/20', 'bg-green-500/20', 'bg-yellow-500/20', 'bg-purple-500/20'];
@@ -1937,6 +2131,9 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
     const dateRangeLabel =
       startDateLabel === endDateLabel ? startDateLabel : `${startDateLabel}/${endDateLabel}`;
     const timeRangeLabel = `${formatCardTime(playback.startTime)}-${formatCardTime(playback.endTime)}`;
+    const thumbnailSrc = thumbnail
+      ? `${thumbnail}${thumbnail.includes('?') ? '&' : '?'}thumb_retry=${thumbnailRetry}`
+      : '';
 
     return (
       <div className="relative w-full" style={{ paddingBottom: '28.125%' }}>
@@ -1945,15 +2142,37 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
             <div
               className={`absolute inset-0 w-full h-full bg-center ${!thumbnail ? getThumbColor(playback.deviceName) : ''}`}
               style={thumbnail ? {
-                backgroundImage: `url(${thumbnail})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
                 backgroundColor: '#000'
               } : {
                 background: getGradientBackground(playback.deviceName || '')
               }}
             >
               {/* 鍔犺浇涓姸鎬?*/}
+              {thumbnailSrc && !loadError && (
+                <img
+                  src={thumbnailSrc}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  loading="lazy"
+                  onLoad={() => {
+                    setIsLoading(false);
+                    setPreviewReady(true);
+                    setLoadError(false);
+                  }}
+                  onError={() => {
+                    if (thumbnailRetry < 8) {
+                      window.setTimeout(() => {
+                        setThumbnailRetry((value) => value + 1);
+                      }, 1500);
+                      return;
+                    }
+                    setIsLoading(false);
+                    setPreviewReady(false);
+                    setThumbnail('');
+                    setLoadError(!playback.filePath);
+                  }}
+                />
+              )}
               {isLoading && (
                 <div className="w-full h-full flex items-center justify-center bg-black/50">
                   <Loader2 size={32} className="text-cyan-400 animate-spin" />
@@ -1969,7 +2188,7 @@ const VideoCard = ({ playback, onPlay, onShowScreenshot }: {
               )}
 
               {/* 鍔犺浇澶辫触鎻愮ず */}
-              {loadError && !thumbnail && (
+              {loadError && (
                 <div className="w-full h-full flex flex-col items-center justify-center bg-black/50">
                   <AlertCircle size={32} className="text-red-400 mb-2" />
                   <span className="text-white/60 text-xs">视频加载失败</span>
@@ -2534,6 +2753,8 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
     const [devices, setDevices] = useState<Device[]>([]);
     const [loadingDevices, setLoadingDevices] = useState(false);
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+    const [devicePanelOpen, setDevicePanelOpen] = useState(true);
+    const [devicePanelWidth, setDevicePanelWidth] = useState(220);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [selectedProject, setSelectedProject] = useState<string>(
       projectScope.isProjectScope && projectScope.projectValue ? projectScope.projectValue : 'all'
@@ -2561,9 +2782,14 @@ export default function VideoPlayback({ initialTab }: VideoPlaybackProps) {
   const [alarmVideos, setAlarmVideos] = useState<SavedPlaybackVideo[]>([]);
   const [alarmScreenshots, setAlarmScreenshots] = useState<SavedPlaybackVideo[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
+  const [playbackLoadError, setPlaybackLoadError] = useState<string | null>(null);
+  const [playbackReloadKey, setPlaybackReloadKey] = useState(0);
+  const [playbackIndexPending, setPlaybackIndexPending] = useState(false);
+  const playbackAutoRetryCountRef = useRef(0);
   const [selectedAlarm, setSelectedAlarm] = useState<ExtendedSavedPlayback | null>(null);
   const [filteredPlaybacks, setFilteredPlaybacks] = useState<ExtendedSavedPlayback[]>([]);
   const [currentPlayback, setCurrentPlayback] = useState<ExtendedSavedPlayback | null>(null);
+  const playbackCacheCountRef = useRef({ manual: 0, alarm: 0 });
   const [showPlayer, setShowPlayer] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [playbackSortOrder, setPlaybackSortOrder] = useState<'newest' | 'oldest'>('newest');
@@ -2742,6 +2968,7 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
   }, []);
 
   useEffect(() => {
+    if (mainTab !== 'voice') return;
     let cancelled = false;
 
     const loadVoiceScopeDevices = async () => {
@@ -2786,9 +3013,10 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mainTab]);
 
   useEffect(() => {
+    if (mainTab !== 'voice') return;
     const loadVoiceRecords = async () => {
       try {
         const [voiceResponse, textResponse] = await Promise.all([
@@ -2836,7 +3064,7 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     };
 
     loadVoiceRecords();
-  }, [voiceScopeDevices]);
+  }, [mainTab, voiceScopeDevices]);
 
   useEffect(() => {
     if (!projectScope.isProjectScope || !projectScope.projectValue) return;
@@ -2875,6 +3103,55 @@ const [trackDateRange, setTrackDateRange] = useState(getDefaultTrackDateRange())
     const projects = getProjectsByCompany();
     const playbackFilterSources = [...devices, ...filteredPlaybacks];
     const companiesForFilter = ['all', ...new Set(playbackFilterSources.map(getDeviceCompany).filter(Boolean))];
+    const candidateDevices = devices.filter((device) => {
+      if (selectedCompany !== 'all' && getDeviceCompany(device) !== selectedCompany) return false;
+      if (selectedProject !== 'all' && getDeviceProject(device) !== selectedProject) return false;
+      if (selectedGrid !== 'all' && getDeviceGrid(device) !== selectedGrid) return false;
+      if (selectedTeam !== 'all' && getDeviceTeam(device) !== selectedTeam) return false;
+      const keyword = normalizeSearch(searchKeyword);
+      if (keyword) {
+        return [
+          device.name,
+          device.id,
+          (device as any).device_id,
+          (device as any).holder,
+          getDeviceCompany(device),
+          getDeviceProject(device),
+          getDeviceGrid(device),
+          getDeviceTeam(device),
+        ].some((value) => normalizeSearch(value).includes(keyword));
+      }
+      return true;
+    });
+    const choosePlaybackDevice = (device: Device) => {
+      setSelectedDevice(device);
+      setCurrentPage(1);
+      setRecordingVideos([]);
+      setAlarmVideos([]);
+      setAlarmScreenshots([]);
+      setFilteredPlaybacks([]);
+      setPlaybackTotal(0);
+      setPlaybackTotalPages(0);
+      setPlaybackLoadError(null);
+      setPlaybackIndexPending(false);
+      playbackAutoRetryCountRef.current = 0;
+      setPlaybackReloadKey((key) => key + 1);
+    };
+    const startDevicePanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = devicePanelWidth;
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const nextWidth = Math.max(150, Math.min(360, startWidth + moveEvent.clientX - startX));
+        setDevicePanelWidth(nextWidth);
+      };
+      const handlePointerUp = () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+      };
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+    };
   useEffect(() => {
     if (selectedCompany !== 'all' && !companiesForFilter.includes(selectedCompany)) {
       setSelectedCompany('all');
@@ -2945,12 +3222,27 @@ useEffect(() => {
   const startTimeFilter = videoStartDate ? `${videoStartDate}T${videoStartClock || '00:00'}` : '';
   const endTimeFilter = videoEndDate ? `${videoEndDate}T${videoEndClock || '23:59'}` : '';
   const timer = window.setTimeout(async () => {
+    if (!selectedDevice?.id) {
+      setRecordingVideos([]);
+      setAlarmVideos([]);
+      setAlarmScreenshots([]);
+      setFilteredPlaybacks([]);
+      setPlaybackTotal(0);
+      setPlaybackTotalPages(0);
+      setPlaybackLoadError(null);
+      setPlaybackIndexPending(false);
+      setLoadingVideos(false);
+      playbackAutoRetryCountRef.current = 0;
+      return;
+    }
     setLoadingVideos(true);
+    setPlaybackLoadError(null);
     try {
       const result = await getPlaybackPage({
         mediaType: isAlarmTab ? 'alarm' : 'manual',
         page: currentPage,
         pageSize: itemsPerPage,
+        timeoutMs: playbackAutoRetryCountRef.current === 0 ? 45000 : 30000,
         deviceId: selectedDevice?.id,
         company: selectedCompany,
         project: selectedProject,
@@ -2961,24 +3253,52 @@ useEffect(() => {
         endTime: endTimeFilter,
       });
       if (cancelled) return;
+      const hasExistingRows = (isAlarmTab ? playbackCacheCountRef.current.alarm : playbackCacheCountRef.current.manual) > 0;
+      if ((result as any).index_building || (result.total === 0 && result.data.length === 0 && !hasExistingRows)) {
+        setPlaybackIndexPending(true);
+        if (playbackAutoRetryCountRef.current >= 8) {
+          setPlaybackIndexPending(false);
+          setPlaybackLoadError('录像索引整理时间较长，请稍后重试');
+          return;
+        }
+        playbackAutoRetryCountRef.current += 1;
+        window.setTimeout(() => {
+          if (!cancelled) setPlaybackReloadKey((key) => key + 1);
+        }, Math.min(6000, 1200 + playbackAutoRetryCountRef.current * 600));
+        return;
+      }
+      playbackAutoRetryCountRef.current = 0;
+      setPlaybackIndexPending(false);
       if (isAlarmTab) {
+        playbackCacheCountRef.current.alarm = result.data.length;
         setAlarmVideos(result.data);
         setRecordingVideos([]);
       } else {
+        playbackCacheCountRef.current.manual = result.data.length;
         setRecordingVideos(result.data);
         setAlarmVideos([]);
       }
       setAlarmScreenshots([]);
       setPlaybackTotal(result.total);
       setPlaybackTotalPages(result.total_pages);
+      setPlaybackLoadError(null);
     } catch (error) {
       if (!cancelled) {
         console.error('加载回放分页失败:', error);
-        setRecordingVideos([]);
-        setAlarmVideos([]);
-        setAlarmScreenshots([]);
-        setPlaybackTotal(0);
-        setPlaybackTotalPages(0);
+        const message = error instanceof Error
+          ? (error.name === 'AbortError' ? '录像索引仍在整理，请稍候' : error.message)
+          : '加载失败，请稍后重试';
+        if (playbackAutoRetryCountRef.current < 5 && (error as any)?.name === 'AbortError') {
+          playbackAutoRetryCountRef.current += 1;
+          setPlaybackIndexPending(true);
+          setPlaybackLoadError(null);
+          window.setTimeout(() => {
+            if (!cancelled) setPlaybackReloadKey((key) => key + 1);
+          }, Math.min(8000, 1500 + playbackAutoRetryCountRef.current * 1000));
+        } else {
+          setPlaybackLoadError(message || '加载失败，请稍后重试');
+          setPlaybackIndexPending(false);
+        }
       }
     } finally {
       if (!cancelled) {
@@ -3004,6 +3324,7 @@ useEffect(() => {
   videoStartClock,
   videoEndDate,
   videoEndClock,
+  playbackReloadKey,
 ]);
 
 // 鉁?杞ㄨ抗API璋冪敤锛堜粠TrackPlayback.tsx杩佺Щ锛?
@@ -3291,6 +3612,8 @@ useEffect(() => {
           endTime,
           duration: duration,
           filePath: toVideoUrl(video.web_path),
+          rawWebPath: video.web_path,
+          metadataAvailable: Boolean(video.metadata_available),
           thumbnail: video.thumbnail_path || video.thumbnail ? toVideoUrl(video.thumbnail_path || video.thumbnail) : '',
           createdAt,
         });
@@ -4016,7 +4339,125 @@ return (
                 </div>
               </div>
 
-            <div className="flex-1 overflow-hidden py-2 grid grid-cols-10 gap-2">
+            <div className="relative min-h-0 flex-1 overflow-hidden py-2">
+              <button
+                type="button"
+                onClick={() => setDevicePanelOpen(true)}
+                className={`absolute left-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-2 rounded-r-lg border border-l-0 border-cyan-300/55 bg-slate-950/92 px-3.5 py-4 text-sm font-bold text-cyan-100 shadow-2xl shadow-cyan-950/45 backdrop-blur transition ${
+                  devicePanelOpen ? 'pointer-events-none opacity-0' : 'opacity-100 hover:border-cyan-200/80 hover:bg-cyan-950/80 hover:text-white'
+                }`}
+                title="展开候选设备列表"
+                aria-label="展开候选设备列表"
+              >
+                <VideoIcon size={18} />
+                <span className="[writing-mode:vertical-rl] tracking-[0.18em]">设备列表</span>
+                <ChevronRight size={18} />
+              </button>
+
+              <aside
+                className={`absolute bottom-0 left-0 top-0 z-40 flex flex-col overflow-hidden rounded-r-lg border border-l-0 border-cyan-400/25 bg-slate-950/88 shadow-2xl shadow-black/35 backdrop-blur-md transition-transform duration-200 ${
+                  devicePanelOpen ? 'translate-x-0' : '-translate-x-[calc(100%+1rem)]'
+                }`}
+                style={{ width: devicePanelWidth }}
+              >
+                <div className="flex items-center justify-between border-b border-cyan-400/15 px-3 py-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
+                    <VideoIcon size={15} />
+                    候选设备
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">{candidateDevices.length}</span>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  {loadingDevices && (
+                    <div className="flex h-24 items-center justify-center gap-2 text-xs text-cyan-200">
+                      <Loader2 size={14} className="animate-spin" />
+                      加载设备
+                    </div>
+                  )}
+                  {!loadingDevices && candidateDevices.length === 0 && (
+                    <div className="flex h-24 items-center justify-center px-2 text-center text-xs text-slate-400">
+                      暂无匹配设备
+                    </div>
+                  )}
+                  {!loadingDevices && candidateDevices.map((device) => {
+                    const active = String(selectedDevice?.id || '') === String(device.id || '');
+                    const orgText = [getDeviceProject(device), getDeviceGrid(device), getDeviceTeam(device)].filter(Boolean).join(' / ');
+                    return (
+                      <button
+                        key={String(device.id)}
+                        type="button"
+                        onClick={() => choosePlaybackDevice(device)}
+                        className={`mb-1.5 w-full rounded-md border px-2.5 py-2 text-left transition ${
+                          active
+                            ? 'border-cyan-300/70 bg-cyan-500/18 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.18)]'
+                            : 'border-slate-700/60 bg-slate-900/55 text-slate-300 hover:border-cyan-400/40 hover:bg-slate-800/70'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-medium">{device.name || `设备 ${device.id}`}</span>
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${device.status === 'online' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                        </div>
+                        <div className="mt-1 truncate text-[11px] text-slate-400">{orgText || getDeviceCompany(device) || '未匹配组织'}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  onPointerDown={startDevicePanelResize}
+                  className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize bg-cyan-300/0 transition hover:bg-cyan-300/35"
+                  title="拖拽调整宽度"
+                />
+                <button
+                  type="button"
+                  onClick={() => setDevicePanelOpen(false)}
+                  className="absolute right-[-1px] top-1/2 z-10 flex h-20 w-9 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-cyan-300/55 bg-slate-950/92 text-cyan-100 shadow-xl shadow-cyan-950/45 transition hover:border-cyan-200/80 hover:bg-cyan-950/85 hover:text-white"
+                  title="收起设备列表"
+                  aria-label="收起设备列表"
+                >
+                  <ChevronLeft size={24} strokeWidth={2.8} />
+                </button>
+              </aside>
+
+              <div className="grid h-full grid-cols-10 content-start gap-2 overflow-hidden">
+              {!selectedDevice && !loadingVideos && (
+                <div className="col-span-10 flex h-full min-h-[320px] flex-col items-center justify-center gap-3 rounded-lg border border-cyan-400/18 bg-slate-900/35 text-slate-300">
+                  <VideoIcon size={30} className="text-cyan-300" />
+                  <div className="text-sm font-semibold text-cyan-100">请选择设备</div>
+                  <div className="max-w-[520px] text-center text-xs text-slate-400">选择设备后再加载该设备的回放记录，避免一次性扫描全部录像段</div>
+                </div>
+              )}
+              {playbackIndexPending && !loadingVideos && currentPagePlaybacks.length === 0 && (
+                <div className="col-span-10 flex h-full min-h-[320px] flex-col items-center justify-center gap-3 rounded-lg border border-cyan-400/20 bg-slate-900/35 text-cyan-100">
+                  <Loader2 size={28} className="animate-spin text-cyan-300" />
+                  <div className="text-sm font-semibold">正在加载录像记录</div>
+                  <div className="max-w-[520px] text-center text-xs text-cyan-100/70">录像索引正在整理，请稍候</div>
+                </div>
+              )}
+              {playbackLoadError && !loadingVideos && (
+                <div className="col-span-10 flex h-full min-h-[320px] flex-col items-center justify-center gap-3 rounded-lg border border-rose-400/25 bg-rose-950/15 text-rose-100">
+                  <AlertCircle size={28} className="text-rose-300" />
+                  <div className="text-sm font-semibold">监控视频加载失败</div>
+                  <div className="max-w-[520px] text-center text-xs text-rose-100/75">{playbackLoadError}</div>
+                  <button
+                    onClick={() => {
+                      setPlaybackLoadError(null);
+                      setPlaybackReloadKey((key) => key + 1);
+                    }}
+                    className="rounded bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
+                  >
+                    重新加载
+                  </button>
+                </div>
+              )}
+              {selectedDevice && !playbackLoadError && !playbackIndexPending && !loadingVideos && currentPagePlaybacks.length === 0 && (
+                <div className="col-span-10 flex h-full min-h-[320px] items-center justify-center rounded-lg border border-blue-300/15 bg-slate-900/35 text-sm text-slate-300">
+                  暂无监控视频记录
+                </div>
+              )}
               {currentPagePlaybacks.map((playback) => (
 <VideoCard
   key={playback.id}
@@ -4074,13 +4515,14 @@ onShowScreenshot={async (playback) => {
               ))}
 
               {/* 鉁?琛ョ┖绐楀彛鍗犱綅锛屼繚璇佹案杩滃～婊?10脳4=40 涓綅缃紝甯冨眬姘歌繙涓€鑷?*/}
-              {Array.from({ length: Math.max(0, 40 - currentPagePlaybacks.length) }, (_, i) => (
+              {!playbackLoadError && currentPagePlaybacks.length > 0 && Array.from({ length: Math.max(0, 40 - currentPagePlaybacks.length) }, (_, i) => (
                 <div
                   key={`empty_${i}`}
                   className="relative w-full rounded-lg border border-slate-700/30 bg-slate-900/30"
                   style={{ paddingBottom: '28.125%' }}
                 />
               ))}
+              </div>
             </div>
 
             {/* 鍒嗛〉鎺т欢 */}

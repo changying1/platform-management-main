@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import { X, MapPin, Clock, AlertTriangle, Check, Circle, Hexagon, Move, Users, ChevronDown, ChevronRight, X as XIcon } from "lucide-react";
+import { X, MapPin, Clock, AlertTriangle, Check, Circle, Hexagon, Move, Users, ChevronDown, ChevronRight, X as XIcon, Info } from "lucide-react";
 import { OrganizationTreeNode } from "../types";
 
 interface OrgNode {
@@ -27,6 +27,7 @@ interface FenceAddModalProps {
   collectedPoints?: any[];
   onStartCollectMode?: () => void;
   onEnterDrawMode?: () => void;
+  onResetDraw?: () => void;
 }
 
 const normalizeFenceSeverity = (value: any): "normal" | "risk" | "severe" => {
@@ -52,6 +53,7 @@ export const FenceAddModal: React.FC<FenceAddModalProps> = ({
   collectedPoints = [],
   onStartCollectMode,
   onEnterDrawMode,
+  onResetDraw,
 }) => {
   const [buildMode, setBuildMode] = useState<"select" | "manual" | "collect">("select");
   const [step, setStep] = useState<"form" | "draw">("form");
@@ -306,8 +308,6 @@ const showTopTip = (message: string) => {
 // 然后找到表单部分里的"下一步"按钮（大约在第 460 行），替换成：
 
   const handleSave = () => {
-      console.log("FenceAddModal handleSave 被调用", formData);
-
     if (formData.shape === "circle" && !tempCenter) {
       alert("请在地图上点击设置圆心");
       return;
@@ -319,7 +319,7 @@ const showTopTip = (message: string) => {
 
     const shape = formData.shape === "circle" ? "circle" : "polygon";
 
-    onSave({
+    onSaveFence({
       ...formData,
       shape: shape,
       center: tempCenter,
@@ -687,8 +687,8 @@ const showTopTip = (message: string) => {
                       onSaveFence({
                         ...formData,
                         ...getSelectedOrgPayload(),
-                        center: tempCenter,
-                        points: tempPoints,
+                        center: tempCenter || initialData?.center,
+                        points: tempPoints.length > 0 ? tempPoints : initialData?.points,
                       });
                       return;
                     }
@@ -745,19 +745,33 @@ const showTopTip = (message: string) => {
               <div className="text-xs text-slate-400 mb-1">当前状态：</div>
               {formData.shape === "circle" ? (
                 <div className="text-cyan-300 text-xs flex items-center gap-1">
-                  {tempCenter ? (
-                    <><Check size={12} className="text-green-400" /> 圆心已设置</>
+                  {tempCenter || (editingFenceId && initialData?.center) ? (
+                    <><Check size={12} className="text-green-400" /> {tempCenter ? "圆心已设置" : "使用原有圆心"}</>
                   ) : (
                     <><div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" /> 等待设置圆心...</>
                   )}
                 </div>
               ) : (
                 <div className="text-cyan-300 text-xs">
-                  已添加 {tempPoints.length} 个顶点
-                  {tempPoints.length >= 3 && <span className="ml-1 text-green-400">✓ 可完成</span>}
+                  {tempPoints.length > 0 ? (
+                    <>已添加 {tempPoints.length} 个顶点{tempPoints.length >= 3 && <span className="ml-1 text-green-400">✓ 可完成</span>}</>
+                  ) : editingFenceId && initialData?.points && initialData.points.length >= 3 ? (
+                    <>使用原有图形（{initialData.points.length} 个顶点）</>
+                  ) : (
+                    <>已添加 {tempPoints.length} 个顶点{tempPoints.length >= 3 && <span className="ml-1 text-green-400">✓ 可完成</span>}</>
+                  )}
                 </div>
               )}
             </div>
+
+            {editingFenceId && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2 mb-3">
+                <div className="text-xs text-amber-300 flex items-center gap-1">
+                  <Info size={12} className="text-amber-400" />
+                  提示：点击下方"重置绘制"按钮可重新绘制围栏，否则将保留原有图形
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-2">
               <button
@@ -766,32 +780,46 @@ const showTopTip = (message: string) => {
               >
                 返回修改
               </button>
+              {editingFenceId && (
+                <button
+                  onClick={() => {
+                    onResetDraw?.();
+                    showTopTip("已重置，可重新绘制围栏");
+                  }}
+                  className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs transition-colors"
+                >
+                  重置绘制
+                </button>
+              )}
 <button
   onClick={(e) => {
     e.preventDefault();
     e.stopPropagation();
     
-    if (formData.shape === "circle" && !tempCenter) {
-      showTopTip("请在地图上点击设置圆心");
-      return;
-    }
-    if (formData.shape === "polygon" && tempPoints.length < 3) {
-      showTopTip("请至少添加3个顶点");
+    const hasValidShape = editingFenceId || 
+      (formData.shape === "circle" && tempCenter) || 
+      (formData.shape === "polygon" && tempPoints.length >= 3);
+    
+    if (!hasValidShape) {
+      if (formData.shape === "circle") {
+        showTopTip("请在地图上点击设置圆心");
+      } else {
+        showTopTip("请至少添加3个顶点");
+      }
       return;
     }
 
-onSaveFence({
-  ...formData,
-  center: tempCenter,
-  points: tempPoints,
-});
-console.log("传递的 startTime:", formData.startTime);
-console.log("传递的 endTime:", formData.endTime);
+    onSaveFence({
+      ...formData,
+      center: tempCenter || (editingFenceId && initialData?.center),
+      points: tempPoints.length > 0 ? tempPoints : (editingFenceId && initialData?.points),
+      ...getSelectedOrgPayload(),
+    });
     onClose();
   }}
   className="flex-1 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 rounded-lg text-xs font-semibold transition-all"
 >
-  完成创建
+  {editingFenceId ? "完成修改" : "完成创建"}
 </button>
             </div>
           </div>

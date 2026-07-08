@@ -1,4 +1,6 @@
 ﻿from datetime import datetime, timedelta
+import copy
+import time
 from secrets import token_urlsafe
 
 from fastapi import Cookie, Header, HTTPException, Query
@@ -13,6 +15,8 @@ from app.services.permission_service import get_permissions_for_level
 
 
 SESSION_TTL_HOURS = 12
+_CURRENT_USER_CACHE: dict[str, tuple[float, dict]] = {}
+_CURRENT_USER_CACHE_TTL_SECONDS = 2.0
 
 
 def _clean_text(value) -> str:
@@ -173,9 +177,20 @@ def _find_session_user(token: str | None):
 
 
 def current_user_from_token(token: str | None):
+    token_key = _clean_text(token)
+    if token_key:
+        cached = _CURRENT_USER_CACHE.get(token_key)
+        if cached and cached[0] > time.time():
+            return copy.deepcopy(cached[1])
     user = _find_session_user(token)
     if user:
-        return _user_to_current_user(user)
+        current_user = _user_to_current_user(user)
+        if token_key:
+            _CURRENT_USER_CACHE[token_key] = (
+                time.time() + _CURRENT_USER_CACHE_TTL_SECONDS,
+                copy.deepcopy(current_user),
+            )
+        return current_user
     return None
 
 

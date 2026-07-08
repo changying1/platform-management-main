@@ -14,6 +14,22 @@ const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
   });
 };
 
+const fetchWithTimeout = (
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = 12000,
+) => {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return authFetch(input, init);
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  return authFetch(input, {
+    ...init,
+    signal: init.signal || controller.signal,
+  }).finally(() => window.clearTimeout(timeout));
+};
+
 export const PTZ_ACTIVITY_EVENT = 'ptz-activity';
 
 const notifyPtzActivity = (videoId: number, action: string) => {
@@ -348,6 +364,41 @@ export interface SavedPlaybackVideo {
   description?: string;
   recording_status?: string;
   alarm_second?: number;
+  metadata_available?: boolean;
+  metadata_path?: string;
+  source_type?: 'raw' | 'annotated' | string;
+  is_raw?: boolean;
+}
+
+export interface RecordingAiBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  track_id?: string | number;
+  label?: string;
+  confidence?: number;
+  personName?: string;
+  behavior?: string[];
+  alarm_level?: string;
+}
+
+export interface RecordingAiSample {
+  video_id: number | string;
+  timestamp: string;
+  frame_time_ms: number;
+  source_width?: number;
+  source_height?: number;
+  boxes: RecordingAiBox[];
+  tracks?: any[];
+}
+
+export interface RecordingAiMetadataResponse {
+  video_id: number;
+  metadata_path: string;
+  available: boolean;
+  max_hold_ms: number;
+  samples: RecordingAiSample[];
 }
 
 export interface PlaybackPageResponse {
@@ -357,12 +408,15 @@ export interface PlaybackPageResponse {
   page: number;
   page_size: number;
   total_pages: number;
+  index_building?: boolean;
+  message?: string;
 }
 
 export interface PlaybackPageQuery {
   mediaType: 'manual' | 'alarm';
   page: number;
   pageSize?: number;
+  timeoutMs?: number;
   deviceId?: number | string;
   company?: string;
   project?: string;
@@ -466,12 +520,12 @@ export interface VideoMonitoringSummary {
 // --- API 方法 ---
 
 /** 获取所有视频设备列表 */
-export async function getAllVideos(): Promise<Video[]> {
+export async function getAllVideos(options: { timeoutMs?: number } = {}): Promise<Video[]> {
   const base = getApiBase();
   const url = `${base}/video/?limit=5000`;
   console.log('📡 请求视频设备列表:', url, '当前域名:', window.location.host, 'port:', window.location.port);
   
-  const response = await authFetch(url);
+  const response = await fetchWithTimeout(url, {}, options.timeoutMs ?? 8000);
   if (!response.ok) throw new Error(`Failed to fetch videos: ${response.status}`);
   
   const videos = await response.json();
@@ -1367,6 +1421,30 @@ export async function getRecordingVideos(
   // ✅ 内网穿透：替换所有文件路径里的 localhost
   return list.map(v => fixPlaybackUrl(v));
 }
+
+export async function getRecordingAiMetadata(
+  videoId: number,
+  webPath: string,
+  maxHoldMs: number = 500
+): Promise<RecordingAiMetadataResponse> {
+  const base = getApiBase();
+  const params = new URLSearchParams({
+    web_path: webPath,
+    max_hold_ms: String(maxHoldMs),
+  });
+  const response = await authFetch(`${base}/video/${videoId}/recordings/metadata?${params.toString()}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let msg = 'Failed to get recording AI metadata';
+    try {
+      const err = await response.json();
+      msg = err.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return response.json();
+}
 /**
  * 获取设备的报警截图列表
  * 从 alarm_screenshots 目录读取
@@ -1418,7 +1496,11 @@ export async function getPlaybackPage(query: PlaybackPageQuery): Promise<Playbac
   if (query.startTime) params.set('start_time', query.startTime);
   if (query.endTime) params.set('end_time', query.endTime);
 
-  const response = await authFetch(`${base}/video/playbacks/query?${params.toString()}`);
+  const response = await fetchWithTimeout(
+    `${base}/video/playbacks/query?${params.toString()}`,
+    { cache: 'no-store' },
+    query.timeoutMs ?? 45000,
+  );
   if (!response.ok) {
     let message = 'Failed to get playback page';
     try {

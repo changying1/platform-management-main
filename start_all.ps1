@@ -7,6 +7,8 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 
+$env:HIKIOT_BEARER_TOKEN = "e9c3d70f-1ec2-4a55-95fb-2fd670e247b5"
+
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $Root "backend"
 $FrontendDir = Join-Path $Root "frontend"
@@ -67,6 +69,37 @@ function Stop-LocalPort {
 
     if (Test-LocalPort -Port $Port) {
         throw "$Name is still listening on port $Port after stop attempt."
+    }
+}
+
+function Stop-ProjectChildProcesses {
+    $ffmpegRoot = Join-Path $Root "ffmpeg-8.0.1-essentials_build"
+    $recordingRoot = Join-Path $BackendDir "static\recordings"
+    $projectWorkerModule = "app.services.ai_runtime.yolo_worker"
+
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $cmd = $_.CommandLine
+            if (-not $cmd) {
+                $false
+            } else {
+                $isProjectFfmpeg = $_.Name -ieq "ffmpeg.exe" -and (
+                    $cmd -like "*$ffmpegRoot*" -or
+                    $cmd -like "*$recordingRoot*"
+                )
+                $isProjectYoloWorker = $_.Name -match "^python" -and $cmd -like "*$projectWorkerModule*"
+
+                $isProjectFfmpeg -or $isProjectYoloWorker
+            }
+        }
+
+    foreach ($process in $processes) {
+        try {
+            Write-Host "[..] Stopping stale project child process PID $($process.ProcessId) ($($process.Name))..."
+            Stop-Process -Id $process.ProcessId -Force
+        } catch {
+            Write-Host "[WARN] Could not stop stale child PID $($process.ProcessId): $($_.Exception.Message)"
+        }
     }
 }
 
@@ -159,6 +192,8 @@ function Start-Backend {
     if (Test-LocalPort -Port 9000) {
         Stop-LocalPort -Port 9000 -Name "backend"
     }
+
+    Stop-ProjectChildProcesses
 
     $python = Find-Python
     $backendOut = Join-Path $LogDir "backend.out.log"

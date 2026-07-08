@@ -1,0 +1,2 @@
+backend/app/services/yolo_models/*.pt filter=lfs diff=lfs merge=lfs -text
+backend/app/services/yolo_models/buffalo_l/*.onnx filter=lfs diff=lfs merge=lfs -text
