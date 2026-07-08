@@ -517,6 +517,16 @@ export interface VideoMonitoringSummary {
   status_text: string;
 }
 
+export interface VideoScanImportResult {
+  success?: boolean;
+  message?: string;
+  imported?: number;
+  skipped_existing?: number;
+  sim_updated_existing?: number;
+  sim_missing?: number;
+  conflicts?: number;
+}
+
 // --- API 方法 ---
 
 /** 获取所有视频设备列表 */
@@ -525,7 +535,7 @@ export async function getAllVideos(options: { timeoutMs?: number } = {}): Promis
   const url = `${base}/video/?limit=5000`;
   console.log('📡 请求视频设备列表:', url, '当前域名:', window.location.host, 'port:', window.location.port);
   
-  const response = await fetchWithTimeout(url, {}, options.timeoutMs ?? 8000);
+  const response = await fetchWithTimeout(url, { cache: 'no-store' }, options.timeoutMs ?? 8000);
   if (!response.ok) throw new Error(`Failed to fetch videos: ${response.status}`);
   
   const videos = await response.json();
@@ -758,6 +768,21 @@ export async function syncDevices(): Promise<{ message: string }> {
     throw new Error(error.detail || 'Failed to sync devices');
   }
   return response.json();
+}
+
+export async function scanImportVideoDevices(): Promise<VideoScanImportResult> {
+  const response = await authFetch(`${API_BASE_URL}/video/devices/scan-import?dry_run=false&overwrite_sim=false`, {
+    method: 'POST',
+  });
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {}
+  if (!response.ok) {
+    const detail = data?.detail ?? data?.message;
+    throw new Error(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : '默认错误信息');
+  }
+  return data || {};
 }
 
 /** 通过 RTSP 地址动态添加摄像头（由 Node Media Server 拉流转码） */

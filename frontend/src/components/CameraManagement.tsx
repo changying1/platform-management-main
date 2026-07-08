@@ -1,9 +1,9 @@
 import React, { useState, useEffect  } from 'react';
-import { Search, Plus, Edit2, Trash2, X, Save, Camera, Wrench, AlertCircle, MoreHorizontal } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, X, Save, Camera, Wrench, AlertCircle, MoreHorizontal, Loader } from 'lucide-react';
 import { Upload, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ReactDOM from 'react-dom';
-import { createVideo, deleteVideo, getAllVideos, updateVideo, type Video } from '../api/videoApi';
+import { createVideo, deleteVideo, getAllVideos, scanImportVideoDevices, updateVideo, type Video } from '../api/videoApi';
 import { unitApiClient, type ResponsibilityUnit, type UnitTreeNode } from '../api/responsibilityUnitApi';
 import { API_BASE_URL } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
@@ -250,6 +250,7 @@ const [showRepairModal, setShowRepairModal] = useState(false);
   const [filterTeam, setFilterTeam] = useState<string>('all');
 
 const [showUploadModal, setShowUploadModal] = useState(false);
+const [autoAdding, setAutoAdding] = useState(false);
 const [uploadPreview, setUploadPreview] = useState<any[]>([]);
 const canCreateDevice = hasStoredPermission('device.create');
 const canEditDevice = hasStoredPermission('device.edit');
@@ -385,6 +386,23 @@ const confirmImport = () => {
   setShowUploadModal(false);
   setUploadPreview([]);
   alert(`成功导入 ${validData.length} 条`);
+};
+
+const handleAutoAdd = async () => {
+  if (autoAdding) return;
+  setAutoAdding(true);
+  try {
+    const result = await scanImportVideoDevices();
+    await fetchCameras(orgUnits);
+    alert(
+      `扫描完成：新增 ${result.imported ?? 0} 个，已存在 ${result.skipped_existing ?? 0} 个，补充 SIM ${result.sim_updated_existing ?? 0} 个，未匹配 ${result.sim_missing ?? 0} 个，冲突 ${result.conflicts ?? 0} 个`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '默认错误信息';
+    alert(`自动添加失败：${message || '默认错误信息'}`);
+  } finally {
+    setAutoAdding(false);
+  }
 };
 
   const handleRepair = (camera: Camera) => {
@@ -534,6 +552,17 @@ const confirmImport = () => {
 >
   <Download size={14} /> 下载模板
 </button>
+
+        {canCreateDevice && (
+        <button
+          onClick={handleAutoAdd}
+          disabled={autoAdding}
+          className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {autoAdding ? <Loader size={14} className="animate-spin" /> : <Camera size={14} />}
+          自动添加
+        </button>
+        )}
 
         {canCreateDevice && (
         <button
