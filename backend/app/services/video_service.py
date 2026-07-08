@@ -59,6 +59,34 @@ VideoDevice = Any
 RECORDING_PROCESSES = {}
 RECORDING_ROLLOVER_LAST_AT: Dict[int, float] = {}
 TEMP_BUFFER_PROCESSES = {}
+RECORDING_START_LOCK = threading.Lock()
+
+
+def _stop_ffmpeg_process_gracefully(process: subprocess.Popen, timeout_seconds: float = 12.0) -> None:
+    if not process:
+        return
+    try:
+        if process.poll() is not None:
+            return
+    except Exception:
+        return
+
+    try:
+        if process.stdin:
+            process.stdin.write("q\n")
+            process.stdin.flush()
+            process.wait(timeout=timeout_seconds)
+            return
+    except Exception:
+        pass
+
+    try:
+        process.terminate()
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.kill()
+    except Exception:
+        pass
 
 
 
@@ -231,8 +259,9 @@ HIKIOT_DISPLAY_RESERVED_GB = float(os.getenv("HIKIOT_DISPLAY_RESERVED_GB", "0.5"
 HIKIOT_LOGIN_TIMEOUT_SECONDS = float(os.getenv("HIKIOT_LOGIN_TIMEOUT_SECONDS", "10"))
 HIKIOT_TOKEN_CACHE: Dict[str, Any] = {"token": "", "expires_at": 0.0}
 EZVIZ_STATUS_POLL_INTERVAL_SECONDS = max(30, int(os.getenv("EZVIZ_STATUS_POLL_INTERVAL_SECONDS", "60")))
-# 杩戝疄鏃跺洖鏀句緷璧栫煭鍒嗘锛涘父鎬佸洖鏀剧敱鐙珛褰掓。閫昏緫瀹屾垚锛屼笉涓庡垎娈垫椂闀跨粦瀹氥€?
-RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "30"))
+# Default fallback only. Runtime recording segment length is read from system settings
+# `videoSegmentMinutes` so the UI setting actually controls ffmpeg segmentation.
+RECORD_SEGMENT_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SECONDS", "1800"))
 
 RECORD_SEGMENT_SAFE_MARGIN_SECONDS = int(os.getenv("VIDEO_RECORD_SEGMENT_SAFE_MARGIN_SECONDS", "8"))
 MIN_RECORD_SEGMENT_BYTES = int(os.getenv("VIDEO_MIN_RECORD_SEGMENT_BYTES", str(64 * 1024)))
@@ -262,6 +291,9 @@ class VideoService:
     _ezviz_status_worker_started = False
     _playback_index_lock = threading.Lock()
     _playback_index_cache: dict[str, Any] = {"expires_at": 0.0, "recordings": [], "alarms": []}
+    _playback_index_cache_map: dict[str, dict[str, Any]] = {}
+    _playback_thumbnail_lock = threading.Lock()
+    _playback_thumbnail_jobs: set[str] = set()
 
     def __init__(self):
 
@@ -928,6 +960,16 @@ class VideoService:
             "responsible_person_name": as_text_or_none(doc.get("responsible_person_name") or holder_name),
 
             "manager_name": as_text_or_none(doc.get("manager_name")),
+            "ai_rules": doc.get("ai_rules"),
+            "aiRules": doc.get("ai_rules") or doc.get("aiRules"),
+            "algo_rules": doc.get("algo_rules"),
+            "algoRules": doc.get("algo_rules") or doc.get("algoRules"),
+            "rules": doc.get("rules"),
+            "algo_type": doc.get("algo_type"),
+            "algoType": doc.get("algo_type") or doc.get("algoType"),
+            "algos": doc.get("algos"),
+            "face_assist_enabled": doc.get("face_assist_enabled"),
+            "faceAssistEnabled": doc.get("face_assist_enabled") if doc.get("face_assist_enabled") is not None else doc.get("faceAssistEnabled"),
 
         }
 
@@ -8254,6 +8296,11 @@ class VideoService:
             numeric = min(maximum, numeric)
         return numeric
 
+    def _get_record_segment_seconds(self) -> int:
+        config = self._get_system_config()
+        minutes = self._coerce_positive_float(config.get("videoSegmentMinutes", 30), 30, 1 / 60, None)
+        return max(1, int(minutes * 60))
+
     def _safe_storage_folder_name(self, value: Any, default: str) -> str:
         name = str(value or "").strip().replace("\\", "/").strip("/")
         if not name or name in {".", ".."} or "/" in name:
@@ -8401,15 +8448,47 @@ class VideoService:
 
             roots.append(record_root)
 
+        raw_root = os.path.join(self._get_playback_video_root(), "raw_recordings")
 
+        os.makedirs(raw_root, exist_ok=True)
 
-        return roots
+        roots.append(raw_root)
+
+        return list(dict.fromkeys(roots))
 
 
 
     def _get_record_root(self) -> str:
 
         return self._get_all_record_roots()[0]
+
+
+
+    def _get_raw_record_root(self) -> str:
+
+        raw_root = os.path.join(self._get_playback_video_root(), "raw_recordings")
+
+        os.makedirs(raw_root, exist_ok=True)
+
+        return raw_root
+
+    def _get_recording_metadata_root(self) -> str:
+
+        metadata_root = os.path.join(self._get_playback_video_root(), "metadata")
+
+        os.makedirs(metadata_root, exist_ok=True)
+
+        return metadata_root
+
+    def _get_recording_metadata_path(self, video_id: int | str, segment_path: str) -> str:
+
+        device_root = os.path.join(self._get_recording_metadata_root(), str(video_id))
+
+        os.makedirs(device_root, exist_ok=True)
+
+        segment_name = os.path.splitext(os.path.basename(segment_path))[0]
+
+        return os.path.join(device_root, f"{segment_name}.jsonl")
 
 
 
@@ -8525,7 +8604,10 @@ class VideoService:
 
         channel_no = int(getattr(db_video, "channel_no", None) or 1)
 
-        protocol_candidates = [4, 2, 3, 1]  # flv, hls, rtmp, ezopen
+        # For EZVIZ recording, prefer continuous FLV over HLS segments.
+        # HLS/m3u8 is more prone to timestamp gaps and short/unreadable MP4
+        # files when the cloud playlist or token rolls.
+        protocol_candidates = [4, 3, 2, 1]  # flv, rtmp, hls, ezopen
 
         paths = ["/api/lapp/live/address/get", "/api/lapp/v2/live/address/get"]
 
@@ -8621,15 +8703,7 @@ class VideoService:
 
                 return ezviz_url
 
-        stream_url = str(getattr(db_video, "stream_url", "") or "").strip()
-
-        stream_url_lower = stream_url.lower()
-
-        if stream_url_lower.startswith(("http://", "https://", "rtmp://", "rtsp://")) and "ezopen://" not in stream_url_lower:
-
-            return stream_url
-
-
+            return None
 
         rtsp_url = self._get_rtsp_url_for_device(db_video)
 
@@ -8637,13 +8711,115 @@ class VideoService:
 
             return rtsp_url
 
+        stream_url = str(getattr(db_video, "stream_url", "") or "").strip()
+
+        stream_url_lower = stream_url.lower()
+
+        if "/live/" in stream_url_lower and stream_url_lower.endswith(".flv"):
+
+            return None
+
+        if stream_url_lower.startswith(("http://", "https://", "rtmp://", "rtsp://")) and "ezopen://" not in stream_url_lower:
+
+            return stream_url
+
 
 
         return None
 
 
 
+    def _cleanup_orphan_recording_processes(self, video_id: int):
+
+        try:
+
+            import psutil
+
+        except Exception:
+
+            return
+
+        match_roots = []
+        try:
+            roots = [self._get_record_root(), self._get_raw_record_root()]
+            roots.append(os.path.join(self._get_playback_video_root(), "alarm_temp_buffer"))
+            for root in roots:
+                if not root:
+                    continue
+                match_roots.append(os.path.normcase(os.path.normpath(os.path.abspath(os.path.join(root, str(video_id))))))
+        except Exception:
+            return
+
+        current_entry = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
+
+        current_pid = None
+
+        if isinstance(current_entry, dict):
+
+            current_process = current_entry.get("process")
+
+            current_pid = getattr(current_process, "pid", None)
+
+        elif current_entry is not None:
+
+            current_pid = getattr(current_entry, "pid", None)
+
+        for process in psutil.process_iter(["pid", "name", "cmdline"]):
+
+            try:
+
+                name = (process.info.get("name") or "").lower()
+
+                if "ffmpeg" not in name:
+
+                    continue
+
+                pid = process.info.get("pid")
+
+                if current_pid and pid == current_pid:
+
+                    continue
+
+                cmdline = " ".join(process.info.get("cmdline") or [])
+
+                cmdline = os.path.normcase(cmdline)
+
+                if not any(root in cmdline for root in match_roots):
+
+                    continue
+
+                logger.warning(f"Stopping orphan recording ffmpeg video_id={video_id}, pid={pid}")
+
+                process.terminate()
+
+                try:
+
+                    process.wait(timeout=3)
+
+                except psutil.TimeoutExpired:
+
+                    process.kill()
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+
+                continue
+
+            except Exception as e:
+
+                logger.warning(f"Failed to stop orphan recording ffmpeg video_id={video_id}: {e}")
+
+
+
+
     def start_ffmpeg_recording(self, video_id: int, source_url: str):
+        with RECORDING_START_LOCK:
+            return self._start_ffmpeg_recording_locked(video_id, source_url)
+
+    def _start_ffmpeg_recording_locked(self, video_id: int, source_url: str):
+
+        if os.getenv("VIDEO_RAW_RECORDING_ENABLED", "1").lower() in {"0", "false", "no", "off"}:
+            logger.info("Raw source recording disabled for video_id=%s; using annotated recording for playback", video_id)
+            return None
 
         if not source_url:
 
@@ -8655,15 +8831,15 @@ class VideoService:
 
         # 婵″倹鐏夐崥灞肩鐠侯垰缍嶉崓蹇氱箻缁嬪顒滈崷銊ㄧ箥鐞涘奔绗栧┃鎰勾閸р偓閺堫亜褰?娑撳秷顩﹂柌宥呮儙?
 
-        existing = RECORDING_PROCESSES.get(video_id)
+        self._cleanup_orphan_recording_processes(video_id)
+
+        existing = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
 
         if isinstance(existing, dict):
 
             existing_process = existing.get("process")
 
-            existing_source = existing.get("source_url") or existing.get("rtsp_url")
-
-            if existing_process and existing_process.poll() is None and existing_source == source_url:
+            if existing_process and existing_process.poll() is None:
 
                 return existing_process
 
@@ -8687,7 +8863,9 @@ class VideoService:
 
         ffmpeg_path = self._get_ffmpeg_path()
 
-        record_root = self._get_record_root()
+        # Raw cloud/source recording is an internal cache only. Regular
+        # playback should use AI annotated recordings from _get_record_root().
+        record_root = self._get_raw_record_root()
 
         device_root = os.path.join(record_root, str(video_id))
 
@@ -8710,30 +8888,40 @@ class VideoService:
         source_lower = str(source_url).lower()
 
         input_options: list[str] = []
+        is_http_live_source = source_lower.startswith(("http://", "https://")) or ".m3u8" in source_lower
 
         if source_lower.startswith("rtsp://"):
 
             input_options.extend(["-rtsp_transport", "tcp"])
+        elif is_http_live_source:
+
+            input_options.extend([
+                "-fflags", "+genpts+discardcorrupt",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5",
+            ])
 
 
 
         config = self._get_system_config()
 
-        segment_minutes = self._coerce_positive_float(config.get('videoSegmentMinutes', 0.5), 0.5, 0.5, 60)
-
-        segment_seconds = int(segment_minutes * 60)
+        segment_seconds = self._get_record_segment_seconds()
 
         
 
-        quality_params = {
-
-            'high': ['-b:v', '4M', '-c:v', 'libx264'],
-
-            'medium': ['-b:v', '2M', '-c:v', 'libx264'],
-
-            'low': ['-b:v', '1M', '-c:v', 'libx265'],
-
-        }
+        if is_http_live_source:
+            quality_params = {
+                "high": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-an"],
+                "medium": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-b:v", "2M", "-an"],
+                "low": ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-b:v", "1M", "-an"],
+            }
+        else:
+            quality_params = {
+                'high': ['-c:v', 'copy'],
+                'medium': ['-c:v', 'copy'],
+                'low': ['-c:v', 'copy'],
+            }
 
         video_quality = config.get('videoQuality', 'high')
 
@@ -8748,24 +8936,38 @@ class VideoService:
             "-y",
 
             *input_options,
+        ]
 
-            "-use_wallclock_as_timestamps", "1",
+        if not is_http_live_source:
+            command.extend(["-use_wallclock_as_timestamps", "1"])
+
+        command.extend([
 
             "-i", source_url,
 
             "-map", "0:v:0",
+        ])
 
-            "-map", "0:a:0?",
+        if not is_http_live_source:
+            command.extend(["-map", "0:a:0?"])
+
+        command.extend([
 
             *codec_params,
+        ])
 
-            "-c:a", "aac",
+        if not is_http_live_source:
+            command.extend(["-c:a", "aac"])
+
+        command.extend([
 
             "-f", "segment",
 
             "-segment_time", str(segment_seconds),
 
-            "-segment_atclocktime", "1",
+            "-segment_format", "mp4",
+
+            "-segment_format_options", "movflags=+faststart",
 
             "-strftime", "1",
 
@@ -8773,7 +8975,7 @@ class VideoService:
 
             segment_pattern
 
-        ]
+        ])
 
 
 
@@ -8788,6 +8990,8 @@ class VideoService:
             process = subprocess.Popen(
 
                 command,
+
+                stdin=subprocess.PIPE,
 
                 stdout=subprocess.DEVNULL,
 
@@ -8857,11 +9061,11 @@ class VideoService:
 
             existing_process = existing.get("process")
 
-            existing_source = existing.get("source_url")
-
-            if existing_process and existing_process.poll() is None and existing_source == source_url:
+            if existing_process and existing_process.poll() is None:
 
                 return existing_process
+
+        self._cleanup_orphan_recording_processes(video_id)
 
         self.stop_alarm_temp_buffer_recording(video_id)
 
@@ -8884,10 +9088,19 @@ class VideoService:
         source_lower = str(source_url).lower()
 
         input_options: list[str] = []
+        is_http_live_source = source_lower.startswith(("http://", "https://")) or ".m3u8" in source_lower
 
         if source_lower.startswith("rtsp://"):
 
             input_options.extend(["-rtsp_transport", "tcp"])
+        elif is_http_live_source:
+
+            input_options.extend([
+                "-fflags", "+genpts+discardcorrupt",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5",
+            ])
 
         try:
 
@@ -8899,22 +9112,36 @@ class VideoService:
 
         segment_pattern = os.path.join(buffer_root, "%Y%m%d_%H%M%S.mp4")
 
+        if is_http_live_source:
+            codec_params = ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-an"]
+        else:
+            codec_params = ["-c", "copy"]
+
         command = [
             ffmpeg_path,
             "-y",
             *input_options,
-            "-use_wallclock_as_timestamps", "1",
+        ]
+
+        if not is_http_live_source:
+            command.extend(["-use_wallclock_as_timestamps", "1"])
+
+        command.extend([
             "-i", source_url,
             "-map", "0:v:0",
-            "-map", "0:a:0?",
-            "-c", "copy",
+        ])
+
+        if not is_http_live_source:
+            command.extend(["-map", "0:a:0?"])
+
+        command.extend([
+            *codec_params,
             "-f", "segment",
             "-segment_time", str(segment_seconds),
-            "-segment_atclocktime", "1",
             "-strftime", "1",
             "-reset_timestamps", "1",
             segment_pattern,
-        ]
+        ])
 
         try:
 
@@ -8924,6 +9151,7 @@ class VideoService:
 
             process = subprocess.Popen(
                 command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=log_file,
                 creationflags=creationflags,
@@ -8973,15 +9201,7 @@ class VideoService:
 
         try:
 
-            process.terminate()
-
-            try:
-
-                process.wait(timeout=3)
-
-            except subprocess.TimeoutExpired:
-
-                process.kill()
+            _stop_ffmpeg_process_gracefully(process)
 
         except Exception as exc:
 
@@ -9041,7 +9261,7 @@ class VideoService:
 
         self.stop_alarm_temp_buffer_recording(video_id)
 
-        entry = RECORDING_PROCESSES.get(video_id)
+        entry = RECORDING_PROCESSES.get(video_id) or RECORDING_PROCESSES.get(str(video_id))
 
         if not entry:
 
@@ -9057,15 +9277,7 @@ class VideoService:
 
         try:
 
-            process.terminate()
-
-            try:
-
-                process.wait(timeout=3)
-
-            except subprocess.TimeoutExpired:
-
-                process.kill()
+            _stop_ffmpeg_process_gracefully(process)
 
         except Exception as e:
 
@@ -9074,6 +9286,8 @@ class VideoService:
         finally:
 
             RECORDING_PROCESSES.pop(video_id, None)
+
+            RECORDING_PROCESSES.pop(str(video_id), None)
 
             if log_file:
 
@@ -9131,6 +9345,185 @@ class VideoService:
             return None
 
     @staticmethod
+    def _mp4_has_moov_atom(file_path: str) -> bool:
+        try:
+            size = os.path.getsize(file_path)
+            if size < MIN_RECORD_SEGMENT_BYTES:
+                return False
+            with open(file_path, "rb") as fh:
+                head = fh.read(1024 * 1024)
+                if b"moov" in head:
+                    return True
+                if size > 1024 * 1024:
+                    fh.seek(max(0, size - 1024 * 1024))
+                    return b"moov" in fh.read(1024 * 1024)
+        except Exception:
+            return False
+        return False
+
+    def _epoch_ms_from_ai_capture_time(self, capture_time: Any = None, fallback_epoch: Any = None) -> int:
+
+        for value in (capture_time, fallback_epoch, time.time()):
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if numeric <= 0:
+                continue
+            return int(numeric if numeric > 10_000_000_000 else numeric * 1000)
+
+        return int(time.time() * 1000)
+
+    def _find_recording_segment_at(self, video_id: int | str, epoch_ms: int) -> Optional[str]:
+
+        target_dt = datetime.fromtimestamp(epoch_ms / 1000.0)
+        candidate_roots = [self._get_raw_record_root(), *self._get_all_record_roots()]
+        segment_seconds = max(1, self._get_record_segment_seconds())
+        candidates: list[tuple[datetime, str]] = []
+
+        for record_root in candidate_roots:
+            device_root = os.path.join(record_root, str(video_id))
+            if not os.path.isdir(device_root):
+                continue
+            for seg_path in glob.glob(os.path.join(device_root, "*.mp4")):
+                seg_start = self._parse_segment_start(seg_path)
+                if not seg_start:
+                    continue
+                candidates.append((seg_start, seg_path))
+
+        candidates.sort(key=lambda item: item[0])
+        for index, (seg_start, seg_path) in enumerate(candidates):
+            next_start = candidates[index + 1][0] if index + 1 < len(candidates) else None
+            if target_dt < seg_start:
+                continue
+            if next_start is not None:
+                if target_dt < next_start:
+                    return seg_path
+                continue
+            if target_dt <= seg_start + timedelta(seconds=segment_seconds + 10):
+                return seg_path
+            try:
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(seg_path))
+                if target_dt <= file_mtime + timedelta(seconds=10):
+                    return seg_path
+                if time.time() - os.path.getmtime(seg_path) <= segment_seconds + 30:
+                    return seg_path
+            except Exception:
+                pass
+
+        raw_device_root = os.path.join(self._get_raw_record_root(), str(video_id))
+        os.makedirs(raw_device_root, exist_ok=True)
+        return os.path.join(raw_device_root, target_dt.strftime("%Y%m%d_%H%M%S.mp4"))
+
+    def _normalize_ai_metadata_boxes(self, payload: dict) -> list[dict]:
+
+        boxes = []
+        frame_width = int(payload.get("frame_width") or 0)
+        frame_height = int(payload.get("frame_height") or 0)
+
+        for track in payload.get("tracks") or []:
+            if not isinstance(track, dict):
+                continue
+            coords = track.get("coords") or track.get("bbox") or []
+            if len(coords) < 4 and track.get("coords_norm") and frame_width and frame_height:
+                try:
+                    nx1, ny1, nx2, ny2 = [float(v) for v in track.get("coords_norm")[:4]]
+                    coords = [nx1 * frame_width, ny1 * frame_height, nx2 * frame_width, ny2 * frame_height]
+                except Exception:
+                    coords = []
+            if len(coords) < 4:
+                continue
+            try:
+                x1, y1, x2, y2 = [float(v) for v in coords[:4]]
+            except Exception:
+                continue
+            behavior = track.get("alarmLabels") or []
+            if not behavior and isinstance(track.get("behaviorAlarms"), list):
+                behavior = [
+                    str(item.get("label") or item.get("type") or "").strip()
+                    for item in track.get("behaviorAlarms")
+                    if isinstance(item, dict) and str(item.get("label") or item.get("type") or "").strip()
+                ]
+            boxes.append({
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "track_id": track.get("track_id"),
+                "label": track.get("personName") or track.get("label") or "person",
+                "confidence": track.get("score"),
+                "personnel_id": track.get("personnel_id"),
+                "personName": track.get("personName"),
+                "behavior": behavior,
+                "alarm_level": track.get("alarmLevel"),
+            })
+
+        return boxes
+
+    def append_ai_detection_metadata(self, video_id: int | str, payload: dict, capture_time: Any = None) -> Optional[str]:
+
+        if os.getenv("VIDEO_AI_METADATA_ENABLED", "1").lower() in {"0", "false", "no", "off"}:
+            return None
+        if not isinstance(payload, dict):
+            return None
+
+        epoch_ms = self._epoch_ms_from_ai_capture_time(capture_time, payload.get("frame_epoch") or payload.get("frame_epoch_ms"))
+        segment_path = self._find_recording_segment_at(video_id, epoch_ms)
+        segment_start = self._parse_segment_start(segment_path) or datetime.fromtimestamp(epoch_ms / 1000.0)
+        frame_time_ms = max(0, int(epoch_ms - int(segment_start.timestamp() * 1000)))
+        metadata_path = self._get_recording_metadata_path(video_id, segment_path)
+        item = {
+            "video_id": int(video_id) if str(video_id).isdigit() else str(video_id),
+            "timestamp": datetime.fromtimestamp(epoch_ms / 1000.0).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "frame_time_ms": frame_time_ms,
+            "source_width": payload.get("frame_width"),
+            "source_height": payload.get("frame_height"),
+            "boxes": self._normalize_ai_metadata_boxes(payload),
+            "tracks": payload.get("tracks") or [],
+        }
+        if not item["boxes"] and not item["tracks"]:
+            return None
+
+        try:
+            with open(metadata_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
+            return metadata_path
+        except Exception as exc:
+            logger.warning("Failed to append AI metadata video_id=%s path=%s error=%s", video_id, metadata_path, exc)
+            return None
+
+    def _resolve_recording_metadata_path(self, video_id: int, web_path: str) -> str:
+
+        try:
+            source_path = self._resolve_recording_web_path(video_id, web_path)
+        except Exception:
+            source_path = os.path.join(self._get_raw_record_root(), str(video_id), os.path.basename(str(web_path or "")))
+        return self._get_recording_metadata_path(video_id, source_path)
+
+    def get_recording_ai_metadata(self, video_id: int, web_path: str, max_hold_ms: int = 500) -> dict:
+
+        metadata_path = self._resolve_recording_metadata_path(video_id, web_path)
+        samples = []
+        if os.path.isfile(metadata_path):
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        samples.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        samples.sort(key=lambda item: int(item.get("frame_time_ms") or 0))
+        return {
+            "video_id": video_id,
+            "metadata_path": metadata_path,
+            "available": bool(samples),
+            "max_hold_ms": max(100, min(int(max_hold_ms or 500), 2000)),
+            "samples": samples,
+        }
+
+    @staticmethod
     def _parse_duration_text(value) -> Optional[float]:
         if value is None:
             return None
@@ -9165,7 +9558,7 @@ class VideoService:
         return hours * 3600 + minutes * 60 + seconds
 
 
-    def _probe_video_duration(self, file_path: str, timeout_seconds: float = 2.0) -> Optional[float]:
+    def _probe_video_duration(self, file_path: str, timeout_seconds: float = 2.0, log_failures: bool = True) -> Optional[float]:
         ffprobe_path = self._get_ffprobe_path()
         if os.path.exists(ffprobe_path):
             cmd = [
@@ -9185,11 +9578,12 @@ class VideoService:
                     timeout=timeout_seconds,
                 )
             except subprocess.TimeoutExpired:
-                logger.warning(
-                    "ffprobe duration timeout file=%s timeout_seconds=%.1f",
-                    file_path,
-                    timeout_seconds,
-                )
+                if log_failures:
+                    logger.warning(
+                        "ffprobe duration timeout file=%s timeout_seconds=%.1f",
+                        file_path,
+                        timeout_seconds,
+                    )
                 return None
             if result.returncode == 0:
                 try:
@@ -9198,10 +9592,11 @@ class VideoService:
                         return duration
                 except Exception:
                     pass
-            logger.warning(
-                f"ffprobe duration failed file={file_path} returncode={result.returncode} "
-                f"stderr={(result.stderr or '').strip()[-800:]}"
-            )
+            if log_failures:
+                logger.warning(
+                    f"ffprobe duration failed file={file_path} returncode={result.returncode} "
+                    f"stderr={(result.stderr or '').strip()[-800:]}"
+                )
             return None
 
         ffmpeg_path = self._get_ffmpeg_path()
@@ -9216,20 +9611,22 @@ class VideoService:
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired:
-            logger.warning(
-                "ffmpeg duration probe timeout file=%s timeout_seconds=%.1f",
-                file_path,
-                timeout_seconds,
-            )
+            if log_failures:
+                logger.warning(
+                    "ffmpeg duration probe timeout file=%s timeout_seconds=%.1f",
+                    file_path,
+                    timeout_seconds,
+                )
             return None
         duration = self._parse_duration_text((result.stderr or "") + "\n" + (result.stdout or ""))
         if duration and duration > 0:
             return duration
 
-        logger.warning(
-            f"video duration probe failed file={file_path} ffprobe_missing={ffprobe_path} "
-            f"returncode={result.returncode} stderr={(result.stderr or '').strip()[-800:]}"
-        )
+        if log_failures:
+            logger.warning(
+                f"video duration probe failed file={file_path} ffprobe_missing={ffprobe_path} "
+                f"returncode={result.returncode} stderr={(result.stderr or '').strip()[-800:]}"
+            )
         return None
 
     @staticmethod
@@ -9267,7 +9664,7 @@ class VideoService:
             seg_start = self._parse_segment_start(file_path)
             if seg_start:
                 if (datetime.now() - seg_start).total_seconds() < (
-                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
                     return False, None, "segment_still_writing"
 
             age = time.time() - stat.st_mtime
@@ -9276,7 +9673,11 @@ class VideoService:
 
             if trace is not None:
                 trace["ffprobe_called"] = True
-            duration = self._probe_video_duration(file_path, timeout_seconds=probe_timeout_seconds)
+            duration = self._probe_video_duration(
+                file_path,
+                timeout_seconds=probe_timeout_seconds,
+                log_failures=False,
+            )
             if duration is None:
                 return False, None, "duration_unreadable"
             if duration <= 0:
@@ -9324,7 +9725,7 @@ class VideoService:
             return seg_start + timedelta(seconds=duration)
         if next_seg_start and next_seg_start > seg_start:
             return next_seg_start
-        return seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+        return seg_start + timedelta(seconds=self._get_record_segment_seconds())
 
 
     def _is_segment_usable(
@@ -9355,7 +9756,7 @@ class VideoService:
 
                 if (datetime.now() - seg_start).total_seconds() < (
 
-                        RECORD_SEGMENT_SECONDS + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
+                        self._get_record_segment_seconds() + RECORD_SEGMENT_SAFE_MARGIN_SECONDS):
 
                     if not has_newer_segment:
 
@@ -9539,6 +9940,31 @@ class VideoService:
             return None
 
         return None
+
+    def _queue_recording_thumbnails(self, file_paths: list[str]) -> None:
+        pending: list[str] = []
+        with self._playback_thumbnail_lock:
+            for file_path in file_paths:
+                if not file_path or file_path in self._playback_thumbnail_jobs:
+                    continue
+                thumbnail_path = f"{file_path}.jpg"
+                if os.path.isfile(thumbnail_path) and os.path.getmtime(thumbnail_path) >= os.path.getmtime(file_path):
+                    continue
+                self._playback_thumbnail_jobs.add(file_path)
+                pending.append(file_path)
+        if not pending:
+            return
+
+        def worker(paths: list[str]) -> None:
+            try:
+                for path in paths:
+                    self._get_recording_thumbnail_path(path)
+            finally:
+                with self._playback_thumbnail_lock:
+                    for path in paths:
+                        self._playback_thumbnail_jobs.discard(path)
+
+        threading.Thread(target=worker, args=(pending,), daemon=True).start()
 
 
 
@@ -9936,7 +10362,7 @@ class VideoService:
                 fallback_seg_end = (
                     next_seg_start
                     if next_seg_start and next_seg_start > seg_start
-                    else seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                    else seg_start + timedelta(seconds=self._get_record_segment_seconds())
                 )
 
                 if not (fallback_seg_end > start_dt and seg_start < end_dt):
@@ -10017,7 +10443,7 @@ class VideoService:
                     fallback_seg_end = (
                         next_seg_start
                         if next_seg_start and next_seg_start > seg_start
-                        else seg_start + timedelta(seconds=RECORD_SEGMENT_SECONDS)
+                        else seg_start + timedelta(seconds=self._get_record_segment_seconds())
                     )
                     if not (fallback_seg_end > start_dt and seg_start < end_dt):
                         continue
@@ -11007,7 +11433,13 @@ class VideoService:
 
             try:
 
-                if not self._is_segment_usable(file_path):
+                ok, probed_duration, _reason = self._validate_recording_segment(
+                    file_path,
+                    min_age_seconds=2,
+                    probe_timeout_seconds=RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS,
+                    check_decode=True,
+                )
+                if not ok:
 
                     continue
 
@@ -11022,9 +11454,9 @@ class VideoService:
                 if seg_start:
 
                     start_at = seg_start
-                    end_at = self._get_segment_end(file_path, seg_start)
+                    end_at = seg_start + timedelta(seconds=probed_duration or self._get_record_segment_seconds())
                 else:
-                    duration_seconds = self._probe_segment_duration_seconds(file_path) or RECORD_SEGMENT_SECONDS
+                    duration_seconds = probed_duration or self._get_record_segment_seconds()
                     start_at = updated_at - timedelta(seconds=duration_seconds)
                     end_at = updated_at
 
@@ -11051,6 +11483,10 @@ class VideoService:
                     "web_path": self._to_backend_static_web_path(file_path),
 
                     "thumbnail_path": self._to_backend_static_web_path(thumbnail_path) if (thumbnail_path := self._get_recording_thumbnail_path(file_path)) else "",
+
+                    "metadata_available": os.path.isfile(self._get_recording_metadata_path(video_id, file_path)),
+
+                    "metadata_path": self._to_backend_static_web_path(self._get_recording_metadata_path(video_id, file_path)) if os.path.isfile(self._get_recording_metadata_path(video_id, file_path)) else "",
 
                     "duration_text": self._format_bytes(stat.st_size) if stat.st_size < 1024*1024 else f"{stat.st_size/(1024*1024):.2f}MB",
 
@@ -11108,6 +11544,7 @@ class VideoService:
 
         allowed_roots = [os.path.abspath(os.path.join(root, self._folder("recordings"))) for root in self._get_enabled_local_storage_roots()]
         allowed_roots.append(os.path.abspath(self._get_default_static_subdir(self._folder("recordings"))))
+        allowed_roots.append(os.path.abspath(self._get_raw_record_root()))
 
         for candidate in candidates:
             abs_candidate = os.path.abspath(candidate)
@@ -11126,6 +11563,12 @@ class VideoService:
         frame_h, frame_w = frame.shape[:2]
         for det in detections or []:
             bbox = det.get("bbox") or det.get("coords") or []
+            if (not bbox or len(bbox) < 4) and det.get("coords_norm"):
+                try:
+                    nx1, ny1, nx2, ny2 = [float(v) for v in det.get("coords_norm")[:4]]
+                    bbox = [nx1 * frame_w, ny1 * frame_h, nx2 * frame_w, ny2 * frame_h]
+                except Exception:
+                    bbox = []
             if len(bbox) < 4:
                 continue
             try:
@@ -11133,6 +11576,24 @@ class VideoService:
                 confidence = float(det.get("confidence", 0.0) or 0.0)
             except Exception:
                 continue
+            name = str(
+                det.get("personName")
+                or det.get("person_name")
+                or det.get("label")
+                or ""
+            ).strip() or "未知人员"
+            alarm_labels = det.get("alarmLabels") or []
+            if not alarm_labels and isinstance(det.get("behaviorAlarms"), list):
+                alarm_labels = [
+                    str(item.get("label") or item.get("type") or "").strip()
+                    for item in det.get("behaviorAlarms")
+                    if isinstance(item, dict) and str(item.get("label") or item.get("type") or "").strip()
+                ]
+            label = name
+            if alarm_labels:
+                label = f"{name} | 异常:{'、'.join(alarm_labels[:2])}"
+            elif confidence:
+                label = f"{name} {confidence:.2f}"
             boxes.append({
                 "coords": [
                     int(max(0, min(frame_w - 1, x1))),
@@ -11142,8 +11603,9 @@ class VideoService:
                 ],
                 "frame_width": frame_w,
                 "frame_height": frame_h,
-                "label": f"person {confidence:.2f}",
+                "label": label,
                 "alarm_type": "person",
+                "level": det.get("alarmLevel") or det.get("alarm_level") or "",
             })
 
         if not boxes:
@@ -11151,6 +11613,29 @@ class VideoService:
 
         from app.services.ai_manager import ai_manager
         return ai_manager._draw_boxes_on_frame(frame, boxes)
+
+    def _pick_timeline_tracks(self, timeline: list[dict], target_epoch_ms: int, max_delta_ms: int) -> list[dict]:
+        if not timeline:
+            return []
+        best = None
+        best_delta = None
+        for item in timeline:
+            try:
+                delta = abs(int(item.get("frame_epoch_ms") or 0) - int(target_epoch_ms))
+            except Exception:
+                continue
+            if best_delta is None or delta < best_delta:
+                best = item
+                best_delta = delta
+        if best is None or best_delta is None or best_delta > max_delta_ms:
+            return []
+        return best.get("tracks") or []
+
+    def _get_recording_start_epoch_ms(self, source_path: str) -> Optional[int]:
+        started_at = self._parse_segment_start(source_path)
+        if not started_at:
+            return None
+        return int(started_at.timestamp() * 1000)
 
     def generate_boxed_recording_video(
         self,
@@ -11185,12 +11670,27 @@ class VideoService:
         detected_frames = 0
         started_at = time.time()
         last_detections = []
+        timeline = []
+        recording_start_epoch_ms = self._get_recording_start_epoch_ms(source_path)
+        timeline_offset_ms = int(os.getenv("BOXED_RECORDING_TIMELINE_OFFSET_MS", "0") or "0")
+        timeline_match_ms = max(50, int(os.getenv("BOXED_RECORDING_TIMELINE_MATCH_MS", "450") or "450"))
         try:
             fps = cap.get(cv2.CAP_PROP_FPS) or 25
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
             if width <= 0 or height <= 0:
                 raise ValueError("invalid recording dimensions")
+            if recording_start_epoch_ms is not None:
+                try:
+                    from app.services.ai_manager import ai_manager
+                    duration_ms = int((cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / max(1.0, fps) * 1000)
+                    timeline = ai_manager.get_person_track_timeline(
+                        video_id,
+                        recording_start_epoch_ms - timeline_match_ms + timeline_offset_ms,
+                        recording_start_epoch_ms + duration_ms + timeline_match_ms + timeline_offset_ms,
+                    )
+                except Exception:
+                    timeline = []
 
             writer = cv2.VideoWriter(raw_tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
             if not writer.isOpened():
@@ -11200,7 +11700,12 @@ class VideoService:
                 ok, frame = cap.read()
                 if not ok:
                     break
-                if frames % stride == 0:
+                if timeline and recording_start_epoch_ms is not None:
+                    target_epoch_ms = int(recording_start_epoch_ms + (frames / max(1.0, fps)) * 1000 + timeline_offset_ms)
+                    last_detections = self._pick_timeline_tracks(timeline, target_epoch_ms, timeline_match_ms)
+                    if last_detections:
+                        detected_frames += 1
+                elif frames % stride == 0:
                     result = detect_frame(algorithm, frame, conf=float(os.getenv("BOXED_RECORDING_PERSON_CONF", "0.35")))
                     last_detections = result.get("detections") if isinstance(result, dict) else []
                     detected_frames += 1
@@ -11256,6 +11761,9 @@ class VideoService:
                 "cached": False,
                 "frames": frames,
                 "detected_frames": detected_frames,
+                "timeline_samples": len(timeline),
+                "timeline_offset_ms": timeline_offset_ms,
+                "timeline_match_ms": timeline_match_ms,
                 "elapsed_ms": int((time.time() - started_at) * 1000),
             }
         finally:
@@ -11284,118 +11792,192 @@ class VideoService:
         except ValueError:
             return None
 
-    def _build_playback_file_index(self) -> tuple[list[dict], list[dict]]:
+    def _build_playback_file_index(
+        self,
+        device_ids: Optional[set[str]] = None,
+        media_type: str = "all",
+        max_items: Optional[int] = None,
+    ) -> tuple[list[dict], list[dict]]:
+        wanted_device_ids = {str(item) for item in (device_ids or set()) if str(item)}
+        media_type = str(media_type or "all").strip().lower()
+        if media_type not in {"all", "manual", "alarm"}:
+            media_type = "all"
+        bounded_max_items = max(0, int(max_items or 0))
+        cache_key = f"{media_type}:{','.join(sorted(wanted_device_ids)) if wanted_device_ids else '*'}:{bounded_max_items or 'all'}"
         now = time.time()
-        cached = self._playback_index_cache
+        cached = self._playback_index_cache_map.get(cache_key) or {"expires_at": 0.0, "recordings": [], "alarms": []}
         if now < float(cached.get("expires_at") or 0):
             return cached["recordings"], cached["alarms"]
 
-        with self._playback_index_lock:
-            cached = self._playback_index_cache
+        if not self._playback_index_lock.acquire(blocking=False):
+            if cached.get("recordings") or cached.get("alarms"):
+                return cached.get("recordings") or [], cached.get("alarms") or []
+            for _ in range(80):
+                time.sleep(0.1)
+                cached = self._playback_index_cache_map.get(cache_key) or {}
+                if cached.get("recordings") or cached.get("alarms"):
+                    return cached.get("recordings") or [], cached.get("alarms") or []
+            return [], []
+        try:
+            cached = self._playback_index_cache_map.get(cache_key) or {"expires_at": 0.0, "recordings": [], "alarms": []}
             if now < float(cached.get("expires_at") or 0):
                 return cached["recordings"], cached["alarms"]
 
             recordings: list[dict] = []
             alarms: list[dict] = []
-            segment_seconds = RECORD_SEGMENT_SECONDS
+            segment_seconds = self._get_record_segment_seconds()
+            fast_index = str(os.getenv("VIDEO_PLAYBACK_FAST_INDEX", "1")).strip().lower() not in {
+                "0",
+                "false",
+                "no",
+                "off",
+            }
 
-            for root in self._get_all_record_roots():
-                if not os.path.isdir(root):
-                    continue
-                for device_entry in os.scandir(root):
-                    if not device_entry.is_dir():
+            limit_per_device = bounded_max_items if bounded_max_items and media_type in {"manual", "alarm"} else 0
+
+            if media_type in {"all", "manual"}:
+                for root in self._get_all_record_roots():
+                    if not os.path.isdir(root):
                         continue
-                    device_id = device_entry.name
-                    try:
-                        entries = os.scandir(device_entry.path)
-                    except OSError:
-                        continue
-                    with entries:
-                        video_entries = sorted(
-                            [
-                                entry
-                                for entry in entries
-                                if entry.is_file() and entry.name.lower().endswith(".mp4")
-                            ],
-                            key=lambda entry: entry.name,
-                        )
-                        for index, entry in enumerate(video_entries):
-                            has_newer_segment = index < len(video_entries) - 1
-                            try:
-                                stat = entry.stat()
-                            except OSError:
-                                continue
-                            if stat.st_size < 64 * 1024:
-                                continue
-                            if not self._is_segment_usable(
-                                entry.path,
-                                min_age_seconds=2,
-                                has_newer_segment=has_newer_segment,
-                                allow_probe_fallback=False,
-                            ):
-                                continue
-                            started_at = self._parse_segment_start(entry.path)
-                            if not started_at:
-                                started_at = datetime.fromtimestamp(stat.st_mtime)
-                            thumbnail_path = f"{entry.path}.jpg"
-                            recordings.append({
-                                "device_id": str(device_id),
-                                "name": entry.name,
-                                "file_path": entry.path,
-                                "size_bytes": int(stat.st_size),
-                                "start_at": started_at,
-                                "end_at": started_at + timedelta(seconds=segment_seconds),
-                                "updated_at": datetime.fromtimestamp(stat.st_mtime),
-                                "web_path": self._to_backend_static_web_path(entry.path),
-                                "thumbnail_path": self._to_backend_static_web_path(thumbnail_path)
-                                if os.path.isfile(thumbnail_path)
-                                else "",
-                            })
+                    for device_entry in os.scandir(root):
+                        if not device_entry.is_dir():
+                            continue
+                        device_id = device_entry.name
+                        if wanted_device_ids and str(device_id) not in wanted_device_ids:
+                            continue
+                        try:
+                            entries = os.scandir(device_entry.path)
+                        except OSError:
+                            continue
+                        with entries:
+                            video_entries = sorted(
+                                [
+                                    entry
+                                    for entry in entries
+                                    if entry.is_file() and entry.name.lower().endswith(".mp4")
+                                ],
+                                key=lambda entry: entry.name,
+                            )
+                            entry_iter = list(enumerate(video_entries))
+                            if limit_per_device and media_type == "manual":
+                                entry_iter = list(reversed(entry_iter))
+                                entry_iter = entry_iter[:limit_per_device + 2]
+                            for index, entry in entry_iter:
+                                has_newer_segment = index < len(video_entries) - 1
+                                try:
+                                    stat = entry.stat()
+                                except OSError:
+                                    continue
+                                if stat.st_size < 64 * 1024:
+                                    continue
+                                if time.time() - stat.st_mtime < 10 and not self._mp4_has_moov_atom(entry.path):
+                                    continue
+                                started_at = self._parse_segment_start(entry.path)
+                                if not started_at:
+                                    started_at = datetime.fromtimestamp(stat.st_mtime)
+                                next_started_at = None
+                                if has_newer_segment:
+                                    next_started_at = self._parse_segment_start(video_entries[index + 1].path)
+                                if fast_index:
+                                    if not has_newer_segment and time.time() - stat.st_mtime < 2:
+                                        continue
+                                    ended_at = (
+                                        next_started_at
+                                        if next_started_at and next_started_at > started_at
+                                        else started_at + timedelta(seconds=segment_seconds)
+                                    )
+                                else:
+                                    ok, probed_duration, _reason = self._validate_recording_segment(
+                                        entry.path,
+                                        min_age_seconds=2,
+                                        probe_timeout_seconds=RECORDING_LIST_FFPROBE_TIMEOUT_SECONDS,
+                                        check_decode=False,
+                                    )
+                                    if not ok:
+                                        continue
+                                    ended_at = started_at + timedelta(seconds=probed_duration or segment_seconds)
+                                thumbnail_path = f"{entry.path}.jpg"
+                                is_raw_recording = os.path.abspath(entry.path).startswith(
+                                    os.path.abspath(self._get_raw_record_root())
+                                )
+                                metadata_path = os.path.join(
+                                    self._get_recording_metadata_root(),
+                                    str(device_id),
+                                    f"{os.path.splitext(os.path.basename(entry.path))[0]}.jsonl",
+                                )
+                                recordings.append({
+                                    "device_id": str(device_id),
+                                    "name": entry.name,
+                                    "file_path": entry.path,
+                                    "size_bytes": int(stat.st_size),
+                                    "start_at": started_at,
+                                    "end_at": ended_at,
+                                    "updated_at": datetime.fromtimestamp(stat.st_mtime),
+                                    "web_path": self._to_backend_static_web_path(entry.path),
+                                    "thumbnail_path": self._to_backend_static_web_path(thumbnail_path),
+                                    "thumbnail_ready": os.path.isfile(thumbnail_path),
+                                    "source_type": "raw" if is_raw_recording else "annotated",
+                                    "is_raw": is_raw_recording,
+                                    "metadata_available": os.path.isfile(metadata_path),
+                                })
 
             alarm_pattern = re.compile(
                 r"^alarm_(?P<alarm_id>[^_]+)_(?P<device_id>[^_]+)_"
                 r"(?P<start>\d{8}_\d{6})_(?P<end>\d{8}_\d{6})\.mp4$",
                 re.IGNORECASE,
             )
-            seen_alarm_paths: set[str] = set()
-            for root in self._get_all_alarm_video_roots():
-                if not os.path.isdir(root):
-                    continue
-                for dir_path, _, file_names in os.walk(root):
-                    for file_name in file_names:
-                        if not file_name.lower().endswith(".mp4"):
-                            continue
-                        file_path = os.path.join(dir_path, file_name)
-                        normalized_path = os.path.normcase(os.path.abspath(file_path))
-                        if normalized_path in seen_alarm_paths:
-                            continue
-                        seen_alarm_paths.add(normalized_path)
-                        match = alarm_pattern.match(file_name)
-                        if not match:
-                            continue
-                        try:
-                            stat = os.stat(file_path)
-                            started_at = datetime.strptime(match.group("start"), "%Y%m%d_%H%M%S")
-                            ended_at = datetime.strptime(match.group("end"), "%Y%m%d_%H%M%S")
-                        except (OSError, ValueError):
-                            continue
-                        alarms.append({
-                            "alarm_id": match.group("alarm_id"),
-                            "device_id": match.group("device_id"),
-                            "name": file_name,
-                            "size_bytes": int(stat.st_size),
-                            "start_at": started_at,
-                            "end_at": ended_at,
-                            "updated_at": datetime.fromtimestamp(stat.st_mtime),
-                            "web_path": self._to_backend_static_web_path(file_path),
-                        })
+            if media_type in {"all", "alarm"}:
+                seen_alarm_paths: set[str] = set()
+                for root in self._get_all_alarm_video_roots():
+                    if not os.path.isdir(root):
+                        continue
+                    for dir_path, _, file_names in os.walk(root):
+                        sorted_names = sorted(file_names, reverse=str(media_type) == "alarm")
+                        if limit_per_device and media_type == "alarm":
+                            sorted_names = sorted_names[:limit_per_device + 2]
+                        for file_name in sorted_names:
+                            if not file_name.lower().endswith(".mp4"):
+                                continue
+                            file_path = os.path.join(dir_path, file_name)
+                            normalized_path = os.path.normcase(os.path.abspath(file_path))
+                            if normalized_path in seen_alarm_paths:
+                                continue
+                            seen_alarm_paths.add(normalized_path)
+                            match = alarm_pattern.match(file_name)
+                            if not match:
+                                continue
+                            if wanted_device_ids and str(match.group("device_id")) not in wanted_device_ids:
+                                continue
+                            try:
+                                stat = os.stat(file_path)
+                                started_at = datetime.strptime(match.group("start"), "%Y%m%d_%H%M%S")
+                                ended_at = datetime.strptime(match.group("end"), "%Y%m%d_%H%M%S")
+                            except (OSError, ValueError):
+                                continue
+                            alarms.append({
+                                "alarm_id": match.group("alarm_id"),
+                                "device_id": match.group("device_id"),
+                                "name": file_name,
+                                "size_bytes": int(stat.st_size),
+                                "start_at": started_at,
+                                "end_at": ended_at,
+                                "updated_at": datetime.fromtimestamp(stat.st_mtime),
+                                "web_path": self._to_backend_static_web_path(file_path),
+                            })
 
-            self._playback_index_cache = {
+            cached_result = {
                 "expires_at": time.time() + 10.0,
                 "recordings": recordings,
                 "alarms": alarms,
             }
+            self._playback_index_cache_map[cache_key] = cached_result
+            self._playback_index_cache = cached_result
             return recordings, alarms
+        finally:
+            try:
+                self._playback_index_lock.release()
+            except RuntimeError:
+                pass
 
     def query_playbacks(
         self,
@@ -11419,13 +12001,19 @@ class VideoService:
             if doc and in_scope(doc, current_user, **self._scope_kwargs())
         ]
 
+        def normalize_filter_value(value: Any) -> str:
+            text = self._playback_text(value)
+            if text.lower() in {"all", "全部", "不限", "全部公司", "所有公司", "全部项目", "所有项目", "全部网格", "所有网格", "全部工队", "所有工队"}:
+                return ""
+            return text
+
         filters = {
-            "company": self._playback_text(company),
-            "project": self._playback_text(project),
-            "grid": self._playback_text(grid),
-            "team": self._playback_text(team),
+            "company": normalize_filter_value(company),
+            "project": normalize_filter_value(project),
+            "grid": normalize_filter_value(grid),
+            "team": normalize_filter_value(team),
         }
-        requested_device = self._playback_text(device_id)
+        requested_device = normalize_filter_value(device_id)
         keyword_text = self._playback_text(keyword).lower()
 
         def matches_device(doc: dict) -> bool:
@@ -11469,7 +12057,27 @@ class VideoService:
             for doc in docs
             if matches_device(doc) and self._playback_text(doc.get("id"))
         }
-        recordings, alarms = self._build_playback_file_index()
+        sort_desc = str(sort_order or "desc").lower() != "asc"
+        can_use_partial_index = (
+            sort_desc
+            and not keyword_text
+            and not start_time
+            and not end_time
+            and media_type in {"manual", "alarm"}
+        )
+        partial_index_limit = max(0, int(page) * min(max(1, int(page_size)), 100) + 20) if can_use_partial_index else None
+        index_building = False
+        try:
+            recordings, alarms = self._build_playback_file_index(
+                set(device_map.keys()),
+                media_type=media_type,
+                max_items=partial_index_limit,
+            )
+        except RuntimeError as exc:
+            if "playback file index is still building" not in str(exc):
+                raise
+            recordings, alarms = [], []
+            index_building = True
         source = alarms if media_type == "alarm" else recordings
         filter_start = self._parse_playback_filter_time(start_time)
         filter_end = self._parse_playback_filter_time(end_time)
@@ -11489,7 +12097,19 @@ class VideoService:
                 continue
             matched.append({**item, "device": doc})
 
-        matched.sort(key=lambda item: item["start_at"], reverse=str(sort_order or "desc").lower() != "asc")
+        if media_type != "alarm":
+            deduped: dict[tuple[str, str], dict] = {}
+            for item in matched:
+                key = (
+                    self._playback_text(item.get("device_id")),
+                    item["start_at"].strftime("%Y%m%d_%H%M"),
+                )
+                current = deduped.get(key)
+                if current is None or (item.get("is_raw") and not current.get("is_raw")):
+                    deduped[key] = item
+            matched = list(deduped.values())
+
+        matched.sort(key=lambda item: item["start_at"], reverse=sort_desc)
         bounded_page_size = max(1, min(int(page_size), 100))
         bounded_page = max(1, int(page))
         total = len(matched)
@@ -11518,15 +12138,12 @@ class VideoService:
                     logger.warning(f"Failed to merge alarm metadata for playbacks: {exc}")
 
         result_items = []
+        thumbnail_jobs: list[str] = []
         for item in page_items:
             doc = item["device"]
             duration_seconds = max(1, int((item["end_at"] - item["start_at"]).total_seconds()))
             alarm_doc = alarm_docs_by_id.get(self._playback_text(item.get("alarm_id")), {})
             thumbnail_path = item.get("thumbnail_path") or ""
-            if media_type != "alarm" and not thumbnail_path and item.get("file_path"):
-                generated_thumbnail = self._get_recording_thumbnail_path(str(item.get("file_path")))
-                if generated_thumbnail:
-                    thumbnail_path = self._to_backend_static_web_path(generated_thumbnail)
             alarm_image_path = (
                 alarm_doc.get("alarm_image_path")
                 or alarm_doc.get("screenshot_path")
@@ -11554,7 +12171,13 @@ class VideoService:
                 "updated_at": item["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "web_path": item["web_path"],
                 "thumbnail_path": thumbnail_path,
+                "thumbnail_ready": bool(item.get("thumbnail_ready")),
+                "source_type": item.get("source_type") or "",
+                "is_raw": bool(item.get("is_raw")),
+                "metadata_available": bool(item.get("metadata_available")),
             }
+            if media_type != "alarm" and not item.get("thumbnail_ready") and item.get("file_path"):
+                thumbnail_jobs.append(item["file_path"])
             if media_type == "alarm":
                 result_item.update({
                     "alarm_type": alarm_doc.get("alarm_type") or "",
@@ -11570,6 +12193,9 @@ class VideoService:
                 })
             result_items.append(result_item)
 
+        if thumbnail_jobs:
+            self._queue_recording_thumbnails(thumbnail_jobs[:bounded_page_size])
+
         return {
             "code": 0,
             "data": result_items,
@@ -11577,6 +12203,9 @@ class VideoService:
             "page": bounded_page,
             "page_size": bounded_page_size,
             "total_pages": (total + bounded_page_size - 1) // bounded_page_size,
+            "partial": bool(partial_index_limit),
+            "index_building": index_building,
+            "message": "录像索引正在整理，请稍候" if index_building else "",
         }
 
 
