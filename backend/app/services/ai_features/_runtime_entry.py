@@ -46,13 +46,23 @@ def legacy_alarm_detect(service, algorithm_code: str, frame: Any, device_id=None
     alarm_labels = config.alarm_labels if config else None
     boxes = to_alarm_boxes(result, alarm_labels)
     if not boxes:
-        return False, None
+        return False, {
+            "alarm": False,
+            "type": result.get("algorithm_code") or algorithm_code,
+            "algorithm_code": result.get("algorithm_code") or algorithm_code,
+            "algorithm_name": result.get("algorithm_name") or algorithm_code,
+            "detections": result.get("detections") or [],
+        }
 
-    alarm_type = result.get("algorithm_name") or algorithm_code
-    if hasattr(service, "_check_cooldown_and_multi_alarm"):
-        return service._check_cooldown_and_multi_alarm(alarm_type, boxes, device_id=device_id)
-
-    return True, {"alarm": True, "type": algorithm_code, "boxes": boxes}
+    alarm_type = str(boxes[0].get("type") or algorithm_code).strip()
+    return True, {
+        "alarm": True,
+        "type": alarm_type,
+        "algorithm_code": result.get("algorithm_code") or algorithm_code,
+        "algorithm_name": result.get("algorithm_name") or algorithm_code,
+        "boxes": boxes,
+        "alarm_boxes": boxes,
+    }
 
 
 def has_alarm_detection(algorithm_code: str, detection: dict) -> bool:

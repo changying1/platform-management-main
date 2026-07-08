@@ -137,6 +137,16 @@ class VideoBase(BaseModel):
     responsible_person: Optional[str] = Field(None, description="responsible person")
     responsible_person_name: Optional[str] = Field(None, description="responsible person name")
     manager_name: Optional[str] = Field(None, description="manager name")
+    ai_rules: Optional[str] = Field(None, description="AI rules")
+    aiRules: Optional[str] = Field(None, description="AI rules")
+    algo_rules: Optional[str] = Field(None, description="algorithm rules")
+    algoRules: Optional[str] = Field(None, description="algorithm rules")
+    rules: Optional[str] = Field(None, description="rules")
+    algo_type: Optional[str] = Field(None, description="algorithm type")
+    algoType: Optional[str] = Field(None, description="algorithm type")
+    algos: Optional[str] = Field(None, description="algorithms")
+    face_assist_enabled: Optional[bool] = Field(None, description="face assist enabled")
+    faceAssistEnabled: Optional[bool] = Field(None, description="face assist enabled")
 
 
 

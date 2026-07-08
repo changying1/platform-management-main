@@ -40,6 +40,8 @@ from app.services.ai_runtime.algorithm_catalog import list_algorithms
 router = APIRouter(prefix="/video", tags=["Video Surveillance"])
 service = VideoService()
 logger = get_logger("VideoController")
+_AI_TRACK_SCOPE_CACHE: dict[tuple, tuple[float, dict]] = {}
+_AI_TRACK_SCOPE_CACHE_TTL_SECONDS = 2.0
 
 
 def _ensure_zoom_direction(direction: str):
@@ -68,6 +70,30 @@ def _require_video_scope(video_id: int | str, current_user: dict):
     video_doc = service._get_video_doc_by_id(video_id)
     if not _video_visible(video_doc, current_user):
         raise HTTPException(status_code=404, detail="Video device not found")
+    return video_doc
+
+
+def _track_scope_cache_key(video_id: int | str, current_user: dict) -> tuple:
+    return (
+        str(video_id),
+        str(current_user.get("username") or current_user.get("id") or ""),
+        str(current_user.get("permission_level") or ""),
+        str(current_user.get("role") or ""),
+        str(current_user.get("branch_id") or current_user.get("department_id") or ""),
+        str(current_user.get("project_id") or current_user.get("project") or ""),
+        str(current_user.get("grid_id") or ""),
+        str(current_user.get("team_id") or current_user.get("team") or current_user.get("work_team") or ""),
+    )
+
+
+def _require_video_scope_cached(video_id: int | str, current_user: dict):
+    key = _track_scope_cache_key(video_id, current_user)
+    now = time.time()
+    cached = _AI_TRACK_SCOPE_CACHE.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+    video_doc = _require_video_scope(video_id, current_user)
+    _AI_TRACK_SCOPE_CACHE[key] = (now + _AI_TRACK_SCOPE_CACHE_TTL_SECONDS, video_doc)
     return video_doc
 
 
@@ -144,6 +170,7 @@ class BoxedRecordingRequest(BaseModel):
 
 class DeviceRulesUpdateRequest(BaseModel):
     rules: list[str] = []
+    face_assist_enabled: bool | None = None
 
 
 def _split_device_rule_value(value) -> list[str]:
@@ -281,11 +308,19 @@ async def start_ai(req: AIMonitorRequest, db=Depends(get_db), current_user: dict
         )
 
     algo_type = str(req.algo_type or "").strip() or "helmet"
+    was_running = device_id in ai_manager.active_monitors
     success = ai_manager.start_monitoring(device_id, ai_stream_url if has_decodable_stream else "", algo_type)
 
     if success:
         print(f"[ALARM_API_START_OK] device_id={device_id} algo_type={algo_type}")
         return {"code": 200, "message": f"AI监控已启动: {algo_type}"}
+    if was_running and device_id in ai_manager.active_monitors:
+        print(f"[ALARM_API_START_REUSED] device_id={device_id} algo_type={algo_type}")
+        return {
+            "code": 200,
+            "message": f"AI monitor already running; rules updated: {algo_type}",
+            "reused": True,
+        }
     else:
         print(f"[ALARM_API_START_FAILED] device_id={device_id} reason=already_running_or_start_failed")
         raise HTTPException(status_code=400, detail="启动失败或已在运行")
@@ -355,7 +390,7 @@ def get_ai_rules(current_user: dict = Depends(get_current_user)):
 @router.get("/ai/tracks/{video_id}")
 def get_ai_person_tracks(video_id: int, current_user: dict = Depends(get_current_user)):
     """Return the latest person tracking boxes for the live video overlay."""
-    _require_video_scope(video_id, current_user)
+    _require_video_scope_cached(video_id, current_user)
     return ai_manager.get_latest_person_tracks(video_id)
 
 
@@ -399,6 +434,9 @@ def detect_ai_frame(video_id: int, body: AIFrameDetectRequest, current_user: dic
     payload["detect_elapsed_ms"] = int((finished_at - detect_started_at).total_seconds() * 1000)
     payload["server_elapsed_ms"] = int((finished_at - request_started_at).total_seconds() * 1000)
     payload["debug_frame_url"] = debug_frame_url
+    metadata_path = service.append_ai_detection_metadata(video_id, payload, body.capture_time)
+    if metadata_path:
+        payload["metadata_saved"] = True
     print(
         f"[AI_FRAME_DETECT] video_id={video_id} frame={frame.shape[1]}x{frame.shape[0]} "
         f"tracks={len(payload.get('tracks') or [])} elapsed_ms={payload['server_elapsed_ms']}"
@@ -512,7 +550,12 @@ def get_device_rules(video_id: int, current_user: dict = Depends(get_current_use
 def update_device_rules(video_id: int, body: DeviceRulesUpdateRequest, current_user: dict = Depends(get_current_user)):
     """更新设备算法规则；若设备正在监控则热更新"""
     _require_video_scope(video_id, current_user)
-    rules = ai_manager.set_device_rules(str(video_id), body.rules or [])
+    requested_rules = list(body.rules or [])
+    if body.face_assist_enabled and "face" not in requested_rules:
+        requested_rules.append("face")
+    if body.face_assist_enabled is False:
+        requested_rules = [rule for rule in requested_rules if rule != "face"]
+    rules = ai_manager.set_device_rules(str(video_id), requested_rules)
     service._update_video_fields(video_id, {"ai_rules": ",".join(rules)})
 
     monitor = ai_manager.active_monitors.get(str(video_id))
@@ -1167,6 +1210,23 @@ def list_recording_videos(
         return {"code": 0, "data": videos, "total": len(videos)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取录制视频列表失败: {e}")
+
+
+@router.get("/{video_id}/recordings/metadata")
+def get_recording_metadata(
+    video_id: int,
+    web_path: str = Query(...),
+    max_hold_ms: int = Query(500, ge=100, le=2000),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return timestamped AI metadata for a recorded raw video segment."""
+    try:
+        _require_video_scope(video_id, current_user)
+        return service.get_recording_ai_metadata(video_id, web_path, max_hold_ms=max_hold_ms)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get recording AI metadata failed: {e}")
 
 
 @router.post("/{video_id}/recordings/boxed")

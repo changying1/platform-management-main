@@ -1187,7 +1187,7 @@ const handleClearDraw = () => {
 
 const handleSaveFenceWithRules = (ruleData: any) => {
   const shape = ruleData.shape === 'circle' ? 'circle' : 'polygon';
-  const newFence = {
+  const fenceData = {
     id: Date.now().toString(),
     name: ruleData.name,
     company: ruleData.company || "",
@@ -1216,7 +1216,12 @@ const handleSaveFenceWithRules = (ruleData: any) => {
     workerCount: 0,
   };
   
-  addFence(newFence);
+  if (editingFenceId) {
+    updateFence(editingFenceId, fenceData);
+    setEditingFenceId(null);
+  } else {
+    addFence(fenceData);
+  }
   resetDrawing();
   setShowSuccess(true);
   setTimeout(() => setShowSuccess(false), 3000);
@@ -1238,7 +1243,7 @@ const handleSaveFenceAfterDraw = () => {
   if (!pendingFenceData) return;
   
   if (drawingMode === "circle" && tempCenter) {
-    const newFence = {
+    const fenceData = {
       id: Date.now().toString(),
       name: pendingFenceData.name,
       company: pendingFenceData.company || "",
@@ -1265,13 +1270,18 @@ const handleSaveFenceAfterDraw = () => {
       workerCount: 0,
     };
     
-    addFence(newFence);
+    if (editingFenceId) {
+      updateFence(editingFenceId, fenceData);
+      setEditingFenceId(null);
+    } else {
+      addFence(fenceData);
+    }
     resetDrawing();
     setShowAddModal(false);
     setPendingFenceData(null);
     setShowSuccess(true);
   } else if (drawingMode === "polygon" && tempPoints.length >= 3) {
-    const newFence = {
+    const fenceData = {
       id: Date.now().toString(),
       name: pendingFenceData.name,
       company: pendingFenceData.company || "",
@@ -1298,7 +1308,12 @@ const handleSaveFenceAfterDraw = () => {
       workerCount: 0,
     };
     
-    addFence(newFence);
+    if (editingFenceId) {
+      updateFence(editingFenceId, fenceData);
+      setEditingFenceId(null);
+    } else {
+      addFence(fenceData);
+    }
     resetDrawing();
     setShowAddModal(false);
     setPendingFenceData(null);
@@ -2240,6 +2255,10 @@ const handleEditFence = (fence: FenceData) => {
     brushFinishedRef.current = false;
     circleStartedRef.current = false;
     rectStartedRef.current = false;
+  }}
+  onResetDraw={() => {
+    setTempCenter(null);
+    setTempPoints([]);
   }}
 />
 

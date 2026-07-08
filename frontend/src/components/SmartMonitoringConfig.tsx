@@ -77,6 +77,9 @@ const aiDisplayName: Record<string, string> = {
   phone: '打电话检测',
   face: '人脸识别追溯辅助',
 };
+aiDisplayName.call = '\u6253\u7535\u8bdd\u68c0\u6d4b';
+aiDisplayName.calling = '\u6253\u7535\u8bdd\u68c0\u6d4b';
+aiDisplayName.phone_call = '\u6253\u7535\u8bdd\u68c0\u6d4b';
 
 const aiDisplayDesc: Record<string, string> = {
   helmet: '检测人员是否正确佩戴安全帽',
@@ -98,6 +101,44 @@ const splitRuleValue = (value: unknown): string[] => {
     .split(/[,，、\s]+/)
     .map(item => item.trim())
     .filter(Boolean);
+};
+
+const normalizeRuleId = (value: unknown): string => {
+  const text = String(value || '').trim();
+  const normalized = text.toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases: Record<string, string> = {
+    call: 'phone',
+    calling: 'phone',
+    phone_call: 'phone',
+    reflective_vest: 'vest',
+    reflection: 'vest',
+    no_vest: 'vest',
+    no_helmet: 'helmet',
+    safehat: 'helmet',
+    smoke: 'smoking',
+    flame: 'fire',
+  };
+  return aliases[normalized] || normalized;
+};
+
+const getPersistedRuleIds = (source: unknown): string[] => {
+  const record = source as Record<string, unknown>;
+  const rawRules = [
+    'ai_rules',
+    'aiRules',
+    'algo_rules',
+    'algoRules',
+    'rules',
+    'algo_type',
+    'algoType',
+    'algos',
+  ].flatMap(key => splitRuleValue(record?.[key]).map(normalizeRuleId));
+  const seen = new Set<string>();
+  return rawRules.filter(ruleId => {
+    if (!ruleId || seen.has(ruleId)) return false;
+    seen.add(ruleId);
+    return true;
+  });
 };
 
 const textOf = (value: unknown): string => {
@@ -219,6 +260,7 @@ export default function SmartMonitoringConfig({
   const [showPreview, setShowPreview] = useState(false);
   const [isAlgosLoaded, setIsAlgosLoaded] = useState(false); // ✅ 添加标记
   const [hasUserEditedAlgos, setHasUserEditedAlgos] = useState(false);
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
 
   // ✅ 只保留一个 fetchAIRules 调用
   useEffect(() => {
@@ -236,10 +278,12 @@ export default function SmartMonitoringConfig({
 
       const entries = await Promise.all(
         devices.map(async (device) => {
+          const fallbackRules = getPersistedRuleIds(device);
           try {
-            return [device.id, await getDeviceRules(device.id)] as const;
+            const rules = await getDeviceRules(device.id);
+            return [device.id, rules.length > 0 ? rules : fallbackRules] as const;
           } catch {
-            return [device.id, []] as const;
+            return [device.id, fallbackRules] as const;
           }
         })
       );
@@ -463,8 +507,8 @@ export default function SmartMonitoringConfig({
     const loadedRules = deviceRules.get(device.id);
     if (loadedRules) {
       const seenLoaded = new Set<string>();
-      return loadedRules.filter(ruleId => {
-        if (!ruleId || ruleId === 'face' || seenLoaded.has(ruleId)) {
+      return loadedRules.map(normalizeRuleId).filter(ruleId => {
+        if (!ruleId || ruleId === 'face' || ruleId === 'person' || seenLoaded.has(ruleId)) {
           return false;
         }
         seenLoaded.add(ruleId);
@@ -472,20 +516,10 @@ export default function SmartMonitoringConfig({
       });
     }
 
-    const source = device as Record<string, unknown>;
-    const rawRules = [
-      'ai_rules',
-      'aiRules',
-      'algo_rules',
-      'algoRules',
-      'rules',
-      'algo_type',
-      'algoType',
-      'algos',
-    ].flatMap(key => splitRuleValue(source[key]));
+    const rawRules = getPersistedRuleIds(device);
     const seen = new Set<string>();
-    return rawRules.filter(ruleId => {
-      if (!ruleId || ruleId === 'face' || seen.has(ruleId)) {
+    return rawRules.map(normalizeRuleId).filter(ruleId => {
+      if (!ruleId || ruleId === 'face' || ruleId === 'person' || seen.has(ruleId)) {
         return false;
       }
       seen.add(ruleId);
@@ -501,7 +535,9 @@ export default function SmartMonitoringConfig({
 
   const selectedDeviceList = devices.filter(device => selectedDevices.has(device.id));
   const selectedAlgoNames = Array.from(selectedAlgos)
-    .filter(id => algos.some(algo => algo.id === id))
+    .map(normalizeRuleId)
+    .filter((id, index, list) => list.indexOf(id) === index)
+    .filter(id => algos.some(algo => algo.id === id) && id !== 'face' && id !== 'person')
     .map(getRuleDisplayName);
 
   // 选择所有过滤后的设备
@@ -525,12 +561,14 @@ export default function SmartMonitoringConfig({
       newSelected.add(deviceId);
     }
     setSelectedDevices(newSelected);
+    setHasPendingChanges(true);
   };
 
   // 切换算法选择
   const toggleAlgo = (algoId: string) => {
     if (algoId === 'face' || !algos.some(algo => algo.id === algoId)) return;
     setHasUserEditedAlgos(true);
+    setHasPendingChanges(true);
     const newSelected = new Set(selectedAlgos);
     if (newSelected.has(algoId)) {
       newSelected.delete(algoId);
@@ -543,12 +581,14 @@ export default function SmartMonitoringConfig({
   // 选择所有算法
   const selectAllAlgos = () => {
     setHasUserEditedAlgos(true);
+    setHasPendingChanges(true);
     setSelectedAlgos(new Set(algos.map(a => a.id)));
   };
 
   // 清空算法选择
   const clearAllAlgos = () => {
     setHasUserEditedAlgos(true);
+    setHasPendingChanges(true);
     setSelectedAlgos(new Set());
   };
 
@@ -564,9 +604,13 @@ export default function SmartMonitoringConfig({
 
     const deviceArray = Array.from(selectedDevices);
     const behaviorAlgoIds = new Set(algos.map(algo => algo.id));
-    const algoList = Array.from(selectedAlgos).filter(id => behaviorAlgoIds.has(id) && id !== 'face');
-    const algoString = algoList.join(',');
-    const shouldStartMonitoring = autoStart && algoList.length > 0;
+    const algoList = Array.from(new Set(Array.from(selectedAlgos).map(normalizeRuleId)))
+      .filter(id => behaviorAlgoIds.has(id) && id !== 'face' && id !== 'person');
+    const runtimeAlgoList = faceAssistEnabled
+      ? Array.from(new Set([...algoList, 'face']))
+      : algoList;
+    const algoString = runtimeAlgoList.length > 0 ? runtimeAlgoList.join(',') : (faceAssistEnabled ? 'person,face' : '');
+    const shouldStartMonitoring = autoStart && Boolean(algoString);
 
     for (let i = 0; i < deviceArray.length; i++) {
       const deviceId = deviceArray[i];
@@ -599,7 +643,9 @@ export default function SmartMonitoringConfig({
         });
 
         // 先停止现有的监控
-        await stopAIMonitoring(String(deviceId));
+        let monitorStartError = '';
+        try {
+          await stopAIMonitoring(String(deviceId));
 
         // 启动新的监控；如果没有选择算法，则表示关闭 AI
         if (shouldStartMonitoring) {
@@ -607,7 +653,7 @@ export default function SmartMonitoringConfig({
           try {
             await startAIMonitoring(String(deviceId), streamSource, algoString);
           } catch (batchError: any) {
-            const selectedAlgoList = algoList;
+            const selectedAlgoList = runtimeAlgoList.length > 0 ? runtimeAlgoList : ['person', 'face'];
             if (selectedAlgoList.length <= 1) {
               throw batchError;
             }
@@ -618,12 +664,18 @@ export default function SmartMonitoringConfig({
           }
         }
 
-        const resultMessage = algoList.length > 0
+        } catch (monitorError: any) {
+          monitorStartError = monitorError?.message || 'AI monitoring start failed';
+        }
+
+        const resultMessage = monitorStartError
+          ? `规则已保存，AI启动失败: ${monitorStartError}`
+          : algoList.length > 0
           ? `已配置 ${algoList.length} 个AI功能`
           : '已关闭 AI 监控';
 
         setConfigResults(prev => new Map(prev).set(deviceId, {
-          success: true,
+          success: !monitorStartError,
           message: resultMessage
         }));
       } catch (error: any) {
@@ -638,6 +690,7 @@ export default function SmartMonitoringConfig({
     }
 
     setConfiguring(false);
+    setHasPendingChanges(false);
     onSuccess?.({
       deviceIds: Array.from(selectedDevices),
       algoIds: algoList,
@@ -1054,6 +1107,25 @@ export default function SmartMonitoringConfig({
                               <span className="text-xs text-slate-500">当前没有启用任何行为功能</span>
                             )}
                           </div>
+                          {hasPendingChanges && (
+                            <div className="mt-2 border-t border-slate-700/70 pt-2">
+                              <div className="mb-1 text-[11px] text-amber-300">待应用配置</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {selectedAlgoNames.length > 0 ? (
+                                  selectedAlgoNames.map(ruleName => (
+                                    <span
+                                      key={`pending-${ruleName}`}
+                                      className="rounded border border-amber-400/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-100"
+                                    >
+                                      {ruleName}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-amber-200/70">将关闭所有行为检测</span>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

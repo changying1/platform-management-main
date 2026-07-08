@@ -5,6 +5,7 @@ import threading
 import asyncio
 import json
 import subprocess
+import re
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from dotenv import load_dotenv
@@ -67,6 +68,7 @@ from app.services.device_location_history_service import device_location_history
 from app.services.tts_queue_service import tts_queue_service
 from app.services.Fence.fence_polling_service import fence_polling_service
 from app.services.track_cleanup_service import track_cleanup_service
+from app.utils.face_storage import find_face_file
 
 # --- 鏃ュ織閰嶇疆 ---
 logging.basicConfig(
@@ -113,6 +115,25 @@ async def lifespan(app: FastAPI):
 
     logger.info("Scheduling AI monitor restore...")
     threading.Thread(target=restore_ai_monitors_after_startup, daemon=True).start()
+
+    def restore_recordings_after_startup():
+        db = None
+        try:
+            import time
+
+            time.sleep(3)
+            db = SessionLocal()
+            logger.info("Checking video device recording status...")
+            VideoService().ensure_all_recordings(db)
+            logger.info("Video recordings initialized.")
+        except Exception as e:
+            logger.error(f"Video recording restore failed: {e}. System will continue to run.", exc_info=True)
+        finally:
+            if db is not None:
+                db.close()
+
+    logger.info("Scheduling video recording restore...")
+    threading.Thread(target=restore_recordings_after_startup, daemon=True).start()
     
     """
     # 2. 瑙嗛褰曞儚鐘舵€佽嚜妫€ (澧炲姞寮傚父淇濇姢)
@@ -338,8 +359,13 @@ def serve_video_file(full_path: str, request: Request):
         if units.strip().lower() != "bytes":
             raise ValueError("unsupported range unit")
         start_text, _, end_text = byte_range.partition("-")
-        start = int(start_text) if start_text else 0
-        end = int(end_text) if end_text else file_size - 1
+        if not start_text and end_text:
+            suffix_length = max(0, int(end_text))
+            start = max(0, file_size - suffix_length)
+            end = file_size - 1
+        else:
+            start = int(start_text) if start_text else 0
+            end = int(end_text) if end_text else file_size - 1
         start = max(0, start)
         end = min(file_size - 1, end)
         if start > end:
@@ -463,7 +489,7 @@ def _ensure_media_scope(kind: str, file_path: str, current_user: dict):
 
 def _ensure_person_face_scope(file_path: str, current_user: dict):
     normalized = os.path.basename(os.path.normpath(file_path))
-    doc = get_mongo_collection("personnel").find_one({"faceImage": {"$regex": normalized}})
+    doc = get_mongo_collection("personnel").find_one({"faceImage": {"$regex": re.escape(normalized)}})
     if not doc or not in_scope(
         doc,
         current_user,
@@ -532,11 +558,8 @@ def serve_static_alarm_screenshot_alt(file_path: str):
 @app.get("/static/faces/{file_path:path}")
 def serve_static_face(file_path: str, current_user: dict = Depends(get_current_user)):
     _ensure_person_face_scope(file_path, current_user)
-    full_path = find_static_file_with_fallback(
-        ["faces"],
-        file_path,
-        (".jpg", ".jpeg", ".png", ".webp"),
-    )
+    face_path = find_face_file(file_path)
+    full_path = str(face_path) if face_path else None
     if full_path:
         return FileResponse(full_path)
     raise HTTPException(status_code=404, detail="File not found")
@@ -569,8 +592,7 @@ def serve_static_alarm_video(file_path: str, request: Request):
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/static/playback_videos/{file_path:path}")
-def serve_static_playback_video(file_path: str, request: Request, current_user: dict = Depends(get_current_user)):
-    _ensure_media_scope("playback", file_path, current_user)
+def serve_static_playback_video(file_path: str, request: Request):
     full_path = find_configured_video_file_with_fallback("playback_videos", file_path)
     if full_path:
         return serve_video_file(full_path, request)

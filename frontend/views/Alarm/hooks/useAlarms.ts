@@ -15,6 +15,14 @@ const ALARM_TYPE_LABEL_MAP: Record<string, string> = {
   fence_exit: '电子围栏越界',
   intrusion: '区域入侵',
   helmet_missing: '未佩戴安全帽',
+  no_helmet: '未佩戴安全帽',
+  no_vest: '未穿反光衣',
+  ppe_violation: '防护用品穿戴异常',
+  ppe: '防护用品穿戴异常',
+  no_harness: '未系安全带',
+  harness_missing: '未系安全带',
+  safety_harness_missing: '未系安全带',
+  harness_violation: '未正确佩戴安全带',
   person_fall: '人员倒地',
 };
 

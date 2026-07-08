@@ -457,7 +457,7 @@ const LoginView = ({ onLogin }: { onLogin: (data: LoginResp, loginName: string) 
       <div className="flex items-center justify-center gap-4">
         {/* Logo */}
         <div className="w-24 h-24 md:w-32 md:h-32 lg:w-40 lg:h-40 flex items-center justify-center">
-          <span className="text-white font-bold text-3xl"><img src="/images/logo.jpeg" className="w-20 h-12 md:w-28 md:h-16 lg:w-36 lg:h-20" /></span>
+          <span className="text-white font-bold text-3xl"><img src="/images/公司logo.jpeg" className="w-20 h-12 md:w-28 md:h-16 lg:w-36 lg:h-20" /></span>
         </div>
         {/* 大标题 */}
         <h1 className="text-4xl font-bold text-white drop-shadow-2xl">xxxx公司智能安全管理系统</h1>
@@ -712,7 +712,7 @@ const Header = ({ onLogout }: { onLogout: () => void }) => {
     {/* 左侧标题 */}
 <div className="flex items-center gap-4">
   <img 
-    src="/images/logo.jpeg" 
+    src="/images/公司logo.jpeg" 
     className="w-28 h-16 object-contain" 
     alt="logo" 
   />
@@ -1136,7 +1136,7 @@ const AppHeader = ({
         style={{ background: 'linear-gradient(180deg, #0b4db3 0%, #0a3f99 42%, #0a2f73 100%)' }}
       >
         <div className="flex items-center gap-4">
-          <img src="/images/logo.jpeg" className="w-28 h-16 object-contain" alt="logo" />
+          <img src="/images/公司logo.jpeg" className="w-28 h-16 object-contain" alt="logo" />
           <h1 className="text-3xl font-bold text-white drop-shadow-lg tracking-wider">
             xxxx公司智能安全管理系统
           </h1>

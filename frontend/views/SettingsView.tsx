@@ -40,6 +40,54 @@ import {
 // 设置分类
 type SettingsTab = 'alarm' | 'video' | 'fence' | 'smartMonitoring' | 'log' | 'account' | 'notification' | 'backup' | 'ai';
 
+const MONITORING_DEVICES_CACHE_KEY = 'smart_monitoring_devices_cache_v1';
+
+const loadMonitoringDevicesCache = (): MonitoringVideo[] => {
+  try {
+    const raw = localStorage.getItem(MONITORING_DEVICES_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed?.devices) ? parsed.devices : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveMonitoringDevicesCache = (devices: MonitoringVideo[]) => {
+  try {
+    localStorage.setItem(MONITORING_DEVICES_CACHE_KEY, JSON.stringify({
+      devices,
+      cachedAt: Date.now(),
+    }));
+  } catch {}
+};
+
+const REQUIRED_AI_ALARM_LEVEL_CONFIGS = [
+  {
+    id: 'phone',
+    name: '\u6253\u7535\u8bdd\u68c0\u6d4b',
+    category: '\u4f5c\u4e1a\u884c\u4e3a',
+    code: 'phone',
+    level: 'high' as const,
+    description: '\u68c0\u6d4b\u4eba\u5458\u6253\u7535\u8bdd\u884c\u4e3a',
+  },
+];
+
+const normalizeAlarmConfigCode = (value: unknown) => {
+  const code = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return {
+    call: 'phone',
+    calling: 'phone',
+    phone_call: 'phone',
+  }[code] || code;
+};
+
+const mergeRequiredAiAlarmConfigs = (configs: any[] = []) => {
+  const list = Array.isArray(configs) ? configs : [];
+  const existingCodes = new Set(list.map(item => normalizeAlarmConfigCode(item?.code || item?.id || item?.name)));
+  const missing = REQUIRED_AI_ALARM_LEVEL_CONFIGS.filter(item => !existingCodes.has(normalizeAlarmConfigCode(item.code)));
+  return [...list, ...missing];
+};
+
 const DEFAULT_VIDEO_STORAGE_FOLDERS = {
   recordings: 'recordings',
   alarm_videos: 'alarm_videos',
@@ -632,7 +680,7 @@ export default function SettingsView() {
   aiVectorDbPath: './vector_db',
 
     // AI检测行为告警等级配置
-    aiAlarmLevelConfigs: [
+    aiAlarmLevelConfigs: mergeRequiredAiAlarmConfigs([
       { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
       { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
       { id: '3', name: '吸烟检测', category: '作业行为', code: 'smoking', level: 'high', description: '禁烟区域吸烟行为检测' },
@@ -648,7 +696,7 @@ export default function SettingsView() {
       { id: '13', name: '动火监护缺失', category: '动火作业', code: 'hotwork_supervisor', level: 'high', description: '动火作业无现场监护' },
       { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
       { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
-    ],
+    ]),
   });
   
   const [saved, setSaved] = useState(false);
@@ -669,7 +717,7 @@ export default function SettingsView() {
   const [showKbCreator, setShowKbCreator] = useState(false);
   const [kbList, setKbList] = useState(['default']);
   const [selectedKb, setSelectedKb] = useState('default');
-  const [monitoringDevices, setMonitoringDevices] = useState<MonitoringVideo[]>([]);
+  const [monitoringDevices, setMonitoringDevices] = useState<MonitoringVideo[]>(() => loadMonitoringDevicesCache());
   const [monitoringDevicesLoading, setMonitoringDevicesLoading] = useState(false);
   const [monitoringDevicesError, setMonitoringDevicesError] = useState('');
   const [smartMonitoringSelection, setSmartMonitoringSelection] = useState<{
@@ -678,24 +726,28 @@ export default function SettingsView() {
   }>(() => loadSmartMonitoringSelection());
 
   const loadMonitoringDevices = async () => {
-    setMonitoringDevicesLoading(true);
+    const hasExistingDevices = monitoringDevices.length > 0;
+    setMonitoringDevicesLoading(!hasExistingDevices);
     setMonitoringDevicesError('');
     try {
-      const data = await getAllVideos();
-      setMonitoringDevices(data || []);
+      const data = await getAllVideos({ timeoutMs: 12000 });
+      const nextDevices = data || [];
+      setMonitoringDevices(nextDevices);
+      saveMonitoringDevicesCache(nextDevices);
 
-      if ((data || []).length > 0 && smartMonitoringSelection.deviceIds.length === 0 && smartMonitoringSelection.algoIds.length === 0) {
-        const firstDeviceId = (data || [])[0]?.id;
+      if (nextDevices.length > 0 && smartMonitoringSelection.deviceIds.length === 0 && smartMonitoringSelection.algoIds.length === 0) {
+        const firstDeviceId = nextDevices[0]?.id;
         if (firstDeviceId) {
-          try {
-            const persistedRules = await getDeviceRules(firstDeviceId);
-            if (Array.isArray(persistedRules) && persistedRules.length > 0) {
-              setSmartMonitoringSelection({
-                deviceIds: [],
-                algoIds: persistedRules,
-              });
-            }
-          } catch {}
+          getDeviceRules(firstDeviceId)
+            .then((persistedRules) => {
+              if (Array.isArray(persistedRules) && persistedRules.length > 0) {
+                setSmartMonitoringSelection({
+                  deviceIds: [],
+                  algoIds: persistedRules,
+                });
+              }
+            })
+            .catch(() => {});
         }
       }
     } catch (error: any) {
@@ -718,7 +770,7 @@ export default function SettingsView() {
               ...DEFAULT_VIDEO_STORAGE_FOLDERS,
               ...(config.videoStorageFolders || {}),
             },
-            aiAlarmLevelConfigs: config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs,
+            aiAlarmLevelConfigs: mergeRequiredAiAlarmConfigs(config.aiAlarmLevelConfigs || prev.aiAlarmLevelConfigs),
           }));
         }
       })
@@ -730,7 +782,7 @@ export default function SettingsView() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'smartMonitoring' && monitoringDevices.length === 0 && !monitoringDevicesLoading) {
+    if (activeTab === 'smartMonitoring' && !monitoringDevicesLoading) {
       loadMonitoringDevices();
     }
   }, [activeTab]);
@@ -822,13 +874,17 @@ export default function SettingsView() {
     setSaving(true);
     setSaved(false);
     setSaveError('');
-    localStorage.setItem('systemSettings', JSON.stringify(settings));
+    const settingsToSave = {
+      ...settings,
+      aiAlarmLevelConfigs: mergeRequiredAiAlarmConfigs(settings.aiAlarmLevelConfigs),
+    };
+    localStorage.setItem('systemSettings', JSON.stringify(settingsToSave));
 
     try {
       const response = await fetch('/admin/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(settingsToSave),
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -845,7 +901,8 @@ export default function SettingsView() {
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    console.log('设置已保存:', settings);
+    setSettings(settingsToSave);
+    console.log('设置已保存:', settingsToSave);
   };
 
   const handleReset = () => {
@@ -873,7 +930,7 @@ export default function SettingsView() {
         videoTrafficMonthlyLimitGb: 30,
         videoTrafficReservedGb: 2,
         videoTrafficLowRatioPercent: 20,
-        aiAlarmLevelConfigs: [
+        aiAlarmLevelConfigs: mergeRequiredAiAlarmConfigs([
           { id: '1', name: '未佩戴安全帽', category: '安全防护', code: 'helmet_missing', level: 'high', description: '检测人员是否正确佩戴安全帽' },
           { id: '2', name: '未系安全带', category: '安全防护', code: 'safety_harness_missing', level: 'high', description: '高空作业人员安全带佩戴检测' },
           { id: '3', name: '吸烟检测', category: '作业行为', code: 'smoking', level: 'high', description: '禁烟区域吸烟行为检测' },
@@ -889,7 +946,7 @@ export default function SettingsView() {
           { id: '13', name: '动火监护缺失', category: '动火作业', code: 'hotwork_supervisor', level: 'high', description: '动火作业无现场监护' },
           { id: '14', name: '特种设备操作', category: '设备安全', code: 'special_equipment', level: 'high', description: '无证操作特种设备' },
           { id: '15', name: '安全帽颜色合规', category: '安全防护', code: 'helmet_color', level: 'low', description: '不同岗位安全帽颜色规范检查' },
-        ],
+        ]),
         videoRetentionDays: 360,
         videoQuality: 'high',
         videoSegmentMinutes: 30,
@@ -1075,7 +1132,7 @@ export default function SettingsView() {
                   </button>
                 </div>
               )}
-              {monitoringDevicesLoading ? (
+              {monitoringDevicesLoading && monitoringDevices.length === 0 ? (
                 <div className="flex h-full items-center justify-center rounded-xl border border-slate-700 bg-slate-800/30 text-sm text-slate-300">
                   正在加载监控设备...
                 </div>
@@ -1539,6 +1596,18 @@ export default function SettingsView() {
                 </div>
                 
                 {/* 子文件夹说明 */}
+                <div className="mb-3">
+                  <label className="block text-xs text-slate-400 mb-1">主存储路径</label>
+                  <input
+                    type="text"
+                    value={settings.videoStoragePath}
+                    onChange={(e) => setSettings({ ...settings, videoStoragePath: e.target.value })}
+                    placeholder="./backend/static"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400/50"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">录像、截图和人员人脸照片统一存放在该路径下；人脸照片固定使用 faces 子目录。</p>
+                </div>
+
                 <div className="bg-slate-900/50 rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between gap-3 mb-1">
                     <div className="text-xs text-slate-300 font-medium">文件存储结构：</div>

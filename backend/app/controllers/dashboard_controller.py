@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.core.data_scope import in_scope, is_hq, text
 from app.core.database import get_mongo_db
 from app.core.security import get_current_user
+from app.utils.alarm_labels import alarm_display_type
 from app.utils.config_manager import get_dashboard_alarm_stat_days, get_safety_production_days
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -305,7 +306,8 @@ def _alarm_list(alarms, limit=50):
     alarms = sorted(alarms, key=lambda a: _dt(a.get("timestamp") or a.get("created_at") or a.get("alarm_time")) or datetime.min, reverse=True)
     return [{
         "id": str(a.get("id") or idx),
-        "alarm_type": a.get("alarm_type") or "",
+        "alarm_type": alarm_display_type(a) or "",
+        "raw_alarm_type": a.get("alarm_type") or "",
         "severity": a.get("severity") or "",
         "description": _clean_description(a.get("description") or ""),
         "timestamp": _format_time(a.get("timestamp") or a.get("created_at") or a.get("alarm_time")),

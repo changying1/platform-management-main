@@ -11,6 +11,7 @@ from app.services.notification_service import notification_service
 from app.services.log_service import LogService
 from app.core.data_scope import in_scope, is_hq, matches_query, merge_filters, scope_filter
 from app.utils.config_manager import get_alarm_auto_resolve_enabled, get_alarm_retention_days, get_system_settings
+from app.utils.alarm_labels import alarm_display_type
 
 from datetime import datetime, timedelta
 import asyncio
@@ -669,7 +670,8 @@ class AlarmService:
         alarm_second = doc.get("alarm_second")
         if alarm_second is None:
             alarm_second = doc.get("alarmSecond")
-        alarm_type = doc.get("alarm_type") or doc.get("event_type") or doc.get("type") or doc.get("rule_name") or doc.get("algo_name") or "未知报警类型"
+        raw_alarm_type = doc.get("alarm_type") or doc.get("event_type") or doc.get("type") or doc.get("rule_name") or doc.get("algo_name") or raw_alarm_type
+        alarm_type = alarm_display_type(doc) or raw_alarm_type
         person = doc.get("person") or {}
         person_name = doc.get("person_name") or doc.get("captured_person_name") or doc.get("bound_person_name") or person.get("username") or person.get("name") or ""
         person_label = doc.get("person_label") or doc.get("captured_person_label") or ""
@@ -701,6 +703,7 @@ class AlarmService:
             "trigger_person_id": org_context.get("trigger_person_id"),
             "trigger_person_name": org_context.get("trigger_person_name"),
             "alarm_type": alarm_type,
+            "raw_alarm_type": raw_alarm_type,
             "severity": doc.get("severity") or "low",
             "timestamp": timestamp,
             "description": description,

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import flvjs from 'flv.js';
-import { getVideoStreamUrl, PTZ_ACTIVITY_EVENT, recognizeVideoTraffic } from '../api/videoApi';
+import { getDeviceRules, getVideoStreamUrl, PTZ_ACTIVITY_EVENT, recognizeVideoTraffic, startAIMonitoring } from '../api/videoApi';
 import { getAuthHeaders } from '../api/config';
+import { getAlarmDisplayLabel } from '../utils/alarmDisplay';
 
 const detectBackendUrl = (): string => {
   if ((import.meta as any).env?.VITE_API_BASE_URL) return (import.meta as any).env?.VITE_API_BASE_URL;
@@ -15,6 +16,7 @@ const MAX_RETRIES = 8;
 const RETRY_DELAY_MS = 1200;
 const TRAFFIC_OCR_FIRST_DELAY_MS = 10 * 1000;
 const TRAFFIC_OCR_AUTO_INTERVAL_MS = 60 * 60 * 1000;
+let VIDEO_PLAYER_INSTANCE_SEQ = 0;
 
 interface VideoPlayerProps {
   src: string;
@@ -65,27 +67,115 @@ type ConnectionStatus = 'connecting' | 'connected' | 'error';
 interface LivePersonTrack {
   track_id?: string;
   coords_norm?: number[];
+  coords?: number[];
   personName?: string;
   personnel_id?: string;
+  behaviorAlarms?: Array<{ label?: string; type?: string; level?: string; msg?: string }>;
+  alarmLabels?: string[];
+  alarmLevel?: string;
   misses?: number;
   score?: number;
+  box_area?: number;
 }
 
 interface LiveTrackPayload {
   timestamp?: string | null;
+  frame_epoch?: number | null;
+  frame_epoch_ms?: number | null;
+  detect_elapsed_ms?: number | null;
   frame_width?: number | null;
   frame_height?: number | null;
   tracks?: LivePersonTrack[];
   source?: string;
   age_ms?: number;
+  video_box_delta_ms?: number;
+  flv_playback_epoch_ms?: number;
+  flv_playback_lag_ms?: number;
+  flv_target_delay_ms?: number;
 }
 
 type VideoSyncMode = 'tracking' | 'realtime';
 type StreamMode = 'auto' | 'flv' | 'ezopen';
-const MAX_RENDERED_PERSON_TRACKS = 8;
-const SAME_PERSON_IOU_THRESHOLD = 0.45;
-const SAME_PERSON_CENTER_DISTANCE_THRESHOLD = 0.12;
-const ENABLE_SYNC_FRAME_FREEZE = (import.meta as any).env?.VITE_ENABLE_SYNC_FRAME_FREEZE === '1';
+const MAX_RENDERED_PERSON_TRACKS = 20;
+const SAME_PERSON_IOU_THRESHOLD = 0.55;
+const SAME_PERSON_CENTER_DISTANCE_THRESHOLD = 0.06;
+const AI_BOX_SMOOTH_CENTER_ALPHA = 0.9;
+const AI_BOX_SMOOTH_SIZE_ALPHA = 0.3;
+const AI_BOX_SMOOTH_DEADBAND = 0.004;
+const AI_BOX_SMOOTH_MAX_AGE_MS = 700;
+const AI_BOX_RELINK_MAX_AGE_MS = 900;
+const AI_BOX_RELINK_CENTER_DISTANCE = 0.18;
+const ENABLE_SYNC_FRAME_FREEZE = false;
+const AI_FRAME_DETECT_MIN_INTERVAL_MS = Number((import.meta as any).env?.VITE_AI_FRAME_DETECT_INTERVAL_MS || 350);
+const AI_TRACK_POLL_INTERVAL_MS = Number((import.meta as any).env?.VITE_AI_TRACK_POLL_INTERVAL_MS || Math.max(250, Math.floor(AI_FRAME_DETECT_MIN_INTERVAL_MS / 2)));
+const HTTP_FLV_DISABLED = false;
+const MIN_RENDERABLE_BOX_SIZE = 0.01;
+const MAX_RENDERABLE_BOX_SPAN = 0.995;
+const MAX_RENDERABLE_BOX_AREA = 0.96;
+const TRACK_PAYLOAD_CACHE_MAX_AGE_MS = 8000;
+const TRACK_BOX_STALE_LIMIT_MS = 4000;
+const TRACK_ALARM_LABEL_STALE_LIMIT_MS = 8000;
+const AI_OVERLAY_REFRESH_EVENT = 'video-ai-overlay-refresh';
+const lastTrackPayloadByVideo = new Map<string, LiveTrackPayload & { cached_at_ms?: number }>();
+
+const stripCachedBehaviorLabels = (payload: LiveTrackPayload): LiveTrackPayload => payload;
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const normalizeTrackCoords = (
+  track: LivePersonTrack,
+  payload?: Pick<LiveTrackPayload, 'frame_width' | 'frame_height'> | null,
+): number[] | null => {
+  const rawCoords = Array.isArray(track.coords_norm)
+    ? track.coords_norm
+    : Array.isArray(track.coords)
+      ? track.coords
+      : [];
+  if (rawCoords.length < 4) return null;
+
+  let [x1, y1, x2, y2] = rawCoords.slice(0, 4).map((value) => Number(value));
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+
+  const frameWidth = Number(payload?.frame_width || 0);
+  const frameHeight = Number(payload?.frame_height || 0);
+  const looksLikePixels = Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) > 1.5;
+  if (looksLikePixels && frameWidth > 0 && frameHeight > 0) {
+    x1 /= frameWidth;
+    x2 /= frameWidth;
+    y1 /= frameHeight;
+    y2 /= frameHeight;
+  }
+
+  const left = clamp01(Math.min(x1, x2));
+  const top = clamp01(Math.min(y1, y2));
+  const right = clamp01(Math.max(x1, x2));
+  const bottom = clamp01(Math.max(y1, y2));
+  const width = right - left;
+  const height = bottom - top;
+  if (width < MIN_RENDERABLE_BOX_SIZE || height < MIN_RENDERABLE_BOX_SIZE) return null;
+  if (width >= MAX_RENDERABLE_BOX_SPAN && height >= MAX_RENDERABLE_BOX_SPAN) {
+    console.debug('[AIOverlay] drop nearly fullscreen box', { track, coords: [left, top, right, bottom], width, height });
+    return null;
+  }
+  if (width * height >= MAX_RENDERABLE_BOX_AREA) {
+    console.debug('[AIOverlay] drop oversized box', { track, coords: [left, top, right, bottom], area: width * height });
+    return null;
+  }
+  return [left, top, right, bottom];
+};
+const FLV_SYNC_DELAY_MS = Number((import.meta as any).env?.VITE_FLV_SYNC_DELAY_MS || 1800);
+const FLV_SYNC_TOLERANCE_MS = Number((import.meta as any).env?.VITE_FLV_SYNC_TOLERANCE_MS || 700);
+const FLV_SYNC_HISTORY_MS = Number((import.meta as any).env?.VITE_FLV_SYNC_HISTORY_MS || 6000);
+const FLV_MAX_DELAY_SECONDS = Number((import.meta as any).env?.VITE_FLV_MAX_DELAY_SECONDS || 4.5);
+const FLV_MIN_DELAY_SECONDS = Number((import.meta as any).env?.VITE_FLV_MIN_DELAY_SECONDS || 1.0);
+const FLV_DELAY_READY_TOLERANCE_SECONDS = 0.25;
+const AI_BACKEND_TRACK_LOG_EVERY = 20;
+
+const isHttpFlvStream = (stream?: { src?: string; playType?: string; source?: string } | null): boolean => {
+  const playType = String(stream?.playType || '').toLowerCase();
+  const src = String(stream?.src || '').toLowerCase();
+  return stream?.source === 'flv' || playType === 'flv' || src.includes('.flv');
+};
 
 interface SyncedAiFrame {
   image: string;
@@ -290,6 +380,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const trafficOcrIntervalTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const liveTrackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const liveTrackCacheRef = useRef<Record<string, { track: LivePersonTrack; lastSeen: number }>>({});
+  const renderedTrackCacheRef = useRef<Record<string, { coords: number[]; lastSeen: number; stableKey: string }>>({});
   const frameDetectBusyRef = useRef(false);
   const frameDetectInflightRef = useRef(0);
   const frameDetectRequestSeqRef = useRef(0);
@@ -297,7 +388,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameDetectFailCountRef = useRef(0);
   const frameDetectLogCountRef = useRef(0);
+  const frameDetectLastStartedAtRef = useRef(0);
   const backendTrackLogCountRef = useRef(0);
+  const aiBenchmarkLogKeyRef = useRef('');
+  const playerInitLogKeyRef = useRef('');
+  const backendAiStreamKeyRef = useRef('');
+  const deviceRulesRef = useRef<string[]>([]);
+  const playerInstanceIdRef = useRef(`vp_${++VIDEO_PLAYER_INSTANCE_SEQ}`);
+  const rootVisibleRef = useRef(true);
+  const lastAiSyncLogAtRef = useRef(0);
+  const flvTrackHistoryRef = useRef<Array<LiveTrackPayload & { receivedAt: number; frameEpochMs: number }>>([]);
+  const flvClockRef = useRef<{ liveEdgeSeconds: number; liveEdgeEpochMs: number; currentTimeSeconds: number; bufferedLagMs: number } | null>(null);
+  const flvDelaySamplesRef = useRef<number[]>([]);
+  const flvDelayPrimedRef = useRef(false);
+  const flvBackendZeroTrackCountRef = useRef(0);
+  const flvFallbackLastStartedAtRef = useRef(0);
   const syncedFrameLayerRef = useRef<HTMLImageElement | null>(null);
   const ptzRealtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncModeRef = useRef<VideoSyncMode>('tracking');
@@ -306,6 +411,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [monitoringSummary, setMonitoringSummary] = useState<MonitoringSummary | null>(null);
   const monitoringSummaryRef = useRef<MonitoringSummary | null>(null);
   const [liveTracks, setLiveTracks] = useState<LiveTrackPayload | null>(null);
+  const [syncedFlvTracks, setSyncedFlvTracks] = useState<LiveTrackPayload | null>(null);
   const [syncMode, setSyncMode] = useState<VideoSyncMode>('tracking');
   const [streamMode, setStreamMode] = useState<StreamMode>('auto');
   const [activeStream, setActiveStream] = useState<{ src: string; playType?: string; accessToken?: string; source: 'primary' | 'flv' }>(() => ({
@@ -330,8 +436,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const resetAiOverlay = useCallback(() => {
     liveTrackCacheRef.current = {};
+    renderedTrackCacheRef.current = {};
+    flvTrackHistoryRef.current = [];
     setLiveTracks(null);
+    setSyncedFlvTracks(null);
     setSyncedAiFrame(null);
+  }, []);
+
+  const logPlayerInitSuccess = useCallback((stream: { src: string; playType?: string }, eventName = 'playing') => {
+    const key = `${videoId || ''}:${stream.playType || ''}:${stream.src}`;
+    if (playerInitLogKeyRef.current === key) return;
+    playerInitLogKeyRef.current = key;
+    console.info('[VideoPlayer] player init success', {
+      videoId,
+      src: stream.src,
+      playType: stream.playType,
+      eventName,
+    });
+  }, [videoId]);
+
+  const getFrontendFrameAlgoType = useCallback(() => {
+    const rules = Array.isArray(deviceRulesRef.current) ? deviceRulesRef.current : [];
+    return Array.from(new Set(['person', ...rules.map((rule) => String(rule || '').trim()).filter(Boolean)])).join(',');
   }, []);
 
   const clearTrafficOcrTimers = useCallback(() => {
@@ -345,12 +471,54 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    deviceRulesRef.current = [];
+    if (!videoId) return;
+    getDeviceRules(Number(videoId))
+      .then((rules) => {
+        if (cancelled) return;
+        deviceRulesRef.current = Array.isArray(rules) ? rules.map((rule) => String(rule || '').trim()).filter(Boolean) : [];
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          deviceRulesRef.current = [];
+          console.warn('[VideoPlayer] failed to preload device AI rules', { videoId, error });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId]);
+
+  const restoreCachedTrackPayload = useCallback(() => {
+    if (!videoId) return false;
+    const cached = lastTrackPayloadByVideo.get(String(videoId));
+    const cachedAt = Number(cached?.cached_at_ms || 0);
+    if (!cached || !cachedAt || Date.now() - cachedAt > TRACK_PAYLOAD_CACHE_MAX_AGE_MS) {
+      return false;
+    }
+    const payload = stripCachedBehaviorLabels({
+      ...cached,
+      stale: true,
+      age_ms: Number(cached.age_ms || 0) + (Date.now() - cachedAt),
+    });
+    setLiveTracks(payload);
+    if (isHttpFlvStream(activeStream)) {
+      setSyncedFlvTracks(payload);
+    }
+    return true;
+  }, [activeStream, videoId]);
+
   const applyLiveTrackPayload = useCallback((data: LiveTrackPayload & { stale?: boolean }) => {
     const timestamp = data?.timestamp ? new Date(data.timestamp).getTime() : 0;
     const now = Date.now();
+    if (videoId && Array.isArray(data?.tracks) && data.tracks.length > 0) {
+      lastTrackPayloadByVideo.set(String(videoId), { ...data, cached_at_ms: now });
+    }
     const trackRect = (track: LivePersonTrack) => {
-      const coords = Array.isArray(track.coords_norm) ? track.coords_norm : [];
-      const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords.map((value) => Math.max(0, Math.min(1, Number(value) || 0)));
+      const coords = normalizeTrackCoords(track, data) || [];
+      const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords;
       return { x1, y1, x2, y2, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
     };
     const trackIou = (a: LivePersonTrack, b: LivePersonTrack) => {
@@ -377,11 +545,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const candidates = tracks
         .filter((track) => Number(track.misses || 0) === 0)
         .map((track, index) => {
-          const coords = Array.isArray(track.coords_norm) ? track.coords_norm : [];
-          const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords.map((value) => Math.max(0, Math.min(1, Number(value) || 0)));
+          const coords = normalizeTrackCoords(track, data);
+          if (!coords) return null;
+          const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords;
           const area = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-          return { track, index, area, score: Number(track.score || 0) };
-        });
+          return { track: { ...track, coords_norm: coords }, index, area, score: Number(track.score || 0) };
+        })
+        .filter((candidate): candidate is { track: LivePersonTrack; index: number; area: number; score: number } => Boolean(candidate));
       if (!candidates.length) return [];
       candidates.sort((a, b) => b.score - a.score || b.area - a.area || a.index - b.index);
       const kept: LivePersonTrack[] = [];
@@ -394,9 +564,110 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
       return kept.slice(0, MAX_RENDERED_PERSON_TRACKS);
     };
+    const smoothRenderableTracks = (tracks: LivePersonTrack[]) => {
+      const nowMs = Date.now();
+      const nextCache: Record<string, { coords: number[]; lastSeen: number; stableKey: string }> = {};
+      const usedPreviousKeys = new Set<string>();
+      const coordsCenterDistance = (a: number[], b: number[]) => {
+        if (a.length < 4 || b.length < 4) return Number.POSITIVE_INFINITY;
+        const acx = (a[0] + a[2]) / 2;
+        const acy = (a[1] + a[3]) / 2;
+        const bcx = (b[0] + b[2]) / 2;
+        const bcy = (b[1] + b[3]) / 2;
+        return Math.hypot(acx - bcx, acy - bcy);
+      };
+      const smoothed = tracks.map((track, index) => {
+        const coords = normalizeTrackCoords(track, data);
+        if (!coords) return track;
+
+        const rawKey = String(track.track_id || track.personnel_id || `person_${index + 1}`);
+        let key = rawKey;
+        let previous = renderedTrackCacheRef.current[key];
+        if (!previous || nowMs - previous.lastSeen > AI_BOX_SMOOTH_MAX_AGE_MS || previous.coords.length < 4) {
+          const relink = Object.entries(renderedTrackCacheRef.current)
+            .filter(([previousKey, value]) => (
+              !usedPreviousKeys.has(previousKey) &&
+              nowMs - value.lastSeen <= AI_BOX_RELINK_MAX_AGE_MS &&
+              value.coords.length >= 4
+            ))
+            .map(([previousKey, value]) => ({
+              previousKey,
+              value,
+              distance: coordsCenterDistance(coords, value.coords),
+            }))
+            .sort((a, b) => a.distance - b.distance)[0];
+          if (relink && relink.distance <= AI_BOX_RELINK_CENTER_DISTANCE) {
+            key = relink.previousKey;
+            previous = relink.value;
+          }
+        }
+        if (!previous || nowMs - previous.lastSeen > AI_BOX_SMOOTH_MAX_AGE_MS || previous.coords.length < 4) {
+          nextCache[key] = { coords, lastSeen: nowMs, stableKey: key };
+          usedPreviousKeys.add(key);
+          return { ...track, track_id: key, coords_norm: coords };
+        }
+
+        const pcx = (previous.coords[0] + previous.coords[2]) / 2;
+        const pcy = (previous.coords[1] + previous.coords[3]) / 2;
+        const pw = Math.max(0.001, previous.coords[2] - previous.coords[0]);
+        const ph = Math.max(0.001, previous.coords[3] - previous.coords[1]);
+        const dcx = (coords[0] + coords[2]) / 2;
+        const dcy = (coords[1] + coords[3]) / 2;
+        const dw = Math.max(0.001, coords[2] - coords[0]);
+        const dh = Math.max(0.001, coords[3] - coords[1]);
+        const movement = Math.max(
+          Math.abs(dcx - pcx),
+          Math.abs(dcy - pcy),
+          Math.abs(dw - pw),
+          Math.abs(dh - ph),
+        );
+        if (movement < AI_BOX_SMOOTH_DEADBAND) {
+          nextCache[key] = { coords: previous.coords, lastSeen: nowMs, stableKey: key };
+          usedPreviousKeys.add(key);
+          return { ...track, track_id: key, coords_norm: previous.coords };
+        }
+
+        const nextCx = pcx + (dcx - pcx) * AI_BOX_SMOOTH_CENTER_ALPHA;
+        const nextCy = pcy + (dcy - pcy) * AI_BOX_SMOOTH_CENTER_ALPHA;
+        const nextW = pw + (dw - pw) * AI_BOX_SMOOTH_SIZE_ALPHA;
+        const nextH = ph + (dh - ph) * AI_BOX_SMOOTH_SIZE_ALPHA;
+        const nextCoords = [
+          Math.max(0, Math.min(1, nextCx - nextW / 2)),
+          Math.max(0, Math.min(1, nextCy - nextH / 2)),
+          Math.max(0, Math.min(1, nextCx + nextW / 2)),
+          Math.max(0, Math.min(1, nextCy + nextH / 2)),
+        ];
+        nextCache[key] = { coords: nextCoords, lastSeen: nowMs, stableKey: key };
+        usedPreviousKeys.add(key);
+        return { ...track, track_id: key, coords_norm: nextCoords };
+      });
+
+      Object.entries(renderedTrackCacheRef.current).forEach(([key, value]) => {
+        if (!nextCache[key] && nowMs - value.lastSeen <= AI_BOX_SMOOTH_MAX_AGE_MS) {
+          nextCache[key] = value;
+        }
+      });
+      renderedTrackCacheRef.current = nextCache;
+      return smoothed;
+    };
     const incomingTracks = Array.isArray(data?.tracks) ? data.tracks : [];
     if (data?.source === 'frontend_frame') {
-      const renderableTracks = selectRenderableTracks(incomingTracks);
+      const renderableTracks = smoothRenderableTracks(selectRenderableTracks(incomingTracks));
+      if (renderableTracks.length <= 0 && videoId) {
+        const cached = lastTrackPayloadByVideo.get(String(videoId));
+        const cachedAt = Number(cached?.cached_at_ms || 0);
+        const cachedTracks = Array.isArray(cached?.tracks) ? cached.tracks : [];
+        if (cached && cachedAt && cachedTracks.length > 0 && now - cachedAt <= TRACK_PAYLOAD_CACHE_MAX_AGE_MS) {
+          setLiveTracks(stripCachedBehaviorLabels({
+            ...cached,
+            timestamp: data?.timestamp || cached.timestamp || new Date(now).toISOString(),
+            source: 'frontend_frame',
+            stale: false,
+            age_ms: now - cachedAt,
+          }));
+          return;
+        }
+      }
       liveTrackCacheRef.current = {};
       setLiveTracks({
         ...data,
@@ -407,17 +678,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     const payloadAgeMs = Number(data?.age_ms ?? (timestamp ? now - timestamp : 0));
-    const staleLimitMs = 1200;
-    if (data?.stale || payloadAgeMs > staleLimitMs) {
+    if (data?.stale || payloadAgeMs > TRACK_BOX_STALE_LIMIT_MS) {
       liveTrackCacheRef.current = {};
+      renderedTrackCacheRef.current = {};
       setLiveTracks({ ...data, tracks: [] });
       return;
     }
-    const primaryTrack = selectRenderableTracks(incomingTracks)[0];
+    const renderableTracks = smoothRenderableTracks(selectRenderableTracks(incomingTracks));
     const cache: Record<string, { track: LivePersonTrack; lastSeen: number }> = {};
-    if (primaryTrack) {
-      const key = String(primaryTrack.track_id || primaryTrack.personnel_id || 'person_1');
-      cache[key] = { track: { ...primaryTrack, track_id: primaryTrack.track_id || key }, lastSeen: now };
+    if (renderableTracks.length > 0) {
+      renderableTracks.forEach((track, index) => {
+        const key = String(track.track_id || track.personnel_id || `person_${index + 1}`);
+        cache[key] = { track: { ...track, track_id: key }, lastSeen: now };
+      });
     } else {
       Object.entries(liveTrackCacheRef.current).forEach(([key, item]) => {
         if (now - item.lastSeen <= 1000) {
@@ -440,6 +713,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     syncModeRef.current = 'realtime';
     setSyncMode('realtime');
     liveTrackCacheRef.current = {};
+    renderedTrackCacheRef.current = {};
     setLiveTracks(null);
     setSyncedAiFrame(null);
     if (ptzRealtimeTimerRef.current) {
@@ -502,20 +776,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }), []);
 
   const captureCurrentVideoFrame = useCallback(async (): Promise<string | null> => {
-    const syncedLayer = syncedFrameLayerRef.current;
-    const previousVisibility = syncedLayer?.style.visibility || '';
-    if (syncedLayer) {
-      syncedLayer.style.visibility = 'hidden';
-      await waitForNextPaint();
-    }
-
     const candidates: Array<{ type: 'video' | 'canvas'; width: number; height: number; dataUrl: string; score: number }> = [];
     const maxWidth = 640;
     const canvas = frameCanvasRef.current || document.createElement('canvas');
     frameCanvasRef.current = canvas;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) {
-      if (syncedLayer) syncedLayer.style.visibility = previousVisibility;
       return null;
     }
 
@@ -568,7 +834,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       });
     } finally {
-      if (syncedLayer) syncedLayer.style.visibility = previousVisibility;
+      // Capture reads directly from video/canvas elements; keep the synced image visible to avoid flicker.
     }
 
     const best = candidates.sort((a, b) => b.score - a.score)[0];
@@ -600,7 +866,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
     }
     return best.dataUrl;
-  }, [scoreCanvasContent, videoId, waitForNextPaint]);
+  }, [scoreCanvasContent, videoId]);
 
   const fetchBackendTracks = useCallback(async () => {
     if (!videoId) {
@@ -608,41 +874,237 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setLiveTracks(null);
       return;
     }
+    if (document.visibilityState === 'hidden') return;
     try {
+      const requestStartedAt = Date.now();
       const res = await fetch(`${API_BASE_URL}/video/ai/tracks/${videoId}`, {
         cache: 'no-store',
         headers: getAuthHeaders(),
       });
+      const responseAt = Date.now();
       if (!res.ok) return;
       const data = await res.json();
       backendTrackLogCountRef.current += 1;
-      if (backendTrackLogCountRef.current === 1 || backendTrackLogCountRef.current % 20 === 0) {
+      const trackCount = Array.isArray(data?.tracks) ? data.tracks.length : 0;
+      const shouldLogBackendTracks =
+        backendTrackLogCountRef.current === 1 ||
+        backendTrackLogCountRef.current % AI_BACKEND_TRACK_LOG_EVERY === 0 ||
+        trackCount > 0;
+      const frameEpochMsForLog = Number(data?.frame_epoch_ms || (data?.frame_epoch ? Number(data.frame_epoch) * 1000 : 0));
+      const playbackEpochMsForLog = Date.now() - FLV_SYNC_DELAY_MS;
+      const videoToBoxDeltaMsForLog = Number.isFinite(frameEpochMsForLog) && frameEpochMsForLog > 0 && Number.isFinite(playbackEpochMsForLog || 0)
+        ? Math.round((playbackEpochMsForLog || 0) - frameEpochMsForLog)
+        : undefined;
+      if (data?.timing) {
+        const detectorTiming = data.timing?.person_debug?.detector_timing || {};
+        console.info('[AI_TIMING]', {
+          videoId,
+          tracks: trackCount,
+          backendAgeMs: data?.age_ms,
+          frameAgeMs: Number.isFinite(frameEpochMsForLog) && frameEpochMsForLog > 0 ? Math.max(0, Math.round(responseAt - frameEpochMsForLog)) : undefined,
+          videoToBoxDeltaMs: videoToBoxDeltaMsForLog,
+          flvBufferedLagMs: flvClockRef.current?.bufferedLagMs,
+          flvTargetDelayMs: FLV_SYNC_DELAY_MS,
+          targetPlaybackEpochMs: playbackEpochMsForLog ? Math.round(playbackEpochMsForLog) : undefined,
+          detectElapsedMs: data?.detect_elapsed_ms,
+          timingFrameAgeMs: data.timing?.frame_age_ms,
+          personMs: data.timing?.person_ms,
+          trackUpdateMs: data.timing?.track_update_ms,
+          faceMs: data.timing?.face_ms,
+          activeRules: data?.active_rules,
+          actualActiveAlgos: data.timing?.active_algos,
+          monitorMode: data?.monitor_mode,
+          personScopedMs: data.timing?.person_scoped_ms,
+          personScopedAlgos: data.timing?.person_scoped_algos,
+          personScopedExpected: data.timing?.person_scoped_expected,
+          personScopedRoiCount: data.timing?.person_scoped_roi_count,
+          personScopedPending: data.timing?.person_scoped_pending,
+          detectionResults: data.timing?.detection_results,
+          yoloTotalMs: detectorTiming?.total_ms,
+          yoloLockWaitMs: detectorTiming?.lock_wait_ms,
+          yoloBenchmarkOverheadMs: detectorTiming?.benchmark_overhead_ms,
+          yoloModelCallMs: detectorTiming?.model_call_ms,
+          yoloCudaSyncMs: detectorTiming?.cuda_sync_ms,
+          yoloInferMs: detectorTiming?.infer_ms,
+          speedPreprocessMs: detectorTiming?.speed_preprocess_ms,
+          speedInferenceMs: detectorTiming?.speed_inference_ms,
+          speedPostprocessMs: detectorTiming?.speed_postprocess_ms,
+          device: detectorTiming?.device,
+          half: detectorTiming?.half,
+          process: detectorTiming?.process,
+          workerPid: detectorTiming?.worker_pid,
+          parentRoundTripMs: detectorTiming?.parent_round_trip_ms,
+          thread: detectorTiming?.thread,
+          track: detectorTiming?.track,
+          tracker: detectorTiming?.tracker,
+          imgsz: detectorTiming?.imgsz,
+          frameShape: detectorTiming?.frame_shape,
+          frameDtype: detectorTiming?.frame_dtype,
+          frameContiguous: detectorTiming?.frame_contiguous,
+          raw: data.timing?.person_debug?.raw,
+          kept: data.timing?.person_debug?.kept,
+          roundTripMs: responseAt - requestStartedAt,
+        });
+        if (detectorTiming?.benchmark) {
+          const benchmarkLogKey = JSON.stringify(detectorTiming.benchmark);
+          if (aiBenchmarkLogKeyRef.current !== benchmarkLogKey) {
+            aiBenchmarkLogKeyRef.current = benchmarkLogKey;
+            console.info('[AI_YOLO_BENCHMARK]', detectorTiming.benchmark);
+          }
+        }
+      }
+      if (shouldLogBackendTracks) {
         console.info('[AIFrame] backend tracks response', {
           videoId,
+          tracks: trackCount,
+          source: data?.source || 'backend_stream',
           backendAgeMs: data?.age_ms,
           stale: data?.stale,
-          tracks: Array.isArray(data?.tracks) ? data.tracks.length : 0,
+          requestStartedAt: new Date(requestStartedAt).toLocaleTimeString(),
+          responseAt: new Date(responseAt).toLocaleTimeString(),
+          roundTripMs: responseAt - requestStartedAt,
+          frameEpochMs: Number.isFinite(frameEpochMsForLog) && frameEpochMsForLog > 0 ? Math.round(frameEpochMsForLog) : undefined,
+          frameAgeMs: Number.isFinite(frameEpochMsForLog) && frameEpochMsForLog > 0 ? Math.max(0, Math.round(responseAt - frameEpochMsForLog)) : undefined,
+          videoToBoxDeltaMs: videoToBoxDeltaMsForLog,
+          flvBufferedLagMs: flvClockRef.current?.bufferedLagMs,
+          flvTargetDelayMs: FLV_SYNC_DELAY_MS,
+          detectStartedAt: data?.detect_started_epoch ? new Date(Number(data.detect_started_epoch) * 1000).toLocaleTimeString() : undefined,
+          detectFinishedAt: data?.detect_finished_epoch ? new Date(Number(data.detect_finished_epoch) * 1000).toLocaleTimeString() : undefined,
+          detectElapsedMs: data?.detect_elapsed_ms,
+          activeRules: data?.active_rules,
+          actualActiveAlgos: data?.timing?.active_algos,
+          monitorMode: data?.monitor_mode,
+          personScopedAlgos: data?.timing?.person_scoped_algos,
+          personScopedExpected: data?.timing?.person_scoped_expected,
+          personScopedRoiCount: data?.timing?.person_scoped_roi_count,
+          personScopedPending: data?.timing?.person_scoped_pending,
+          detectionResults: data?.timing?.detection_results,
+          frameWidth: data?.frame_width,
+          frameHeight: data?.frame_height,
           timestamp: data?.timestamp,
         });
       }
-      if (Number(data?.age_ms || 0) > 1200) {
+      if (Number(data?.age_ms || 0) > TRACK_ALARM_LABEL_STALE_LIMIT_MS && shouldLogBackendTracks) {
         console.warn('[AIFrame] backend tracks stale; dropped', {
           videoId,
           backendAgeMs: data?.age_ms,
-          tracks: Array.isArray(data?.tracks) ? data.tracks.length : 0,
+          tracks: trackCount,
         });
+      }
+      if (isHttpFlvStream(activeStream)) {
+        let payloadForRender = data;
+        let payloadTrackCount = trackCount;
+        let usingCachedTrackPayload = false;
+        if (trackCount <= 0) {
+          flvBackendZeroTrackCountRef.current += 1;
+        } else {
+          flvBackendZeroTrackCountRef.current = 0;
+        }
+        const shouldFallbackToDisplayedFrame =
+          trackCount <= 0 &&
+          flvBackendZeroTrackCountRef.current >= 2 &&
+          frameDetectInflightRef.current <= 0 &&
+          Date.now() - flvFallbackLastStartedAtRef.current >= 900;
+        if (shouldFallbackToDisplayedFrame) {
+          flvFallbackLastStartedAtRef.current = Date.now();
+          frameDetectInflightRef.current += 1;
+          try {
+            const image = await captureCurrentVideoFrame();
+            if (image) {
+              const captureTime = Date.now();
+              const fallbackStartedAt = Date.now();
+              const fallbackRes = await fetch(`${API_BASE_URL}/video/ai/frame/${videoId}`, {
+                method: 'POST',
+                cache: 'no-store',
+                headers: {
+                  ...getAuthHeaders(),
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  image,
+                  algo_type: getFrontendFrameAlgoType(),
+                  capture_time: captureTime,
+                }),
+              });
+              if (fallbackRes.ok) {
+                const fallbackData = await fallbackRes.json();
+                const fallbackTrackCount = Array.isArray(fallbackData?.tracks) ? fallbackData.tracks.length : 0;
+                console.info('[AIFrame] FLV displayed-frame fallback', {
+                  videoId,
+                  backendTracks: trackCount,
+                  fallbackTracks: fallbackTrackCount,
+                  roundTripMs: Date.now() - fallbackStartedAt,
+                });
+                if (fallbackTrackCount > 0) {
+                  payloadForRender = {
+                    ...fallbackData,
+                    source: 'frontend_frame',
+                    frame_epoch_ms: Date.now(),
+                    age_ms: 0,
+                  };
+                  payloadTrackCount = fallbackTrackCount;
+                  flvBackendZeroTrackCountRef.current = 0;
+                }
+              }
+            }
+          } catch (fallbackError) {
+            console.warn('[AIFrame] FLV displayed-frame fallback failed', { videoId, fallbackError });
+          } finally {
+            frameDetectInflightRef.current = Math.max(0, frameDetectInflightRef.current - 1);
+          }
+        }
+        if (payloadTrackCount <= 0) {
+          const cached = videoId ? lastTrackPayloadByVideo.get(String(videoId)) : null;
+          const cachedAt = Number(cached?.cached_at_ms || 0);
+          const cachedTracks = Array.isArray(cached?.tracks) ? cached.tracks : [];
+          if (cached && cachedAt && cachedTracks.length > 0 && Date.now() - cachedAt <= TRACK_PAYLOAD_CACHE_MAX_AGE_MS) {
+            payloadForRender = stripCachedBehaviorLabels({
+              ...cached,
+              age_ms: Date.now() - cachedAt,
+            });
+            payloadTrackCount = cachedTracks.length;
+            usingCachedTrackPayload = true;
+          }
+        }
+        const frameEpochMs = Number(data?.frame_epoch_ms || (data?.frame_epoch ? Number(data.frame_epoch) * 1000 : 0));
+        const receivedAt = Date.now();
+        if (payloadTrackCount > 0 && !usingCachedTrackPayload) {
+          lastTrackPayloadByVideo.set(String(videoId), { ...payloadForRender, cached_at_ms: receivedAt });
+        }
+        const latestFlvPayload = {
+          ...payloadForRender,
+          frame_epoch_ms: Number.isFinite(frameEpochMs) && frameEpochMs > 0 ? frameEpochMs : receivedAt,
+          age_ms: 0,
+        };
+        setLiveTracks(latestFlvPayload);
+        if (Number.isFinite(frameEpochMs) && frameEpochMs > 0) {
+          flvTrackHistoryRef.current = [
+            ...flvTrackHistoryRef.current.filter((item) => receivedAt - item.frameEpochMs <= FLV_SYNC_HISTORY_MS),
+            { ...data, receivedAt, frameEpochMs },
+          ].slice(-80);
+          const detectElapsed = Number(data?.detect_elapsed_ms || 0);
+          if (detectElapsed > 0 && Number.isFinite(detectElapsed)) {
+            flvDelaySamplesRef.current = [...flvDelaySamplesRef.current, detectElapsed].slice(-30);
+          }
+        }
+        setSyncedFlvTracks(latestFlvPayload);
+        return;
       }
       applyLiveTrackPayload(data);
     } catch {
       // Keep the current frame briefly; the stale timestamp check will clear it.
     }
-  }, [applyLiveTrackPayload, videoId]);
+  }, [activeStream, applyLiveTrackPayload, captureCurrentVideoFrame, getFrontendFrameAlgoType, videoId]);
 
   const fetchLiveTracks = useCallback(async () => {
     if (!videoId) return;
+    if (document.visibilityState === 'hidden') return;
     if (syncModeRef.current === 'realtime') return;
     const maxInflight = 1;
     if (frameDetectInflightRef.current >= maxInflight) return;
+    const now = Date.now();
+    if (now - frameDetectLastStartedAtRef.current < AI_FRAME_DETECT_MIN_INTERVAL_MS) return;
+    frameDetectLastStartedAtRef.current = now;
     frameDetectBusyRef.current = true;
     frameDetectInflightRef.current += 1;
     const requestSeq = frameDetectRequestSeqRef.current + 1;
@@ -654,6 +1116,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (frameDetectFailCountRef.current === 1 || frameDetectFailCountRef.current % 20 === 0) {
           console.warn('[VideoPlayer] current-frame capture unavailable; keep last synced AI frame', { videoId });
         }
+        await fetchBackendTracks();
         return;
       }
       const captureTime = Date.now();
@@ -667,7 +1130,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         },
         body: JSON.stringify({
           image,
-          algo_type: 'person',
+          algo_type: getFrontendFrameAlgoType(),
           capture_time: captureTime,
         }),
       });
@@ -689,6 +1152,45 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
       const trackCount = Array.isArray(data?.tracks) ? data.tracks.length : 0;
+      const detectorTiming = data?.timing?.person_debug?.detector_timing || data?.person_debug?.detector_timing || {};
+      if (detectorTiming?.benchmark) {
+        const benchmarkLogKey = JSON.stringify(detectorTiming.benchmark);
+        if (aiBenchmarkLogKeyRef.current !== benchmarkLogKey) {
+          aiBenchmarkLogKeyRef.current = benchmarkLogKey;
+          console.info('[AI_YOLO_BENCHMARK]', detectorTiming.benchmark);
+        }
+      }
+      if (detectorTiming && Object.keys(detectorTiming).length > 0) {
+        console.info('[AI_TIMING]', {
+          videoId,
+          tracks: trackCount,
+          backendAgeMs: data?.age_ms,
+          detectElapsedMs: data?.detect_elapsed_ms,
+          serverElapsedMs: data?.server_elapsed_ms,
+          yoloTotalMs: detectorTiming?.total_ms,
+          yoloLockWaitMs: detectorTiming?.lock_wait_ms,
+          yoloBenchmarkOverheadMs: detectorTiming?.benchmark_overhead_ms,
+          yoloModelCallMs: detectorTiming?.model_call_ms,
+          yoloCudaSyncMs: detectorTiming?.cuda_sync_ms,
+          yoloInferMs: detectorTiming?.infer_ms,
+          speedPreprocessMs: detectorTiming?.speed_preprocess_ms,
+          speedInferenceMs: detectorTiming?.speed_inference_ms,
+          speedPostprocessMs: detectorTiming?.speed_postprocess_ms,
+          device: detectorTiming?.device,
+          half: detectorTiming?.half,
+          process: detectorTiming?.process,
+          workerPid: detectorTiming?.worker_pid,
+          parentRoundTripMs: detectorTiming?.parent_round_trip_ms,
+          track: detectorTiming?.track,
+          imgsz: detectorTiming?.imgsz,
+          frameShape: detectorTiming?.frame_shape,
+          frameDtype: detectorTiming?.frame_dtype,
+          frameContiguous: detectorTiming?.frame_contiguous,
+          raw: data?.person_debug?.raw || data?.timing?.person_debug?.raw,
+          kept: data?.person_debug?.kept || data?.timing?.person_debug?.kept,
+          roundTripMs: responseAt - requestStartedAt,
+        });
+      }
       console.info('[AIFrame] detect response', {
         videoId,
         tracks: trackCount,
@@ -704,8 +1206,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         detectElapsedMs: data?.detect_elapsed_ms,
         serverElapsedMs: data?.server_elapsed_ms,
         debugFrameUrl: data?.debug_frame_url,
+        cacheHit: data?.cache_hit,
+        cacheReason: data?.cache_reason,
         personDebug: data?.person_debug,
       });
+      if (data?.cache_hit && trackCount <= 0) {
+        return;
+      }
       if (trackCount <= 0) {
         console.warn('[AIFrame] no frontend-frame tracks; apply synced frame without boxes', {
           videoId,
@@ -714,6 +1221,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       frameDetectLatestAppliedSeqRef.current = requestSeq;
       applyLiveTrackPayload(data);
+      if (isHttpFlvStream(activeStream)) {
+        flvTrackHistoryRef.current = [];
+        setSyncedFlvTracks({
+          ...data,
+          frame_epoch_ms: responseAt,
+          age_ms: 0,
+        });
+      }
       setSyncedAiFrame({ image, captureTime, responseAt });
     } catch (error) {
       frameDetectFailCountRef.current += 1;
@@ -722,7 +1237,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       frameDetectInflightRef.current = Math.max(0, frameDetectInflightRef.current - 1);
       frameDetectBusyRef.current = frameDetectInflightRef.current > 0;
     }
-  }, [applyLiveTrackPayload, captureCurrentVideoFrame, fetchBackendTracks, videoId]);
+  }, [activeStream, applyLiveTrackPayload, captureCurrentVideoFrame, fetchBackendTracks, getFrontendFrameAlgoType, videoId]);
 
   const fetchTrafficStatus = useCallback(async () => {
     if (!videoId) {
@@ -827,6 +1342,47 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [fetchTrafficStatus, videoId]);
 
+  const ensureBackendFlvAiMonitoring = useCallback(async () => {
+    if (!videoId || !isHttpFlvStream(activeStream)) return;
+    const flvUrl = String(activeStream.src || '').trim();
+    if (!flvUrl) return;
+
+    try {
+      let rules: string[] = [];
+      try {
+        rules = await getDeviceRules(Number(videoId));
+        deviceRulesRef.current = Array.isArray(rules) ? rules.map((rule) => String(rule || '').trim()).filter(Boolean) : [];
+      } catch (rulesError) {
+        console.warn('[VideoPlayer] failed to load device AI rules; fallback to person tracking', { videoId, rulesError });
+      }
+      const aiRules = Array.from(new Set(['person', ...rules.map((rule) => String(rule || '').trim()).filter(Boolean)]));
+      const algoType = aiRules.join(',');
+      const streamKey = `${videoId}:${flvUrl}:${algoType}`;
+      if (backendAiStreamKeyRef.current === streamKey) return;
+      backendAiStreamKeyRef.current = streamKey;
+
+      await startAIMonitoring(String(videoId), flvUrl, algoType);
+      console.info('[VideoPlayer] backend FLV AI monitoring started', {
+        videoId,
+        algoType,
+        urlPrefix: flvUrl.slice(0, 96),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || '');
+      if (message.includes('已在运行') || message.includes('already')) {
+        console.info('[VideoPlayer] backend AI monitoring already running; keep configured rules', { videoId });
+        return;
+      }
+      backendAiStreamKeyRef.current = '';
+      console.warn('[VideoPlayer] backend FLV AI monitoring start failed', { videoId, error });
+    }
+  }, [activeStream, videoId]);
+
+  useEffect(() => {
+    if (!isHttpFlvStream(activeStream)) return;
+    ensureBackendFlvAiMonitoring();
+  }, [activeStream, ensureBackendFlvAiMonitoring]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -851,7 +1407,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       };
     }
 
-    if (streamMode === 'flv' || streamMode === 'auto') {
+    if (!HTTP_FLV_DISABLED && (streamMode === 'flv' || streamMode === 'auto')) {
       if (!videoId) {
         applyPrimaryStream(streamMode === 'flv' ? '缺少设备 ID，无法获取 HTTP-FLV' : '');
         return () => {
@@ -992,7 +1548,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               handleSuccess: () => {
                 retryCountRef.current = 0;
                 setConnectionStatus('connected');
-                console.info('[VideoPlayer] player init success', { videoId, src: currentSrc, playType: currentPlayType });
+                logPlayerInitSuccess({ src: currentSrc, playType: currentPlayType }, 'ezopen-success');
               },
               handleError: (err: any) => {
                 console.error('[VideoPlayer] player error', err);
@@ -1021,7 +1577,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     videoEl.onplaying = () => {
       retryCountRef.current = 0;
       setConnectionStatus('connected');
-      console.info('[VideoPlayer] player init success', { videoId, src: currentSrc, playType: currentPlayType });
+      logPlayerInitSuccess({ src: currentSrc, playType: currentPlayType });
     };
     videoEl.onerror = () => {
       console.error('[VideoPlayer] player error', videoEl.error);
@@ -1066,10 +1622,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (flvjs?.isSupported?.()) {
       try {
+        let flvReadyLogged = false;
         const markFlvReady = (eventName: string, detail?: unknown) => {
           retryCountRef.current = 0;
           setConnectionStatus('connected');
-          setStreamSwitchStatus(`HTTP-FLV ${eventName}`);
+          setStreamSwitchStatus((current) => (current.startsWith('HTTP-FLV') ? current : '当前使用 HTTP-FLV'));
+          if (flvReadyLogged && eventName === 'statistics_info') return;
+          flvReadyLogged = true;
           console.info('[VideoPlayer] FLV ready', { videoId, eventName, detail, src: currentSrc, playType: currentPlayType });
         };
         videoEl.onloadeddata = () => markFlvReady('loadeddata', { videoWidth: videoEl.videoWidth, videoHeight: videoEl.videoHeight });
@@ -1086,7 +1645,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           },
           {
             enableWorker: false,
-            enableStashBuffer: true,
+            enableStashBuffer: false,
             stashInitialSize: 64,
             lazyLoad: false,
             autoCleanupSourceBuffer: true,
@@ -1100,7 +1659,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         flvPlayer.on(flvjs.Events.MEDIA_INFO, (info: unknown) => console.info('[VideoPlayer] FLV media_info', { videoId, info }));
         flvPlayer.on(flvjs.Events.METADATA_ARRIVED, (metadata: unknown) => console.info('[VideoPlayer] FLV metadata_arrived', { videoId, metadata }));
         flvPlayer.on(flvjs.Events.SCRIPTDATA_ARRIVED, (data: unknown) => console.info('[VideoPlayer] FLV scriptdata_arrived', { videoId, data }));
-        flvPlayer.on(flvjs.Events.STATISTICS_INFO, (stats: unknown) => markFlvReady('statistics_info', stats));
+        flvPlayer.on(flvjs.Events.STATISTICS_INFO, () => markFlvReady('statistics_info'));
         console.info('[VideoPlayer] FLV load start', { videoId, src: currentSrc, playType: currentPlayType });
         flvPlayer.load();
         flvPlayer.play().then(() => {
@@ -1115,7 +1674,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         flvPlayer.on('statistics_info', () => {
           retryCountRef.current = 0;
           setConnectionStatus('connected');
-          console.info('[VideoPlayer] player init success', { videoId, src: currentSrc, playType: currentPlayType });
+          logPlayerInitSuccess({ src: currentSrc, playType: currentPlayType }, 'statistics_info');
         });
         return;
       } catch (error) {
@@ -1126,13 +1685,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     console.info('[VideoPlayer] player set src', { videoId, src: currentSrc, playType: currentPlayType });
     videoEl.src = currentSrc;
     videoEl.play().catch(() => {});
-  }, [accessToken, activeStream, cleanupPlayer, onError, playType, scheduleRetry, src, streamMode, videoId]);
+  }, [accessToken, activeStream, cleanupPlayer, logPlayerInitSuccess, onError, playType, scheduleRetry, src, streamMode, videoId]);
 
   initRef.current = initPlayer;
 
   useEffect(() => {
     resetAiOverlay();
-  }, [activeStream.src, resetAiOverlay]);
+    restoreCachedTrackPayload();
+  }, [activeStream.src, resetAiOverlay, restoreCachedTrackPayload]);
 
   useEffect(() => {
     if (String(deviceStatus || '').toLowerCase() === 'offline') {
@@ -1161,6 +1721,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [fetchTrafficStatus]);
 
   useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') {
+      rootVisibleRef.current = true;
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      rootVisibleRef.current = entries.some((entry) => entry.isIntersecting && entry.intersectionRatio > 0.05);
+    }, { threshold: [0, 0.05] });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     clearTrafficOcrTimers();
     if (!videoId) return;
 
@@ -1183,7 +1757,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       liveTrackTimerRef.current = null;
     }
     liveTrackCacheRef.current = {};
-    setLiveTracks(null);
+    renderedTrackCacheRef.current = {};
+    if (!restoreCachedTrackPayload()) {
+      setLiveTracks(null);
+    }
     setSyncedAiFrame(null);
     syncModeRef.current = 'tracking';
     setSyncMode('tracking');
@@ -1194,16 +1771,165 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!videoId) return;
 
     fetchLiveTracks();
-    liveTrackTimerRef.current = setInterval(fetchLiveTracks, 150);
+    const quickTrackTimers = [120, 360, 800].map((delay) => window.setTimeout(fetchLiveTracks, delay));
+    liveTrackTimerRef.current = setInterval(fetchLiveTracks, Math.max(25, AI_TRACK_POLL_INTERVAL_MS));
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLiveTracks();
+      }
+    };
+    const handleAiOverlayRefresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ videoId?: number }>).detail || {};
+      if (detail.videoId && Number(detail.videoId) !== Number(videoId)) return;
+      rootVisibleRef.current = true;
+      syncModeRef.current = 'tracking';
+      setSyncMode('tracking');
+      fetchLiveTracks();
+      window.setTimeout(fetchLiveTracks, 150);
+      window.setTimeout(fetchLiveTracks, 500);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener(AI_OVERLAY_REFRESH_EVENT, handleAiOverlayRefresh as EventListener);
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener(AI_OVERLAY_REFRESH_EVENT, handleAiOverlayRefresh as EventListener);
+      quickTrackTimers.forEach((timer) => window.clearTimeout(timer));
       if (liveTrackTimerRef.current) {
         clearInterval(liveTrackTimerRef.current);
         liveTrackTimerRef.current = null;
       }
       liveTrackCacheRef.current = {};
+      renderedTrackCacheRef.current = {};
     };
-  }, [fetchLiveTracks, videoId]);
+  }, [fetchLiveTracks, restoreCachedTrackPayload, videoId]);
+
+  useEffect(() => {
+    if (!isHttpFlvStream(activeStream)) {
+      flvTrackHistoryRef.current = [];
+      flvDelaySamplesRef.current = [];
+      flvDelayPrimedRef.current = false;
+      setSyncedFlvTracks(null);
+      return;
+    }
+    flvDelayPrimedRef.current = false;
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      const videoEl = videoRef.current;
+      if (!videoEl || !videoEl.buffered?.length) return;
+
+      const samples = [...flvDelaySamplesRef.current].sort((a, b) => a - b);
+      const p95 = samples.length ? samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))] : FLV_SYNC_DELAY_MS;
+      const targetDelayMs = Math.max(FLV_SYNC_DELAY_MS, p95 + 350);
+      const targetDelaySeconds = Math.max(FLV_MIN_DELAY_SECONDS, Math.min(FLV_MAX_DELAY_SECONDS, targetDelayMs / 1000));
+
+      const liveEdge = videoEl.buffered.end(videoEl.buffered.length - 1);
+      const lag = liveEdge - videoEl.currentTime;
+      flvClockRef.current = {
+        liveEdgeSeconds: liveEdge,
+        liveEdgeEpochMs: Date.now(),
+        currentTimeSeconds: videoEl.currentTime,
+        bufferedLagMs: Math.max(0, Math.round(lag * 1000)),
+      };
+      if (!flvDelayPrimedRef.current && lag < targetDelaySeconds - FLV_DELAY_READY_TOLERANCE_SECONDS) {
+        if (!videoEl.paused) {
+          videoEl.pause();
+        }
+        return;
+      }
+
+      if (!flvDelayPrimedRef.current) {
+        flvDelayPrimedRef.current = true;
+        if (videoEl.paused) {
+          videoEl.play().catch(() => {});
+        }
+      }
+
+      if (lag > targetDelaySeconds + 2.0) {
+        try {
+          videoEl.currentTime = Math.max(0, liveEdge - targetDelaySeconds);
+        } catch {}
+      } else if (videoEl.paused) {
+        videoEl.play().catch(() => {});
+      }
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [activeStream]);
+
+  useEffect(() => {
+    if (!isHttpFlvStream(activeStream)) return;
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      const samples = [...flvDelaySamplesRef.current].sort((a, b) => a - b);
+      const p95 = samples.length ? samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))] : FLV_SYNC_DELAY_MS;
+      const targetDelayMs = Math.max(FLV_SYNC_DELAY_MS, p95 + 350);
+      const displayEpochMs = now - targetDelayMs;
+
+      const history = flvTrackHistoryRef.current.filter((item) => now - item.frameEpochMs <= FLV_SYNC_HISTORY_MS);
+      flvTrackHistoryRef.current = history;
+      if (history.length < 2) {
+        setSyncedFlvTracks((current) => {
+          const currentFrameMs = Number(current?.frame_epoch_ms || 0);
+          return currentFrameMs && now - currentFrameMs <= TRACK_PAYLOAD_CACHE_MAX_AGE_MS
+            ? stripCachedBehaviorLabels({ ...current, age_ms: now - currentFrameMs })
+            : null;
+        });
+        return;
+      }
+      const best = history
+        .map((item) => ({ item, distance: Math.abs(item.frameEpochMs - displayEpochMs) }))
+        .sort((a, b) => a.distance - b.distance)[0];
+
+      if (!best || best.distance > FLV_SYNC_TOLERANCE_MS) {
+        const latest = history[history.length - 1];
+        if (latest && now - latest.frameEpochMs <= TRACK_PAYLOAD_CACHE_MAX_AGE_MS) {
+          setSyncedFlvTracks(stripCachedBehaviorLabels({
+            ...latest,
+            age_ms: now - latest.frameEpochMs,
+            video_box_delta_ms: Math.round(displayEpochMs - latest.frameEpochMs),
+            flv_playback_epoch_ms: Math.round(displayEpochMs),
+            flv_playback_lag_ms: flvClockRef.current?.bufferedLagMs,
+            flv_target_delay_ms: Math.round(targetDelayMs),
+          }));
+          return;
+        }
+        setSyncedFlvTracks((current) => current);
+        return;
+      }
+
+      if (now - lastAiSyncLogAtRef.current >= 500) {
+        lastAiSyncLogAtRef.current = now;
+        console.info('[AI_SYNC]', {
+          videoId,
+          playerInstanceId: playerInstanceIdRef.current,
+          visible: rootVisibleRef.current,
+          videoToBoxDeltaMs: Math.round(displayEpochMs - best.item.frameEpochMs),
+          matchedFrameDistanceMs: Math.round(best.distance),
+          flvBufferedLagMs: flvClockRef.current?.bufferedLagMs,
+          flvTargetDelayMs: Math.round(targetDelayMs),
+          playbackEpochMs: Math.round(displayEpochMs),
+          boxFrameEpochMs: Math.round(best.item.frameEpochMs),
+          flvCurrentTime: flvClockRef.current?.currentTimeSeconds,
+          flvLiveEdge: flvClockRef.current?.liveEdgeSeconds,
+          historySize: history.length,
+        });
+      }
+      setSyncedFlvTracks({
+        ...best.item,
+        age_ms: best.distance,
+        video_box_delta_ms: Math.round(displayEpochMs - best.item.frameEpochMs),
+        flv_playback_epoch_ms: Math.round(displayEpochMs),
+        flv_playback_lag_ms: flvClockRef.current?.bufferedLagMs,
+        flv_target_delay_ms: Math.round(targetDelayMs),
+      });
+    }, 80);
+
+    return () => clearInterval(timer);
+  }, [activeStream]);
 
   useEffect(() => {
     const updateOverlayRect = () => {
@@ -1217,14 +1943,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
 
-      const isEzopenPlayer = src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen';
-      if (isEzopenPlayer) {
+      const fillsContainer = isHttpFlvStream(activeStream) || src.startsWith('ezopen://') || String(playType || '').toLowerCase() === 'ezopen';
+      if (fillsContainer) {
         setOverlayRect({ left: 0, top: 0, width, height });
         return;
       }
 
-      const frameWidth = Number(liveTracks?.frame_width || 0);
-      const frameHeight = Number(liveTracks?.frame_height || 0);
+      const renderTracks = isHttpFlvStream(activeStream) ? syncedFlvTracks : liveTracks;
+      const frameWidth = Number(renderTracks?.frame_width || 0);
+      const frameHeight = Number(renderTracks?.frame_height || 0);
       const frameAspect = frameWidth > 0 && frameHeight > 0 ? frameWidth / frameHeight : width / height;
       const containerAspect = width / height;
 
@@ -1254,7 +1981,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       observer?.disconnect();
       window.removeEventListener('resize', updateOverlayRect);
     };
-  }, [liveTracks?.frame_width, liveTracks?.frame_height, playType, src]);
+  }, [activeStream, liveTracks?.frame_width, liveTracks?.frame_height, playType, src, syncedFlvTracks?.frame_width, syncedFlvTracks?.frame_height]);
 
   const showNativeVideo = !(activeStream.src.startsWith('ezopen://') || String(activeStream.playType || '').toLowerCase() === 'ezopen');
   const isDeviceOffline =
@@ -1291,24 +2018,92 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const updateTimeText = formatBackendLocalTime(monitoringSummary?.last_traffic_ocr_time);
   const isTrafficAlarm = monitoringSummary?.traffic_status === 'alarm';
   const isRealtimeControlMode = syncMode === 'realtime';
-  const tracksToRender = !isRealtimeControlMode && Array.isArray(liveTracks?.tracks) ? liveTracks.tracks : [];
+  const renderTrackPayload = isHttpFlvStream(activeStream) ? (syncedFlvTracks || liveTracks) : liveTracks;
+  const tracksToRender = !isRealtimeControlMode && Array.isArray(renderTrackPayload?.tracks)
+    ? renderTrackPayload.tracks
+        .map((track) => {
+          const coords = normalizeTrackCoords(track, renderTrackPayload);
+          return coords ? { ...track, coords_norm: coords } : null;
+        })
+        .filter((track): track is LivePersonTrack => Boolean(track))
+    : [];
   const overlayBoxStyle = (track: LivePersonTrack): React.CSSProperties => {
-    const coords = Array.isArray(track.coords_norm) ? track.coords_norm : [];
-    const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords.map((value) => Math.max(0, Math.min(1, Number(value) || 0)));
+    const coords = normalizeTrackCoords(track, renderTrackPayload) || [0, 0, 0, 0];
+    const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = coords;
     return {
       left: `${x1 * 100}%`,
       top: `${y1 * 100}%`,
       width: `${Math.max(0, x2 - x1) * 100}%`,
       height: `${Math.max(0, y2 - y1) * 100}%`,
-      transition: 'left 40ms linear, top 40ms linear, width 40ms linear, height 40ms linear, opacity 80ms ease',
+      transition: 'left 80ms linear, top 80ms linear, width 100ms ease-out, height 100ms ease-out, opacity 80ms ease',
     };
+  };
+  const overlayLabelStyle = (coords: number[], index: number): React.CSSProperties => {
+    const [x1 = 0, y1 = 0, x2 = 0] = coords;
+    const vertical = Math.max(2, Math.min(86, y1 * 100 + index * 4));
+    if (x2 <= 0.72) {
+      return {
+        left: `${Math.min(96, x2 * 100 + 2)}%`,
+        top: `${vertical}%`,
+        maxWidth: `${Math.max(16, Math.min(30, (0.98 - x2) * 100 - 2))}%`,
+      };
+    }
+    if (x1 >= 0.28) {
+      return {
+        right: `${Math.min(96, (1 - x1) * 100 + 2)}%`,
+        top: `${vertical}%`,
+        maxWidth: `${Math.max(16, Math.min(30, x1 * 100 - 2))}%`,
+      };
+    }
+    return {
+      left: '2%',
+      top: `${Math.max(2, y1 * 100 - 10 + index * 4)}%`,
+      maxWidth: '30%',
+    };
+  };
+  const getTrackAlarmLabels = (track: LivePersonTrack): string[] => {
+    if (renderTrackPayload?.stale || Number(renderTrackPayload?.age_ms || 0) > TRACK_ALARM_LABEL_STALE_LIMIT_MS) {
+      return [];
+    }
+    const labels = new Map<string, string>();
+    const addLabel = (value: unknown) => {
+      const text = normalizeLabel(value);
+      if (!text) return;
+      const compact = text.toLowerCase().replace(/[\s_\-:：|]+/g, '');
+      let key = compact;
+      let display = text;
+      if (compact.includes('phone') || compact.includes('call') || text.includes('打电话')) {
+        key = 'phone';
+        display = '打电话';
+      } else if (text.includes('反光衣') || compact.includes('vest') || compact.includes('reflective')) {
+        key = 'vest';
+        display = text.includes('缺失') || text.includes('未穿') ? text : '反光衣缺失';
+      } else if (text.includes('安全帽') || compact.includes('helmet')) {
+        key = 'helmet';
+        display = text.includes('缺失') || text.includes('未戴') ? text : '安全帽缺失';
+      }
+      labels.set(key, display);
+    };
+    const normalizeLabel = (value: unknown) => {
+      const text = String(value || '').trim();
+      return getAlarmDisplayLabel(text) || text;
+    };
+    if (Array.isArray(track.alarmLabels)) {
+      track.alarmLabels.forEach(addLabel);
+    }
+    if (Array.isArray(track.behaviorAlarms)) {
+      track.behaviorAlarms.forEach((alarm) => {
+        addLabel(alarm?.label || alarm?.type);
+      });
+    }
+    return Array.from(labels.values()).slice(0, 3);
   };
 
   if (isDeviceOffline) {
     return (
       <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-white p-4">
         <img
-          src="/images/logo.jpeg"
+          src="/images/公司logo.jpeg"
           alt="公司 Logo"
           className="block h-auto max-h-[76%] w-auto max-w-[76%] object-contain"
         />
@@ -1322,7 +2117,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {showNativeVideo && (
         <video
           ref={videoRef}
-          className="w-full h-full object-contain absolute inset-0"
+          className="w-full h-full object-fill absolute inset-0"
           muted
           autoPlay
           playsInline
@@ -1335,7 +2130,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
           ref={syncedFrameLayerRef}
           src={syncedAiFrame.image}
           alt=""
-          className="pointer-events-none absolute inset-0 z-[6] h-full w-full object-fill"
+          className="pointer-events-none absolute z-[50] object-fill"
+          style={{
+            left: overlayRect.left,
+            top: overlayRect.top,
+            width: overlayRect.width,
+            height: overlayRect.height,
+          }}
         />
       )}
 
@@ -1351,17 +2152,43 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
           >
             {tracksToRender.map((track, index) => {
-              const label = track.personName || track.track_id || `person_${index + 1}`;
+              const alarmLabels = getTrackAlarmLabels(track);
+              const hasAlarm = alarmLabels.length > 0;
+              const coords = normalizeTrackCoords(track, renderTrackPayload) || [0, 0, 0, 0];
+              const displayLabel = hasAlarm
+                ? `${track.personName || '未知人员'} | 异常：${alarmLabels.join('、')}`
+                : track.personName || '未知人员';
+              const label = track.personName || '未知人员';
               return (
                 <div
                   key={`${track.track_id || index}`}
-                  className="absolute rounded-sm border-2 border-cyan-300 shadow-[0_0_0_1px_rgba(8,47,73,0.85),0_0_12px_rgba(34,211,238,0.55)]"
+                  className={`absolute rounded-sm border-2 ${
+                    hasAlarm
+                      ? 'border-red-500 shadow-[0_0_0_1px_rgba(127,29,29,0.9),0_0_14px_rgba(248,113,113,0.65)]'
+                      : 'border-cyan-300 shadow-[0_0_0_1px_rgba(8,47,73,0.85),0_0_12px_rgba(34,211,238,0.55)]'
+                  }`}
                   style={overlayBoxStyle(track)}
+                />
+              );
+            })}
+            {tracksToRender.map((track, index) => {
+              const alarmLabels = getTrackAlarmLabels(track);
+              const hasAlarm = alarmLabels.length > 0;
+              const coords = normalizeTrackCoords(track, renderTrackPayload) || [0, 0, 0, 0];
+              const displayLabel = hasAlarm
+                ? `${track.personName || '未知人员'} | 异常：${alarmLabels.join('、')}`
+                : track.personName || '未知人员';
+              return (
+                <span
+                  key={`label-${track.track_id || index}`}
+                  className={`absolute rounded-sm px-2 py-1 text-[12px] font-semibold leading-tight shadow-lg ${
+                    hasAlarm ? 'bg-red-500 text-white' : 'bg-cyan-400 text-slate-950'
+                  }`}
+                  style={overlayLabelStyle(coords, index)}
+                  title={displayLabel}
                 >
-                  <span className="absolute left-0 top-0 -translate-y-full rounded-t-sm bg-cyan-400 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-slate-950">
-                    {label}
-                  </span>
-                </div>
+                  {displayLabel}
+                </span>
               );
             })}
           </div>

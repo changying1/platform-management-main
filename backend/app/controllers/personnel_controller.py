@@ -3,6 +3,7 @@ from app.core.data_scope import in_scope
 from app.core.security import get_current_user
 from app.schemas.personnel_schema import PersonnelCreate, PersonnelUpdate, PersonnelOut
 from app.services.personnel_service import PersonnelService
+from app.utils.face_storage import ALLOWED_FACE_EXTS, get_face_file_path, get_face_public_url, safe_filename_part
 import os
 import shutil
 from uuid import uuid4
@@ -132,24 +133,29 @@ def upload_personnel_face(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    allowed_exts = {".jpg", ".jpeg", ".png", ".webp"}
     _, ext = os.path.splitext(file.filename or "")
     ext = ext.lower()
 
-    if ext not in allowed_exts:
+    if ext not in ALLOWED_FACE_EXTS:
         raise HTTPException(status_code=400, detail="Only jpg, jpeg, png, webp files are allowed")
 
-    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    face_dir = os.path.join(backend_root, "static", "faces")
-    os.makedirs(face_dir, exist_ok=True)
+    person = service.collection.find_one({"_id": personnel_id}) if isinstance(personnel_id, str) else None
+    if person is None:
+        try:
+            from bson import ObjectId
 
-    filename = f"{personnel_id}_{uuid4().hex}{ext}"
-    save_path = os.path.join(face_dir, filename)
+            if ObjectId.is_valid(personnel_id):
+                person = service.collection.find_one({"_id": ObjectId(personnel_id)})
+        except Exception:
+            person = None
+    person_name = safe_filename_part((person or {}).get("username") or (person or {}).get("name"), "person")
+    filename = f"{person_name}_{personnel_id}_{uuid4().hex}{ext}"
+    save_path = get_face_file_path(filename)
 
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    face_image_url = f"/static/faces/{filename}"
+    face_image_url = get_face_public_url(filename)
 
     updated = service.update_face_image(personnel_id, face_image_url, current_user=current_user)
     if not updated:

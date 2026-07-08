@@ -29,6 +29,7 @@
 
   import VideoPlayer from "../src/components/VideoPlayer";
   import PTZControlPanel from "../src/components/PTZControlPanel";
+  import { getAlarmDisplayType, translateAlarmDisplayText } from "../src/utils/alarmDisplay";
   import { unitApiClient, type ResponsibilityUnit, type UnitTreeNode } from "../src/api/responsibilityUnitApi";
   import { getStoredScopeState, readStoredAuth } from "../src/utils/authScope";
   import {
@@ -89,7 +90,7 @@
     ) : (
       <div className="absolute inset-0 flex items-center justify-center bg-white p-4">
         <img
-          src="/images/logo.jpeg"
+          src="/images/公司logo.jpeg"
           alt="公司 Logo"
           className="block h-auto max-h-[76%] w-auto max-w-[76%] object-contain"
         />
@@ -597,6 +598,7 @@
     const [streamUrl, setStreamUrl] = useState<string | null>(null);
     const [isMonitorOnlyMode, setIsMonitorOnlyMode] = useState(false);
     const [streamInfo, setStreamInfo] = useState<StreamUrl | null>(null);  // ✅ 新增
+    const [previewFullscreenDevice, setPreviewFullscreenDevice] = useState<Video | null>(null);
 
     // --- ✅ 新增 AI 监控状态 ---
     const [isAIEnabled, setIsAIEnabled] = useState(false);
@@ -1094,9 +1096,11 @@ useEffect(() => {
       if (x2 < x1) [x1, x2] = [x2, x1];
       if (y2 < y1) [y1, y2] = [y2, y1];
 
+      const displaySource = raw.type ? raw : fallback;
+      const displayType = getAlarmDisplayType(displaySource);
       return {
-        type: raw.type || fallback?.type || "未知警报",
-        msg: raw.msg || fallback?.msg || "检测到异常",
+        type: displayType || raw.type || fallback?.type || "\u672a\u77e5\u62a5\u8b66",
+        msg: translateAlarmDisplayText(raw.msg || fallback?.msg || "", displaySource) || displayType || "\u68c0\u6d4b\u5230\u5f02\u5e38",
         score: Number.isFinite(Number(raw.score)) ? Number(raw.score) : Number(fallback?.score) || 0,
         coords: [x1, y1, x2, y2],
         track_id: Number(raw.track_id ?? fallback?.track_id ?? 0),
@@ -1391,8 +1395,8 @@ useEffect(() => {
           }
 
           const firstBox = boxes[0];
-          const alarmType = firstBox?.type || alarmLike?.type || "未知警报";
-          const alarmMsg = firstBox?.msg || alarmLike?.msg || "检测到异常";
+          const alarmType = getAlarmDisplayType(firstBox || alarmLike) || "\u672a\u77e5\u62a5\u8b66";
+          const alarmMsg = translateAlarmDisplayText(firstBox?.msg || alarmLike?.msg || "", firstBox || alarmLike) || alarmType || "\u68c0\u6d4b\u5230\u5f02\u5e38";
           const deviceName = alarmLike?.device_name || alarmLike?.device_id || maximizedVideo?.name || "未知设备";
           const fenceName = alarmLike?.fence_name || alarmLike?.location || "未绑定围栏";
           
@@ -1609,16 +1613,41 @@ useEffect(() => {
   const fetchDevices = async () => {
       try {
           setLoading(true);
-          const [data, tree] = await Promise.all([
-            getAllVideos(),
-            unitApiClient.getTree().catch(() => []),
+          const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+            let timer: ReturnType<typeof window.setTimeout> | undefined;
+            try {
+              return await Promise.race([
+                promise,
+                new Promise<T>((resolve) => {
+                  timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+                }),
+              ]);
+            } finally {
+              if (timer) window.clearTimeout(timer);
+            }
+          };
+          const [videoResult, treeResult] = await Promise.allSettled([
+            getAllVideos({ timeoutMs: 8000 }),
+            withTimeout(unitApiClient.getTree(), 4000, [] as UnitTreeNode[]),
           ]);
+          const data = videoResult.status === "fulfilled" && Array.isArray(videoResult.value)
+            ? videoResult.value
+            : [];
+          const tree = treeResult.status === "fulfilled" && Array.isArray(treeResult.value)
+            ? treeResult.value
+            : [];
           setOrgUnits(flattenUnitTree(tree));
           setDevices(data);
-          setError(null);
+          setError(
+            videoResult.status === "fulfilled"
+              ? null
+              : "监控设备加载失败，请确认登录状态和后端服务。"
+          );
       } catch (e: any) {
           console.error('fetchDevices错误:', e);
           setError("无法加载设备。请确认后端服务已启动。");
+          setDevices([]);
+          setOrgUnits([]);
       } finally {
           setLoading(false);
       }
@@ -2014,8 +2043,18 @@ useEffect(() => {
       });
     }, [loadPreviewStream, paginatedCells]);
 
+    const refreshAiOverlayForDevice = (deviceId?: number) => {
+      if (!deviceId) return;
+      window.dispatchEvent(new CustomEvent("video-ai-overlay-refresh", { detail: { videoId: deviceId } }));
+    };
+
     const handleVideoDoubleClick = async (device: Video) => {
-      await handleShowStream(device);
+      if (!previewStreamsRef.current[device.id] && !previewLoadingRef.current[device.id]) {
+        await loadPreviewStream(device, true);
+      }
+      setPreviewFullscreenDevice(device);
+      window.setTimeout(() => refreshAiOverlayForDevice(device.id), 0);
+      window.setTimeout(() => refreshAiOverlayForDevice(device.id), 300);
     };
 
   const handleAddDevice = async () => {
@@ -2241,6 +2280,20 @@ useEffect(() => {
 
           const sourceW = rawVideoW || inferredSourceW;
           const sourceH = rawVideoH || inferredSourceH;
+          if (x2 < x1) [x1, x2] = [x2, x1];
+          if (y2 < y1) [y1, y2] = [y2, y1];
+          x1 = Math.max(0, Math.min(sourceW, x1));
+          x2 = Math.max(0, Math.min(sourceW, x2));
+          y1 = Math.max(0, Math.min(sourceH, y1));
+          y2 = Math.max(0, Math.min(sourceH, y2));
+
+          const boxW = x2 - x1;
+          const boxH = y2 - y1;
+          if (boxW <= 1 || boxH <= 1) return;
+          if ((boxW / sourceW >= 0.92 && boxH / sourceH >= 0.92) || (boxW * boxH) / (sourceW * sourceH) >= 0.72) {
+            return;
+          }
+
           const scaleX = renderW / sourceW;
           const scaleY = renderH / sourceH;
 
@@ -2251,7 +2304,8 @@ useEffect(() => {
 
           const id = Number(box.track_id || 0);
           const color = "#ef4444";
-          const label = `${box.msg || box.type || "报警"}${id ? ` #${id}` : ""}`;
+          const labelText = translateAlarmDisplayText(box.msg || "", box) || getAlarmDisplayType(box) || "\u62a5\u8b66";
+          const label = `${labelText}${id ? ` #${id}` : ""}`;
 
           ctx.strokeStyle = color;
           ctx.lineWidth = 3;
@@ -2685,6 +2739,69 @@ useEffect(() => {
         
         </div>
 
+        {previewFullscreenDevice && ReactDOM.createPortal(
+          <div className="fixed inset-0 z-[9500] bg-black">
+            <div
+              className="relative h-screen w-screen bg-black"
+              onDoubleClick={() => {
+                const deviceId = previewFullscreenDevice.id;
+                setPreviewFullscreenDevice(null);
+                window.setTimeout(() => refreshAiOverlayForDevice(deviceId), 0);
+                window.setTimeout(() => refreshAiOverlayForDevice(deviceId), 300);
+              }}
+            >
+              {isDeviceOffline(previewFullscreenDevice) ? (
+                <OfflineVideoFallback virtual />
+              ) : previewStreams[previewFullscreenDevice.id] ? (
+                <VideoPlayer
+                  src={previewStreams[previewFullscreenDevice.id].url}
+                  playType={previewStreams[previewFullscreenDevice.id].play_type}
+                  accessToken={previewStreams[previewFullscreenDevice.id].access_token}
+                  videoId={previewFullscreenDevice.id}
+                  deviceStatus={previewFullscreenDevice.status}
+                  showTrafficPanel
+                  trafficPanelVariant="compact"
+                />
+              ) : previewLoading[previewFullscreenDevice.id] ? (
+                <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
+                  正在加载视频流...
+                </div>
+              ) : previewErrors[previewFullscreenDevice.id] ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-sm text-rose-300">
+                  <div>{previewErrors[previewFullscreenDevice.id]}</div>
+                  <button
+                    className="rounded bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadPreviewStream(previewFullscreenDevice, true);
+                    }}
+                  >
+                    重新拉流
+                  </button>
+                </div>
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
+                  暂无可用视频流
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  const deviceId = previewFullscreenDevice.id;
+                  setPreviewFullscreenDevice(null);
+                  window.setTimeout(() => refreshAiOverlayForDevice(deviceId), 0);
+                  window.setTimeout(() => refreshAiOverlayForDevice(deviceId), 300);
+                }}
+                className="absolute right-4 top-4 z-30 rounded bg-black/55 p-2 text-white transition hover:bg-rose-500/80"
+                aria-label="关闭全屏"
+                title="关闭全屏"
+              >
+                <X size={22} />
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
         {/* 原有的添加设备弹窗 - 完整保留 */}
         {showAddModal && (
           <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -2867,6 +2984,8 @@ useEffect(() => {
     accessToken={streamInfo?.access_token}
     videoId={maximizedVideo?.id}
     deviceStatus={maximizedVideo?.status}
+    showTrafficPanel
+    trafficPanelVariant="compact"
     onError={handlePlayerError}
   />
                         <canvas id="aiCanvas" ref={aiCanvasRef} className="absolute top-0 left-0 z-10 w-full h-full pointer-events-none" />

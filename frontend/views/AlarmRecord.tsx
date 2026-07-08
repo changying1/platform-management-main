@@ -4,6 +4,7 @@ import { alarmApi, toStaticUrl, type AlarmResponse } from '../src/api/alarmApi';
 import { getAlarmVideosList, type SavedPlaybackVideo } from '../src/api/videoApi';
 import { withAuthTokenParam } from '../src/api/config';
 import { formatAlarmDisplayTime, getAlarmDisplayTime, parseAlarmTimeValue } from '../src/utils/alarmTime';
+import { getAlarmDisplayType, translateAlarmDisplayText as translateAlarmDisplayValue } from '../src/utils/alarmDisplay';
 import { hasStoredPermission } from '../src/utils/permissions';
 import { getStoredScopeState } from '../src/utils/authScope';
 import {
@@ -378,7 +379,7 @@ const isOfflineAlarm = (item: AlarmResponse) => {
   return text.includes('offline') || text.includes('离线');
 };
 
-const translateAlarmDisplayText = (value: unknown) => String(value || '')
+const translateAlarmDisplayText = (value: unknown, alarm?: any) => translateAlarmDisplayValue(value, alarm)
   .replace(/\bnohelmet\b/gi, '未佩戴安全帽')
   .replace(/\bno_helmet\b/gi, '未佩戴安全帽')
   .replace(/\bhelmet_missing\b/gi, '未佩戴安全帽')
@@ -392,6 +393,7 @@ const translateAlarmDisplayText = (value: unknown) => String(value || '')
   .replace(/\bno_vest\b/gi, '未穿反光衣')
   .replace(/\breflective_vest_missing\b/gi, '未穿反光衣')
   .replace(/\breflectivevestmissing\b/gi, '未穿反光衣')
+  .replace(/\bppe_violation\b/gi, alarm ? getAlarmDisplayType(alarm) : '\u9632\u62a4\u7528\u54c1\u7a7f\u6234\u5f02\u5e38')
   .replace(/\bunknown\b/gi, '未知异常')
   .replace(/\bpending\b/gi, '生成中')
   .replace(/\bgenerating\b/gi, '生成中')
@@ -412,7 +414,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
   const isFence = sourceType === 'fence';
 
   const rawType = String(item.alarm_type || '');
-  const title = translateAlarmDisplayText(rawType) || (isFence ? '围栏告警' : '视频告警');
+  const title = getAlarmDisplayType(rawItem) || translateAlarmDisplayText(rawType, rawItem) || (isFence ? '\u56f4\u680f\u544a\u8b66' : '\u89c6\u9891\u544a\u8b66');
   const timestamp = getAlarmDisplayTime(rawItem);
   const alarmCode = `ALM-${formatAlarmCodeDate(timestamp)}-${item.id}`;
 
@@ -495,7 +497,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     ].join('-'),
     type: isFence ? 'fence' : 'video',
     title,
-    description: translateAlarmDisplayText(item.description) || personText || title,
+    description: translateAlarmDisplayText(item.description, rawItem) || personText || title,
     time: timestamp,
     level: getLevelFromSeverity(item.severity),
     severityRaw: item.severity || '',
@@ -516,7 +518,7 @@ const mapAlarmFromApi = (item: AlarmResponse): AlarmRecord => {
     endTime: rawItem.end_time || rawItem.recording_end_time,
     alarmSecond: rawItem.alarm_second ?? rawItem.alarmSecond,
     recordingStatus: item.recording_status,
-    recordingError: translateAlarmDisplayText(item.recording_error || item.error_message),
+    recordingError: translateAlarmDisplayText(item.recording_error || item.error_message, rawItem),
     fenceId:
       item.fence_id !== undefined && item.fence_id !== null
         ? String(item.fence_id)
