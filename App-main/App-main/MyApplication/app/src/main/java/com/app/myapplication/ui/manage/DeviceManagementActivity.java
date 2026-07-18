@@ -31,18 +31,23 @@ import androidx.viewpager2.widget.ViewPager2;
 
 import com.app.myapplication.R;
 import com.app.myapplication.data.api.ApiClient;
+import com.app.myapplication.data.api.CameraRegistrationApi;
 import com.app.myapplication.data.api.ManagementApi;
 import com.app.myapplication.data.api.VideoApi;
 import com.app.myapplication.data.local.SessionManager;
 import com.app.myapplication.data.model.VideoDevice;
 import com.app.myapplication.data.model.manage.LocationDevice;
+import com.app.myapplication.ui.scan.QrScanOptions;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -85,13 +90,12 @@ public class DeviceManagementActivity extends AppCompatActivity {
         private TextView tvEmpty;
         private OrgNode selectedFilterOrg;
         private final List<OrgNode> selectableOrgTreeNodes = new ArrayList<>();
-        private EditText activeScanField;
+        private CameraForm activeScanForm;
 
         private final ActivityResultLauncher<ScanOptions> scanLauncher =
                 registerForActivityResult(new ScanContract(), result -> {
-                    if (result != null && !TextUtils.isEmpty(result.getContents()) && activeScanField != null) {
-                        activeScanField.setText(extractSerialFromScan(result.getContents()));
-                        activeScanField.setSelection(activeScanField.length());
+                    if (result != null && !TextUtils.isEmpty(result.getContents()) && activeScanForm != null) {
+                        applyCameraScanResult(activeScanForm, result.getContents());
                     }
                 });
 
@@ -141,7 +145,7 @@ public class DeviceManagementActivity extends AppCompatActivity {
         private void loadCameras() {
             swipeRefresh.setRefreshing(true);
             ApiClient.get(requireContext()).create(VideoApi.class)
-                    .getDevices(5000)
+                    .getDevices(500)
                     .enqueue(new Callback<List<VideoDevice>>() {
                         @Override
                         public void onResponse(Call<List<VideoDevice>> call, Response<List<VideoDevice>> response) {
@@ -194,7 +198,7 @@ public class DeviceManagementActivity extends AppCompatActivity {
 
         private void showCameraDefaultsDialog() {
             LinearLayout root = formRoot(requireContext());
-            OrgPicker org = addOrgPicker(root, "所属单位 *", null, this::showOrgTreePicker);
+            OrgPicker org = addOrgPicker(root, "所属单位", null, this::showOrgTreePicker);
             EditText port = addInput(root, "端口", "80");
             Spinner platform = addSpinner(root, "平台类型", CAMERA_PLATFORM_LABELS);
             Spinner type = addSpinner(root, "设备类型", CAMERA_TYPE_LABELS);
@@ -220,11 +224,13 @@ public class DeviceManagementActivity extends AppCompatActivity {
             form.name = addInput(root, "设备名称 *", "");
             form.address = addInput(root, "设备地址", "");
             form.serial = addInput(root, "设备序列号", "");
+            form.cameraPassword = addInput(root, "摄像头密码", "");
+            form.simCardId = addInput(root, "SIM卡号(ICCID)", "");
             Button scan = new Button(requireContext());
             scan.setText("扫码填写序列号");
             root.addView(scan);
             scan.setOnClickListener(v -> {
-                activeScanField = form.serial;
+                activeScanForm = form;
                 ensureCameraPermission();
             });
             form.channel = addInput(root, "通道号", "1");
@@ -233,7 +239,7 @@ public class DeviceManagementActivity extends AppCompatActivity {
             form.manager = addInput(root, "负责人", "");
             form.managerPhone = addInput(root, "负责人电话", "");
             form.remark = addInput(root, "备注", "");
-            form.org = addOrgPicker(root, "所属单位 *", defaults.orgNode, this::showOrgTreePicker);
+            form.org = addOrgPicker(root, "所属单位", defaults.orgNode, this::showOrgTreePicker);
             form.platform = addSpinner(root, "平台类型", CAMERA_PLATFORM_LABELS);
             form.type = addSpinner(root, "设备类型", CAMERA_TYPE_LABELS);
             selectSpinnerByValue(form.platform, CAMERA_PLATFORM_VALUES, defaults.platformType);
@@ -253,8 +259,8 @@ public class DeviceManagementActivity extends AppCompatActivity {
                 form.name.setError("设备名称必填");
                 return;
             }
-            if (form.org.selected == null) {
-                Toast.makeText(requireContext(), "请选择所属单位", Toast.LENGTH_SHORT).show();
+            if (!value(form.serial).isEmpty() && value(form.cameraPassword).isEmpty()) {
+                form.cameraPassword.setError("填写设备序列号时必须填写摄像头密码");
                 return;
             }
 
@@ -262,14 +268,17 @@ public class DeviceManagementActivity extends AppCompatActivity {
             req.setName(value(form.name));
             req.setIpAddress(value(form.address));
             req.setDeviceSerial(value(form.serial));
+            req.setSimCardId(value(form.simCardId));
             req.setChannelNo(intValue(form.channel, 1));
             req.setPort(intValue(form.port, 80));
             req.setPlatformType(spinnerValue(form.platform, CAMERA_PLATFORM_VALUES));
             req.setDeviceType(spinnerValue(form.type, CAMERA_TYPE_VALUES));
-            req.setCompany(form.org.selected.company);
-            req.setProject(form.org.selected.project);
-            req.setGrid(form.org.selected.grid);
-            req.setTeam(form.org.selected.team);
+            if (form.org.selected != null) {
+                req.setCompany(form.org.selected.company);
+                req.setProject(form.org.selected.project);
+                req.setGrid(form.org.selected.grid);
+                req.setTeam(form.org.selected.team);
+            }
             req.setInstallLocation(value(form.installLocation));
             req.setManager(value(form.manager));
             req.setManagerPhone(value(form.managerPhone));
@@ -277,6 +286,15 @@ public class DeviceManagementActivity extends AppCompatActivity {
             req.setStatus("offline");
             req.setIsActive(1);
 
+            if (!value(form.serial).isEmpty() || !value(form.simCardId).isEmpty()) {
+                submitCameraRegistration(form, req, batchMode, dialog);
+                return;
+            }
+
+            submitPlainCamera(form, req, batchMode, dialog);
+        }
+
+        private void submitPlainCamera(CameraForm form, VideoDevice req, boolean batchMode, AlertDialog dialog) {
             ApiClient.get(requireContext()).create(VideoApi.class)
                     .addCamera(req)
                     .enqueue(new Callback<VideoDevice>() {
@@ -289,6 +307,8 @@ public class DeviceManagementActivity extends AppCompatActivity {
                                     form.name.setText("");
                                     form.address.setText("");
                                     form.serial.setText("");
+                                    form.cameraPassword.setText("");
+                                    form.simCardId.setText("");
                                 } else {
                                     dialog.dismiss();
                                 }
@@ -304,6 +324,54 @@ public class DeviceManagementActivity extends AppCompatActivity {
                     });
         }
 
+        private void submitCameraRegistration(CameraForm form, VideoDevice req, boolean batchMode, AlertDialog dialog) {
+            JsonObject request = new JsonObject();
+            put(request, "name", value(form.name));
+            put(request, "device_serial", value(form.serial));
+            put(request, "camera_password", value(form.cameraPassword));
+            put(request, "sim_card_id", value(form.simCardId));
+            request.addProperty("channel_no", intValue(form.channel, 1));
+            put(request, "device_type", spinnerValue(form.type, CAMERA_TYPE_VALUES));
+            put(request, "status", "offline");
+            put(request, "remark", value(form.remark));
+            put(request, "location", value(form.installLocation));
+            put(request, "username", value(form.manager));
+            if (form.org.selected != null) {
+                put(request, "company", form.org.selected.company);
+                put(request, "project", form.org.selected.project);
+                put(request, "grid", form.org.selected.grid);
+                put(request, "team", form.org.selected.team);
+            }
+
+            ApiClient.get(requireContext()).create(CameraRegistrationApi.class)
+                    .registerCamera(request)
+                    .enqueue(new Callback<JsonObject>() {
+                        @Override
+                        public void onResponse(Call<JsonObject> call, Response<JsonObject> response) {
+                            if (response.isSuccessful()) {
+                                Toast.makeText(requireContext(), registrationMessage(response.body()), Toast.LENGTH_LONG).show();
+                                loadCameras();
+                                if (batchMode) {
+                                    form.name.setText("");
+                                    form.address.setText("");
+                                    form.serial.setText("");
+                                    form.cameraPassword.setText("");
+                                    form.simCardId.setText("");
+                                } else {
+                                    dialog.dismiss();
+                                }
+                            } else {
+                                Toast.makeText(requireContext(), "自动注册失败: HTTP " + response.code(), Toast.LENGTH_SHORT).show();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Call<JsonObject> call, Throwable t) {
+                            Toast.makeText(requireContext(), "自动注册失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }
+
         private void ensureCameraPermission() {
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                 launchScanner();
@@ -313,11 +381,20 @@ public class DeviceManagementActivity extends AppCompatActivity {
         }
 
         private void launchScanner() {
-            ScanOptions options = new ScanOptions();
-            options.setPrompt("请扫描设备二维码");
-            options.setBeepEnabled(true);
-            options.setOrientationLocked(false);
-            scanLauncher.launch(options);
+            scanLauncher.launch(QrScanOptions.cameraDevice("请扫描设备二维码。小标签请靠近至10-20厘米，避开反光，保持二维码铺满取景框。"));
+        }
+
+        private void applyCameraScanResult(CameraForm form, String raw) {
+            CameraScanResult parsed = parseCameraScanContent(raw);
+            if (!TextUtils.isEmpty(parsed.simCardId)) {
+                form.simCardId.setText(parsed.simCardId);
+                form.simCardId.setSelection(form.simCardId.length());
+                return;
+            }
+            if (!TextUtils.isEmpty(parsed.deviceSerial)) {
+                form.serial.setText(parsed.deviceSerial);
+                form.serial.setSelection(form.serial.length());
+            }
         }
 
         private void showOrgTreePicker(String title, OrgNode selected, OrgPickCallback callback) {
@@ -878,18 +955,122 @@ public class DeviceManagementActivity extends AppCompatActivity {
         return headers;
     }
 
-    private static String extractSerialFromScan(String raw) {
-        String text = raw.trim();
-        String lower = text.toLowerCase(Locale.ROOT);
-        for (String key : new String[]{"device_serial=", "serial=", "sn=", "code="}) {
-            int index = lower.indexOf(key);
-            if (index >= 0) {
-                String value = text.substring(index + key.length());
-                int end = value.indexOf('&');
-                return end >= 0 ? value.substring(0, end) : value;
+    private static CameraScanResult parseCameraScanContent(String raw) {
+        CameraScanResult result = new CameraScanResult();
+        String text = raw == null ? "" : raw.trim();
+        if (TextUtils.isEmpty(text)) return result;
+
+        String[] hikvisionParts = parseHikvisionSingleQr(text);
+        if (hikvisionParts != null) {
+            result.deviceSerial = hikvisionParts[0];
+            result.model = hikvisionParts[2];
+            return result;
+        }
+
+        if (text.startsWith("{")) {
+            try {
+                JsonObject obj = JsonParser.parseString(text).getAsJsonObject();
+                result.deviceSerial = first(jsonStringAnyCase(obj, "deviceSerial"), jsonStringAnyCase(obj, "device_serial"));
+                result.deviceSerial = first(result.deviceSerial, jsonStringAnyCase(obj, "serial"));
+                result.deviceSerial = first(result.deviceSerial, jsonStringAnyCase(obj, "sn"));
+                result.simCardId = first(jsonStringAnyCase(obj, "sim_card_id"), jsonStringAnyCase(obj, "simCardId"));
+                result.simCardId = first(result.simCardId, jsonStringAnyCase(obj, "iccid"));
+                result.simCardId = first(result.simCardId, jsonStringAnyCase(obj, "sim"));
+                if (!TextUtils.isEmpty(result.simCardId)) result.simCardId = digitsOnly(result.simCardId);
+                return result;
+            } catch (Exception ignored) {
             }
         }
-        return text;
+
+        result.deviceSerial = first(findQueryLikeValue(text, "deviceSerial"), findQueryLikeValue(text, "device_serial"));
+        result.deviceSerial = first(result.deviceSerial, findQueryLikeValue(text, "serial"));
+        result.deviceSerial = first(result.deviceSerial, findQueryLikeValue(text, "sn"));
+        result.deviceSerial = first(result.deviceSerial, findQueryLikeValue(text, "code"));
+        result.simCardId = first(findQueryLikeValue(text, "sim_card_id"), findQueryLikeValue(text, "simCardId"));
+        result.simCardId = first(result.simCardId, findQueryLikeValue(text, "iccid"));
+        result.simCardId = first(result.simCardId, findQueryLikeValue(text, "sim"));
+        if (!TextUtils.isEmpty(result.simCardId)) result.simCardId = digitsOnly(result.simCardId);
+
+        if (TextUtils.isEmpty(result.deviceSerial) && TextUtils.isEmpty(result.simCardId)) {
+            if (looksLikeIccid(text)) {
+                result.simCardId = digitsOnly(text);
+            } else {
+                result.deviceSerial = text;
+            }
+        }
+        return result;
+    }
+
+    private static String[] parseHikvisionSingleQr(String text) {
+        if (TextUtils.isEmpty(text)) return null;
+        String lower = text.toLowerCase(Locale.ROOT);
+        if (!lower.contains("support.hikvision.com") && !lower.contains("sn=")) return null;
+
+        int snIndex = lower.indexOf("sn=");
+        if (snIndex < 0) return null;
+        String afterSn = decode(text.substring(snIndex + 3)).trim();
+        if (TextUtils.isEmpty(afterSn)) return null;
+
+        String[] rawLines = afterSn.split("\\r\\n|\\r|\\n");
+        List<String> lines = new ArrayList<>();
+        for (String rawLine : rawLines) {
+            String line = rawLine.trim();
+            if (!TextUtils.isEmpty(line)) lines.add(line);
+        }
+        if (lines.isEmpty()) return null;
+
+        return new String[] {
+                lines.get(0),
+                lines.size() > 1 ? lines.get(1) : "",
+                lines.size() > 2 ? lines.get(2) : ""
+        };
+    }
+
+    private static String findQueryLikeValue(String text, String key) {
+        if (TextUtils.isEmpty(text)) return "";
+        String normalized = text.replace('\n', '&').replace('\r', '&');
+        String prefix = key.toLowerCase(Locale.ROOT) + "=";
+        String[] parts = normalized.split("[?&#]");
+        for (String part : parts) {
+            for (String pair : part.split("&")) {
+                String trimmed = pair.trim();
+                if (trimmed.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                    return decode(trimmed.substring(prefix.length())).trim();
+                }
+            }
+        }
+        return "";
+    }
+
+    private static String jsonStringAnyCase(JsonObject obj, String key) {
+        if (obj == null) return "";
+        for (String candidate : obj.keySet()) {
+            if (candidate.equalsIgnoreCase(key) && !obj.get(candidate).isJsonNull()) {
+                return obj.get(candidate).getAsString().trim();
+            }
+        }
+        return "";
+    }
+
+    private static boolean looksLikeIccid(String value) {
+        String digits = digitsOnly(value);
+        return digits.length() == 20 && digits.startsWith("8986");
+    }
+
+    private static String digitsOnly(String value) {
+        return value == null ? "" : value.replaceAll("\\D+", "");
+    }
+
+    private static String decode(String value) {
+        try {
+            return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+        } catch (Exception ignored) {
+            return value;
+        }
+    }
+
+    private static String first(String a, String b) {
+        return TextUtils.isEmpty(a) ? (b == null ? "" : b) : a;
     }
 
     private static String normalizeUnitType(String type) {
@@ -903,6 +1084,14 @@ public class DeviceManagementActivity extends AppCompatActivity {
     private static String jsonText(JsonObject json, String key) {
         if (json == null || !json.has(key) || json.get(key).isJsonNull()) return "";
         return json.get(key).getAsString();
+    }
+
+    private static String registrationMessage(JsonObject response) {
+        if (response == null) return "摄像头已保存并提交自动注册";
+        boolean partial = response.has("partial_success") && response.get("partial_success").getAsBoolean();
+        boolean success = response.has("success") && response.get("success").getAsBoolean();
+        if (partial) return "摄像头已保存，部分平台注册失败";
+        return success ? "摄像头已保存并注册成功" : "摄像头已保存，平台注册失败";
     }
 
     private static String value(EditText editText) {
@@ -1036,6 +1225,8 @@ public class DeviceManagementActivity extends AppCompatActivity {
         EditText name;
         EditText address;
         EditText serial;
+        EditText cameraPassword;
+        EditText simCardId;
         EditText channel;
         EditText port;
         EditText installLocation;
@@ -1045,6 +1236,12 @@ public class DeviceManagementActivity extends AppCompatActivity {
         Spinner platform;
         Spinner type;
         OrgPicker org;
+    }
+
+    private static class CameraScanResult {
+        String deviceSerial = "";
+        String simCardId = "";
+        String model = "";
     }
 
     private static class LocationForm {

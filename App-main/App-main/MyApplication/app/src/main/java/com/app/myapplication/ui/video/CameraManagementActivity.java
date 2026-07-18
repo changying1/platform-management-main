@@ -29,6 +29,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.app.myapplication.R;
 import com.app.myapplication.data.model.VideoDevice;
+import com.app.myapplication.ui.scan.QrScanOptions;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 import com.google.android.material.button.MaterialButton;
@@ -470,12 +471,11 @@ public class CameraManagementActivity extends AppCompatActivity {
     }
 
     private void launchScanner() {
-        ScanOptions options = new ScanOptions();
         String target = first(activeScanTarget, pendingScanTarget);
-        options.setPrompt(SCAN_TARGET_SIM_CARD.equals(target) ? "请扫描SIM卡卡号二维码" : "请扫描摄像头二维码");
-        options.setBeepEnabled(true);
-        options.setOrientationLocked(false);
-        scanLauncher.launch(options);
+        String prompt = SCAN_TARGET_SIM_CARD.equals(target)
+                ? "请扫描SIM卡二维码。小标签请靠近至10-20厘米，避开反光，保持二维码铺满取景框。"
+                : "请扫描摄像头二维码。小标签请靠近至10-20厘米，避开反光，保持二维码铺满取景框。";
+        scanLauncher.launch(QrScanOptions.cameraDevice(prompt));
     }
 
     private Spinner addSpinner(LinearLayout parent, String label, String[] values) {
@@ -610,6 +610,8 @@ public class CameraManagementActivity extends AppCompatActivity {
 
     private String extractSerialFromScan(String raw) {
         String result = raw == null ? "" : raw.trim();
+        String hikvisionSerial = extractHikvisionSerial(result);
+        if (!TextUtils.isEmpty(hikvisionSerial)) return hikvisionSerial;
         String serial = findQueryLikeValue(result, "serial");
         if (!TextUtils.isEmpty(serial)) return serial;
         serial = findQueryLikeValue(result, "deviceSerial");
@@ -628,6 +630,24 @@ public class CameraManagementActivity extends AppCompatActivity {
         if (!TextUtils.isEmpty(simCardId)) return simCardId;
         simCardId = findQueryLikeValue(result, "sim");
         return TextUtils.isEmpty(simCardId) ? result : simCardId;
+    }
+
+    private String extractHikvisionSerial(String text) {
+        if (TextUtils.isEmpty(text)) return "";
+        String lower = text.toLowerCase();
+        if (!lower.contains("support.hikvision.com") && !lower.contains("sn=")) return "";
+
+        int snIndex = lower.indexOf("sn=");
+        if (snIndex < 0) return "";
+        String afterSn = decode(text.substring(snIndex + 3)).trim();
+        if (TextUtils.isEmpty(afterSn)) return "";
+
+        String[] lines = afterSn.split("\\r\\n|\\r|\\n");
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (!TextUtils.isEmpty(line)) return line;
+        }
+        return "";
     }
 
     private String findQueryLikeValue(String text, String key) {

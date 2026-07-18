@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import base64
+import json
 import numpy as np
 from app.core.database import get_db
 from app.core.data_scope import in_scope
@@ -450,6 +451,8 @@ def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), curr
     Dynamically adds a new camera by commanding the media server
     and then creating a record in the database.
     """
+    request_body = camera.model_dump(exclude_none=False) if hasattr(camera, "model_dump") else camera.dict()
+    logger.info("POST /video/add_camera request body: %s", json.dumps(request_body, ensure_ascii=False, default=str))
     try:
         created = service.add_camera_to_media_server(db, camera, scope_fields=_default_scope_fields(current_user))
         snapshot = _video_audit_snapshot(created)
@@ -469,9 +472,38 @@ def add_camera_dynamically(camera: CameraCreateRequest, db=Depends(get_db), curr
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/", response_model=List[VideoOut])
-def read_videos(skip: int = 0, limit: int = 100, db=Depends(get_db), current_user: dict = Depends(get_current_user)):
+def read_videos(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """获取所有视频设备列表"""
-    return service.get_videos(db, skip=skip, limit=limit, current_user=current_user)
+    username = current_user.get("username") if isinstance(current_user, dict) else ""
+    logger.info("[VIDEO_LIST_START] user={} limit={} offset={}", username, limit, skip)
+    try:
+        videos = service.get_videos(db, skip=skip, limit=limit, current_user=current_user)
+        result = [VideoOut.model_validate(video) for video in videos]
+        json_size = len(
+            json.dumps(
+                [item.model_dump(mode="json") for item in result],
+                ensure_ascii=False,
+                default=str,
+            ).encode("utf-8")
+        )
+        logger.info("[VIDEO_LIST_SUCCESS] count={} json_size_bytes={}", len(result), json_size)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "[VIDEO_LIST_EXCEPTION] offset={} limit={} user={} error={}",
+            skip,
+            limit,
+            username,
+            e,
+        )
+        raise HTTPException(status_code=500, detail="获取摄像头列表失败，请查看后端日志")
 
 
 @router.get("/playbacks/query")

@@ -7,6 +7,7 @@ import { createVideo, deleteVideo, getAllVideos, scanImportVideoDevices, updateV
 import { unitApiClient, type ResponsibilityUnit, type UnitTreeNode } from '../api/responsibilityUnitApi';
 import { API_BASE_URL } from '../api/config';
 import { hasStoredPermission } from '../utils/permissions';
+import CameraRegistrationModal from './camera/CameraRegistrationModal';
 
 interface Camera {
   id: number;
@@ -236,6 +237,7 @@ useEffect(() => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [showRegistrationModal, setShowRegistrationModal] = useState(false);
 const [showRepairModal, setShowRepairModal] = useState(false);
   const [repairCamera, setRepairCamera] = useState<Camera | null>(null);
   const [repairReason, setRepairReason] = useState('');
@@ -566,7 +568,7 @@ const handleAutoAdd = async () => {
 
         {canCreateDevice && (
         <button
-          onClick={() => { setFormNotice(null); setEditingItem({ sim_card_id: "" } as Camera); setShowModal(true); }}
+          onClick={() => { setFormNotice(null); setShowRegistrationModal(true); }}
           className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-1 text-sm"
         >
           <Plus size={14} /> 添加摄像头
@@ -1093,6 +1095,15 @@ const handleAutoAdd = async () => {
       )}
 
     {/* 批量导入弹窗 */}
+    <CameraRegistrationModal
+      open={showRegistrationModal}
+      orgUnits={orgUnits}
+      onClose={() => setShowRegistrationModal(false)}
+      onLocalSaved={async () => {
+        await fetchCameras(orgUnits);
+      }}
+    />
+
 {showUploadModal && ReactDOM.createPortal(
   <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm">
     <div className="bg-slate-900 border border-cyan-300/30 rounded-lg w-[800px] p-6 shadow-2xl max-h-[80vh] flex flex-col">

@@ -56,6 +56,7 @@ from app.controllers import (
     app_voice_call_controller,
     ai_algorithm_controller,
     device_scan_controller,
+    device_registration_controller,
     permission_controller,
 )
 from app.utils.logger import get_logger
@@ -609,6 +610,7 @@ app.include_router(device_controller.router)
 app.include_router(device_controller.db_router)
 app.include_router(video_controller.router)
 app.include_router(device_scan_controller.router)
+app.include_router(device_registration_controller.router)
 app.include_router(fence_controller.router)
 app.include_router(team_controller.router)
 app.include_router(alarm_controller.router)
@@ -639,6 +641,10 @@ logger.info("AI health check: http://localhost:9000/api/ai/health")
 @app.get("/")
 def root():
     return {"status": "running", "message": "Smart Helmet Platform API"}
+
+@app.get("/test/network")
+def test_network():
+    return {"status": "ok"}
 
 # --- WebSocket ---
 @app.websocket("/ws/alarm")

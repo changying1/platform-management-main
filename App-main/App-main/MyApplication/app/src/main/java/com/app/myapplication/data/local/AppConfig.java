@@ -7,7 +7,9 @@ public class AppConfig {
     private static final String KEY_BASE_URL = "base_url";
     // Android emulator can use 10.0.2.2 to reach the host machine.
     // For a physical phone, replace this with the computer LAN IP or server address.
-    private static final String DEFAULT_BASE_URL = "http://220.185.189.50:43862/";
+    private static final String DEFAULT_BASE_URL = "http://10.0.2.2:9000/";
+    private static final String PUBLIC_BASE_URL = "http://220.185.189.50:9000/";
+    private static final String LEGACY_PUBLIC_BASE_URL = "http://220.185.189.50:43862/";
 
     public static String getBaseUrl(Context ctx) {
         Context appCtx = ctx.getApplicationContext();
@@ -15,6 +17,9 @@ public class AppConfig {
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(KEY_BASE_URL, DEFAULT_BASE_URL);
         String url = normalizeBaseUrl(saved);
+        if (shouldMigrateCachedBaseUrl(url)) {
+            url = DEFAULT_BASE_URL;
+        }
         if (!url.equals(saved)) {
             appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
@@ -70,6 +75,27 @@ public class AppConfig {
 
         if (!value.endsWith("/")) value += "/";
         return value;
+    }
+
+    private static boolean shouldMigrateCachedBaseUrl(String normalizedUrl) {
+        if (normalizedUrl == null || normalizedUrl.trim().isEmpty()) {
+            return true;
+        }
+        String value = normalizedUrl.trim();
+        if (value.equalsIgnoreCase(DEFAULT_BASE_URL)) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        return lower.equals(PUBLIC_BASE_URL.toLowerCase())
+                || lower.equals(LEGACY_PUBLIC_BASE_URL.toLowerCase())
+                || lower.equals(LEGACY_PUBLIC_BASE_URL.substring(0, LEGACY_PUBLIC_BASE_URL.length() - 1).toLowerCase() + "/")
+                || lower.startsWith("http://220.185.189.50:")
+                || lower.startsWith("https://220.185.189.50:")
+                || lower.startsWith("http://127.0.0.1:")
+                || lower.startsWith("http://localhost:")
+                || lower.startsWith("http://192.168.")
+                || lower.matches("^https?://172\\.(1[6-9]|2\\d|3[0-1])\\..*")
+                || (lower.startsWith("http://10.") && !lower.startsWith("http://10.0.2.2:"));
     }
 
     private static boolean looksLikeHostPort(String value) {

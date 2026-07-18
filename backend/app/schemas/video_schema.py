@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
 
-from typing import Optional
+from typing import ClassVar, Optional
 
 
 from enum import Enum
@@ -281,6 +281,8 @@ class VideoOut(VideoBase):
 
     id: str
 
+    password: ClassVar[None] = None
+
 
 
 
@@ -391,7 +393,7 @@ class CameraCreateRequest(BaseModel):
     name: str = Field(..., description="摄像头名称")
 
 
-    rtsp_url: str = Field(..., description="摄像头的RTSP地址")
+    rtsp_url: Optional[str] = Field(None, description="摄像头的RTSP地址")
 
 
     ip_address: Optional[str] = Field(None, description="设备IP地址 (可选)")

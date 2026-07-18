@@ -874,21 +874,41 @@ class VideoService:
                 return None
             return str(value)
 
+        def as_int(value: Any, default: int) -> int:
+            try:
+                if value in [None, ""]:
+                    return default
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        def as_float_or_none(value: Any) -> Optional[float]:
+            try:
+                if value in [None, ""]:
+                    return None
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def as_video_status(value: Any) -> str:
+            status = str(value or "offline").strip().lower()
+            if status not in {"online", "offline", "fault", "maintaining"}:
+                return "offline"
+            return status
+
 
 
         return {
 
             "id": str(doc.get("id", "")),
 
-            "name": doc.get("name"),
+            "name": str(doc.get("name") or doc.get("device_name") or doc.get("device_serial") or doc.get("id") or "未命名摄像头"),
 
             "ip_address": doc.get("ip_address"),
 
-            "port": doc.get("port", 80),
+            "port": as_int(doc.get("port", 80), 80),
 
             "username": doc.get("username"),
-
-            "password": doc.get("password"),
 
             "stream_url": doc.get("stream_url"),
 
@@ -905,23 +925,23 @@ class VideoService:
             "device_serial": doc.get("device_serial"),
             "sim_card_id": as_text_or_none(doc.get("sim_card_id")),
 
-            "channel_no": doc.get("channel_no", 1),
+            "channel_no": as_int(doc.get("channel_no", 1), 1),
 
-            "supports_ptz": doc.get("supports_ptz", 1),
+            "supports_ptz": as_int(doc.get("supports_ptz", 1), 1),
 
-            "supports_preset": doc.get("supports_preset", 1),
+            "supports_preset": as_int(doc.get("supports_preset", 1), 1),
 
-            "supports_cruise": doc.get("supports_cruise", 1),
+            "supports_cruise": as_int(doc.get("supports_cruise", 1), 1),
 
-            "supports_zoom": doc.get("supports_zoom", 1),
+            "supports_zoom": as_int(doc.get("supports_zoom", 1), 1),
 
-            "supports_focus": doc.get("supports_focus", 0),
+            "supports_focus": as_int(doc.get("supports_focus", 0), 0),
 
-            "latitude": doc.get("latitude"),
+            "latitude": as_float_or_none(doc.get("latitude")),
 
-            "longitude": doc.get("longitude"),
+            "longitude": as_float_or_none(doc.get("longitude")),
 
-            "status": doc.get("status"),
+            "status": as_video_status(doc.get("status")),
             "sleeping": doc.get("sleeping", False),
             "privacy_enabled": doc.get("privacy_enabled", False),
             "storage_abnormal": doc.get("storage_abnormal", False),
@@ -931,7 +951,7 @@ class VideoService:
             "last_status_error": doc.get("last_status_error"),
             "remark": doc.get("remark"),
 
-            "is_active": doc.get("is_active", 1),
+            "is_active": as_int(doc.get("is_active", 1), 1),
 
             "company": doc.get("company"),
             "branch_id": as_text_or_none(doc.get("branch_id")),
@@ -7670,7 +7690,8 @@ class VideoService:
 
         collection = self._video_collection()
 
-        ip_address = camera_data.ip_address or self._extract_ip_from_rtsp(camera_data.rtsp_url) or ""
+        rtsp_url = camera_data.rtsp_url or ""
+        ip_address = camera_data.ip_address or self._extract_ip_from_rtsp(rtsp_url) or ""
 
         port = camera_data.port or 80
 
@@ -7696,7 +7717,7 @@ class VideoService:
 
             "stream_url": "",
 
-            "rtsp_url": camera_data.rtsp_url,
+            "rtsp_url": rtsp_url,
 
             "stream_protocol": self._normalize_stream_protocol(camera_data.stream_protocol),
 
@@ -7858,15 +7879,24 @@ class VideoService:
 
     def get_videos(self, mongo_db, skip: int = 0, limit: int = 100, current_user: dict | None = None):
         collection = self._video_collection()
+        skip = max(0, int(skip or 0))
+        limit = max(1, min(int(limit or 100), 500))
 
         docs = [self._enrich_video_org_scope(doc) for doc in collection.find({}, {"_id": 0})]
         docs = [doc for doc in docs if doc]
         if current_user:
             docs = [doc for doc in docs if in_scope(doc, current_user, **self._scope_kwargs())]
 
-        docs.sort(key=lambda x: int(str(x.get("id", "0"))))
+        def video_sort_key(doc: dict) -> tuple[int, str]:
+            raw_id = str(doc.get("id", "0"))
+            try:
+                return int(raw_id), raw_id
+            except ValueError:
+                return 0, raw_id
 
-        docs = docs[max(0, int(skip)): max(0, int(skip)) + max(1, int(limit))]
+        docs.sort(key=video_sort_key)
+
+        docs = docs[skip: skip + limit]
 
         return [self._mongo_video_to_out(doc) for doc in docs]
 

@@ -134,6 +134,13 @@
             android:exported="false"
             android:label="全局设置" />
 
+        <activity
+            android:name=".ui.scan.EnhancedQrCaptureActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:theme="@style/zxing_CaptureTheme" />
+
     </application>
 
 </manifest>

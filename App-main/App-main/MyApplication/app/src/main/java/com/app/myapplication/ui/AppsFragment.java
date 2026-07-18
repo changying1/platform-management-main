@@ -223,7 +223,7 @@ public class AppsFragment extends Fragment {
 
     private void loadOnlineDevices() {
         VideoApi videoApi = ApiClient.get(requireContext()).create(VideoApi.class);
-        videoApi.getDevices(5000).enqueue(new Callback<List<VideoDevice>>() {
+        videoApi.getDevices(500).enqueue(new Callback<List<VideoDevice>>() {
             @Override
             public void onResponse(@NonNull Call<List<VideoDevice>> call,
                                    @NonNull Response<List<VideoDevice>> response) {

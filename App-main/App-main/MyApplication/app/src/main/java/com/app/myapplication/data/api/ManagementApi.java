@@ -92,7 +92,7 @@ public interface ManagementApi {
     /**
      * 获取视频设备列表 - 对应 Web 端 /video/
      */
-    @GET("video/?limit=5000")
+    @GET("video/?limit=500")
     Call<List<JsonObject>> getVideos(
         @HeaderMap Map<String, String> headers
     );
